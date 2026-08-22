@@ -360767,6 +360767,1924 @@ _ANSWER_V2['Bellman-Ford (shortest path with negative edges)'] = """Relax every 
 · SPFA is the queue-based refinement, faster in practice, same worst case.
   Mention it if pushed."""
 
+_ANSWER_V2["Hashing — the 'have I seen this?' pattern"] = """A hash set turns 'have I seen this before?' from a scan of everything into one
+instant lookup.
+
+· THE EVERYDAY PICTURE — a coat-check counter. Instead of walking the rack
+  looking for your coat, you hand over a ticket number and the attendant goes
+  straight to that hook. The hash function is what turns your coat into a
+  ticket number.
+· WHAT A HASH FUNCTION IS — a rule that turns any value into a number. Same
+  value in, same number out, always. That number is the slot to look in.
+· WHY IT IS FAST — you never compare against the other items. You compute one
+  number and look in one place. O(1) average, versus O(n) for scanning a list.
+· THE TELL IN AN INTERVIEW — any phrase like 'has this appeared', 'is there a
+  duplicate', 'find the pair that adds to X'. Nested loops are the naive
+  answer; a set or dict removes the inner one.
+· SET VS DICT — a set stores 'I saw it'. A dict stores 'I saw it, and here is
+  where / how many times'. Reach for the dict the moment you need the index or
+  the count.
+· THE COST — memory. You are buying time with space, usually O(n) extra. Say
+  that trade out loud; it is half of what is being tested.
+· WHEN IT DEGRADES — if many values collide into one slot it decays toward
+  O(n). Real libraries handle this, but knowing it exists is the senior answer."""
+
+_ANSWER_V2["Process vs Thread (and why it matters)"] = """A process owns its memory; threads SHARE the memory of the process they live
+in - and that sharing is both the speed and the danger.
+
+· THE EVERYDAY PICTURE — a process is a separate house. A thread is a person
+  inside one house. Two people in the same house can hand things to each other
+  instantly, but they can also both grab the same cup.
+· WHAT A PROCESS IS — a running program with its own private memory space. If
+  one crashes, the others are untouched, because they cannot reach its memory.
+· WHAT A THREAD IS — an independent path of execution inside a process. Threads
+  share the same variables, the same open files, the same heap.
+· WHY THREADS ARE CHEAPER — creating one is fast and switching between them is
+  fast, because there is no separate memory space to set up or swap.
+· WHY THREADS ARE DANGEROUS — two threads writing the same variable at once
+  produce a RACE CONDITION: the result depends on timing, so the bug appears
+  once a week and never in testing. Locks fix it and cost speed.
+· THE PYTHON FOOTNOTE worth naming — the GIL (Global Interpreter Lock) lets
+  only one thread run Python code at a time, so threads help with waiting
+  (network, disk) and not with computation. Use processes for computation.
+· THE ONE-LINE RULE — isolation and safety, use processes; shared state and
+  cheap switching, use threads."""
+
+_ANSWER_V2["SQL vs NoSQL — how to choose"] = """Choose on the SHAPE of your access patterns, not on scale - 'NoSQL is for big
+data' is the answer that gets you marked down.
+
+· WHAT SQL GIVES YOU — a fixed schema (every row has the same columns), joins
+  across tables, and transactions that are all-or-nothing. The database
+  enforces correctness for you.
+· WHAT NoSQL GIVES YOU — a flexible shape per record, and easy horizontal
+  scaling (adding more machines rather than a bigger one). You enforce
+  correctness in your application code instead.
+· THE REAL QUESTION — do you know your queries in advance? SQL is best when
+  you will slice the data in ways you have not thought of yet. NoSQL is best
+  when you have one dominant access pattern and design the storage around it.
+· MONEY MEANS SQL. Anything where two things must both happen or neither -
+  debit and credit, seat booked and payment taken - wants real transactions.
+· THE FOUR NoSQL FAMILIES, worth naming: key-value (Redis), document
+  (MongoDB), wide-column (Cassandra), graph (Neo4j). They are not
+  interchangeable, and saying 'NoSQL' without saying which is a weak answer.
+· THE HONEST MODERN ANSWER — Postgres scales far further than most people
+  assume, and handles JSON natively. Most systems should start there and move
+  a specific workload out when there is evidence, not before.
+· SAY 'BOTH' WHERE IT IS TRUE — orders in Postgres, session cache in Redis,
+  event log in Cassandra. Polyglot persistence is a real and expected answer."""
+
+_ANSWER_V2["'Why this company / why you?'"] = """Two questions, and the second is really 'what evidence do you have?' - specific
+beats enthusiastic every time.
+
+· WHY THIS COMPANY needs THREE specifics they could not copy-paste into another
+  company's answer: a product decision you admire, a technical problem they
+  have that interests you, and something about how they work.
+· WHERE TO FIND THEM — their engineering blog, a recent launch, their public
+  API, a conference talk by someone on the team. Twenty minutes of reading is
+  the entire difference between this answer working and not.
+· THE TEST — if your answer would still be true of their biggest competitor,
+  it is not an answer.
+· WHY YOU is a claim plus proof, not adjectives. 'I care about reliability' is
+  worth nothing; 'I cut our on-call pages by 60% by fixing retry storms' is
+  the same claim with evidence attached.
+· PICK THREE STRENGTHS that match the job posting's actual words, and have one
+  concrete story ready for each.
+· CONNECT THE TWO — the strongest version ends by joining them: what you are
+  good at is what they need done. That is the sentence they remember.
+· AVOID — salary, location, 'great culture', and anything about what you want
+  to LEARN as the main reason. Learning is a benefit to you, not to them."""
+
+_ANSWER_V2["Decision Trees & Random Forests"] = """A decision tree is a flowchart of yes/no questions learned from data - and a
+random forest is hundreds of deliberately different trees voting.
+
+· HOW A TREE LEARNS — at each step it tries every possible question ('is age >
+  30?') and keeps the one that best SEPARATES the outcomes. Then it repeats on
+  each branch. That is the whole algorithm.
+· WHAT 'BEST SEPARATES' MEANS — a purity measure, usually Gini impurity or
+  entropy. Both answer 'after this split, how mixed are the two groups?' Lower
+  is better. They almost always pick the same split.
+· WHY A SINGLE TREE FAILS — grown deep enough it memorises the training data,
+  including its noise. Perfect on data it has seen, poor on anything new. That
+  is OVERFITTING, and trees are unusually prone to it.
+· THE FOREST FIX, and both halves matter: each tree sees a random SAMPLE of the
+  rows (bagging), and at each split may only consider a random SUBSET of the
+  columns. The column trick is what stops every tree from looking the same.
+· WHY VOTING WORKS — the trees' errors are in different directions, so they
+  cancel; the signal they agree on survives. Averaging uncorrelated mistakes is
+  the entire idea.
+· WHAT YOU GAIN AND LOSE — much better accuracy, and you lose the ability to
+  read the model as a flowchart. Feature importances are what you get instead.
+· WHEN TO USE — tabular data with mixed numeric and categorical columns, no
+  scaling needed, and a strong baseline in an afternoon. Gradient boosting
+  (XGBoost, LightGBM) usually beats it and is the natural follow-up question."""
+
+_ANSWER_V2["Feature engineering, scaling & encoding"] = """Models learn from the numbers you hand them, so the shape of those numbers is
+usually worth more than the choice of model.
+
+· WHY SCALING EXISTS — if salary runs 0-200000 and age runs 0-100, any
+  distance-based model treats salary as a thousand times more important purely
+  because of its units. Scaling removes that accident.
+· THE TWO SCALERS — standardisation (subtract the mean, divide by the standard
+  deviation, giving mean 0) and min-max normalisation (squash to 0-1). Use
+  min-max when you need a bounded range, standardisation otherwise.
+· WHO NEEDS IT — anything using distances or gradients: k-NN, k-means, SVM,
+  neural networks, and any regression with regularisation. Trees and forests
+  do not care, because they only ask 'is this value above that threshold?'
+· ENCODING CATEGORIES — one-hot creates a 0/1 column per category and is the
+  safe default. Label encoding (red=0, green=1, blue=2) invents an ordering
+  that is not real, and linear models will believe it.
+· HIGH-CARDINALITY COLUMNS (thousands of values, like postcode) break one-hot.
+  Target encoding replaces each category with the average outcome for it - and
+  leaks badly unless computed inside cross-validation folds.
+· THE LEAK THAT COSTS PEOPLE THE OFFER — fit the scaler on the TRAINING data
+  only, then apply it to the test data. Fitting on everything lets test
+  information reach the model, and your score becomes a lie.
+· FEATURE ENGINEERING IS DOMAIN KNOWLEDGE — 'transactions in the last hour'
+  from a timestamp column, or 'price per square foot' from two columns. This
+  is where real gains come from, and where a model cannot help itself."""
+
+_ANSWER_V2["Big-O notation"] = """Big-O describes how the work GROWS as the input grows - it deliberately ignores
+constants, because those stop mattering at scale.
+
+· THE EVERYDAY PICTURE — 'how much longer does this take if the list gets ten
+  times bigger?' O(n) means ten times longer. O(n²) means a hundred times.
+  O(log n) means barely any longer at all.
+· WHY CONSTANTS ARE DROPPED — 5n and 100n are both straight lines; at large n
+  the SHAPE decides everything and the multiplier does not. So O(5n) is
+  written O(n).
+· THE LADDER, best to worst: O(1) constant, O(log n) halving, O(n) one pass,
+  O(n log n) sorting, O(n²) nested loops, O(2ⁿ) subsets, O(n!) permutations.
+· HOW TO READ CODE — one loop over n is O(n); a loop inside a loop is O(n²);
+  halving the range each step is O(log n); sorting anything is O(n log n) and
+  usually dominates everything else in the function.
+· WORST VS AVERAGE — quicksort is O(n log n) average and O(n²) worst; hash
+  lookup is O(1) average and O(n) worst. Naming which you mean is the mark of
+  someone who has actually been bitten.
+· SPACE COMPLEXITY counts extra memory, not the input. A recursive function
+  costs O(depth) in stack frames even if it allocates nothing - that is what
+  makes deep recursion crash.
+· THE PRACTICAL LIMIT to quote: roughly 10⁸ simple operations per second. n =
+  10⁵ rules out O(n²) immediately. Interviewers use the constraints to tell you
+  the intended complexity, so read them first."""
+
+_ANSWER_V2["Recursion"] = """A function that solves a big problem by calling itself on a smaller one - and
+the base case is the only thing standing between you and a crash.
+
+· THE EVERYDAY PICTURE — you are in a cinema queue and want to know your
+  position. You ask the person in front 'what number are you?' They ask the
+  person in front of them. The front person says 'I am 1' (the base case) and
+  the answer travels back, each person adding one.
+· THE TWO PARTS, always both: the BASE CASE that returns without recursing, and
+  the RECURSIVE CASE that calls itself on strictly smaller input. Missing base
+  case, or input that does not shrink, gives infinite recursion.
+· HOW TO TRUST IT — assume the recursive call already works correctly for the
+  smaller input. Do not trace it three levels deep in your head; that way lies
+  confusion. This leap is the whole skill.
+· THE CALL STACK is why it costs memory. Each pending call keeps its variables
+  alive. Depth n means O(n) space, and Python stops you at about 1000 frames.
+· WHERE IT IS NATURAL — trees and graphs, because their structure is already
+  recursive (a tree's child is a tree). Also divide-and-conquer: merge sort,
+  quicksort, binary search.
+· THE TRAP — naive recursive Fibonacci recomputes the same values
+  exponentially. Adding memoisation (cache each answer) turns O(2ⁿ) into O(n).
+  That single step is the bridge from recursion to dynamic programming.
+· TAIL RECURSION, worth a sentence — when the recursive call is the last thing
+  the function does, some languages reuse the stack frame. Python does NOT, so
+  in Python deep recursion becomes a loop."""
+
+_ANSWER_V2["Dynamic programming"] = """Solve each sub-problem ONCE and write the answer down - DP is recursion plus a
+notebook, and nothing more mysterious than that.
+
+· WHEN IT APPLIES, two conditions: OPTIMAL SUBSTRUCTURE (the best answer is
+  built from best answers to smaller pieces) and OVERLAPPING SUBPROBLEMS (the
+  same smaller piece is needed again and again). Without the second, plain
+  recursion is fine.
+· THE FOUR QUESTIONS that solve almost every DP: what is the STATE (what do I
+  need to know to decide)? what is the TRANSITION (how does one state build
+  from earlier ones)? what are the BASE CASES? what ORDER guarantees each
+  state is ready before it is used?
+· TOP-DOWN (memoisation) — write the natural recursion, add a cache. Easiest
+  to get right, and the one to write first under time pressure.
+· BOTTOM-UP (tabulation) — fill a table from the base cases upward. No
+  recursion limit, usually faster, and it makes the next trick possible.
+· SPACE OPTIMISATION — if row i only depends on row i-1, you never need the
+  whole table. Two rows, or even two variables. Fibonacci in O(1) space, and
+  House Robber the same way.
+· THE RECOGNITION SIGNAL in a problem statement: 'maximum / minimum / how many
+  ways', combined with making a sequence of choices where each choice affects
+  what remains.
+· HOW TO SPEAK ABOUT IT — say the state definition out loud first. 'dp[i] is
+  the best answer considering the first i items.' Interviewers grade the state
+  definition more than the code."""
+
+_ANSWER_V2["Maximum Subarray (Kadane's algorithm)"] = """At every element ask one question: is it better to EXTEND the run so far, or
+START fresh here? That single comparison is the whole algorithm.
+
+· THE PROBLEM — find the contiguous stretch of the array with the largest sum.
+  Contiguous matters: you cannot skip elements.
+· THE INSIGHT — a running sum that has gone negative is a liability. Carrying
+  -7 forward makes every future total worse than starting again from zero.
+· THE TWO VARIABLES — `current` is the best sum ENDING exactly here; `best` is
+  the best seen anywhere so far. They are different, and mixing them up is the
+  usual bug.
+· THE STEP — current = max(num, current + num). Then best = max(best, current).
+  Two lines inside one loop.
+· THE HAND TRACE on [-2, 1, -3, 4, -1, 2, 1]: current goes -2, 1, -2, 4, 3, 5,
+  6; best goes -2, 1, 1, 4, 4, 5, 6. Answer 6, the subarray [4, -1, 2, 1].
+· THE ALL-NEGATIVE TRAP — initialise both to the first element, not to zero.
+  Starting at zero returns 0 for [-3, -1, -2], and the correct answer is -1.
+· COST — O(n) time, O(1) space, one pass.
+· THE FOLLOW-UP they nearly always ask: return the indices too. Record a start
+  pointer, and move it to the current index whenever you choose to start
+  fresh rather than extend."""
+
+_ANSWER_V2["Valid Parentheses"] = """A stack, because the most recently opened bracket must be the first one closed -
+that is exactly what a stack does.
+
+· THE PROBLEM — given a string of (), [] and {}, decide whether every bracket
+  is closed in the right order. '([])' is valid; '([)]' is not.
+· WHY A STACK — brackets nest. When you meet a closer, the only bracket it can
+  legally match is the most recent unclosed opener. Last in, first out.
+· THE ALGORITHM — push every opening bracket. On a closing bracket, pop and
+  check the pair matches. At the end the stack must be EMPTY.
+· THE MAP TRICK — keep a dict {')': '(', ']': '[', '}': '{'}. Then the check is
+  one lookup instead of a chain of ifs.
+· THE THREE FAILURE MODES, and all three must be handled: wrong type on pop
+  ('(]'), popping an EMPTY stack (a closer with nothing open, ')('), and a
+  non-empty stack at the end (something never closed, '((').
+· THE HAND TRACE on '{[]}': push {, push [, meet ] pop [ matches, meet } pop {
+  matches, stack empty, return True.
+· COST — O(n) time, O(n) space in the worst case of all openers.
+· WHY COUNTING FAILS, worth saying out loud: just counting openers and closers
+  accepts '([)]'. Order is the point, and only a stack captures it."""
+
+_ANSWER_V2["Product of Array Except Self"] = """Two passes - everything to the LEFT of each position, then everything to the
+RIGHT - because division is forbidden and zeros would break it anyway.
+
+· THE PROBLEM — return an array where each slot holds the product of every
+  other element. No division allowed, O(n) time.
+· WHY NOT DIVIDE — total product divided by nums[i] is the obvious answer and
+  it dies on a single zero (division by zero) and gives wrong answers with two
+  zeros. The ban is a hint, not an obstacle.
+· THE INSIGHT — the answer at i is (product of everything left of i) × (product
+  of everything right of i). Neither includes i itself, which is the point.
+· PASS ONE, left to right: keep a running product and write it into the output
+  BEFORE multiplying in the current element. Slot 0 gets 1, the empty product.
+· PASS TWO, right to left: keep a second running product and MULTIPLY it into
+  what is already in the output. Same before-then-update ordering.
+· THE HAND TRACE on [1,2,3,4]: after pass one the output is [1,1,2,6]; the
+  right-running product goes 1,4,12,24; the final answer is [24,12,8,6].
+· SPACE — O(1) extra if the output array does not count, which is the standard
+  convention and worth stating.
+· THE ORDER OF OPERATIONS IS THE WHOLE BUG. Write first, then update the
+  running product. Doing it the other way includes the element in its own
+  answer."""
+
+_ANSWER_V2["Design a Min Stack"] = """Store the minimum ALONGSIDE each value, so the minimum is popped away with the
+element that made it - O(1) for everything, at the cost of one extra number.
+
+· THE PROBLEM — a stack with push, pop, top and getMin, all in O(1). Scanning
+  for the minimum would be O(n) and is the answer being ruled out.
+· WHY IT IS HARD — popping can remove the current minimum, and then you need
+  the PREVIOUS minimum, which you did not keep.
+· THE FIX — every entry remembers the minimum of the stack at the moment it was
+  pushed. Pop removes both together, so the correct earlier minimum is exposed
+  automatically.
+· TWO WAYS TO STORE IT — push a tuple (value, min_so_far), or keep a parallel
+  min-stack. The tuple version is fewer moving parts and harder to get wrong.
+· THE PUSH RULE — new_min = min(value, current_min if the stack is non-empty
+  else value). The empty case is the edge people miss.
+· THE HAND TRACE — push 5 → (5,5); push 3 → (3,3); push 7 → (7,3). getMin is 3.
+  Pop 7, getMin still 3. Pop 3, and the top is now (5,5) so getMin is 5,
+  restored with no work.
+· THE SPACE OPTIMISATION if pushed: only push to the min-stack when the value
+  is less than OR EQUAL to the current minimum. Equal matters - with duplicate
+  minimums, using strict less-than pops the minimum too early.
+· COST — O(1) all operations, O(n) space, which is the trade being bought."""
+
+_ANSWER_V2["House Robber"] = """At each house the choice is binary: take it and skip the previous one, or skip
+it and keep the best you already had.
+
+· THE PROBLEM — pick a set of houses with the maximum total value, where no two
+  chosen houses may be adjacent.
+· THE STATE — dp[i] is the best you can do considering the first i houses. That
+  sentence is the answer; the code is bookkeeping.
+· THE TRANSITION — dp[i] = max(dp[i-1], dp[i-2] + value[i]). Skip this house
+  and inherit, or rob it and add the best from two back.
+· WHY TWO BACK — because robbing house i forbids house i-1, so the most recent
+  usable total is dp[i-2].
+· THE HAND TRACE on [2,7,9,3,1]: dp goes 2, 7, 11, 11, 12. Answer 12 (houses 2,
+  9 and 1).
+· SPACE — you only ever look one and two steps back, so two variables replace
+  the array. prev2, prev1 = prev1, max(prev1, prev2 + value). O(1) space.
+· THE GREEDY TRAP — 'take every other house' fails on [2,1,1,2], where the
+  answer is 4 by taking the two ends. Say why greedy fails; it is a common
+  follow-up.
+· THE VARIANTS worth knowing: House Robber II arranges the houses in a CIRCLE,
+  solved by running the same function twice (excluding the first house, then
+  excluding the last) and taking the better. House Robber III does it on a
+  tree with post-order recursion."""
+
+_ANSWER_V2["Unique Paths (grid DP)"] = """Every cell can only be reached from above or from the left, so the paths to it
+are simply the sum of the paths to those two.
+
+· THE PROBLEM — count the routes from the top-left to the bottom-right of an
+  m×n grid, moving only right or down.
+· THE TRANSITION — dp[r][c] = dp[r-1][c] + dp[r][c-1]. Nothing else can reach
+  that cell, so nothing else can contribute.
+· THE BASE CASE — the entire first row and first column are 1. There is exactly
+  one way to travel in a straight line.
+· THE HAND TRACE on a 3×3 grid — the rows fill as [1,1,1], [1,2,3], [1,3,6].
+  Six paths, and you can verify that by hand, which is worth doing once.
+· IT IS PASCAL'S TRIANGLE, which gives the closed form: C(m+n-2, m-1). Say this
+  even if you code the DP; recognising the combinatorial identity reads well.
+· SPACE — a single row, updated left to right in place, is enough: row[c] +=
+  row[c-1]. The value already in row[c] is the cell above. O(n) space.
+· THE OBSTACLE VARIANT is the usual follow-up: set dp to 0 at any blocked cell
+  and continue. The one trap is a blocked cell in the first row or column,
+  which zeroes everything after it.
+· COST — O(m×n) time, O(n) space."""
+
+_ANSWER_V2["Longest Common Subsequence"] = """Compare the two strings character by character in a grid: matching characters
+extend the diagonal, mismatches take the better of dropping one character.
+
+· SUBSEQUENCE VS SUBSTRING — a subsequence keeps order but allows gaps. In
+  'abcde', 'ace' is a subsequence and not a substring. Getting this wrong
+  solves a different problem.
+· THE STATE — dp[i][j] is the LCS length of the first i characters of A and the
+  first j of B.
+· THE TRANSITION, two cases only. If A[i-1] == B[j-1], then dp[i][j] =
+  dp[i-1][j-1] + 1 (both characters used, extend the diagonal). Otherwise
+  dp[i][j] = max(dp[i-1][j], dp[i][j-1]) (drop one character from one string).
+· WHY THE DIAGONAL — using both characters means the remaining problem is both
+  strings one shorter, which is exactly the up-left cell.
+· THE BASE ROW AND COLUMN are zero: nothing in common with an empty string. The
+  one-based indexing with a zero row is what makes the code clean.
+· THE HAND TRACE on 'abcde' and 'ace' gives 3, the subsequence 'ace'.
+· RECONSTRUCTING THE ACTUAL STRING, the usual follow-up: walk back from the
+  bottom-right, moving diagonally when the characters match and toward the
+  larger neighbour otherwise, collecting matches in reverse.
+· COST — O(m×n) time and space, reducible to O(min(m,n)) space with two rows if
+  you only need the length. This is the engine behind `diff`."""
+
+_ANSWER_V2["Group Anagrams"] = """Give every word a fingerprint that anagrams share, then bucket by fingerprint -
+sorting the letters is the simplest fingerprint that works.
+
+· THE PROBLEM — group words that are rearrangements of each other. 'eat', 'tea'
+  and 'ate' belong together.
+· THE INSIGHT — anagrams differ only in ORDER, so anything that discards order
+  and keeps content becomes a shared key.
+· THE SORTED KEY — sorted('eat') and sorted('tea') both give 'aet'. Use it as a
+  dict key and append the original word to that bucket.
+· THE COUNT KEY, faster for long words — a 26-length tuple of letter counts.
+  O(k) per word instead of O(k log k), and it must be a TUPLE because lists are
+  not hashable.
+· THE ALGORITHM — one pass, compute the key, append to defaultdict(list),
+  return the values.
+· THE HAND TRACE on ['eat','tea','tan','ate','nat','bat']: key 'aet' collects
+  eat/tea/ate, 'ant' collects tan/nat, 'abt' collects bat.
+· COST — O(n × k log k) with sorted keys, O(n × k) with count keys, where n is
+  the number of words and k the longest word.
+· THE ANSWER THAT LOSES MARKS — comparing every word against every other is
+  O(n²k). The whole point of the question is replacing pairwise comparison with
+  a canonical key."""
+
+_ANSWER_V2["Edit Distance (Levenshtein)"] = """Three operations, three neighbouring cells: insert, delete and replace each map
+to one cell of the grid, and you take the cheapest.
+
+· THE PROBLEM — the fewest single-character edits to turn word A into word B.
+  This is what spell-checkers and fuzzy search run on.
+· THE STATE — dp[i][j] is the cost of converting the first i characters of A
+  into the first j characters of B.
+· THE MATCH CASE — if A[i-1] == B[j-1], nothing to pay: dp[i][j] = dp[i-1][j-1].
+· THE MISMATCH CASE — 1 + min of three: dp[i-1][j-1] is REPLACE, dp[i][j-1] is
+  INSERT, dp[i-1][j] is DELETE. Being able to name which cell is which
+  operation is exactly what is being tested.
+· THE BASE CASES — dp[i][0] = i (delete everything) and dp[0][j] = j (insert
+  everything). Converting to or from an empty string costs its length.
+· THE HAND TRACE — 'horse' to 'ros' is 3: replace h→r, delete o... in fact
+  replace h→r, delete r, delete e. Any three-edit path is correct; the count is
+  what matters.
+· COST — O(m×n) time and space, reducible to O(min(m,n)) with two rows.
+· THE VARIANTS — weighting the operations differently (a typo costs less than a
+  deletion), and Damerau-Levenshtein which adds transposition of adjacent
+  characters, because that is the commonest human typing error."""
+
+_ANSWER_V2["Jump Game"] = """Track the FURTHEST index reachable so far - if the loop ever reaches a position
+beyond it, you are stuck, and if it never does, you can finish.
+
+· THE PROBLEM — each value is the maximum jump length from that index. Decide
+  whether the last index is reachable from the first.
+· THE GREEDY INSIGHT — you do not need to know WHICH jumps to take. You only
+  need to know how far it is possible to get, and that is one number.
+· THE ALGORITHM — walk left to right keeping `furthest`. At index i, if i >
+  furthest you can never stand here, so return False. Otherwise furthest =
+  max(furthest, i + nums[i]).
+· THE HAND TRACE on [2,3,1,1,4]: furthest goes 2, 4, 4, 4, and the end is
+  reachable. On [3,2,1,0,4]: furthest goes 3, 3, 3, 3, then i = 4 > 3, so
+  False.
+· THE ZERO IS THE ONLY OBSTACLE — a run of positions can only fail if a zero
+  blocks it and nothing earlier can jump over. That is what the check encodes.
+· COST — O(n) time, O(1) space, one pass and no extra memory.
+· WHY DP IS THE WRONG ANSWER HERE — an O(n²) DP works and will be marked down.
+  Recognising that only the maximum reach matters is the whole question.
+· JUMP GAME II, the follow-up, asks for the MINIMUM number of jumps. Same idea
+  with a level-by-level sweep: track the end of the current jump's range and
+  increment a counter when you reach it, which is BFS in disguise."""
+
+_ANSWER_V2["Validate Binary Search Tree"] = """Every node must fall inside a RANGE inherited from its ancestors - checking only
+against the parent is the wrong answer that looks right.
+
+· THE PROPERTY — for every node, everything in its left subtree is smaller and
+  everything in its right subtree is larger. Every, not just the children.
+· THE CLASSIC WRONG ANSWER — comparing each node with its parent only. The tree
+  5 → left 1 → right 4 (with children 3 and 6) passes that check and is not a
+  BST, because 3 sits left of 5 but is inside 5's right subtree.
+· THE RANGE METHOD — pass down (low, high). The root gets (-∞, +∞). Going left
+  tightens the upper bound to the node's value; going right tightens the lower
+  bound. Fail if the value is outside its range.
+· WHY IT WORKS — the range accumulates every constraint from every ancestor, so
+  a violation many levels down is still caught.
+· THE IN-ORDER ALTERNATIVE — an in-order traversal of a BST produces sorted
+  values. Walk it keeping the previous value; if the current is not strictly
+  greater, fail. Same O(n), and often the cleaner explanation.
+· DUPLICATES — decide and state the convention. Usually strict inequality, so
+  equal values are invalid.
+· THE INTEGER-BOUNDS TRAP — using INT_MIN/INT_MAX as sentinels breaks if the
+  tree actually contains those values. Use None and check for it, which is why
+  the Python version reads more cleanly.
+· COST — O(n) time, O(h) space for the recursion stack, where h is the height."""
+
+_ANSWER_V2["Rotate Image (90 degrees, in place)"] = """Transpose, then reverse each row - two simple operations that compose into a
+rotation, which is far easier to get right than moving four cells at a time.
+
+· THE PROBLEM — rotate an n×n matrix 90° clockwise, modifying it in place with
+  no extra matrix.
+· STEP ONE, TRANSPOSE — swap element [i][j] with [j][i]. This flips the matrix
+  over its main diagonal.
+· THE CRITICAL DETAIL — only iterate j from i+1 onward. Swapping the full grid
+  swaps everything twice and leaves the matrix exactly as it started, which is
+  the bug that wastes ten minutes.
+· STEP TWO, REVERSE EACH ROW — row.reverse() on every row. Transpose plus
+  horizontal flip equals a clockwise quarter turn.
+· THE HAND TRACE on [[1,2],[3,4]]: transpose gives [[1,3],[2,4]]; reversing
+  each row gives [[3,1],[4,2]], which is correct.
+· ANTICLOCKWISE is the same two steps in the other order, or transpose then
+  reverse the COLUMN order. Being asked for the other direction is a common
+  twist, so know which half changes.
+· THE FOUR-WAY-SWAP ALTERNATIVE rotates four cells per step in rings. It is
+  one pass instead of two, and much easier to get the indices wrong under
+  pressure. Mention it, code the transpose version.
+· COST — O(n²) time, which is unavoidable since every cell moves, and O(1)
+  extra space."""
+
+_ANSWER_V2["Spiral Matrix"] = """Keep four walls - top, bottom, left, right - and move each one inward after you
+have consumed it. The walls are what stop you revisiting cells.
+
+· THE PROBLEM — return all elements of a matrix in spiral order: across the
+  top, down the right, back along the bottom, up the left, then inward.
+· WHY BOUNDARIES RATHER THAN A VISITED GRID — four integers replace an entire
+  extra matrix, and the code becomes four straight loops instead of direction
+  logic.
+· THE CYCLE — traverse the top row left to right then top++; the right column
+  top to bottom then right--; the bottom row right to left then bottom--; the
+  left column bottom to top then left++.
+· THE EDGE CASE THAT BREAKS NAIVE VERSIONS — after the first two moves the
+  remaining shape may be a single row or single column, and the last two loops
+  would re-read it. Guard the bottom row with `if top <= bottom` and the left
+  column with `if left <= right`.
+· THE HAND TRACE on a 3×3 — 1,2,3 then 6,9 then 8,7 then 4 then 5. Nine
+  elements, no repeats.
+· THE LOOP CONDITION — while top <= bottom and left <= right, so a non-square
+  matrix terminates correctly.
+· COST — O(m×n) time, O(1) extra space beyond the output.
+· THE SISTER PROBLEM, Spiral Matrix II, fills a matrix with 1..n² in spiral
+  order using exactly the same four-wall skeleton. Learn the skeleton once."""
+
+_ANSWER_V2["Database index (B-tree)"] = """An index is a sorted lookup structure kept beside the table - it turns 'read
+every row' into 'walk down a shallow tree', at the cost of slower writes.
+
+· THE EVERYDAY PICTURE — the index at the back of a textbook. Without it you
+  read every page to find 'mitochondria'. With it you jump to the entry and
+  then to the page. The index is redundant, sorted, and worth its space.
+· WHAT A FULL TABLE SCAN COSTS — O(n) disk reads. With a million rows that is a
+  million rows examined to return one.
+· WHY B-TREE AND NOT A BINARY TREE — a B-tree node holds hundreds of keys, so
+  the tree is very SHALLOW: a million rows sits about three levels deep. Each
+  level is one disk read, and disk reads are the only cost that matters.
+· WHAT IT STORES — the indexed column's values in sorted order, each paired
+  with a pointer to the actual row. Sorted order is why it also accelerates
+  ranges and ORDER BY, not only equality.
+· WHAT IT SPEEDS UP — equality (=), ranges (BETWEEN, <, >), prefix matches
+  (LIKE 'abc%'), sorting, and joins on the indexed column.
+· WHAT IT CANNOT HELP — a leading wildcard (LIKE '%abc'), a function applied to
+  the column (WHERE UPPER(name) = ...), or a column with very few distinct
+  values, where reading the table is cheaper than bouncing through an index.
+· COMPOSITE INDEXES ARE LEFT-TO-RIGHT — an index on (a, b) serves queries on a,
+  and on a+b, but NOT on b alone. Think of a phone book sorted by surname then
+  first name.
+· THE COST — every INSERT, UPDATE and DELETE must also maintain every index,
+  plus the storage. That is why you index deliberately, not everywhere."""
+
+_ANSWER_V2["ACID transactions"] = """Four guarantees that let you write code as if nothing else were happening -
+Atomicity, Consistency, Isolation, Durability.
+
+· ATOMICITY — all of it or none of it. A transfer that debits one account and
+  credits another must not stop in the middle. If anything fails, everything
+  rolls back.
+· CONSISTENCY — the database moves from one valid state to another. Constraints,
+  foreign keys and triggers all still hold when the transaction commits. This
+  is the one people state most vaguely; it is about your declared RULES.
+· ISOLATION — concurrent transactions do not see each other's half-finished
+  work. This is the hardest and most tunable of the four.
+· DURABILITY — once committed, it survives a crash. Implemented with a
+  write-ahead log: record the intent to disk before changing the data.
+· THE FOUR ISOLATION LEVELS, weakest to strongest: READ UNCOMMITTED (dirty
+  reads possible), READ COMMITTED (Postgres default), REPEATABLE READ (MySQL
+  InnoDB default), SERIALIZABLE (as if run one at a time).
+· THE THREE ANOMALIES they prevent, and naming them is the mark of depth. DIRTY
+  READ: seeing uncommitted data. NON-REPEATABLE READ: the same row read twice
+  gives different values. PHANTOM READ: the same query returns different ROWS
+  because someone inserted.
+· THE TRADE — stronger isolation means more locking and less throughput. Most
+  systems run READ COMMITTED and handle the rest in application logic.
+· MVCC is how Postgres gets isolation without heavy read locks: readers see a
+  snapshot rather than waiting. Worth naming if the conversation goes deeper."""
+
+_ANSWER_V2["Why does a database index speed up reads but slow down writes?"] = """Because an index is a SECOND sorted copy of the data, and every write has to
+keep it correct as well as the table.
+
+· THE READ SIDE — without an index the engine scans every row, O(n). With one
+  it descends a shallow B-tree, roughly O(log n), which at a million rows is
+  three or four page reads instead of a million.
+· THE WRITE SIDE — an INSERT now writes the row AND inserts a key into every
+  index on that table, each in its correct sorted position. Five indexes means
+  six structures updated, not one.
+· UPDATE IS THE EXPENSIVE ONE, and the detail people miss: updating an indexed
+  column means DELETE the old key and INSERT the new one, because the row's
+  position in the sorted order has changed. Updating an unindexed column
+  touches no index at all.
+· PAGE SPLITS — when a B-tree node fills up it must split in two and the parent
+  must be updated. An insert that triggers a split costs far more than an
+  average one, which is why write latency is spiky rather than uniform.
+· THE OTHER COSTS — disk space (an index on a large text column can rival the
+  table), memory (indexes compete for the same cache), and longer recovery.
+· THE PRACTICAL RULE — index what you filter, join and sort on. Do not index
+  columns with very few distinct values, or tables that are written far more
+  than they are read.
+· HOW TO ANSWER WELL — give the shape of the trade, then say you would measure:
+  look at actual query plans and drop indexes the planner never chooses. Most
+  slow databases have both missing AND unused indexes."""
+
+_ANSWER_V2["Single Number (XOR)"] = """XOR every element together - pairs cancel to zero and the lone element is what
+remains.
+
+· THE PROBLEM — every value appears twice except one. Find it in O(n) time and
+  O(1) space, which rules out the obvious hash set.
+· THE THREE XOR FACTS that make it work: x ^ x = 0 (a value cancels itself),
+  x ^ 0 = x (zero is harmless), and XOR is commutative and associative (order
+  does not matter).
+· WHY ORDER NOT MATTERING IS THE KEY — the duplicates do not need to be
+  adjacent. Wherever they sit in the array, they still pair off and vanish.
+· THE ALGORITHM — result = 0, then result ^= num for every element. Return
+  result. Two lines.
+· THE HAND TRACE on [4,1,2,1,2]: 0^4=4, 4^1=5, 5^2=7, 7^1=6, 6^2=4. Answer 4.
+· WHAT XOR ACTUALLY IS, since it is worth defining: bitwise 'different'. Each
+  output bit is 1 when the two input bits differ. That is why identical values
+  produce all zeros.
+· THE VARIANTS — Single Number II (every element appears three times) needs bit
+  counting mod 3, since XOR only cancels pairs. Single Number III (two unique
+  elements) XORs everything, isolates the lowest set bit to split the array
+  into two groups, and XORs each group.
+· WHERE ELSE XOR APPEARS — Missing Number, finding a duplicate, and swapping
+  two variables without a temporary. Recognising the cancellation trick is
+  what transfers."""
+
+_ANSWER_V2["Next Greater Element (monotonic stack)"] = """Keep a stack that only ever decreases - when a bigger number arrives, it is the
+answer for everything waiting underneath it.
+
+· THE PROBLEM — for each element, find the first element to its RIGHT that is
+  larger. If there is none, report -1.
+· WHAT 'MONOTONIC' MEANS — the stack is kept in sorted order by construction.
+  Here it holds values still waiting for their answer, always decreasing from
+  bottom to top.
+· THE INSIGHT — an element is waiting because nothing bigger has arrived yet.
+  The moment something bigger does arrive, it is that element's answer, and it
+  is also the answer for anything smaller still waiting.
+· THE ALGORITHM — for each number, while the stack is non-empty and the top is
+  SMALLER than the current number, pop it and record the current number as its
+  answer. Then push the current number.
+· WHY IT IS O(n) DESPITE THE INNER LOOP — each element is pushed once and
+  popped at most once. Total work is 2n, not n². Say this out loud; it is the
+  point of the question.
+· STORE INDICES, NOT VALUES, when you need to write into an answer array or
+  compute a distance. This is the one implementation choice that decides how
+  painful the rest is.
+· THE HAND TRACE on [2,1,2,4,3]: 2 waits; 1 waits; 2 pops the 1 (answer 2) and
+  waits; 4 pops both 2s (answer 4) and waits; 3 waits. Leftovers get -1, so
+  the result is [4,2,4,-1,-1].
+· THE FAMILY — Daily Temperatures, Largest Rectangle in Histogram, Trapping
+  Rain Water and Stock Span are all this same skeleton. Learn it once."""
+
+_ANSWER_V2["CAP theorem"] = """When the network splits, you must choose: keep answering with possibly stale
+data, or refuse to answer. You do not get to choose whether partitions happen.
+
+· THE THREE LETTERS — Consistency (every read sees the latest write),
+  Availability (every request gets a response), Partition tolerance (the system
+  keeps working when the network drops messages between nodes).
+· THE COMMON MISREADING — 'pick two of three'. Partition tolerance is not
+  optional in any real distributed system, because networks fail. So the
+  choice is really CP or AP, and only during a partition.
+· CP — refuse to serve rather than serve stale data. A banking ledger should
+  say 'try again' rather than show a balance that may be wrong.
+· AP — answer with what you have and reconcile later. A social feed should show
+  a slightly old timeline rather than an error page.
+· THE PART PEOPLE MISS — this is a choice made DURING a partition only. When
+  the network is healthy a system can be both consistent and available, and
+  most are.
+· PACELC IS THE BETTER MODEL and worth naming: if Partitioned, choose
+  Availability or Consistency; Else, choose Latency or Consistency. It captures
+  the everyday trade, not just the emergency.
+· EVENTUAL CONSISTENCY means replicas converge once the writes stop. Useful,
+  and it needs conflict resolution — last-write-wins, vector clocks, or CRDTs.
+· HOW TO USE IT IN A DESIGN ROUND — do not recite the letters. Say which side
+  you would pick for THIS system and why, and note that different parts of one
+  product can pick differently: payments CP, view counts AP."""
+
+_ANSWER_V2["Database normalization"] = """Store each fact exactly once, so there is never a second copy to forget to
+update - that is the entire purpose, and denormalisation trades it for speed.
+
+· THE PROBLEM IT SOLVES — if a customer's address is copied onto every order,
+  changing it means finding every row. Miss one and the database now disagrees
+  with itself. That is an UPDATE ANOMALY.
+· THE OTHER TWO ANOMALIES — insertion (you cannot record a product with no
+  order to attach it to) and deletion (removing the last order erases the
+  customer entirely).
+· FIRST NORMAL FORM — every column holds a single value. No comma-separated
+  lists in a cell, no repeating columns like phone1, phone2, phone3.
+· SECOND NORMAL FORM — 1NF, and every non-key column depends on the WHOLE
+  primary key. Only bites when the key is composite: if the key is (order_id,
+  product_id), product_name depends on half of it and must move out.
+· THIRD NORMAL FORM — 2NF, and no non-key column depends on another non-key
+  column. If you store zip_code and city, city follows from zip, so city
+  belongs in its own table.
+· THE MEMORABLE SUMMARY — every non-key column depends on the key, the whole
+  key, and nothing but the key.
+· BCNF is the stricter version of 3NF for the rare case of overlapping
+  candidate keys. Name it, do not dwell on it.
+· DENORMALISATION IS DELIBERATE, NOT SLOPPY — copying data back to avoid joins
+  is correct for read-heavy analytics and reporting. The cost is that you now
+  own the consistency problem in application code, and you should say so."""
+
+_ANSWER_V2["Majority Element (Boyer-Moore voting)"] = """Pair off every different element and they annihilate each other - whatever
+survives must be the one that appeared more than half the time.
+
+· THE PROBLEM — one element appears MORE than n/2 times. Find it in O(n) time
+  and O(1) space, which rules out a counting dictionary.
+· THE INTUITION — imagine each occurrence of the majority element cancelling
+  one occurrence of anything else. Since the majority has more than half, it
+  cannot be fully cancelled. Something must be left.
+· THE ALGORITHM — keep a `candidate` and a `count`. If count is 0, adopt the
+  current element as candidate. Then count += 1 if it matches the candidate,
+  else count -= 1.
+· THE HAND TRACE on [2,2,1,1,1,2,2]: candidate 2 count 1, count 2, count 1
+  (saw 1), count 0, candidate 1 count 1, count 0, candidate 2 count 1. Answer
+  2, which is correct.
+· WHY IT SURVIVES A BAD START — even if a wrong candidate is adopted early, it
+  gets cancelled down to zero and the true majority gets adopted eventually.
+  This is the part worth explaining, because the algorithm looks like it should
+  not work.
+· THE GUARANTEE MATTERS — the answer is only valid if a majority actually
+  exists. If it might not, run a second pass to COUNT the candidate and verify.
+  Interviewers often add exactly that follow-up.
+· COST — O(n) time, O(1) space, one pass.
+· THE EXTENSION — the same idea with two candidates finds all elements
+  appearing more than n/3 times. In general, k-1 candidates for n/k."""
+
+_ANSWER_V2["Missing Number"] = """Compare what the sum SHOULD be against what it actually is - the difference is
+the missing number.
+
+· THE PROBLEM — an array holds n distinct numbers drawn from 0..n, so exactly
+  one is missing. Find it.
+· THE SUM METHOD — the numbers 0..n add up to n(n+1)/2, a formula worth
+  remembering. Subtract the actual sum and what remains is the gap.
+· THE HAND TRACE on [3,0,1], where n = 3: expected 3×4/2 = 6, actual 4,
+  missing 2.
+· THE XOR METHOD, if overflow is a concern — XOR every index 0..n together with
+  every value. Identical numbers cancel (x ^ x = 0) and the missing one
+  survives. Same O(n), no risk of a large sum overflowing.
+· WHY XOR IS THE SAFER ANSWER in a language with fixed-width integers: with
+  n around a billion, n(n+1)/2 exceeds a 32-bit int. Saying this unprompted
+  reads as experience.
+· THE SORTING ANSWER is O(n log n) and the set answer is O(n) space. Both work
+  and both are worse; naming them and then rejecting them shows you considered
+  the trade rather than pattern-matched.
+· COST — O(n) time, O(1) space, one pass.
+· THE FAMILY — Single Number, Find the Duplicate Number, and Find All Numbers
+  Disappeared. The shared idea is exploiting the fact that the values ARE the
+  index range, which is what makes O(1) space possible at all."""
+
+_ANSWER_V2["Merge Sort"] = """Split the list in half until every piece is a single element, then merge the
+pieces back in order - the merging is where the sorting actually happens.
+
+· THE TWO PHASES — divide (recurse on each half until length 1, which is
+  trivially sorted) and conquer (merge two sorted lists into one).
+· THE MERGE STEP — two pointers, one per list. Compare the fronts, take the
+  smaller, advance that pointer. When one list runs out, append the rest of
+  the other.
+· WHY O(n log n), and this is the sentence to be able to say: each level of
+  recursion does O(n) work merging, and there are log n levels because you
+  halve each time.
+· THE SPACE COST — O(n) extra for the temporary arrays. This is merge sort's
+  one real weakness against quicksort, which sorts in place.
+· IT IS STABLE, meaning equal elements keep their original relative order. Take
+  from the LEFT list when the two fronts are equal — that single choice is what
+  preserves stability, and reversing it silently breaks it.
+· WHERE IT WINS — sorting LINKED LISTS, because merging needs no random access
+  and can be done with O(1) extra space by relinking. It is the standard answer
+  for 'sort a linked list'.
+· EXTERNAL SORTING — data too large for memory is sorted in chunks and merged.
+  Merge sort is the algorithm behind that, which is worth naming.
+· PYTHON'S sorted() IS TIMSORT, a hybrid of merge sort and insertion sort that
+  detects already-sorted runs. Mentioning it shows you know what the library
+  actually does."""
+
+_ANSWER_V2["Subsets II (with duplicates)"] = """Sort first, then skip any duplicate that is not the first of its run at that
+level - that one condition is the whole difference from plain Subsets.
+
+· THE PROBLEM — generate all unique subsets of an array that may contain
+  repeated values. [1,2,2] should give [[], [1], [1,2], [1,2,2], [2], [2,2]]
+  and not two copies of [2].
+· WHY SORTING IS MANDATORY — duplicates must be ADJACENT for the skip rule to
+  see them. Without sorting, the two 2s might sit apart and both branches
+  proceed.
+· THE SKIP RULE — inside the loop, `if i > start and nums[i] == nums[i-1]:
+  continue`. Skip a value identical to its predecessor unless it is the first
+  choice at this level.
+· WHY `i > start` AND NOT `i > 0` — this is the entire subtlety. At the start
+  of a level you MUST allow the duplicate, because that is the legitimate
+  [2,2] branch. You are only forbidding picking the same value twice as the
+  FIRST element of the same position.
+· THE MENTAL MODEL — at each level you choose which value goes next. Choosing
+  '2' twice at the same level produces identical subtrees, so the second is
+  pruned. Going deeper with another 2 is a different decision entirely.
+· RECORD A COPY of the working list, not the list itself, since it is about to
+  be mutated. Standard backtracking discipline.
+· COST — O(n × 2ⁿ) time, which is output-bound: there can be 2ⁿ subsets and
+  copying each costs O(n).
+· THE SAME RULE transfers directly to Combination Sum II and Permutations II.
+  Sort, then skip non-leading duplicates."""
+
+_ANSWER_V2["Quickselect (kth largest)"] = """Quicksort that only recurses into the HALF containing the answer - which turns
+O(n log n) into O(n) on average.
+
+· THE PROBLEM — find the kth largest element without fully sorting.
+· THE INSIGHT — after one partition step, the pivot is in its final sorted
+  position. Compare that position with k: if it matches you are done, and
+  otherwise the answer lies entirely on one side. The other side can be
+  discarded, not sorted.
+· WHY IT IS O(n) — the work halves each time: n + n/2 + n/4 + ... which sums to
+  2n. Quicksort recurses into BOTH halves and pays the extra log factor.
+· THE PARTITION — choose a pivot, move everything smaller to its left and
+  everything larger to its right, return the pivot's final index. Lomuto is
+  the easier scheme to write; Hoare is faster.
+· THE WORST CASE is O(n²), when every pivot is the smallest or largest element
+  — which is exactly what a sorted input does to a first-element pivot.
+  RANDOMISE THE PIVOT and that becomes vanishingly unlikely.
+· THE HEAP ALTERNATIVE — a min-heap of size k gives O(n log k), and is BETTER
+  when k is small or the data arrives as a stream. Quickselect needs the whole
+  array in memory and mutates it.
+· WHICH TO SAY IN AN INTERVIEW — offer both, then pick based on the constraints
+  you were given. Streaming means heap; array in memory and k near n/2 means
+  quickselect.
+· MEDIAN OF MEDIANS guarantees O(n) worst case. Name it, do not implement it;
+  its constant factor makes it slower in practice."""
+
+_ANSWER_V2["Quick Sort"] = """Pick a pivot, push everything smaller to one side and everything larger to the
+other, then repeat on each side - the pivot never moves again.
+
+· THE PARTITION IS THE ALGORITHM. After one pass the pivot sits in its final
+  sorted position, and the two sides can be sorted independently.
+· WHY IT IS USUALLY THE FASTEST in practice despite the same O(n log n) as
+  merge sort: it sorts IN PLACE, so it moves less memory and is far kinder to
+  the CPU cache.
+· THE WORST CASE, O(n²), happens when the pivot is always the smallest or
+  largest element — which an already-sorted array does to a naive
+  first-element pivot. This is a real production bug, not a theoretical one.
+· THE FIXES — random pivot, or median-of-three (first, middle, last). Both make
+  the bad case a coincidence rather than a pattern.
+· SPACE — O(log n) for the recursion stack on average. Recursing into the
+  smaller side first and looping on the larger bounds it even in bad cases.
+· IT IS NOT STABLE — equal elements can be reordered by the partition. If
+  stability matters, merge sort is the answer.
+· THE THREE-WAY PARTITION (Dutch National Flag) splits into less-than,
+  equal-to and greater-than. With many duplicate keys this is dramatically
+  faster, because all the equals are finished in one pass.
+· HOW IT DIFFERS FROM MERGE SORT, as a summary worth having ready: quicksort
+  does the work BEFORE recursing (partition), merge sort does it AFTER
+  (merge). One is in-place and unstable, the other allocates and is stable."""
+
+_ANSWER_V2["Counting Sort"] = """Count how many times each value appears, then write them out in order - no
+comparisons at all, which is how it beats O(n log n).
+
+· THE KEY IDEA — comparison sorts cannot beat O(n log n), and counting sort
+  gets around that by not comparing. It uses the values themselves as array
+  indices.
+· THE ALGORITHM — find the range, make a count array of that size, tally every
+  element, then walk the counts writing each value out the right number of
+  times.
+· THE COST — O(n + k) time and O(k) space, where k is the RANGE of values.
+  Both halves matter: it is linear in the data and linear in the range.
+· WHEN IT WINS — a small, known range of integers. Sorting a million exam
+  scores from 0 to 100 is instant. Sorting a million arbitrary 64-bit integers
+  is impossible, because k is astronomically larger than n.
+· THE RULE OF THUMB — use it when k is O(n) or smaller. If the range dwarfs the
+  count, the count array is mostly zeros and you have wasted the memory.
+· THE STABLE VERSION uses a PREFIX SUM of the counts to compute each element's
+  final position, then walks the input BACKWARDS. Stability is what makes it
+  usable as the inner step of radix sort.
+· RADIX SORT is the natural follow-up: apply counting sort digit by digit, from
+  least significant to most. That is how you sort large integers or fixed-width
+  strings in linear time.
+· BUCKET SORT is the sibling for uniformly distributed floats: scatter into
+  buckets, sort each, concatenate."""
+
+_ANSWER_V2["Binary Search Lower Bound (bisect_left)"] = """Find the FIRST position where the value could be inserted and still keep the
+list sorted - which is the same as the first element not less than the target.
+
+· WHY IT MATTERS MORE THAN PLAIN BINARY SEARCH — plain search answers 'is it
+  here?'. Lower bound answers 'where does it belong?', which also handles
+  duplicates, ranges and 'first element >= x' in one primitive.
+· THE INVARIANT — everything left of `lo` is strictly less than the target,
+  everything at or right of `hi` is greater than or equal. The loop shrinks the
+  unknown middle until it is empty.
+· THE LOOP — while lo < hi: mid = (lo + hi) // 2; if arr[mid] < target then lo
+  = mid + 1 else hi = mid. Return lo.
+· THE THREE DETAILS THAT DECIDE CORRECTNESS — the condition is `<` and not
+  `<=`; `hi` starts at len(arr) and NOT len(arr) - 1; and `hi = mid` rather
+  than mid - 1. Change any one and you get upper bound, an infinite loop, or an
+  off-by-one.
+· LOWER VS UPPER — bisect_left with `<` gives the first index where the value
+  could go; bisect_right with `<=` gives the last. The count of a value equals
+  upper minus lower, which is a neat trick worth knowing.
+· THE RESULT MAY BE len(arr), meaning the target is larger than everything.
+  Check that before indexing, or you get an out-of-range error on the happy
+  path of a different test case.
+· MID OVERFLOW — in Java or C++, use lo + (hi - lo) / 2. Python integers do not
+  overflow, but naming the issue is expected.
+· WHERE IT SHOWS UP — search in a rotated array, find first and last position,
+  and every 'binary search on the answer' problem such as Koko Eating Bananas."""
+
+_ANSWER_V2["Set Matrix Zeroes (O(1) space)"] = """Use the first row and first column as the notepad - the marks live inside the
+matrix you are already allowed to modify.
+
+· THE PROBLEM — if any cell is 0, set its entire row and column to 0. In place,
+  with no extra matrix.
+· THE BUG THAT MAKES IT INTERESTING — zeroing as you go creates new zeros,
+  which then trigger more zeroing, and the whole matrix collapses. You must
+  RECORD first and apply second.
+· THE O(m+n) ANSWER — two sets of row and column indices to zero. Correct, and
+  usually a stepping stone to the real answer.
+· THE O(1) TRICK — store those marks in row 0 and column 0 of the matrix
+  itself. Cell [i][0] means 'row i needs zeroing'; cell [0][j] means 'column j
+  does'.
+· THE COLLISION — cell [0][0] would have to mean both. So handle the first
+  column with a separate boolean variable, and let [0][0] speak only for the
+  first row.
+· THE ORDER OF OPERATIONS — mark by scanning from [1][1] outward; then apply
+  from the BOTTOM-RIGHT backwards, so the markers are read before they are
+  overwritten; then handle row 0 and column 0 last.
+· THE HAND TRACE worth doing once by hand on [[1,1,1],[1,0,1],[1,1,1]]: the
+  centre 0 marks [1][0] and [0][1], and applying gives a plus-shaped band of
+  zeros.
+· WHAT IS ACTUALLY BEING TESTED — not cleverness but discipline about ORDER.
+  Say 'record, then apply, and apply in an order that does not destroy the
+  record' and the code follows."""
+
+_ANSWER_V2["Task Scheduler (cooldown)"] = """The most frequent task decides the answer - lay it out with gaps first, then
+pour everything else into those gaps.
+
+· THE PROBLEM — identical tasks must be separated by at least n intervals.
+  Find the minimum total time, where idle slots count as time.
+· THE INSIGHT — the schedule is dictated entirely by whichever task appears
+  most. Arrange those first: they create (max_count - 1) gaps, each of length
+  n, and everything else fills in around them.
+· THE FORMULA — (max_count - 1) × (n + 1) + number_of_tasks_tied_for_max. The
+  (n + 1) is one slot for the frequent task plus n slots of separation.
+· WHY THE TIE TERM — if three tasks all appear 4 times, the final block needs
+  one slot for each of them, so you add 3 rather than 1.
+· THE ANSWER IS max(formula, len(tasks)) — with many distinct tasks there are
+  no idle slots at all, every position is filled, and the total is simply the
+  number of tasks. Forgetting this max is the standard failure.
+· THE HAND TRACE on ['A','A','A','B','B','B'] with n = 2: max_count 3, two
+  tasks tied, so (3-1) × 3 + 2 = 8. The schedule A B idle A B idle A B is
+  indeed 8 long.
+· THE HEAP ALTERNATIVE simulates it: pop the most frequent available tasks each
+  round, decrement, push back after the cooldown. O(n log n), and it generalises
+  to variants the formula cannot handle.
+· WHICH TO PRESENT — derive the formula, because it is O(n) and shows you found
+  the structure. Mention the heap as the version that survives a change to the
+  rules."""
+
+_ANSWER_V2["Kth Smallest Element in a BST"] = """In-order traversal visits a BST in sorted order, so the answer is simply the
+kth node you touch - stop as soon as you reach it.
+
+· THE PROPERTY BEING USED — for any node, left subtree < node < right subtree.
+  Visiting left, then node, then right therefore produces ascending values.
+· THE ALGORITHM — walk in-order with a counter. When the counter hits k, that
+  node is the answer. Return immediately; do not finish the traversal.
+· WHY THE EARLY EXIT MATTERS — a full traversal is O(n) regardless. Stopping at
+  k makes it O(h + k), which for a small k on a large tree is dramatically
+  better and is what the interviewer is watching for.
+· THE ITERATIVE VERSION with an explicit stack is the one to write, because it
+  makes stopping natural: push left spine, pop, count, then move right. In a
+  recursive version you need a flag or an exception to escape cleanly.
+· THE HAND TRACE on a BST holding 1..5 with k = 3: you touch 1, 2, then 3 and
+  stop, having never visited the right subtree of the root.
+· COST — O(h + k) time where h is the height, O(h) space for the stack.
+· THE FOLLOW-UP THEY ALWAYS ASK — 'what if the tree is modified often and you
+  need this repeatedly?' Augment each node with the SIZE of its left subtree.
+  Then you can descend directly to the kth in O(h), and you maintain the counts
+  on insert and delete.
+· KTH LARGEST is the mirror image: traverse right, node, left."""
+
+_ANSWER_V2["Largest Rectangle in Histogram (monotonic stack)"] = """Every bar is the shortest bar of some rectangle - so for each bar, find how far
+it can extend left and right before hitting something shorter.
+
+· THE PROBLEM — bars of varying heights standing side by side; find the largest
+  axis-aligned rectangle that fits inside them.
+· THE REFRAME THAT SOLVES IT — instead of asking 'which rectangle is biggest',
+  ask for each bar 'what is the widest rectangle whose HEIGHT is this bar?'
+  The answer is bounded by the first shorter bar on each side.
+· THE MONOTONIC STACK holds indices of bars in INCREASING height. While the
+  current bar is shorter than the stack top, that top bar has just found its
+  right boundary, so pop it and compute its area.
+· THE WIDTH, which is the fiddly part — after popping, the left boundary is the
+  new stack top (the nearest shorter bar to the left), so width = current_index
+  - stack[-1] - 1. If the stack is empty, the bar extends all the way left, so
+  width = current_index.
+· THE SENTINEL TRICK — append a bar of height 0 at the end. It forces every
+  remaining bar to be popped and measured, removing the whole clean-up loop.
+· WHY O(n) — each index is pushed once and popped once, despite the nested
+  while.
+· THE HAND TRACE on [2,1,5,6,2,3]: the answer is 10, from the bars 5 and 6
+  giving height 5 over width 2.
+· WHERE IT LEADS — Maximal Rectangle in a binary matrix is this algorithm run
+  once per row, treating each row as a histogram of consecutive 1s above it.
+  That is the payoff for learning it properly."""
+
+_ANSWER_V2["Same Tree"] = """Two trees are identical when their roots match and both pairs of subtrees are
+identical - the definition is recursive, so the code is three lines.
+
+· THE BASE CASES, and getting them in the right order is the whole exercise.
+  Both None means identical, return True. Exactly one None means different,
+  return False. Different values means different, return False.
+· THE RECURSIVE CASE — return sameTree(p.left, q.left) AND sameTree(p.right,
+  q.right). Both halves must hold.
+· WHY BOTH-NONE COMES FIRST — checking p.val when p is None crashes. Ordering
+  the guards so the structural cases are resolved before any value is read is
+  the actual lesson.
+· STRUCTURE MATTERS AS MUCH AS VALUES — a tree with a single left child is not
+  the same as one with a single right child, even though both contain the same
+  two numbers. The None-mismatch case is what catches that.
+· COST — O(n) time where n is the smaller tree, O(h) space for the recursion.
+· THE ITERATIVE VERSION pushes pairs of nodes onto a stack or queue and applies
+  the same three checks. Worth knowing for the 'what if the tree is very deep'
+  follow-up, where recursion would overflow.
+· THE FAMILY — Symmetric Tree is this function comparing left against right
+  with the child order MIRRORED. Subtree of Another Tree calls this at every
+  node of the larger tree.
+· THE INTERVIEW SIGNAL — these are graded on whether your base cases are
+  exhaustive and correctly ordered, not on cleverness. Say them out loud
+  before writing."""
+
+_ANSWER_V2["Construct Binary Tree from Preorder and Inorder"] = """Preorder tells you WHO the root is; inorder tells you WHERE it splits the rest.
+Together they determine the tree uniquely.
+
+· WHY TWO ORDERS ARE NEEDED — preorder alone gives root-first but not where the
+  left subtree ends. Inorder alone gives the split but not which node is the
+  root. Neither is enough on its own.
+· THE ALGORITHM — take the next value from preorder as the root, find it in
+  inorder, everything left of it is the left subtree and everything right is
+  the right subtree. Recurse on both.
+· THE NAIVE VERSION is O(n²) because searching inorder for each root is O(n).
+  Build a dict from value to index FIRST, and it becomes O(n).
+· THE SECOND OPTIMISATION — do not slice the arrays. Pass index BOUNDARIES
+  instead. Slicing copies and turns O(n) back into O(n²) space and time.
+· THE PREORDER POINTER MUST BE SHARED across the whole recursion, not passed by
+  value. Consuming roots in order is what keeps the two arrays in step, and a
+  local copy silently rebuilds the wrong tree.
+· THE ORDER OF RECURSION MATTERS — build the LEFT subtree before the right,
+  because preorder lists the entire left subtree before any of the right.
+· DUPLICATE VALUES BREAK IT, and this is the good question to raise: the index
+  lookup becomes ambiguous. The problem statement almost always guarantees
+  distinct values; noticing that is the senior move.
+· THE SIBLING PROBLEM — postorder plus inorder works the same way, taking the
+  root from the END of postorder and building the RIGHT subtree first. Preorder
+  plus postorder does NOT uniquely determine a tree."""
+
+_ANSWER_V2["01 Matrix (distance to nearest zero)"] = """Start the BFS from ALL the zeros at once - one multi-source sweep gives every
+cell its nearest-zero distance in a single pass.
+
+· THE PROBLEM — for each cell in a binary matrix, find the distance to the
+  nearest 0.
+· THE NAIVE ANSWER — BFS outward from every 1, which is O((mn)²) and will be
+  rejected. The reframe is the entire question.
+· MULTI-SOURCE BFS — push every zero into the queue at the start, all at
+  distance 0. Then expand normally. Because BFS explores in rings, the first
+  time any cell is reached is via its nearest source.
+· WHY IT IS CORRECT — it is exactly equivalent to adding a virtual node
+  connected to every zero and running one BFS from it. Saying that out loud
+  explains it faster than tracing.
+· THE IMPLEMENTATION — set every 1 to infinity (or use a visited set), enqueue
+  all zeros, then for each neighbour not yet assigned, distance = current + 1
+  and enqueue.
+· WHY BFS AND NOT DFS — BFS visits in order of increasing distance, so the
+  first arrival is the shortest. DFS would need to revisit cells repeatedly.
+· COST — O(m×n) time and space. Every cell is enqueued exactly once.
+· THE DP ALTERNATIVE — two passes, top-left to bottom-right then
+  bottom-right to top-left, taking the minimum of the neighbours already
+  processed. Same complexity, O(1) extra space, and it only works because
+  movement is 4-directional on a grid. Worth offering as the follow-up.
+· THE PATTERN TRANSFERS to Rotting Oranges, Walls and Gates, and any 'nearest X
+  for every cell' question."""
+
+_ANSWER_V2["Redundant Connection (Union-Find)"] = """Add the edges one at a time; the first edge whose two endpoints are ALREADY
+connected is the one that closes a cycle.
+
+· THE PROBLEM — a tree with one extra edge added. Find that extra edge (the
+  last one, if several qualify).
+· WHAT UNION-FIND IS, in plain terms — a structure that answers 'are these two
+  things in the same group?' and 'merge these two groups', both in near
+  constant time. Each group is represented by one member, its root.
+· FIND — follow parent pointers up to the root. UNION — point one root at the
+  other.
+· THE ALGORITHM HERE — for each edge (a, b), if find(a) == find(b) then a and b
+  were already connected and this edge creates a cycle, so return it.
+  Otherwise union them.
+· PATH COMPRESSION — during find, repoint every node visited straight at the
+  root. This flattens the tree so later lookups are immediate.
+· UNION BY RANK (or size) — always attach the smaller tree under the larger, so
+  the structure never grows tall. With both optimisations the amortised cost is
+  effectively O(1).
+· WHY UNION-FIND RATHER THAN DFS — DFS cycle detection also works and is O(V+E),
+  but union-find handles edges arriving one at a time and is the natural tool
+  for 'connected components' questions generally.
+· THE FAMILY — Number of Provinces, Accounts Merge, Number of Islands II, and
+  Kruskal's MST all sit on this structure. It is worth writing the fifteen-line
+  class from memory."""
+
+_ANSWER_V2["Shortest Path in Binary Matrix (8-directional BFS)"] = """BFS on an unweighted grid gives the shortest path by construction - the only
+twist is eight neighbours instead of four.
+
+· THE PROBLEM — travel from the top-left to the bottom-right of a binary grid
+  through 0-cells only, moving in any of eight directions including diagonals.
+  Return the path length, or -1.
+· WHY BFS AND NOT DFS — every step costs the same, so BFS explores in rings of
+  increasing distance and the first time it reaches the target is by the
+  shortest route. DFS finds a path, not the shortest.
+· WHY NOT DIJKSTRA — Dijkstra is BFS with a priority queue, needed only when
+  edges have different weights. On a uniform grid it is the same answer with a
+  log factor of overhead. Saying this shows you know why the simpler tool fits.
+· THE EIGHT DIRECTIONS — all combinations of -1, 0, +1 for row and column,
+  excluding (0,0). Generating them with a nested loop is less error-prone than
+  typing eight pairs.
+· MARK VISITED WHEN ENQUEUEING, not when dequeuing. Otherwise the same cell
+  enters the queue many times before it is processed, and the queue explodes.
+  This is the single commonest BFS bug.
+· THE EDGE CASES — if the start or the end cell is blocked, return -1
+  immediately. A 1×1 grid with a 0 has a path of length 1, not 0, because the
+  problem counts CELLS.
+· COST — O(m×n) time and space; every cell is visited once.
+· THE UPGRADE, if pushed — A* with the Chebyshev distance as the heuristic,
+  which on a grid with diagonals is max(|dr|, |dc|). Same answer, explores
+  fewer cells."""
+
+_ANSWER_V2["Kruskal's Minimum Spanning Tree"] = """Sort every edge by weight and take them cheapest-first, skipping any edge that
+would close a cycle - union-find is what makes the cycle check fast.
+
+· WHAT AN MST IS — a subset of edges connecting every vertex with no cycles and
+  the smallest possible total weight. For V vertices it always has exactly
+  V-1 edges.
+· THE ALGORITHM — sort all edges by weight; for each in order, if its endpoints
+  are in different components, take it and union them; stop after V-1 edges.
+· WHY GREEDY IS SAFE — the cut property: for any way of splitting the vertices
+  into two groups, the lightest edge crossing the split is in some MST. Taking
+  the globally lightest safe edge never forecloses the optimum.
+· THE CYCLE CHECK IS UNION-FIND — 'are these already connected?' is exactly
+  what find() answers. Without it, cycle detection would dominate the cost.
+· COST — O(E log E) for the sort, which dominates; the union-find work is
+  effectively linear. Since E ≤ V², log E is O(log V), so it is often written
+  O(E log V).
+· KRUSKAL VS PRIM — Kruskal is edge-centric and shines on SPARSE graphs, and
+  works naturally when the graph is given as an edge list. Prim is
+  vertex-centric and better on DENSE graphs. Knowing which to pick is the
+  usual follow-up.
+· DISCONNECTED GRAPHS produce a minimum spanning FOREST — the loop simply ends
+  with fewer than V-1 edges. Noticing this is a good sign.
+· WHERE IT IS USED — network cabling, clustering (cut the k-1 heaviest MST
+  edges to get k clusters), and approximation algorithms for travelling
+  salesman."""
+
+_ANSWER_V2["Prim's Minimum Spanning Tree"] = """Grow one tree outward from a starting vertex, always taking the cheapest edge
+that reaches somewhere new - Dijkstra's shape with a different comparison.
+
+· THE ALGORITHM — start anywhere. Keep a min-heap of edges crossing from the
+  tree to the outside. Repeatedly take the cheapest, and if it reaches an
+  unvisited vertex, add that vertex and push its edges.
+· THE ONE-LINE DIFFERENCE FROM DIJKSTRA — Dijkstra's heap key is the total
+  distance from the source; Prim's is the weight of the single edge. Same
+  skeleton, different quantity, and being able to say this is worth more than
+  either implementation.
+· WHY IT IS CORRECT — the cut property again. The tree so far and everything
+  else form a cut, and the lightest edge across a cut is always safe.
+· THE MUST-CHECK — when popping an edge, verify the destination is still
+  unvisited. Stale entries accumulate in the heap because you never remove
+  them, and using one would add a vertex twice.
+· COST — O(E log V) with a binary heap, the same as Kruskal in practice. With a
+  Fibonacci heap it is O(E + V log V), which is theory rather than something
+  you would write.
+· ON A DENSE GRAPH the adjacency-matrix version is O(V²) and BEATS the heap
+  version, because with E near V² the log factor costs more than it saves. This
+  is the strongest reason to prefer Prim over Kruskal.
+· NO SORTING REQUIRED, unlike Kruskal, and no union-find. That makes it the
+  easier one to write when the graph is given as an adjacency list.
+· DISCONNECTED GRAPHS — Prim finds only the component containing the start
+  vertex. Kruskal naturally produces the whole forest."""
+
+_ANSWER_V2["Cheapest Flights Within K Stops (Bellman-Ford)"] = """Relax all the edges exactly K+1 times, using a SNAPSHOT of the previous round -
+the snapshot is what enforces the stop limit.
+
+· WHY DIJKSTRA IS WRONG HERE — Dijkstra finds the cheapest path with no
+  constraint on length, and greedily fixes each vertex once. A route that is
+  more expensive now but uses fewer stops may be the only legal answer, and
+  Dijkstra has already discarded it.
+· THE BELLMAN-FORD FIT — each round of edge relaxation extends every path by
+  exactly one more edge. Run K+1 rounds and you have considered every path with
+  at most K+1 edges, which is K stops.
+· THE CRITICAL DETAIL — copy the distance array at the start of each round and
+  read from the COPY while writing to the live one. Without it, an edge relaxed
+  earlier in the same round can be used again, letting a single round consume
+  two flights and silently breaking the limit.
+· THE HAND TRACE worth doing — with K = 1 the answer must use at most two
+  flights, so exactly two rounds of relaxation run.
+· COST — O(K × E), which is far better than it sounds because K is small. No
+  heap, no sorting.
+· THE ALTERNATIVE — BFS level by level, where each level is one more flight,
+  carrying the cheapest cost seen per node per level. Same idea in different
+  clothing, and often easier to explain.
+· WHY NOT JUST ADD STOPS TO DIJKSTRA'S STATE — you can: make the state (node,
+  stops_used) and it works. It is more code and more memory, and worth
+  mentioning as the general technique for constrained shortest paths.
+· THE PARENT SKILL — recognising when a greedy shortest-path algorithm is
+  invalidated by an extra constraint. That transfers well beyond this problem."""
+
+_ANSWER_V2["Evaluate Reverse Polish Notation"] = """Push numbers, and when an operator arrives pop two, apply, push the result -
+RPN exists precisely so that a stack is all you need.
+
+· WHAT RPN IS — operators come AFTER their operands. '3 4 +' means 3 + 4.
+  '2 1 + 3 *' means (2 + 1) × 3 = 9. No brackets are ever needed, and no
+  precedence rules apply.
+· WHY IT SUITS A STACK — by the time an operator appears, both its operands are
+  the two most recent values. That is exactly what a stack gives you.
+· THE ORDER OF POPPING IS THE BUG. The first pop is the RIGHT operand and the
+  second is the LEFT. For '+' and '*' it does not matter; for '-' and '/' it
+  reverses the answer.
+· INTEGER DIVISION TRUNCATES TOWARD ZERO in this problem, which Python's // does
+  NOT — -7 // 2 is -4 in Python and the expected answer is -3. Use
+  int(a / b), and say why.
+· THE HAND TRACE on ['2','1','+','3','*']: push 2, push 1, '+' pops 1 and 2 and
+  pushes 3, push 3, '*' pops 3 and 3 and pushes 9. Answer 9.
+· THE END STATE — exactly one value on the stack. Anything else means malformed
+  input, which is a good validation point to raise.
+· COST — O(n) time, O(n) space, one pass.
+· THE FOLLOW-UP — converting infix to RPN is the shunting-yard algorithm, also
+  a stack, and it is where operator precedence actually lives. Naming it shows
+  you understand why RPN is convenient rather than arbitrary."""
+
+_ANSWER_V2["Decode String (stack)"] = """Nesting means a stack: push the state you are in before descending into the
+brackets, and restore it when you come back out.
+
+· THE PROBLEM — '3[a2[c]]' decodes to 'accaccacc'. The repeat counts nest, so
+  a single loop with one counter cannot work.
+· THE TWO STACKS — one for the repeat counts, one for the string built so far
+  at the outer level. They are pushed and popped together.
+· ON A DIGIT — build the number across possibly several characters. '12[a]'
+  means twelve, and treating each digit separately is a classic bug.
+· ON '[' — push the current number and the current string, then RESET both. You
+  are starting a fresh inner context.
+· ON ']' — pop the count and the previous string, and set current = previous +
+  current × count. This is where the multiplication actually happens.
+· ON A LETTER — append it to the current string.
+· THE HAND TRACE on '3[a]2[bc]': at the first ']' current is 'a' and count 3,
+  giving 'aaa'; at the second, previous is 'aaa' and current 'bc' with count 2,
+  giving 'aaabcbc'.
+· COST — O(total output length), because you build the result; space is O(depth
+  + output).
+· THE RECURSIVE ALTERNATIVE mirrors the stack exactly, with the call stack
+  doing the pushing for you. Either is fine; the stack version makes the state
+  visible, which is easier to talk through."""
+
+_ANSWER_V2["Asteroid Collision (stack)"] = """A right-moving asteroid on the stack meets a left-moving one arriving - that is
+the only situation in which anything explodes.
+
+· THE SETUP — positive means moving right, negative means moving left. A
+  collision happens only when a positive is followed by a negative.
+· WHY NO OTHER PAIR COLLIDES — two positives travel the same way, two negatives
+  likewise, and a negative followed by a positive move apart. Stating this
+  first makes the code obvious.
+· THE ALGORITHM — for each asteroid, while the stack top is positive and the
+  current is negative, compare sizes: the smaller is destroyed. Equal sizes
+  destroy both. If the current survives everything, push it.
+· THE THREE OUTCOMES per comparison, and all three need handling: top is
+  smaller so pop and keep testing; equal so pop and the current also dies;
+  top is bigger so the current dies and the loop ends.
+· THE CONTROL-FLOW TRAP — after the current asteroid is destroyed you must NOT
+  push it. A flag, or a for-else, or a break with a guard. This is where most
+  attempts go wrong.
+· THE HAND TRACE on [5,10,-5]: 5 pushed, 10 pushed, -5 meets 10 which is bigger
+  so -5 dies. Result [5,10]. On [8,-8]: equal, both die, result [].
+· COST — O(n) time, each asteroid pushed and popped at most once; O(n) space.
+· WHY IT IS A STACK PROBLEM AT ALL — after a collision the NEW top may also
+  collide with the same incoming asteroid, so you need to keep looking
+  backwards. That backward chain is what a stack gives you for free."""
+
+_ANSWER_V2["Daily Temperatures (monotonic stack)"] = """Hold the days still waiting for a warmer one; when a warmer day arrives it
+settles all of them at once, and the answer is the difference in indices.
+
+· THE PROBLEM — for each day, how many days until a warmer temperature? Zero if
+  none ever comes.
+· THE STACK HOLDS INDICES, not temperatures, because the answer is a DISTANCE.
+  This is the single decision that makes the code short.
+· THE INVARIANT — temperatures at the stacked indices are decreasing from
+  bottom to top. Anything warmer would already have been resolved and popped.
+· THE ALGORITHM — for each day i, while the stack is non-empty and today is
+  warmer than the temperature at the top index j, pop j and set answer[j] = i -
+  j. Then push i.
+· WHY ONE WARM DAY CAN SETTLE SEVERAL — everything on the stack is cooler than
+  the new day, and stacked in decreasing order, so the new day is the first
+  warmer day for a whole run of them.
+· LEFTOVERS STAY ZERO — anything still on the stack at the end never found a
+  warmer day, and the array was initialised to zero, so nothing more is needed.
+· THE HAND TRACE on [73,74,75,71,69,72,76,73]: the answer is
+  [1,1,4,2,1,1,0,0]. Index 2 (75) waits four days for 76, which is the case
+  worth checking by hand.
+· COST — O(n) time, since each index is pushed and popped once, and O(n) space.
+· IT IS EXACTLY Next Greater Element with the index difference reported instead
+  of the value. Recognising that saves you solving it twice."""
+
+_ANSWER_V2["Partition Labels (greedy)"] = """A partition can only end where every letter inside it has run out - so
+precompute each letter's last position and extend the boundary as you go.
+
+· THE PROBLEM — split a string into as many pieces as possible, so that each
+  letter appears in only one piece.
+· THE INSIGHT — if the current piece contains 'a', it cannot close before the
+  LAST 'a' in the whole string. The piece's end is the furthest last-occurrence
+  of anything seen so far.
+· PASS ONE — record last[c] for every character. One dictionary, 26 entries at
+  most.
+· PASS TWO — walk the string with `end = max(end, last[c])`. When the index
+  reaches `end`, every letter in this piece has finished, so cut here and start
+  the next piece.
+· THE HAND TRACE on 'ababcbacadefegdehijhklij': the first cut lands at index 8,
+  giving 'ababcbaca', because the last 'a' is at 8 and nothing inside reaches
+  further. Then 'defegde' and 'hijhklij', so [9,7,8].
+· WHY GREEDY IS OPTIMAL — cutting at the earliest legal position can never
+  reduce the number of pieces, since delaying a cut only merges pieces
+  together. That argument is what the interviewer wants to hear.
+· COST — O(n) time and O(1) space, since the alphabet is fixed at 26.
+· THE PATTERN — 'extend a boundary while scanning' also solves Merge Intervals,
+  Jump Game and Minimum Number of Arrows. The shared skill is realising a
+  single running maximum captures all the constraints so far."""
+
+_ANSWER_V2["Longest Consecutive Sequence"] = """Put everything in a set, then only start counting from a number whose
+predecessor is absent - that check is what keeps it O(n).
+
+· THE PROBLEM — the longest run of consecutive integers in an unsorted array,
+  in O(n). Sorting would be O(n log n) and is the answer being ruled out.
+· THE NAIVE-WITH-A-SET VERSION — for each number, walk upward while n+1 exists.
+  That is O(n²) on input like [1,2,3,...,n], because every element re-walks the
+  same run.
+· THE FIX, one line — only begin a walk if n-1 is NOT in the set. That makes n
+  the true start of its run, so each run is walked exactly once.
+· WHY THAT MAKES IT LINEAR — every element is visited at most twice: once by the
+  start check, once during the single walk of its run. Total O(n).
+· THE HAND TRACE on [100,4,200,1,3,2]: 100 starts a run (no 99) of length 1;
+  4 is skipped because 3 exists; 1 starts a run and walks 2, 3, 4 for length 4.
+  Answer 4.
+· THE SET IS DOING TWO JOBS — deduplication and O(1) membership. Duplicates in
+  the input are handled for free, which is worth pointing out.
+· COST — O(n) time, O(n) space. The space is the price of avoiding the sort,
+  and stating that trade is expected.
+· THE UNION-FIND ANSWER also works and is more machinery for the same result.
+  Mention it, then explain why the set version is the one you would ship."""
+
+_ANSWER_V2["Valid Sudoku"] = """One pass, three sets per constraint - and the only real trick is the formula
+that maps a cell to its 3×3 box.
+
+· THE PROBLEM — decide whether a partially filled board breaks any rule. You
+  are NOT solving it, only validating what is already there.
+· THE THREE CONSTRAINTS — no repeats in any row, any column, or any 3×3 box.
+· THE BOX INDEX FORMULA — box = (row // 3) * 3 + (col // 3). Integer division
+  collapses three rows into one band, and multiplying by 3 spaces the bands
+  apart. This one line is what the question is really checking.
+· THE STRUCTURE — nine sets for rows, nine for columns, nine for boxes. For
+  each filled cell, if the digit is already in any of its three sets, return
+  False; otherwise add it to all three.
+· ONE PASS IS ENOUGH. Checking rows, then columns, then boxes separately also
+  works and reads worse; doing all three per cell is both shorter and faster.
+· EMPTY CELLS, usually '.', are skipped entirely. They cannot violate anything.
+· COST — O(81), which is O(1) since the board is fixed size. Say that rather
+  than 'O(n²)', because the constant board size is the honest description.
+· THE FOLLOW-UP is Sudoku Solver, which is backtracking: try 1-9 in the first
+  empty cell, recurse, undo on failure. This validity check becomes the
+  'is this move legal' test inside it, which is why it is asked first."""
+
+_ANSWER_V2["First Missing Positive"] = """Put every number in its own place - value v belongs at index v-1 - and then the
+first index that disagrees is the answer.
+
+· THE PROBLEM — the smallest positive integer absent from an unsorted array, in
+  O(n) time and O(1) extra space. Both constraints together are what make it
+  hard.
+· THE BOUNDING INSIGHT — with n elements the answer is somewhere in 1..n+1. If
+  all of 1..n are present the answer is n+1; otherwise it is one of them.
+  Anything outside that range is irrelevant and can be ignored.
+· THE TRICK — use the array itself as the hash table. Cyclic sort: while the
+  value at position i is in range and not already home, SWAP it to its correct
+  index v-1.
+· THE LOOP CONDITION — swap while 1 <= nums[i] <= n and nums[nums[i]-1] !=
+  nums[i]. Comparing VALUES rather than indices is what stops an infinite loop
+  on duplicates.
+· WHY IT IS STILL O(n) despite a while inside a for — every swap puts one
+  number permanently in its correct home, so there are at most n swaps in
+  total.
+· PASS TWO — walk the array; the first i where nums[i] != i+1 gives the answer
+  i+1. If none disagree, return n+1.
+· THE HAND TRACE on [3,4,-1,1]: after the swaps it becomes [1,-1,3,4]; index 1
+  holds -1 instead of 2, so the answer is 2.
+· THE ALTERNATIVE marks presence by NEGATING the value at index v-1, which
+  avoids swapping but destroys the signs and needs abs() everywhere. Both are
+  accepted; the cyclic sort generalises to more problems."""
+
+_ANSWER_V2["Sort Colors (Dutch National Flag)"] = """Three pointers, one pass: everything before `low` is 0, everything after `high`
+is 2, and the middle is still unknown.
+
+· THE PROBLEM — sort an array of only 0s, 1s and 2s in place, in one pass, with
+  constant space. Counting occurrences and rewriting is two passes and is the
+  answer being ruled out.
+· THE THREE REGIONS — [0, low) holds 0s, [low, mid) holds 1s, [mid, high] is
+  unexamined, and (high, end] holds 2s. The loop shrinks the unexamined middle
+  to nothing.
+· ON A 0 — swap arr[low] and arr[mid], then advance BOTH low and mid.
+· ON A 1 — advance mid only. It is already in the right region.
+· ON A 2 — swap arr[mid] and arr[high], then decrement high and DO NOT advance
+  mid. This is the one rule people get wrong.
+· WHY MID DOES NOT ADVANCE ON A 2 — the value swapped in from `high` has never
+  been examined. Advancing past it would leave an unsorted element behind. On a
+  0, by contrast, the value coming from `low` is already known to be a 1.
+· THE LOOP RUNS while mid <= high, inclusive, because `high` is a valid
+  unexamined index.
+· THE HAND TRACE on [2,0,1]: 2 swaps to the end giving [1,0,2] with high now 1;
+  1 advances mid; 0 swaps giving [0,1,2]. Sorted in three steps.
+· COST — O(n) time, O(1) space. The same partitioning is quicksort's three-way
+  split, which is why it matters beyond this problem."""
+
+_ANSWER_V2["Subarray Product Less Than K"] = """A sliding window, and the count of new subarrays each time the window grows is
+simply its length.
+
+· THE PROBLEM — count contiguous subarrays whose product is strictly less than
+  k. All values are positive, which is what makes a window valid.
+· WHY POSITIVITY MATTERS — extending the window can only increase the product,
+  and shrinking it can only decrease it. That monotonicity is what lets a
+  window work; with zeros or negatives it collapses.
+· THE ALGORITHM — expand `right`, multiply into the running product. While the
+  product is >= k, divide out arr[left] and advance left. Then add (right -
+  left + 1) to the answer.
+· WHY THAT COUNT IS RIGHT, and it is the whole question: every subarray ENDING
+  at `right` and starting anywhere from `left` to `right` is valid. There are
+  exactly (right - left + 1) of them, and each is new because it ends at a
+  position never used before.
+· THE HAND TRACE on [10,5,2,6] with k = 100: right=0 adds 1; right=1 product 50
+  adds 2; right=2 product 100 is not < 100 so left advances, product 10, adds
+  2; right=3 product 60 adds 3. Total 8.
+· THE k <= 1 EDGE CASE — no positive product is ever less than 1, so return 0
+  immediately. Without the guard, `left` runs past `right` and the count goes
+  negative.
+· COST — O(n) time, since each pointer only moves forward; O(1) space.
+· THE COUNTING TRICK — 'add the window length' — reappears in Count Number of
+  Nice Subarrays and Subarrays with K Different Integers. It is the transferable
+  part."""
+
+_ANSWER_V2["Permutation in String"] = """A fixed-size sliding window plus a character count - a permutation is just the
+same letters in any order, so counts are all you need to compare.
+
+· THE PROBLEM — does s2 contain any permutation of s1 as a contiguous
+  substring?
+· THE REFRAME — a permutation of s1 has exactly s1's letter counts and exactly
+  s1's length. So slide a window of len(s1) over s2 and compare counts.
+· WHY A FIXED WINDOW — the length never changes, which makes this simpler than
+  a variable-size window: one character enters and one leaves on every step.
+· THE O(26) COMPARISON — comparing two 26-length count arrays each step is
+  O(26n), which is fine. Say it is effectively linear.
+· THE O(1) REFINEMENT worth mentioning — maintain a `matches` counter of how
+  many of the 26 letters currently have equal counts. Update it only for the
+  two letters that changed, and the answer is `matches == 26`. That removes
+  the per-step comparison entirely.
+· THE UPDATE ORDER — add the entering character, then remove the leaving one,
+  then compare. Doing it in a different order off-by-ones the window.
+· THE HAND TRACE on s1='ab', s2='eidbaooo': windows 'ei','id','db','ba' — 'ba'
+  has one a and one b, so True.
+· THE EARLY EXIT — if len(s1) > len(s2), return False before doing anything.
+· COST — O(n) time, O(1) space since the alphabet is fixed. The sibling problem
+  Find All Anagrams in a String is the identical algorithm returning every
+  match instead of stopping at the first."""
+
+_ANSWER_V2["Koko Eating Bananas (binary search on the answer)"] = """You are not searching the array - you are searching the ANSWER SPACE, because
+'can she finish at speed k?' gets easier as k grows.
+
+· THE PROBLEM — piles of bananas and h hours. Find the smallest eating speed
+  that finishes everything in time.
+· THE PATTERN — when the answer is a number in a known range, and there is a
+  cheap yes/no test that is MONOTONIC (false, false, ..., true, true), you can
+  binary search the answer instead of computing it.
+· THE MONOTONICITY, which must be stated: if speed k works, every speed above k
+  also works. That is what makes the search space sorted, and it is the whole
+  justification.
+· THE RANGE — low is 1 (any slower is not eating), high is max(piles) (no point
+  eating faster than the biggest pile, since she cannot start a second pile in
+  the same hour).
+· THE FEASIBILITY TEST — hours = sum of ceil(pile / k) for every pile. In
+  Python, ceil division is (pile + k - 1) // k, which avoids floating point
+  entirely.
+· THE SEARCH — this is lower bound: if feasible(mid), move high to mid,
+  otherwise low to mid + 1. Return low, the FIRST speed that works.
+· COST — O(n log(max_pile)). The log is over the answer range, not the array
+  size, which is worth saying explicitly.
+· THE FAMILY, all the same skeleton: Capacity to Ship Packages Within D Days,
+  Split Array Largest Sum, Minimum Number of Days to Make Bouquets. Recognising
+  'minimise the maximum' or 'maximise the minimum' in a problem statement is
+  the tell."""
+
+_ANSWER_V2["Capacity to Ship Packages Within D Days"] = """Binary search the ship's capacity - the test 'can we finish in D days at this
+capacity?' is a simple greedy sweep.
+
+· THE PROBLEM — packages must ship in their given ORDER. Find the smallest ship
+  capacity that clears them all within D days.
+· THE ORDER CONSTRAINT MATTERS — you may not reorder packages, so the greedy
+  test is simply 'keep loading until the next package would overflow, then
+  start a new day'.
+· THE SEARCH RANGE — low is max(weights), because a single package must fit on
+  one day. High is sum(weights), which finishes in a single day. Getting `low`
+  wrong is the classic error here: starting at 1 makes the feasibility test
+  loop forever on an unshippable package.
+· THE MONOTONICITY — a bigger ship never needs more days. So the answers form
+  false...false,true...true and binary search applies.
+· THE FEASIBILITY TEST — walk the weights with a running load; when adding the
+  next would exceed capacity, increment days and reset the load to that
+  package. Compare days against D.
+· THE SEARCH — lower bound again: feasible means try smaller (high = mid),
+  infeasible means go bigger (low = mid + 1). Return low.
+· THE HAND TRACE on [1..10] with D = 5: the answer is 15, splitting as
+  1-5 / 6-7 / 8 / 9 / 10.
+· COST — O(n log(sum - max)). One greedy pass per binary-search step.
+· IT IS KOKO EATING BANANAS with a different feasibility function. If you can
+  see that, you have learned the pattern rather than the problem."""
+
+_ANSWER_V2["Pow(x, n) — fast exponentiation"] = """Squaring halves the exponent, so x^n takes about log n multiplications instead
+of n.
+
+· THE INSIGHT — x^10 is (x^5)², and x^5 is x × (x^2)². Each squaring step
+  halves the exponent, so the work is logarithmic rather than linear.
+· THE RECURSIVE FORM — if n is even, return half × half where half = pow(x,
+  n/2). If n is odd, return x × half × half. Compute `half` ONCE; calling
+  pow twice makes it O(n) again and is the commonest mistake.
+· THE ITERATIVE FORM, which is what to write — while n > 0: if n is odd,
+  multiply the result by the current base; then square the base and halve n.
+· WHY THE ITERATIVE VERSION IS PREFERRED — O(1) space instead of O(log n) stack
+  frames, and it is the same shape used in modular exponentiation, which is
+  everywhere in cryptography.
+· THE NEGATIVE EXPONENT — x^-n is 1 / x^n. Invert once at the start (x = 1/x, n
+  = -n) rather than sprinkling checks through the loop.
+· THE OVERFLOW TRAP in fixed-width languages — negating INT_MIN overflows,
+  because its magnitude exceeds INT_MAX. Convert to a wider type first. Python
+  is immune, and naming the issue still counts.
+· THE HAND TRACE for x=2, n=10: n=10 even so base becomes 4, n=5; odd so result
+  4, base 16, n=2; even so base 256, n=1; odd so result 1024. Correct.
+· MODULAR EXPONENTIATION is the same loop with `% m` after every multiply. Say
+  it if the conversation turns to hashing or RSA."""
+
+_ANSWER_V2["Count Primes (Sieve of Eratosthenes)"] = """Instead of testing each number for primality, cross out every multiple of every
+prime you find - each composite is eliminated by its factors.
+
+· THE FLIP — trial division asks 'is n prime?' for each n, which is slow. The
+  sieve asks 'what does this prime rule out?' and marks whole runs at once.
+· THE ALGORITHM — a boolean array of size n, all true. For each i from 2, if i
+  is still marked prime, cross out i×i, i×i+i, i×i+2i, ... up to n.
+· WHY START AT i² AND NOT 2i — every smaller multiple of i has a factor below
+  i, so it was already crossed out by that smaller prime. Starting at i² is a
+  real speed-up and a good detail to volunteer.
+· WHY STOP THE OUTER LOOP AT √n — any composite below n has a factor no larger
+  than √n. Beyond that point there is nothing left to cross out.
+· THE COMPLEXITY — O(n log log n), which is very nearly linear. The log log
+  comes from summing 1/p over the primes; you are not expected to derive it,
+  only to know it is not O(n log n).
+· SPACE — O(n) booleans. A bitset quarters that, and skipping even numbers
+  halves it again. Worth naming if memory is raised.
+· THE OFF-BY-ONE — 0 and 1 are not prime and must be marked false explicitly.
+  Almost every wrong answer to this question is that.
+· WHEN NOT TO SIEVE — for a single large number, Miller-Rabin probabilistic
+  testing is the right tool. The sieve is for 'all primes up to n', which is a
+  different question."""
+
+_ANSWER_V2["Number of 1 Bits (popcount)"] = """n & (n-1) clears the lowest set bit - so the number of times you can do that
+before reaching zero is the number of 1 bits.
+
+· WHY IT WORKS — subtracting 1 flips the lowest 1 to 0 and turns every 0 below
+  it into 1. ANDing with the original therefore keeps everything above the
+  lowest set bit and clears that bit and everything below.
+· THE EXAMPLE — 12 is 1100. 11 is 1011. 1100 & 1011 = 1000, which is 12 with
+  its lowest 1 removed. One step, one bit.
+· THE LOOP — count = 0; while n: n &= n - 1; count += 1. Return count.
+· WHY IT BEATS SHIFTING — the shift-and-test loop always runs 32 times. This
+  one runs once per SET bit, so a sparse number finishes almost immediately.
+· THE NEGATIVE-NUMBER TRAP in Java — use >>> (unsigned shift) if you loop by
+  shifting, because >> sign-extends and loops forever on a negative. The n &
+  (n-1) version avoids the issue entirely, which is another reason to prefer
+  it.
+· THE BUILT-INS — Python has int.bit_count() (3.10+) or bin(n).count('1'),
+  Java has Integer.bitCount, C++ has __builtin_popcount. Say you would use them
+  in production and then show the manual version, which is what is being asked
+  for.
+· THE RELATED IDENTITIES worth knowing: n & (n-1) == 0 tests for a power of two;
+  n & -n isolates the lowest set bit; n | (n+1) sets the lowest zero.
+· THE FOLLOW-UP — Counting Bits asks for the popcount of every number from 0 to
+  n, which is DP: dp[i] = dp[i >> 1] + (i & 1)."""
+
+_ANSWER_V2["String Compression (in place)"] = """Two pointers - one reading the run you are counting, one writing the compressed
+result behind it. The write pointer never overtakes the read pointer.
+
+· THE PROBLEM — replace runs of repeated characters with the character followed
+  by the count, modifying the array in place, and return the new length.
+  A run of length 1 gets NO number.
+· WHY IT IS SAFE TO WRITE IN PLACE — compression never makes the output longer
+  than the input for runs of 2 or more, and a run of 1 writes exactly one
+  character. So the write pointer always trails the read pointer.
+· THE STRUCTURE — an outer loop over runs. For each run, note the character,
+  advance a scanner while it stays the same, then write the character and, if
+  the count exceeds 1, the digits of the count.
+· THE MULTI-DIGIT TRAP — a run of 12 must be written as '1','2', two separate
+  characters. Writing the integer 12 into a character array is the standard
+  bug. Convert to a string and write each character.
+· THE HAND TRACE on ['a','a','b','b','c','c','c']: writes a,2,b,2,c,3 and
+  returns 6. On ['a']: writes just 'a' and returns 1, with no '1'.
+· COST — O(n) time, O(1) extra space, which is the point of the question.
+· THE OFF-BY-ONE that catches people — the final run has no following character
+  to terminate it, so either bound the scanner by the array length or handle
+  the tail after the loop.
+· WHAT IS BEING TESTED — careful index discipline rather than an idea. Say the
+  invariant out loud ('write never passes read') before you start writing."""
+
+_ANSWER_V2["Convert Sorted Array to BST"] = """Take the MIDDLE element as the root and recurse on each half - choosing the
+middle is what makes the tree balanced.
+
+· THE PROBLEM — build a height-balanced BST from a sorted array. Height
+  balanced means the two subtrees of every node differ in height by at most 1.
+· WHY THE MIDDLE — it splits the remaining values into two halves of nearly
+  equal size, so the left and right subtrees have nearly equal depth. Choosing
+  the first element instead produces a linked list.
+· WHY IT IS AUTOMATICALLY A BST — the array is sorted, so everything left of
+  the middle is smaller and everything right is larger. The BST property comes
+  free from the input.
+· THE RECURSION — build(lo, hi): if lo > hi return None; mid = (lo + hi) // 2;
+  node = TreeNode(arr[mid]); node.left = build(lo, mid-1); node.right =
+  build(mid+1, hi).
+· PASS INDICES, NOT SLICES. Slicing copies the array at every level, turning
+  O(n) into O(n log n) time and space for no benefit.
+· THE ANSWER IS NOT UNIQUE — with an even number of elements, taking the lower
+  or upper middle both give valid balanced trees. Say so; graders accept either
+  and it shows you understand the constraint rather than a recipe.
+· COST — O(n) time, since each element becomes exactly one node, and O(log n)
+  space for the recursion stack.
+· THE SIBLING — Convert Sorted List to BST, where random access is gone. Either
+  copy to an array first (O(n) space) or use the in-order simulation that
+  builds bottom-up while walking the list once. The second is the impressive
+  answer."""
+
+_ANSWER_V2["Range Sum of BST"] = """Use the BST property to PRUNE - if a node is below the range, its whole left
+subtree is too, and never needs visiting.
+
+· THE PROBLEM — sum all values in a BST that fall between low and high
+  inclusive.
+· THE LAZY ANSWER — visit every node and add the ones in range. O(n), correct,
+  and it throws away the only interesting property the input has.
+· THE PRUNING RULES, which are the point. If node.val < low, everything in the
+  LEFT subtree is smaller still, so recurse right only. If node.val > high,
+  everything in the RIGHT subtree is larger still, so recurse left only.
+  Otherwise the node counts and both sides may contain more.
+· WHY THIS IS A REAL SAVING — on a large tree with a narrow range, the search
+  descends to the relevant band and ignores the rest. The complexity becomes
+  O(number of nodes in range + height) rather than O(n).
+· THE STRUCTURE — three branches, one return each. It is shorter than the naive
+  version, not longer, which is worth noticing.
+· THE BASE CASE — a None node contributes 0. Handle it first so the value
+  checks never see a missing node.
+· COST — O(n) worst case if the range covers everything, and much better
+  typically. Space is O(h) for the stack.
+· THE INTERVIEW SIGNAL — this question exists to see whether you USE the BST
+  property or merely traverse. Volunteer the pruning before writing code; it is
+  the entire grading criterion."""
+
+_ANSWER_V2["Swap Nodes in Pairs"] = """Use a dummy node before the head so the first pair is not a special case, then
+relink three pointers per swap.
+
+· THE PROBLEM — swap every two adjacent nodes of a linked list and return the
+  new head. You must swap NODES, not values; swapping values defeats the point
+  of the question.
+· WHY A DUMMY NODE — the head itself moves, so without a dummy the first pair
+  needs separate code. A dummy pointing at the head means every pair is handled
+  identically, and you return dummy.next.
+· THE THREE RELINKS per pair, with prev before the pair and first/second being
+  the pair: prev.next = second; first.next = second.next; second.next = first.
+· THE ORDER MATTERS — save `second.next` before overwriting it, or write the
+  three lines in exactly the order above, which happens to keep every pointer
+  alive until after it is read.
+· THEN ADVANCE prev to `first`, because after the swap `first` is the second
+  node of the pair and therefore the predecessor of the next pair.
+· THE TERMINATION CONDITION — while prev.next and prev.next.next. Both checks
+  are needed: an odd-length list must leave its final node alone rather than
+  crash.
+· THE HAND TRACE on 1→2→3→4: becomes 2→1→4→3. On 1→2→3: becomes 2→1→3, with 3
+  untouched.
+· COST — O(n) time, O(1) space. A recursive version is elegant and costs O(n)
+  stack; mention it, write the iterative one.
+· THE GENERALISATION is Reverse Nodes in k-Group, which is this problem with an
+  arbitrary group size and a length check before each group."""
+
+_ANSWER_V2["Odd Even Linked List"] = """Build two chains as you walk - one of odd positions, one of even - then join the
+tail of the odd chain to the head of the even one.
+
+· THE PROBLEM — regroup a list so that all nodes in ODD POSITIONS come first,
+  then all even ones, preserving relative order within each group. Positions,
+  not values, which is the misreading to avoid.
+· THE SETUP — `odd` starts at head, `even` starts at head.next, and save
+  `evenHead = head.next` because you will need it to join the chains at the
+  end. Losing that pointer is the standard bug.
+· THE LOOP — odd.next = even.next; odd = odd.next; even.next = odd.next; even =
+  even.next. Each pass advances both chains by one node, skipping over the
+  other chain's node.
+· THE CONDITION — while even and even.next. This handles both odd and even
+  total lengths without a separate case.
+· THE JOIN — after the loop, odd.next = evenHead. The odd chain's tail now
+  points at the start of the even chain.
+· WHY IT IS O(1) SPACE — you are relinking existing nodes, not allocating.
+  Building two new lists with new nodes would be correct and would miss the
+  point.
+· THE HAND TRACE on 1→2→3→4→5: odd chain 1→3→5, even chain 2→4, joined as
+  1→3→5→2→4.
+· COST — O(n) time, O(1) space, one pass.
+· THE TRANSFERABLE IDEA — 'partition a list by walking it once and building two
+  chains, then splice' also solves Partition List (values less than x before
+  the rest) and the merge step of a linked-list merge sort."""
+
+_ANSWER_V2["Rotate List"] = """Close the list into a ring, then cut it open at the right place - which is far
+simpler than moving nodes one at a time.
+
+· THE PROBLEM — rotate the list to the right by k places. With 1→2→3→4→5 and
+  k = 2 the answer is 4→5→1→2→3.
+· STEP ONE — walk to the tail, counting the length n. You need both, and one
+  pass gives you both.
+· STEP TWO — connect tail.next = head, making a circle. Now every node is
+  reachable from every other and there is no head to preserve.
+· STEP THREE — k may exceed n, so reduce it: k %= n. Rotating by n is a no-op,
+  and forgetting this makes a large k run for a very long time.
+· STEP FOUR — the new tail is at position n - k - 1 from the original head.
+  Walk there, set newHead = newTail.next, then newTail.next = None to break the
+  ring.
+· WHY n - k AND NOT k — rotating RIGHT by k moves the last k nodes to the
+  front, so the cut is k from the end, which is n - k from the start. Deriving
+  this out loud is better than remembering it.
+· THE EDGE CASES — an empty list, a single node, and k % n == 0 all return the
+  original head unchanged. Guard them before doing any work.
+· THE HAND TRACE on 1→2→3→4→5 with k=2: n=5, k=2, new tail is at index 2 (the
+  node 3), so the new head is 4 and the list becomes 4→5→1→2→3.
+· COST — O(n) time, O(1) space. Rotating one step at a time k times would be
+  O(nk) and is the answer to avoid."""
+
+_ANSWER_V2["Maximum Product of Three Numbers"] = """Two candidates only: the three largest, or the two smallest with the largest -
+because two negatives multiply to a positive.
+
+· THE TRAP — 'take the three biggest' is wrong. In [-10, -10, 1, 3, 2] the
+  answer is 300, from (-10) × (-10) × 3, not 1 × 2 × 3 = 6.
+· WHY ONLY TWO CANDIDATES — a product of three is positive either when all
+  three are positive, or when exactly two are negative. Maximising the first
+  case means the three largest; maximising the second means the two most
+  negative paired with the largest positive.
+· THE ANSWER — max(max1 × max2 × max3, min1 × min2 × max1), where max1 is the
+  largest and min1 the smallest.
+· THE SORTING SOLUTION — sort, then compare arr[-1]×arr[-2]×arr[-3] against
+  arr[0]×arr[1]×arr[-1]. O(n log n), three lines, and perfectly acceptable.
+· THE LINEAR SOLUTION — one pass tracking the three largest and two smallest.
+  O(n) time, O(1) space. Offer the sort first, then say you can do it in one
+  pass, and write that.
+· THE FIVE VARIABLES must be updated in the right ORDER — check against max1
+  first, then max2, then max3, cascading the old values down. Updating them
+  independently loses values.
+· WHAT IS ACTUALLY BEING TESTED — whether you enumerate the sign cases rather
+  than pattern-matching to 'largest'. Say 'negatives can help' before writing
+  anything.
+· THE EXTENSION to k numbers is a genuinely harder problem and needs care with
+  how many negatives you take; noting that the two-case trick is specific to
+  three is a good sign."""
+
+_ANSWER_V2["Best Time to Buy and Sell Stock II (greedy)"] = """Take every upward step - if tomorrow is higher than today, that gain is yours,
+and summing all of them is optimal.
+
+· THE PROBLEM — unlimited transactions, but you may hold at most one share at a
+  time. Maximise total profit.
+· THE GREEDY — sum max(0, price[i] - price[i-1]) over the whole array. Three
+  lines, one pass.
+· WHY IT IS OPTIMAL, and this is the part to explain: any profitable stretch
+  from a low to a high equals the sum of the daily changes across it. Buying at
+  the bottom and selling at the top gives exactly the same total as buying and
+  selling every single day within it. So capturing every positive step captures
+  every possible profit.
+· WHAT IT IS NOT SAYING — you do not actually trade daily. The sum is a
+  mathematical identity, not a trading strategy. Interviewers ask exactly this
+  follow-up.
+· THE CONTRAST WITH VERSION I — with only ONE transaction allowed, greedy fails
+  and you track the minimum price so far and the best profit against it. Being
+  able to say why the two differ matters more than either solution.
+· THE HAND TRACE on [7,1,5,3,6,4]: gains are 0, 4, 0, 3, 0, so the answer is 7,
+  which matches buying at 1 selling at 5 and buying at 3 selling at 6.
+· COST — O(n) time, O(1) space.
+· THE HARDER SIBLINGS — version III caps at two transactions and version IV at
+  k, both needing DP over (day, transactions used, holding or not). Version II
+  is the only one where greed is provably right."""
+
+_ANSWER_V2["Lemonade Change (greedy)"] = """Always give the largest note you can - hoarding fives is what lets you serve
+later customers.
+
+· THE PROBLEM — customers pay with 5, 10 or 20 and you start with no change.
+  Decide whether you can serve everyone in order.
+· THE ONLY DECISION — for a 20, you can give back 10+5 or 5+5+5. That is the
+  entire strategy space, and everything else is forced.
+· THE GREEDY RULE — prefer 10+5. A ten is useless for anything except change
+  for a twenty, whereas a five is needed for both tens and twenties. Spending
+  the less flexible note first is the general principle.
+· WHY IT IS OPTIMAL — fives are strictly more useful than tens, since anywhere a
+  ten can be used two fives can also be used but not the reverse. So never
+  spend three fives when a ten would do.
+· THE STATE — two counters, fives and tens. Twenties are never given as change
+  so they need no counter at all, which is a nice thing to notice out loud.
+· THE ALGORITHM — on 5, fives++. On 10, need a five or fail; fives--, tens++.
+  On 20, try tens-- and fives--, else fives -= 3, else fail.
+· THE HAND TRACE on [5,5,10,10,20]: fives 1, 2; then 10 takes a five leaving
+  1 five 1 ten; then 10 takes the last five, 0 fives 2 tens; then 20 needs
+  10+5 or 5+5+5 and has neither, so False.
+· COST — O(n) time, O(1) space.
+· WHY IT IS ASKED — it is a small, clean exchange-argument proof. Interviewers
+  want the JUSTIFICATION for the greedy choice, not just the code."""
+
+_ANSWER_V2["Can Place Flowers (greedy)"] = """Walk left to right and plant at the first legal spot - planting as early as
+possible never blocks a plot that a later choice could have used.
+
+· THE PROBLEM — a row of plots where 1 means occupied. No two flowers may be
+  adjacent. Can you plant n more?
+· THE RULE FOR A LEGAL SPOT — the plot is empty, the plot before it is empty or
+  does not exist, and the plot after it is empty or does not exist. All three.
+· THE BOUNDARY HANDLING — treat out-of-range neighbours as empty. Either check
+  `i == 0 or bed[i-1] == 0`, or pad the array with a zero at each end, which
+  removes the special cases entirely and is the cleaner write-up.
+· THE GREEDY JUSTIFICATION — planting at the earliest legal plot leaves the
+  most room to the right. Skipping a legal plot can never let you fit more
+  flowers, so earliest-first is optimal. Say this; it is the graded part.
+· PLANT IMMEDIATELY when legal, setting bed[i] = 1, so the adjacency check for
+  the next plot sees it. Counting without writing produces double-planting in
+  a run of empties.
+· THE EARLY EXIT — return True the moment the count reaches n. With a huge bed
+  and a small n this matters, and it also avoids an unnecessary full scan.
+· THE HAND TRACE on [1,0,0,0,1] with n = 1: index 2 is legal (both neighbours
+  empty), plant there, count 1, True. With n = 2 it returns False, since indices
+  1 and 3 are each adjacent to an existing flower.
+· COST — O(n) time, O(1) space if you may modify the input; say so, and offer a
+  copy if mutation is unwelcome."""
+
+_ANSWER_V2["Array Partition I"] = """Sort, then pair up neighbours - the sum of every second element from the sorted
+array is the best you can do.
+
+· THE PROBLEM — split 2n numbers into n pairs to maximise the sum of
+  min(a, b) over all pairs.
+· THE ANSWER — sort ascending and take the elements at indices 0, 2, 4, ...
+  That is the whole solution.
+· WHY PAIRING NEIGHBOURS IS OPTIMAL — every pair contributes its smaller
+  element, so the larger element of each pair is 'wasted'. To waste as little
+  as possible, pair each number with the closest number above it. Sorting makes
+  those neighbours adjacent.
+· THE EXCHANGE ARGUMENT, if pushed — take any optimal pairing with two pairs
+  (a,b) and (c,d) where the values interleave in sorted order. Re-pairing them
+  as neighbours never decreases the total. Repeating this converts any optimum
+  into the sorted-neighbour pairing.
+· THE HAND TRACE on [1,4,3,2]: sorted gives [1,2,3,4], pairs (1,2) and (3,4),
+  sum of minimums is 1 + 3 = 4. Pairing (1,4) and (2,3) gives 1 + 2 = 3, which
+  is worse.
+· COST — O(n log n), dominated by the sort. O(1) extra space.
+· THE COUNTING-SORT VARIANT — when values are bounded (this problem bounds them
+  at ±10000), counting sort makes it O(n + k). Worth mentioning as the
+  optimisation the constraints are hinting at.
+· WHY IT IS ASKED — it looks like it needs search and does not. The interviewer
+  is checking whether you look for structure before reaching for brute force."""
+
+_ANSWER_V2["Distribute Candies"] = """The answer is the smaller of two numbers: how many DIFFERENT kinds there are,
+and how many candies she is allowed to eat.
+
+· THE PROBLEM — n candies split evenly between a sister and brother. Maximise
+  the number of distinct TYPES the sister ends up with.
+· THE TWO CEILINGS — she gets exactly n/2 candies, so she can never have more
+  than n/2 types. And there are only so many distinct types in the bag, so she
+  can never exceed that either.
+· THE ANSWER — min(len(set(candies)), len(candies) // 2). One line.
+· WHY IT IS ACHIEVABLE, which is the part worth arguing: if there are fewer
+  distinct types than n/2, she takes one of each and pads with duplicates. If
+  there are more, she takes n/2 different ones. Either way the minimum is
+  reached, so it is not merely an upper bound.
+· THE SET IS DOING THE WORK — counting distinct values is exactly what a set
+  is for, and no counting of frequencies is needed at all.
+· THE HAND TRACE on [1,1,2,2,3,3]: three distinct types, six candies so she
+  gets three. min(3, 3) = 3. On [1,1,2,3]: three types, two candies, min(3,2)
+  = 2.
+· COST — O(n) time and O(n) space for the set.
+· WHY IT IS ASKED — as a warm-up that rewards stating constraints precisely
+  before coding. The trap is elaborate counting logic for a problem that has
+  none; saying 'this is bounded by two things' up front is the whole answer."""
+
+_ANSWER_V2["Two City Scheduling (greedy)"] = """Send everyone to city A, then sort by how much you would SAVE by switching -
+switch the cheapest half.
+
+· THE PROBLEM — 2n people, each with a cost to fly to city A and a cost to fly
+  to city B. Exactly n must go to each. Minimise the total.
+· THE NAIVE INSTINCT — send each person to their cheaper city. It breaks
+  immediately, because the counts must come out equal and cheapness does not
+  distribute evenly.
+· THE REFRAME THAT SOLVES IT — imagine everyone flies to A. Now n people must
+  be switched to B, and switching person i changes the cost by (costB - costA).
+  That difference may be negative, which is a saving.
+· THE ALGORITHM — sort by (costB - costA) ascending and switch the first n. The
+  most negative differences are the biggest savings.
+· WHY SORTING BY THE DIFFERENCE IS RIGHT — the baseline (everyone to A) is
+  fixed, so minimising the total is exactly minimising the sum of the n
+  differences you choose. Choosing the n smallest is trivially optimal.
+· THE HAND TRACE on [[10,20],[30,200],[400,50],[30,20]]: differences are +10,
+  +170, -350, -10. Sorted, the two smallest are -350 and -10, so those two go
+  to B. Total 10 + 30 + 50 + 20 = 110.
+· COST — O(n log n) for the sort, O(1) extra space.
+· THE TRANSFERABLE MOVE — 'fix a baseline, then sort by the marginal change'.
+  It also solves problems about swapping, upgrading and reassigning under a
+  fixed quota, and it is the reason this question is asked at all."""
+
+_ANSWER_V2["Maximum Units on a Truck (greedy)"] = """Sort by units per box, load the densest boxes first, and stop when the truck is
+full - the fractional trap does not apply because boxes are interchangeable.
+
+· THE PROBLEM — each box type has a count and a units-per-box value. The truck
+  holds a fixed number of BOXES. Maximise total units.
+· WHY GREEDY IS SAFE HERE — every box takes exactly one slot regardless of what
+  is in it. So each slot should hold the most valuable box available, and
+  sorting by units per box gives exactly that order.
+· THE CONTRAST WITH KNAPSACK, which is the insight being tested: 0/1 knapsack
+  needs DP because items have different SIZES, so a greedy choice can waste
+  capacity. Here all sizes are 1, and greedy is provably optimal.
+· THE ALGORITHM — sort descending by units per box; for each type take
+  min(remaining_capacity, count) boxes; subtract from capacity; stop at zero.
+· THE PARTIAL TAKE at the end is the only fiddly part — you will usually take
+  only some of the last box type, which is why min() rather than a full take.
+· THE HAND TRACE on [[1,3],[2,2],[3,1]] with capacity 4: take 1 box of 3 units,
+  then 2 boxes of 2 units, then 1 box of 1 unit. Total 3 + 4 + 1 = 8.
+· COST — O(n log n) for the sort. With units bounded at 1000, counting sort
+  makes it O(n + k), which the constraints are hinting at.
+· HOW TO ANSWER WELL — state why greedy is valid before coding. 'All items have
+  equal size, so there is no packing decision, only a value ordering' is the
+  sentence that earns the marks."""
+
+_ANSWER_V2["Maximum Ascending Subarray Sum"] = """One pass with a running sum that RESETS the moment the sequence stops rising.
+
+· THE PROBLEM — find the largest sum of a contiguous, strictly increasing
+  stretch of the array.
+· THE ALGORITHM — keep `current` and `best`. If nums[i] > nums[i-1], add to
+  current; otherwise start current fresh at nums[i]. Update best each step.
+· STRICTLY INCREASING MATTERS — equal adjacent values BREAK the run. [10,10]
+  gives 10, not 20. Using >= instead of > is the single bug this problem
+  exists to catch.
+· INITIALISE both current and best to nums[0], then loop from index 1. Starting
+  at zero works here because all values are positive, but initialising from the
+  first element is the habit that survives problems where they are not.
+· THE HAND TRACE on [10,20,30,5,10,50]: current goes 10, 30, 60, then resets to
+  5, then 15, then 65. Best ends at 65.
+· ON [12,17,15,13,10,11,12]: runs are 12+17=29, 15, 13, 10+11+12=33. Answer 33.
+· COST — O(n) time, O(1) space, one pass.
+· IT IS KADANE'S SHAPE with a different reset condition — Kadane resets when
+  the running sum turns unhelpful, this resets when the ORDER breaks. Seeing
+  that both are 'extend or restart' decisions is what makes the family
+  learnable rather than a list of separate tricks."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
