@@ -358462,6 +358462,290 @@ _ANSWER_V2['Neural network basics: from a perceptron to a multi-layer network'] 
   unit in a layer computes the same thing and receives the same gradient
   forever, so the layer is permanently one unit wide."""
 
+_ANSWER_V2['k-means clustering: how it works, how to pick k, and where it fails'] = """Assign every point to the nearest centroid, move each centroid to the mean of what it claimed, repeat until nothing moves.
+
+· THAT IS THE WHOLE ALGORITHM (Lloyd's). It minimises WCSS, the total squared
+  distance from points to their assigned centroid, and every iteration reduces
+  it - so it always converges.
+· BUT ONLY TO A LOCAL MINIMUM, which depends on where the centroids started.
+  That is why n_init exists: run it several times from different seeds and keep
+  the best. k-means++ seeds them spread apart and is the sane default.
+· PICKING k — the ELBOW method plots WCSS against k and looks for the bend, but
+  the bend is often ambiguous. The SILHOUETTE score is usually more decisive,
+  measuring how much closer a point is to its own cluster than the next.
+  Frequently the honest answer is that k comes from the business, not the data.
+· IT ASSUMES SPHERICAL, SIMILARLY SIZED, SIMILARLY DENSE CLUSTERS, because it
+  is minimising Euclidean distance to a mean. Elongated, crescent-shaped or
+  very unequal clusters break it, and that is where it fails in interviews.
+· SCALE YOUR FEATURES FIRST. Distance is dominated by whichever feature has the
+  largest units, so unscaled data means clustering by measurement unit.
+· EVERY POINT GETS ASSIGNED, including outliers, which drag centroids. k-medoids
+  or DBSCAN are the answers when that matters — DBSCAN also finds arbitrary
+  shapes and decides the cluster count itself.
+· COST — O(n * k * d * iterations). Fast, which is much of why it endures."""
+
+_ANSWER_V2['Prompt engineering patterns that actually work'] = """How you ask changes what you get - and a handful of patterns beat any amount of clever phrasing.
+
+· BE SPECIFIC ABOUT ROLE, TASK, FORMAT AND CONSTRAINTS. 'You are a senior
+  editor. Rewrite in under 100 words as bullet points.' Vagueness in, variance
+  out.
+· FEW-SHOT — show one to three input/output examples and the model copies the
+  pattern. This is the single highest-leverage change for a task with a
+  specific output shape, and it beats describing the shape in words.
+· DELIMIT THE DATA — wrap user input in triple backticks or XML tags so the
+  model can tell instructions from content. This also blunts prompt injection,
+  which is the security half of the same practice.
+· CHAIN OF THOUGHT — 'reason step by step' for genuinely multi-step problems.
+  It costs tokens and latency, and it does NOT help on simple retrieval tasks,
+  so it is not a default.
+· ASK FOR STRUCTURED OUTPUT with an explicit schema, and validate it on the way
+  out. Do not parse prose you could have received as JSON.
+· GIVE IT AN ESCAPE HATCH — 'say I don't know if the context does not contain
+  the answer'. Without one, a model asked a question will answer it, which is
+  the mechanism behind most hallucination complaints.
+· PUT THE INSTRUCTION AFTER THE LONG CONTEXT when the context is large;
+  attention to the middle of a long input is measurably weaker.
+· ITERATE ON REAL FAILURES, not in the abstract. Keep a small set of cases that
+  broke, and treat the prompt as something with a test suite."""
+
+_ANSWER_V2['Abstract class vs interface - and which to reach for'] = """An interface is a CONTRACT with no state; an abstract class is a partially built PARENT that shares code.
+
+· THE MECHANICAL DIFFERENCES — an interface holds signatures (plus constants,
+  and default methods since Java 8), carries no fields, and a class can
+  implement MANY. An abstract class can hold fields, constructors and finished
+  methods, and in a single-inheritance language you get only ONE.
+· THE DECISION RULE — sharing a CONTRACT, use an interface. Sharing CODE and
+  state, use an abstract class. If you need both, an interface plus an abstract
+  base that implements it is the standard shape.
+· PREFER INTERFACES BY DEFAULT because inheritance is the tightest coupling
+  available: it exposes the parent's internals to every subclass and you can
+  only spend it once. 'Composition over inheritance' is this observation.
+· IS-A VERSUS CAN-DO is a useful phrasing. A Dog IS-A Animal (abstract class);
+  a Dog CAN-DO Serializable (interface).
+· DEFAULT METHODS BLURRED THE LINE — Java 8 interfaces can carry
+  implementations, so the remaining hard differences are STATE and
+  CONSTRUCTORS, which interfaces still cannot have. That is the modern answer;
+  the old 'interfaces have no code' one is out of date.
+· PYTHON HAS NEITHER KEYWORD PROPERLY — abc.ABC with @abstractmethod gives you
+  abstract classes, multiple inheritance removes the one-parent limit, and
+  duck typing means an explicit interface is often unnecessary. Protocols give
+  static structural checking without inheritance."""
+
+_ANSWER_V2['HTTP in depth: methods, status codes, idempotency and REST'] = """The two properties that matter are SAFE (changes nothing) and IDEMPOTENT (doing it twice is the same as once) - everything practical follows from those.
+
+· SAFE — GET, HEAD, OPTIONS. IDEMPOTENT — those plus PUT and DELETE. POST is
+  neither, which is exactly why double-clicking Buy can create two orders.
+· THAT IS NOT TRIVIA. It decides whether a proxy, a browser or your own retry
+  logic may repeat a request after a timeout. A timed-out POST is genuinely
+  ambiguous: you cannot know whether it landed.
+· THE FIX IS AN IDEMPOTENCY KEY — the client sends a unique key, the server
+  stores the result against it and returns the same response for a repeat.
+  Every real payments API does this, and it is the expected answer.
+· PUT REPLACES at a known URL and is idempotent; POST creates a subordinate
+  resource and is not. PATCH is a partial update and is NOT idempotent in
+  general, which surprises people.
+· STATUS CODES BY CLASS — 2xx worked, 3xx go elsewhere, 4xx you got it wrong,
+  5xx we got it wrong. The distinction between 4xx and 5xx decides who has to
+  fix it and whether retrying is sane.
+· THE ONES WORTH KNOWING EXACTLY — 201 Created with a Location header, 204 No
+  Content, 301 permanent versus 302 temporary, 401 unauthenticated versus 403
+  unauthorised (that pair is asked constantly), 404, 409 conflict, 429 rate
+  limited with Retry-After, 500, 503.
+· REST IS RESOURCES AND NOUNS — /orders/123, with the method carrying the verb.
+  /getOrder?id=123 is RPC wearing HTTP's clothes.
+· STATELESSNESS is the constraint that makes horizontal scaling possible: any
+  server can serve any request because the request carries its own context."""
+
+_ANSWER_V2['Overloading vs overriding (compile-time vs runtime polymorphism)'] = """Overloading is same name, different parameters, chosen by the COMPILER; overriding is same signature in a subclass, chosen at RUNTIME.
+
+· OVERLOADING — add(int, int) and add(double, double) in one class. The
+  compiler picks from the argument types, which is why it is called static or
+  compile-time polymorphism. It is really a naming convenience, not
+  polymorphism in the interesting sense.
+· OVERRIDING — a subclass replaces a parent method with the SAME signature.
+  Which body runs is decided from the actual object's type at runtime. That is
+  dynamic dispatch, and it is what makes `for s in shapes: s.area()` work.
+· THE ONE-LINE TEST — different parameter list means overloading; identical
+  signature in a subclass means overriding.
+· PYTHON HAS NO OVERLOADING. A second def with the same name simply replaces
+  the first, silently. You get the same effect with default arguments, *args,
+  or functools.singledispatch. Saying this confidently is the point of the
+  question in a Python interview.
+· PYTHON OVERRIDES BY DEFAULT — every method is virtual, so there is no
+  keyword and nothing to opt into. Call the parent explicitly with super().
+· THE JAVA GOTCHA — a subclass method with the same name but a DIFFERENT
+  parameter list is an overload, not an override, so the parent version still
+  runs when you expected yours. @Override exists precisely to make the compiler
+  catch that.
+· OVERRIDING IS WHAT LISKOV CONSTRAINS — the subclass must remain usable
+  wherever the parent was, which is why it may not narrow arguments or
+  strengthen preconditions."""
+
+_ANSWER_V2['SQL JOINs - all of them, with one worked example'] = """Every join answers one question: which rows survive when there is NO match?
+
+· INNER JOIN keeps only rows matching on both sides — employees who have a
+  department and departments that have employees. It is the default and the one
+  people mean when they say 'join'.
+· LEFT JOIN keeps every left row, filling the right with NULLs when nothing
+  matches. That NULL is a feature: adding `WHERE d.id IS NULL` turns it into
+  'find the employees with no department', which is the anti-join idiom.
+· RIGHT JOIN is the mirror image and is rarely written, because swapping the
+  tables and using LEFT reads better.
+· FULL OUTER JOIN keeps unmatched rows from both sides. Useful for reconciling
+  two systems; MySQL does not support it and needs a UNION of the two outer
+  joins.
+· CROSS JOIN is every combination, which is either a deliberate Cartesian
+  product or an accidental one caused by a forgotten ON clause.
+· SELF JOIN is a table joined to itself with aliases — employees to their
+  managers. Nothing special about it; the aliases are the whole technique.
+· THE BUG THAT MATTERS — putting a condition on the right table in the WHERE
+  clause of a LEFT JOIN silently turns it into an INNER JOIN, because NULL
+  fails the comparison. Filters on the right table belong in the ON clause.
+· COUNT(*) VERSUS COUNT(column) after an outer join is the other trap: COUNT(*)
+  counts the NULL-filled rows, COUNT(d.id) does not, and that is usually what
+  you meant."""
+
+_ANSWER_V2['The four pillars of OOP, with one running example'] = """Do not recite four definitions - take ONE example, a payment system, and show all four doing work in it.
+
+· ENCAPSULATION — bundle data with the code that changes it and hide the
+  internals. An Account exposes deposit() and withdraw() and keeps the balance
+  private, so no caller can set it negative; the class enforces its own
+  invariants.
+· THE TEST OF GOOD ENCAPSULATION is that you can change how the balance is
+  stored — an int of cents, a Decimal, a running ledger — and no caller
+  notices. If they notice, it was not encapsulated.
+· ABSTRACTION — expose WHAT something does and hide HOW. A PaymentMethod has
+  pay(amount); whether that is Stripe, PayPal or a gift card is not the
+  caller's business. Encapsulation hides DATA, abstraction hides
+  IMPLEMENTATION; that is the distinction people blur.
+· INHERITANCE — share behaviour by specialising a parent. Use it sparingly: it
+  is the tightest coupling in the language, and composition usually says the
+  same thing with less commitment.
+· POLYMORPHISM — one call site, many behaviours. `for m in methods: m.pay(x)`
+  runs different code per object, decided at runtime. This is the pillar that
+  actually pays for the other three.
+· NAME THE PAYOFF, because the question is really 'do you know why this
+  matters': adding a new payment method touches ONE new class and no existing
+  ones. That is the open/closed principle falling out of polymorphism.
+· BE READY FOR THE PYTHON CAVEAT — privacy is a convention (a leading
+  underscore), not enforcement, and duck typing gives you polymorphism without
+  any inheritance at all."""
+
+_ANSWER_V2['Design a RAG-powered document Q&A chatbot'] = """Retrieve the relevant chunks first, then let the model answer ONLY from them and cite - the retrieval is the hard half.
+
+· TWO PIPELINES, and say so up front. OFFLINE ingest: load, chunk, embed, store.
+  ONLINE query: embed the question, retrieve, rerank, prompt, answer.
+· CHUNKING IS THE DECISION THAT DECIDES QUALITY — roughly 300-800 tokens with
+  overlap, split on structure (headings, paragraphs) rather than a fixed
+  character count, so an idea is not cut in half. Most bad RAG is bad chunking.
+· RETRIEVE MORE THAN YOU NEED, THEN RERANK. Take top-50 by vector similarity
+  and rerank with a cross-encoder to top-5. Embedding similarity is a cheap
+  approximation of relevance; the reranker is the accurate one.
+· HYBRID SEARCH BEATS PURE VECTORS — combine dense embeddings with BM25 keyword
+  matching. Vectors miss exact identifiers, error codes and rare proper nouns,
+  which is precisely what people search documentation for.
+· THE PROMPT MUST GRANT PERMISSION TO FAIL — 'answer only from the context; if
+  it is not there, say you do not know'. Without that, the model answers
+  anyway, and that is the hallucination the stakeholders will report.
+· CITE THE CHUNKS, with links back to the source document. It is what makes the
+  answer verifiable, and it is the feature users trust most.
+· EVALUATE THE TWO HALVES SEPARATELY — retrieval by recall@k on a labelled set,
+  generation by faithfulness (is every claim supported by a retrieved chunk).
+  A single end-to-end score cannot tell you which half is broken.
+· THE OPERATIONAL PARTS — re-embed when documents change, respect per-user
+  document permissions AT RETRIEVAL TIME, and cache embeddings. Permission
+  filtering after retrieval leaks the existence of documents."""
+
+_ANSWER_V2['Symmetric Tree'] = """Compare two subtrees in MIRROR: left's left against right's right, and left's right against right's left.
+
+· THE HELPER TAKES TWO NODES, not one. That is the whole insight — symmetry is
+  a property of a PAIR, so a single-argument recursion cannot express it.
+· THE BASE CASES — both null is symmetric; exactly one null is not; different
+  values are not.
+· THE RECURSIVE STEP — isMirror(a.left, b.right) AND isMirror(a.right, b.left).
+  The crossing is the mirror; comparing left-to-left is the standard bug and it
+  quietly accepts trees that are merely identical rather than mirrored.
+· NOT THE SAME AS COMPARING THE TREE TO ITS REVERSAL, and not the same as
+  checking that an inorder traversal is a palindrome — that passes on trees
+  with duplicate values that are not symmetric.
+· THE ITERATIVE VERSION pushes nodes onto a queue in PAIRS and checks them as
+  they come off, which is a clean answer if they ask you to remove the
+  recursion.
+· AN EMPTY TREE IS SYMMETRIC. A single node is too.
+· COST — O(n) time, O(h) stack."""
+
+_ANSWER_V2['Chain-of-Thought and reasoning models'] = """Let the model write its intermediate steps before answering - each step conditions the next, so multi-step problems stop collapsing.
+
+· WHY IT WORKS — a transformer does a fixed amount of computation per token, so
+  a hard problem needs somewhere to put the intermediate work. Written tokens
+  ARE that scratch space. Demanding an immediate answer allows no room to
+  think.
+· HOW TO TRIGGER IT — 'let's think step by step' (zero-shot CoT), or show worked
+  examples with their reasoning (few-shot CoT). The few-shot version is more
+  reliable because it also fixes the format.
+· IT HELPS ON ARITHMETIC, LOGIC AND MULTI-STEP tasks, and does essentially
+  nothing for retrieval or simple classification, where it just costs tokens
+  and latency. It is not a default setting.
+· REASONING MODELS BAKE IT IN — o-series, DeepSeek-R1 and similar are trained
+  with reinforcement learning to produce long internal reasoning before
+  answering. You do not prompt them to think step by step; they already do, and
+  telling them to can make things worse.
+· THE TRADE IS TOKENS AND LATENCY FOR ACCURACY. Reasoning models can spend
+  thousands of hidden tokens on one answer, which is a real cost decision, not
+  a free upgrade.
+· SELF-CONSISTENCY is the cheap upgrade to plain CoT — sample several reasoning
+  paths and take the majority answer. It measurably beats a single path.
+· THE HONEST CAVEAT — the written chain is not a faithful record of the
+  computation that produced the answer. It improves accuracy; it is not an
+  explanation, and treating it as an audit trail is a mistake."""
+
+_ANSWER_V2['Pattern: Factory and Factory Method - centralise object creation'] = """Construction knowledge is a dependency - route it through one place so adding a type edits one file instead of fifty.
+
+· THE PROBLEM — if fifty call sites do StripeClient(api_key, region, retries),
+  then changing that constructor or adding PayPal means editing fifty files.
+  The coupling is to the CONCRETE class, and it is spread everywhere.
+· SIMPLE FACTORY — one function or static method holding the if/elif, or better
+  a registry dict from key to class, returning the right concrete object. Not
+  one of the Gang of Four patterns, and by far the most common in practice.
+· FACTORY METHOD — the creation step is a method the SUBCLASS overrides. The
+  base class defines the workflow and calls create(); each subclass decides
+  what gets created. Reach for it when the surrounding algorithm is shared but
+  the product varies.
+· THE REGISTRY DICT IS THE UPGRADE worth showing — it turns adding a type from
+  editing a conditional into registering an entry, which is open/closed
+  properly satisfied rather than merely gestured at.
+· THE CALLER DEPENDS ON THE INTERFACE ONLY, which is what makes the objects
+  substitutable and testable: a fake payment client is just another registry
+  entry.
+· DO NOT CONFUSE IT WITH ABSTRACT FACTORY, which produces FAMILIES of related
+  objects meant to be used together (a whole matching widget set). That
+  distinction is the usual follow-up.
+· THE HONEST LIMIT — a factory for a single implementation that will never grow
+  is ceremony. The pattern earns its place when the set of types is genuinely
+  open."""
+
+_ANSWER_V2['Pattern: Strategy - swap an algorithm at runtime'] = """Pull the part that VARIES into its own class and delegate to it - the moment you write if type == A elif type == B to pick behaviour.
+
+· THE MECHANIC — define a family of interchangeable algorithms behind one
+  interface; the context object holds one and calls strategy.execute(). The
+  context stops knowing the variants exist.
+· THIS IS THE MOST USEFUL PATTERN IN AN LLD INTERVIEW, because the follow-up is
+  almost always 'now support another pricing rule / payment method / sort
+  order', and Strategy answers it by adding a class rather than editing one.
+· THE SMELL THAT SUMMONS IT is a conditional on a type or mode that keeps
+  growing, especially the same conditional repeated in several methods.
+· NAME THE ONE EXTENSION POINT rather than wrapping everything. Putting five
+  strategy interfaces into a design is speculation; putting one where change is
+  genuinely expected is judgement, and interviewers score the difference.
+· IT IS THE OPEN/CLOSED PRINCIPLE MADE CONCRETE — open to a new pricing rule,
+  closed to modification of the code that uses it.
+· IN PYTHON A STRATEGY CAN JUST BE A FUNCTION. Passing a callable, or a dict
+  from name to function, is the same pattern without the class ceremony, and
+  saying that shows you understand the intent rather than the diagram.
+· VERSUS STATE — the structure is identical; the intent differs. Strategy is
+  chosen from outside and does not change itself; State transitions to the next
+  state on its own. Expect to be asked."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
