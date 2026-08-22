@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checklist history — DailyPlanner</title>
+  {% include "_pwa_head.html" %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='components.css') }}">
+  <style>
+    body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-family)}
+    .ch-wrap{max-width:900px;margin:0 auto;padding:16px 14px 44px}
+    .ch-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:2px}
+    .ch-head h1{margin:0;font-size:20px;font-weight:800}
+    .ch-head a.back{font-size:13px;font-weight:700;color:var(--color-text-secondary);text-decoration:none}
+    .ch-sub{margin:0 0 14px;font-size:13px;color:var(--color-text-secondary);line-height:1.5}
+
+    .ch-tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+    .ch-tabs a{font-size:12.5px;font-weight:700;padding:5px 12px;border-radius:999px;
+      border:1px solid var(--color-border);background:var(--color-surface);
+      color:var(--color-text);text-decoration:none}
+    .ch-tabs a.on{background:#4338ca;border-color:#4338ca;color:#fff}
+
+    .ch-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}
+    .ch-stat{border:1px solid var(--color-border);border-radius:12px;padding:12px;
+      background:var(--color-surface)}
+    .ch-stat b{display:block;font-size:24px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}
+    .ch-stat span{font-size:11.5px;color:var(--color-text-secondary);font-weight:600}
+
+    /* One cell per day. A grid rather than a chart: the question is "which
+       days did I miss", and a dot you can point at answers it better than
+       a line you have to read off an axis. */
+    .ch-grid{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:20px}
+    .ch-cell{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;
+      justify-content:center;font-size:9.5px;font-weight:800;text-decoration:none;
+      border:1px solid var(--color-border);color:var(--color-text-secondary)}
+    .ch-cell.none{background:var(--color-bg);opacity:.55}
+    .ch-cell.full{background:#059669;border-color:#059669;color:#fff}
+    .ch-cell.most{background:#a7f3d0;border-color:#6ee7b7;color:#065f46}
+    .ch-cell.some{background:#fde68a;border-color:#fbbf24;color:#92400e}
+    .ch-cell.bad {background:#fecaca;border-color:#f87171;color:#991b1b}
+    .ch-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;
+      color:var(--color-text-secondary);margin:-12px 0 22px}
+    .ch-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;
+      margin-right:4px;vertical-align:-1px}
+
+    .ch-sec{font-size:14px;font-weight:800;margin:0 0 8px}
+    .ch-rows{display:flex;flex-direction:column;gap:6px;margin-bottom:24px}
+    .ch-row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:center;
+      border:1px solid var(--color-border);border-radius:10px;padding:9px 12px;
+      background:var(--color-surface)}
+    .ch-row .n{font-size:13.5px;font-weight:600}
+    .ch-row .v{font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+    .ch-bar{grid-column:1/-1;height:5px;border-radius:3px;background:var(--color-border);overflow:hidden}
+    .ch-bar i{display:block;height:100%;background:#4338ca}
+    .ch-empty{padding:34px 12px;text-align:center;color:var(--color-text-secondary);
+      font-size:14px;line-height:1.6}
+    @media(max-width:560px){.ch-stats{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+{% include "_top_nav.html" %}
+
+<div class="ch-wrap">
+  <div class="ch-head">
+    <h1>Checklist history</h1>
+    <a class="back" href="/checklist">← Back to today</a>
+  </div>
+  <p class="ch-sub">
+    Built from ticks that were always being stored and never read for any day
+    but today. A day counts only what was actually <em>due</em> on it, using
+    the same schedule rule that decides whether a reminder fires &mdash; so a
+    weekend with no weekday items is not a failure.
+  </p>
+
+  <div class="ch-tabs">
+    {% for n in options %}
+      <a href="/checklist/history?days={{ n }}" class="{% if n == days %}on{% endif %}">{{ n }} days</a>
+    {% endfor %}
+  </div>
+
+  {% if data.total_due %}
+    <div class="ch-stats">
+      <div class="ch-stat">
+        <b>{{ data.pct }}%</b>
+        <span>{{ data.total_done }} of {{ data.total_due }} ticked</span>
+      </div>
+      <div class="ch-stat">
+        <b>{{ data.streak }}</b>
+        <span>day{{ '' if data.streak == 1 else 's' }} in a row with nothing missed</span>
+      </div>
+      <div class="ch-stat">
+        <b>{{ data.active_days }}</b>
+        <span>days with anything due</span>
+      </div>
+    </div>
+
+    <div class="ch-grid">
+      {% for d in data.days %}
+        {% set cls = 'none' if d.due == 0 else ('full' if d.pct == 100 else ('most' if d.pct >= 67 else ('some' if d.pct >= 34 else 'bad'))) %}
+        <a class="ch-cell {{ cls }}" href="/checklist?date={{ d.date }}"
+           title="{{ d.label }} — {{ d.done }}/{{ d.due }} done{% if d.missed %} · missed {{ d.missed_names[:5]|join(', ') }}{% endif %}">
+          {{ d.date[8:] }}
+        </a>
+      {% endfor %}
+    </div>
+    <div class="ch-legend">
+      <span><i style="background:#059669"></i>all done</span>
+      <span><i style="background:#a7f3d0"></i>most</span>
+      <span><i style="background:#fde68a"></i>some</span>
+      <span><i style="background:#fecaca"></i>few or none</span>
+      <span><i style="background:var(--color-bg);border:1px solid var(--color-border)"></i>nothing due</span>
+    </div>
+
+    <h2 class="ch-sec">By item — weakest first</h2>
+    <div class="ch-rows">
+      {% for i in data['items'] %}
+        {% set pc = (100 * i.done // i.due) if i.due else 0 %}
+        <div class="ch-row">
+          <span class="n">{{ i.name }}</span>
+          <span class="v">{{ i.done }}/{{ i.due }} · {{ pc }}%</span>
+          <span class="ch-bar"><i style="width:{{ pc }}%"></i></span>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="ch-empty">
+      Nothing was due in this window, so there is nothing to score.<br>
+      Try a longer range, or add items on <a href="/checklist">today's checklist</a>.
+    </div>
+  {% endif %}
+</div>
+</body>
+</html>

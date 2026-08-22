@@ -1972,3 +1972,162 @@ def test_time_announcer_offers_pause_and_stop_separately():
     assert 'data-ta-mode="paused"' in js and 'data-ta-mode="off"' in js
     assert "pause: function" in js and "stop:  function" in js
     assert "state.lastSlot = null" in js, "stop does not reset the slot"
+
+
+# ═══════════════════════════════════════════════════
+# Checklist — yesterday's misses, and the history browser
+# ═══════════════════════════════════════════════════
+
+def test_schedule_logic_is_shared_with_the_thing_that_reminds_you():
+    """The Day Board had its own copy with NO branch for `weekdays` or
+    `weekends`, so both fell through to "show it" and those items appeared
+    on the board every day of the week. Measured against live data: three
+    weekday items and one weekend item, on all seven days.
+
+    Anything saying "you missed this" has to agree with the thing that
+    reminded you, so the reminder's logic is now the only copy.
+    """
+    from datetime import date
+    from services.checklist_schedule import applies_on, is_due
+
+    sat, sun, mon = date(2026, 8, 22), date(2026, 8, 23), date(2026, 8, 24)
+    assert [applies_on("weekdays", "", d) for d in (sat, sun, mon)] == [False, False, True]
+    assert [applies_on("weekends", "", d) for d in (sat, sun, mon)] == [True, True, False]
+    # `custom` stores Sun=0..Sat=6 as NUMBERS, not three-letter names — the
+    # Day Board compared them as names and so matched nothing.
+    assert applies_on("custom", "6", sat) is True
+    assert applies_on("custom", "6", mon) is False
+    assert applies_on("once", "2026-08-22", sat) is True
+    assert applies_on("monthly_dom", "22", sat) is True
+
+    # An item cannot be due before it existed, or a checklist started last
+    # week shows months of "missed" behind it.
+    assert is_due({"schedule": "daily", "created_at": "2026-08-30T00:00:00Z"}, sat) is False
+    # recurrence_end stops it without deleting the history.
+    assert is_due({"schedule": "daily", "recurrence_end": "2026-08-01"}, sat) is False
+    assert is_due({"schedule": "daily", "is_deleted": True}, sat) is False
+
+
+def test_push_scheduler_behaviour_is_unchanged_by_the_extraction():
+    """The logic moved out of push_scheduler, which decides whether a
+    reminder actually fires. Moving it must not change a single answer."""
+    from datetime import date, timedelta
+    from services.push_scheduler import _schedule_applies_today as sched
+    from services.checklist_schedule import applies_on
+
+    cases = [("daily", ""), ("weekdays", ""), ("weekends", ""), ("custom", "0,6"),
+             ("custom", "1,2,3,4,5"), ("monthly_dow", "1:1"), ("monthly_dow", "-1:6"),
+             ("monthly_dom", "1"), ("monthly_dom", "-1"), ("once", "2026-03-15"),
+             ("", ""), ("bogus", "")]
+    d, checked = date(2026, 1, 1), 0
+    while d < date(2027, 1, 1):
+        for s, days in cases:
+            assert sched(s, days, d.weekday(), d) == applies_on(s, days, d), (s, days, d)
+            checked += 1
+        d += timedelta(days=1)
+    assert checked > 4000
+
+
+def test_a_legacy_whole_item_tick_still_counts_as_done():
+    """Ticks recorded before an item gained reminder times are stored with
+    a NULL time. Requiring today's reminder rows to be ticked would mark
+    those days MISSED for items the user demonstrably ticked.
+
+    Real case from this database: every tick on 2026-04-26 is NULL-keyed
+    and all seven of those items were given reminder times later, so the
+    strict rule reported 0 of 10 done on a day with seven ticks on it.
+    Configuring a reminder in August cannot un-tick April.
+    """
+    from services.checklist_history import _is_done
+    item = {"id": "i1"}
+    times = {"i1": ["06:00:00", "22:00:00"]}
+    day = "2026-04-26"
+
+    legacy = {("i1", day): {None}}
+    assert _is_done(item, day, legacy, times) is True, "a whole-item tick was ignored"
+
+    partial = {("i1", day): {"06:00:00"}}
+    assert _is_done(item, day, partial, times) is False, "one of two reminders is not done"
+
+    both = {("i1", day): {"06:00:00", "22:00:00"}}
+    assert _is_done(item, day, both, times) is True
+    assert _is_done(item, day, {}, times) is False
+
+
+def test_checklist_shows_yesterdays_misses(auth_client, monkeypatch):
+    """The ticks were always stored per date and never read for any day but
+    today, so the miss was invisible — and a loop with no feedback is how a
+    checklist quietly stops being used."""
+    import routes.checklist as cl
+
+    monkeypatch.setattr(cl.checklist_history, "yesterday_summary",
+                        lambda u, t: {"date": "2026-08-21", "label": "Fri 21 Aug",
+                                      "due": 16, "done": 9, "missed": 7,
+                                      "names": ["Drink water", "Ram"]})
+    html = auth_client.get("/checklist").get_data(as_text=True)
+    assert "Yesterday: missed 7 of 16." in html
+    assert "Drink water" in html
+
+    monkeypatch.setattr(cl.checklist_history, "yesterday_summary",
+                        lambda u, t: {"date": "x", "label": "y", "due": 9,
+                                      "done": 9, "missed": 0, "names": []})
+    assert "Yesterday: all 9 done." in auth_client.get("/checklist").get_data(as_text=True)
+
+    # Nothing due yesterday means no line: "0 of 0" is not a result.
+    monkeypatch.setattr(cl.checklist_history, "yesterday_summary", lambda u, t: None)
+    body = auth_client.get("/checklist").get_data(as_text=True).split("</style>")[-1]
+    assert "cl-yday" not in body
+
+    # And never on a historical view — it would be about a day two before
+    # the one being read.
+    monkeypatch.setattr(cl.checklist_history, "yesterday_summary",
+                        lambda u, t: {"date": "x", "label": "y", "due": 9,
+                                      "done": 1, "missed": 8, "names": ["a"]})
+    assert "Yesterday: missed" not in auth_client.get(
+        "/checklist?date=2026-08-01").get_data(as_text=True)
+
+
+def test_checklist_history_page(auth_client, monkeypatch):
+    """A day counts only what was DUE on it, so a weekend with no weekday
+    items is not a failure — the empty cell says "nothing due", not 0%."""
+    import routes.checklist as cl
+    fake = {
+        "start": "2026-08-09", "end": "2026-08-22", "window": 14,
+        "days": [
+            {"date": "2026-08-22", "label": "Sat 22 Aug", "due": 14, "done": 14,
+             "missed": 0, "pct": 100, "missed_names": []},
+            {"date": "2026-08-21", "label": "Fri 21 Aug", "due": 16, "done": 9,
+             "missed": 7, "pct": 56, "missed_names": ["Drink water"]},
+            {"date": "2026-08-20", "label": "Thu 20 Aug", "due": 0, "done": 0,
+             "missed": 0, "pct": None, "missed_names": []},
+            {"date": "2026-08-19", "label": "Wed 19 Aug", "due": 16, "done": 1,
+             "missed": 15, "pct": 6, "missed_names": ["Ram"]},
+        ],
+        "items": [{"id": "i1", "name": "Drink water", "due": 14, "done": 2}],
+        "total_due": 46, "total_done": 24, "pct": 52, "active_days": 3, "streak": 1,
+    }
+    monkeypatch.setattr(cl.checklist_history, "load", lambda u, e, d: fake)
+    html = auth_client.get("/checklist/history?days=14").get_data(as_text=True)
+    assert "52%" in html and "24 of 46 ticked" in html
+    assert "Drink water" in html and "2/14" in html
+    # Every cell links to that day's read-only checklist.
+    assert "/checklist?date=2026-08-22" in html
+    # The four bands plus "nothing due" are all distinguishable.
+    for cls in ("ch-cell full", "ch-cell some", "ch-cell bad", "ch-cell none"):
+        assert cls in html, cls
+
+
+def test_history_window_is_bounded(auth_client, monkeypatch):
+    """An unbounded ?days= is a way to ask the database for everything."""
+    import routes.checklist as cl
+    seen = {}
+    monkeypatch.setattr(cl.checklist_history, "load",
+                        lambda u, e, d: seen.setdefault("days", d) or
+                        {"days": [], "items": [], "total_due": 0, "total_done": 0,
+                         "pct": None, "active_days": 0, "streak": 0,
+                         "start": "", "end": "", "window": d})
+    auth_client.get("/checklist/history?days=99999")
+    assert seen["days"] <= cl.checklist_history.MAX_DAYS
+    seen.clear()
+    auth_client.get("/checklist/history?days=nonsense")
+    assert seen["days"] == 30

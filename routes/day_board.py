@@ -37,7 +37,7 @@ from datetime import date, datetime, time, timedelta
 from flask import Blueprint, jsonify, render_template, request, session, url_for
 
 from services.login_service import login_required
-from services import event_recurrence
+from services import checklist_schedule, event_recurrence
 from supabase_client import get
 from utils.user_tz import user_now, user_today
 
@@ -142,23 +142,23 @@ def _checklist_for(user_id, plan_date):
     today's business.
     """
     day_str = plan_date.isoformat()
-    weekday = plan_date.strftime("%a").lower()      # mon, tue, ...
 
     items = get("checklist_items", params={
         "user_id": f"eq.{user_id}", "is_deleted": "eq.false",
         "order": "position.asc,created_at.asc",
     }) or []
 
-    def due_today(it):
-        sched = (it.get("schedule") or "daily").lower()
-        days = (it.get("schedule_days") or "").strip().lower()
-        if sched == "once":
-            return days == day_str
-        if sched in ("weekly", "days", "custom") and days:
-            return weekday in [d.strip()[:3] for d in days.split(",")]
-        return True                                  # daily, or unspecified
-
-    items = [i for i in items if due_today(i)]
+    # WAS WRONG, and measurably so. This used to have no branch for
+    # `weekdays` or `weekends`, so both fell through to "show it" and those
+    # items appeared on the board every day of the week — three weekday
+    # items and one weekend item, on all seven days. It also compared
+    # `custom` days as three-letter names ("mon") when they are stored as
+    # numbers (Sun=0..Sat=6), so a custom schedule matched nothing.
+    #
+    # The schedule logic now lives in one place, shared with the push
+    # scheduler that decides whether a reminder actually fires. A board
+    # disagreeing with the reminder is worse than either being wrong alone.
+    items = [i for i in items if checklist_schedule.is_due(i, plan_date)]
 
     ticks = get("checklist_ticks", params={
         "user_id": f"eq.{user_id}", "tick_date": f"eq.{day_str}",

@@ -55,64 +55,41 @@ def _resolve_tz(name):
 
 
 def _schedule_applies_today(schedule, schedule_days, weekday, today=None):
-    """weekday is Python Mon=0..Sun=6. We convert to Sun=0..Sat=6 for
-    storage. `today` is a `date` and is only required for monthly
-    schedules — pass it in from callers that support them; older
-    callers can omit it and the monthly branches will simply return
-    False (no false positives)."""
-    dow = (weekday + 1) % 7  # Sun=0, Mon=1, ..., Sat=6
-    if schedule == "daily" or not schedule:
-        return True
-    if schedule == "weekdays":
-        return dow in (1, 2, 3, 4, 5)
-    if schedule == "weekends":
-        return dow in (0, 6)
-    if schedule == "custom":
-        allowed = {int(x) for x in (schedule_days or "").split(",") if x.strip().lstrip("-").isdigit()}
-        return dow in allowed
-    if schedule == "monthly_dow":
-        # "WEEK:DAY" — fires when today is the Nth (or last) DAY of the
-        # current month. WEEK is 1..5 or -1 for "last occurrence".
-        if today is None:
+    """Does this schedule fire on `today`?
+
+    THE LOGIC MOVED to services/checklist_schedule.py, unchanged, because
+    three places needed it and the copies had drifted — the Day Board's had
+    no branch for `weekdays` or `weekends` and showed those items every day.
+    Anything reporting "you missed this" has to agree with the thing that
+    reminded you.
+
+    The signature is kept so callers do not change. `weekday` is now only
+    used when `today` is absent, which no current caller does; the shared
+    function derives the day from the date itself, since deriving it in the
+    caller is exactly how the two versions came to disagree.
+    """
+    from services.checklist_schedule import applies_on
+
+    if today is None:
+        # Older callers passed a weekday and no date. Monthly and one-shot
+        # schedules cannot be evaluated without the date, and returning
+        # False for them is the pre-existing behaviour (no false positives).
+        if schedule in ("monthly_dow", "monthly_dom", "once"):
             return False
-        try:
-            week_s, day_s = (schedule_days or "").split(":", 1)
-            target_week = int(week_s)
-            target_day = int(day_s)
-        except (ValueError, AttributeError):
-            return False
-        if dow != target_day:
-            return False
-        # nth occurrence of this weekday so far this month (1-indexed).
-        occ = (today.day - 1) // 7 + 1
-        if target_week == -1:
-            # Last occurrence: there is no same-weekday day within the
-            # next 7 days that's still in this month.
-            from datetime import timedelta as _td
-            next_same = today + _td(days=7)
-            return next_same.month != today.month
-        return occ == target_week
-    if schedule == "once":
-        # schedule_days holds an ISO date; fire only on that day.
-        if today is None:
-            return False
-        return (schedule_days or "").strip() == today.isoformat()
-    if schedule == "monthly_dom":
-        if today is None:
-            return False
-        raw = (schedule_days or "").strip()
-        if not raw:
-            return False
-        try:
-            target = int(raw)
-        except ValueError:
-            return False
-        if target == -1:
-            # Last day of month: tomorrow is in a different month.
-            from datetime import timedelta as _td
-            return (today + _td(days=1)).month != today.month
-        return today.day == target
-    return False
+        dow = (weekday + 1) % 7
+        if schedule == "daily" or not schedule:
+            return True
+        if schedule == "weekdays":
+            return dow in (1, 2, 3, 4, 5)
+        if schedule == "weekends":
+            return dow in (0, 6)
+        if schedule == "custom":
+            allowed = {int(x) for x in (schedule_days or "").split(",")
+                       if x.strip().lstrip("-").isdigit()}
+            return dow in allowed
+        return False
+
+    return applies_on(schedule, schedule_days, today)
 
 
 def _users_with_active_subscriptions():

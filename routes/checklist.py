@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 from auth import login_required
 from services import checklist_calendar_service as cal_sync
+from services import checklist_history
 from supabase_client import delete as sb_delete
 from supabase_client import get, post, update
 from utils.user_tz import user_today
@@ -284,10 +285,45 @@ def _requested_date():
 def checklist_page():
     on = _requested_date()
     today = user_today()
+    # Yesterday's misses, on today's view only. A checklist is a daily
+    # loop and the only feedback that changes behaviour is about the loop
+    # you just finished — on a historical view the line would be noise
+    # about a day two days before the one you are reading.
+    yesterday = None
+    if on == today:
+        try:
+            yesterday = checklist_history.yesterday_summary(session["user_id"], today)
+        except Exception:
+            logger.warning("yesterday summary failed", exc_info=True)
     return render_template("checklist.html",
                            plan_date=on.isoformat(),
                            is_today=(on == today),
-                           today=today.isoformat())
+                           today=today.isoformat(),
+                           yesterday=yesterday)
+
+
+@checklist_bp.route("/checklist/history")
+@login_required
+def checklist_history_page():
+    """Adherence over time, built from ticks that were always being stored
+    and never read for any day but today.
+
+    The window is a query arg because the useful question changes: 14 days
+    answers "am I keeping this up", 90 answers "did that ever stick".
+    """
+    try:
+        days = int(request.args.get("days") or 30)
+    except (TypeError, ValueError):
+        days = 30
+    days = max(7, min(checklist_history.MAX_DAYS, days))
+
+    end = _requested_date()
+    data = checklist_history.load(session["user_id"], end, days)
+    return render_template("checklist_history.html",
+                           data=data,
+                           days=days,
+                           today=user_today().isoformat(),
+                           options=(14, 30, 90, 180))
 
 
 # ─────────────────────────────────────────────

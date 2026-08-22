@@ -14,6 +14,17 @@
        useful; letting them be changed from there is not. */
     body.cl-readonly .cl-item input[type=checkbox],
     body.cl-readonly .cl-tickpill{pointer-events:none;opacity:.55}
+    .cl-histlink{font-size:11.5px;font-weight:700;text-decoration:none;margin-left:8px;
+      padding:2px 8px;border-radius:999px;border:1px solid var(--color-border);
+      color:var(--color-text-secondary);vertical-align:1px}
+    .cl-histlink:hover{background:var(--color-bg)}
+    .cl-yday{margin:8px 0 2px;padding:8px 12px;border-radius:10px;font-size:13px;
+      line-height:1.5;background:#fef2f2;color:#991b1b;border:1px solid #fca5a5}
+    .cl-yday.ok{background:#ecfdf5;color:#065f46;border-color:#6ee7b7}
+    .cl-yday-names{display:block;font-size:11.5px;opacity:.85;margin-top:2px}
+    .cl-yday a{color:inherit;font-weight:800;white-space:nowrap;margin-left:4px}
+    html.dark .cl-yday{background:#3f1d1d;color:#fca5a5;border-color:#b91c1c}
+    html.dark .cl-yday.ok{background:#04302a;color:#6ee7b7;border-color:#047857}
   </style>
 {% include "_pwa_head.html" %}
 </head>
@@ -27,12 +38,31 @@
 
     <header class="cl-header">
       <h1>✓ Daily Checklist</h1>
-      <div class="cl-date">{{ plan_date }}</div>
+      <div class="cl-date">{{ plan_date }}
+        <a class="cl-histlink" href="/checklist/history">history</a>
+      </div>
       {# Viewing another day is a NARROW case — it exists so the Day Board
          can link a row from the day it is showing. Ticking stays
          today-only: back-filling "slept at 10.30" for last Tuesday is
          self-deception, and a checklist you can edit backwards stops being
          a record of what happened. #}
+      {# Yesterday, in one line. The ticks were always stored per date and
+         never read for any day but today, so the miss was invisible — and
+         a loop with no feedback is why a checklist quietly stops being
+         used. Shown only when something was actually DUE: "0 of 0" is not
+         a result. #}
+      {% if yesterday %}
+        <div class="cl-yday {% if yesterday.missed == 0 %}ok{% endif %}">
+          {% if yesterday.missed == 0 %}
+            <strong>Yesterday: all {{ yesterday.due }} done.</strong>
+          {% else %}
+            <strong>Yesterday: missed {{ yesterday.missed }} of {{ yesterday.due }}.</strong>
+            <span class="cl-yday-names">{{ yesterday.names[:4]|join(' · ') }}{% if yesterday.names|length > 4 %} …{% endif %}</span>
+          {% endif %}
+          <a href="/checklist/history">History →</a>
+        </div>
+      {% endif %}
+
       {% if not is_today %}
         <div class="cl-otherday">
           Viewing <strong>{{ plan_date }}</strong> — read only.
