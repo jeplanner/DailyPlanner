@@ -76,6 +76,26 @@
     ".prep-pickbox{flex:none;width:17px;height:17px;cursor:pointer;accent-color:#4338ca}",
     ".q-card.prep-picked{outline:2px solid #4338ca;outline-offset:-2px}",
 
+    /* Her own notes, at the foot of an opened card. Visually separate from
+       the written material above it — this is the one part of the card that
+       is hers, and it should not read as more of the bank's prose. */
+    ".prep-note{margin:12px 13px 13px;padding:10px 11px;border-radius:10px;",
+    "border:1px dashed var(--color-border,#e5e7eb);",
+    "background:var(--color-bg,#f9fafb)}",
+    ".prep-note-head{display:flex;justify-content:space-between;align-items:center;",
+    "gap:8px;font-size:11.5px;font-weight:800;margin-bottom:6px;",
+    "color:var(--color-text-secondary,#6b7280)}",
+    ".prep-note-state{font-weight:700;font-size:11px}",
+    ".prep-note-state.ok{color:#047857}",
+    ".prep-note-state.err{color:#b91c1c}",
+    ".prep-note-box{width:100%;box-sizing:border-box;font:inherit;font-size:13.5px;",
+    "line-height:1.5;padding:8px 9px;border-radius:8px;resize:vertical;",
+    "border:1px solid var(--color-border,#e5e7eb);",
+    "background:var(--color-surface,#fff);color:var(--color-text,#111827)}",
+    ".prep-note-box:focus{outline:none;border-color:var(--color-primary,#2563eb)}",
+    "html.dark .prep-note-state.ok{color:#6ee7b7}",
+    "html.dark .prep-note-state.err{color:#fca5a5}",
+
     /* "(Planned 22 Aug, 19:00)". Green while it is still ahead of you, red
        once the moment has passed without the topic being marked done, grey
        when it has.
@@ -814,6 +834,131 @@
     }).catch(function () { /* the study record is still right */ });
   }
 
+  /* ══════════════════════════════════════════════════════════════════
+     HER OWN NOTES ON A QUESTION
+
+     A bank entry is written material — an answer, a walkthrough, worked
+     examples. What it never had is somewhere for the READER's thinking:
+     what she got wrong the first time, the sentence that finally made it
+     click, the follow-up an interviewer actually asked. That is the note
+     most worth keeping and it had nowhere to live.
+
+     INJECTED INTO THE CARD BODY WHEN IT OPENS, not at render time. Two
+     reasons: a bank page draws over a thousand cards and a textarea in
+     every one is waste, and /ai-sde fills its body lazily on first open, so
+     anything added earlier is thrown away by that fetch.
+
+     SAVED ON A DEBOUNCE AND ON BLUR. Auto-save because a note you have to
+     remember to save is a note you lose; on blur as well because the
+     debounce has not fired yet when you close the card or the tab.
+     ══════════════════════════════════════════════════════════════════ */
+
+  var notesCache = {};
+  var notesReady = false;
+  var NOTE_DEBOUNCE = 900;
+
+  function loadNotes(root) {
+    var bank = bulkBank(root);
+    if (!bank) return;
+    fetch("/api/prep/notes?bank=" + encodeURIComponent(bank),
+          { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j) return;
+        if (j.available === false) {
+          // The table is not there yet. Say so once rather than offering a
+          // box that silently throws away everything typed into it.
+          inert("notes table missing — run " + (j.migration || "the migration"));
+          return;
+        }
+        notesCache = j.notes || {};
+        notesReady = true;
+        // Any card already open gets its note filled in now.
+        Array.prototype.forEach.call(
+          root.querySelectorAll(".q-card.open"), function (c) { ensureNote(c); });
+      })
+      .catch(function () { /* offline: the cards still work */ });
+  }
+
+  function noteHostFor(card) {
+    return card.querySelector(".q-body") || card;
+  }
+
+  function ensureNote(card) {
+    if (!notesReady) return;
+    var btn = card.querySelector("[data-prep-plan]");
+    if (!btn) return;                       // not a bank entry
+    var bank = btn.getAttribute("data-bank");
+    var title = btn.getAttribute("data-title");
+    if (!bank || !title) return;
+
+    var host = noteHostFor(card);
+    if (!host || host.querySelector(".prep-note")) return;
+
+    var existing = notesCache[title];
+    var wrap = document.createElement("div");
+    wrap.className = "prep-note";
+    wrap.innerHTML =
+      '<div class="prep-note-head">' +
+        '<span>📝 My notes</span>' +
+        '<span class="prep-note-state"></span>' +
+      '</div>' +
+      '<textarea class="prep-note-box" rows="3" ' +
+        'placeholder="What tripped you up, what finally made it click, ' +
+        'what they actually asked…"></textarea>';
+    var box = wrap.querySelector(".prep-note-box");
+    box.value = existing ? (existing.note || "") : "";
+    host.appendChild(wrap);
+    autoGrow(box);
+
+    var timer = null;
+    var state = wrap.querySelector(".prep-note-state");
+
+    function save() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      var text = box.value;
+      // Nothing changed since the last save — do not spend a request on it.
+      if ((notesCache[title] && notesCache[title].note) === text) return;
+      state.textContent = "saving…";
+      state.className = "prep-note-state";
+      fetch("/api/prep/notes", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+        body: JSON.stringify({ bank: bank, title: title, note: text }),
+      }).then(function (r) {
+        if (!r.ok) throw new Error("save failed");
+        notesCache[title] = { note: text };
+        state.textContent = text ? "saved" : "cleared";
+        state.className = "prep-note-state ok";
+        setTimeout(function () { if (state) state.textContent = ""; }, 2200);
+      }).catch(function () {
+        state.textContent = "not saved — will retry when you type again";
+        state.className = "prep-note-state err";
+      });
+    }
+
+    box.addEventListener("input", function () {
+      autoGrow(box);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(save, NOTE_DEBOUNCE);
+    });
+    // The debounce has not fired when you click away or close the card.
+    box.addEventListener("blur", save);
+    // Typing must not reach the host page's card toggle, which would fold
+    // the card shut mid-sentence.
+    ["click", "keydown", "keyup"].forEach(function (evt) {
+      box.addEventListener(evt, function (e) { e.stopPropagation(); });
+    });
+  }
+
+  function autoGrow(box) {
+    try {
+      box.style.height = "auto";
+      box.style.height = Math.min(box.scrollHeight + 2, 420) + "px";
+    } catch (_) {}
+  }
+
   var PrepScheduler = {
     /* HTML for the header button. `title` is the topic text and is what
        actually identifies it to the server; `entryId` is optional and is
@@ -900,7 +1045,26 @@
       whenCardsReady(root, function () {
         mountBulk(root);
         loadScheduled(root);
+        loadNotes(root);
       });
+
+      /* A card's body is filled when it OPENS, and on /ai-sde that means a
+         fetch that replaces the body wholesale. So watch for the open class
+         appearing rather than hooking any one page's toggle, and re-add the
+         box if a lazy render has just wiped it. */
+      if (window.MutationObserver) {
+        new MutationObserver(function (records) {
+          for (var i = 0; i < records.length; i++) {
+            var card = records[i].target.closest
+              ? records[i].target.closest(".q-card")
+              : null;
+            if (card && card.classList.contains("open")) ensureNote(card);
+          }
+        }).observe(root, {
+          subtree: true, childList: true,
+          attributes: true, attributeFilter: ["class"],
+        });
+      }
 
       // ?topic= — arriving from the Day Board on one specific line item.
       landOnTopic(root);
@@ -923,6 +1087,8 @@
     _fmtWhen: fmtWhen,
     _deadlineOf: deadlineOf,
     _paintScheduled: paintScheduled,
+    _ensureNote: ensureNote,
+    _notes: function (n) { notesCache = n || {}; notesReady = true; },
   };
 
   window.PrepScheduler = PrepScheduler;

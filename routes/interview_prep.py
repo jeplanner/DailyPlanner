@@ -913,6 +913,92 @@ def complete_prep_artifacts(user_id, bank, title, done, include_bucket=True):
     return touched
 
 
+@interview_prep_bp.route("/api/prep/notes", methods=["GET"])
+@login_required
+def prep_notes_list():
+    """Every note this user has for one bank. ``?bank=ai_sde``
+
+    Returned as {title: note} in one request rather than a query per card:
+    a bank page draws 1,120 cards, and a note lookup each would be absurd.
+    """
+    user_id = session["user_id"]
+    bank = (request.args.get("bank") or "ai_sde").strip()
+    if bank not in PREP_BANKS:
+        return jsonify({"error": f"unknown bank {bank!r}"}), 400
+
+    try:
+        rows = get("prep_notes", params={
+            "user_id": f"eq.{user_id}",
+            "bank": _pg_eq(bank),
+            "select": "entry_title,note,updated_at",
+            "limit": "5000",
+        }) or []
+    except Exception as exc:
+        text = str(exc)
+        if "prep_notes" in text or "does not exist" in text or "schema cache" in text:
+            # An unrun migration is a setup step, not an error. The page
+            # hides the notes box rather than showing one that silently
+            # throws away what she types into it.
+            logger.warning("prep notes unavailable — run MIGRATION_PREP_NOTES.sql")
+            return jsonify({"bank": bank, "notes": {}, "available": False,
+                            "migration": "MIGRATION_PREP_NOTES.sql"}), 200
+        raise
+
+    notes = {}
+    for r in rows:
+        title = (r.get("entry_title") or "").strip()
+        if title and (r.get("note") or "").strip():
+            notes[title] = {"note": r["note"], "updated_at": r.get("updated_at") or ""}
+    return jsonify({"bank": bank, "notes": notes, "available": True})
+
+
+@interview_prep_bp.route("/api/prep/notes", methods=["POST"])
+@login_required
+def prep_notes_save():
+    """Write one note. Body: ``{bank, title, note}``.
+
+    UPSERT on (user_id, bank, entry_title), which the migration's unique
+    index is what makes possible — without it a second save would create a
+    second row and the first would silently become unreachable.
+
+    AN EMPTY NOTE IS A DELETE, because that is what clearing the box means.
+    Soft, per project convention: the row is kept with an empty note rather
+    than removed, so nothing has to distinguish "never wrote one" from
+    "cleared it" and an accidental clear is recoverable from the table.
+    """
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+
+    bank = (data.get("bank") or "").strip()
+    if bank not in PREP_BANKS:
+        return jsonify({"error": f"unknown bank {bank!r}"}), 400
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+
+    # Bounded, because this lands in a text column and the client is not
+    # the only thing that can post here.
+    note = (data.get("note") or "")[:20000]
+
+    try:
+        post("prep_notes",
+             {"user_id": user_id, "bank": bank, "entry_title": title,
+              "note": note, "updated_at": _iso_now()},
+             prefer="resolution=merge-duplicates,return=minimal")
+    except Exception as exc:
+        text = str(exc)
+        if "prep_notes" in text or "does not exist" in text or "schema cache" in text:
+            logger.warning("prep notes not saved — run MIGRATION_PREP_NOTES.sql")
+            return jsonify({"error": "Notes are not set up yet. Run "
+                                     "MIGRATION_PREP_NOTES.sql in Supabase.",
+                            "migration": "MIGRATION_PREP_NOTES.sql"}), 503
+        logger.warning("prep note save failed for %r", title, exc_info=True)
+        return jsonify({"error": "Couldn't save that note — please retry."}), 502
+
+    return jsonify({"status": "ok", "bank": bank, "title": title,
+                    "length": len(note)})
+
+
 @interview_prep_bp.route("/api/prep/complete", methods=["POST"])
 @login_required
 def prep_complete():

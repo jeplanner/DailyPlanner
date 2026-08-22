@@ -2973,3 +2973,102 @@ def test_the_guards_that_hid_the_dead_features_now_speak_up():
     assert "reported[key]" in g
     # keepalive, because a navigation is exactly when this fires.
     assert "keepalive: true" in g
+
+
+# ═══════════════════════════════════════════════════
+# Her own notes on a prep question
+# ═══════════════════════════════════════════════════
+
+def test_a_note_can_be_saved_and_read_back_per_bank(auth_client, monkeypatch):
+    """A bank entry is written material — an answer, a walkthrough, worked
+    examples. What it never had is somewhere for the READER's thinking: what
+    she got wrong, what finally made it click, what an interviewer actually
+    asked. That is the note most worth keeping.
+    """
+    import routes.interview_prep as ip
+    posted = []
+    monkeypatch.setattr(ip, "post", lambda t, p, **k: posted.append((t, p, k)) or [{}])
+    monkeypatch.setattr(ip, "get", lambda t, params=None, **k: [
+        {"entry_title": "ORDER BY, and where NULL sorts",
+         "note": "I got the NULL ordering backwards", "updated_at": "2026-08-22"},
+        {"entry_title": "Empty one", "note": "   ", "updated_at": "2026-08-22"},
+    ])
+
+    j = auth_client.get("/api/prep/notes?bank=sql").get_json()
+    assert j["available"] is True
+    assert j["notes"]["ORDER BY, and where NULL sorts"]["note"] == \
+        "I got the NULL ordering backwards"
+    # A blank note is not a note — it would draw an empty box for nothing.
+    assert "Empty one" not in j["notes"]
+
+    r = auth_client.post("/api/prep/notes", json={
+        "bank": "sql", "title": "ORDER BY, and where NULL sorts",
+        "note": "Ask about NULLS FIRST vs LAST"})
+    assert r.status_code == 200
+    table, payload, kwargs = posted[-1]
+    assert table == "prep_notes"
+    assert payload["entry_title"] == "ORDER BY, and where NULL sorts"
+    assert payload["bank"] == "sql"
+    # UPSERT, not insert. Without merge-duplicates a second save creates a
+    # second row and the first silently becomes unreachable.
+    assert "merge-duplicates" in kwargs.get("prefer", "")
+
+
+def test_notes_are_keyed_by_title_not_by_a_positional_id(auth_client, monkeypatch):
+    """Every bank numbers its entries by POSITION — ai42, j7, sq3 — and a
+    position shifts the moment an entry is added or deduped. The AI SDE bank
+    went from ~500 to 1,120 entries with 57 duplicates folded out."""
+    import routes.interview_prep as ip
+    posted = []
+    monkeypatch.setattr(ip, "post", lambda t, p, **k: posted.append(p) or [{}])
+    auth_client.post("/api/prep/notes",
+                     json={"bank": "ai_sde", "title": "Two Sum", "note": "n"})
+    assert posted[-1]["entry_title"] == "Two Sum"
+    assert not any(k in posted[-1] for k in ("entry_id", "id", "index"))
+
+    assert auth_client.post("/api/prep/notes",
+                            json={"bank": "ai_sde", "title": "", "note": "x"}).status_code == 400
+    assert auth_client.post("/api/prep/notes",
+                            json={"bank": "nope", "title": "t", "note": "x"}).status_code == 400
+
+
+def test_notes_degrade_when_the_migration_has_not_been_run(auth_client, monkeypatch):
+    """The page must HIDE the box rather than offer one that silently throws
+    away everything typed into it."""
+    import routes.interview_prep as ip
+
+    def missing(*a, **k):
+        raise Exception('relation "prep_notes" does not exist')
+
+    monkeypatch.setattr(ip, "get", missing)
+    j = auth_client.get("/api/prep/notes?bank=java").get_json()
+    assert j["available"] is False and j["migration"] == "MIGRATION_PREP_NOTES.sql"
+
+    monkeypatch.setattr(ip, "post", missing)
+    r = auth_client.post("/api/prep/notes",
+                         json={"bank": "java", "title": "t", "note": "n"})
+    assert r.status_code == 503
+    assert "MIGRATION_PREP_NOTES.sql" in r.get_json()["error"]
+
+
+def test_the_notes_box_is_injected_on_open_not_on_render():
+    """A bank page draws over a thousand cards; a textarea in every one is
+    waste. And /ai-sde fills its body LAZILY on first open, so anything
+    added earlier is thrown away by that fetch — hence watching for the
+    class change rather than hooking any one page's toggle."""
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    assert "function ensureNote" in js
+    # The body lookup is its own function, so check it there rather than
+    # inside ensureNote — an earlier version of this test looked in the
+    # wrong place and failed on working code.
+    host = js.split("function noteHostFor")[1].split("}")[0]
+    assert ".q-body" in host, "the note is not placed in the card body"
+    body = js.split("function ensureNote")[1].split("function autoGrow")[0]
+    assert "noteHostFor(card)" in body
+    assert 'querySelector(".prep-note")' in body, "would stack a second box"
+    # Saved on a debounce AND on blur: the debounce has not fired when you
+    # close the card.
+    assert 'addEventListener("blur", save)' in body
+    # Typing must not reach the page's own card toggle.
+    assert "stopPropagation" in body
+    assert 'attributeFilter: ["class"]' in js, "a lazy re-render would lose it"
