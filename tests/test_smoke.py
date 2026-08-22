@@ -3595,6 +3595,14 @@ def test_announcer_says_that_it_autosaves():
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
     assert "data-ta-saved" in js and "savedFlash" in js
     assert "saves as you type" in js
+    # A confirmation that fires for some controls and not others teaches
+    # people to distrust it, so every control that persists must flash.
+    assert js.count("savedFlash();") >= 4, \
+        "some controls save without confirming it"
+    # And a standing read-back of what is actually stored — the flash proves
+    # the last keystroke landed, this proves the SETTING did, which is the
+    # question that was asked.
+    assert "data-ta-now" in js and "Saved & running: " in js
 
 
 def test_day_board_phone_breakpoint_is_declared_once():

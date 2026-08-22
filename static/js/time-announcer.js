@@ -485,11 +485,17 @@
       "line-height:1.45;font-weight:700}",
       ".ta-health.good{color:#047857}",
       ".ta-health.bad{color:#b91c1c}",
-      ".ta-saved{float:right;font-size:10.5px;font-weight:700;color:#047857;",
-      "opacity:0;transition:opacity .15s}",
-      ".ta-saved.show{opacity:1}",
+      ".ta-saved{float:right;font-size:11px;font-weight:800;color:#047857;",
+      "background:color-mix(in srgb,#047857 14%,transparent);",
+      "border:1px solid color-mix(in srgb,#047857 35%,transparent);",
+      "border-radius:999px;padding:2px 8px;line-height:1.5;",
+      "opacity:0;transform:translateY(-2px);transition:opacity .12s,transform .12s}",
+      ".ta-saved.show{opacity:1;transform:none}",
       ".ta-auto{margin:10px 0 0 !important;font-size:10.5px !important;",
       "line-height:1.45;font-style:italic}",
+      ".ta-now{margin:6px 0 0 !important;font-size:11px !important;",
+      "line-height:1.45;font-weight:700;",
+      "color:var(--color-text,#111827) !important}",
     ].join("");
     var el = document.createElement("style");
     el.id = "ta-style";
@@ -544,6 +550,22 @@
     if (lbl && document.activeElement !== lbl) lbl.value = state.label;
     paintAtEcho();
 
+    /* WHAT IS CURRENTLY SAVED, in words. Read back from the same state the
+       announcer schedules from, so if this line is wrong the feature is
+       wrong — it cannot drift into reassuring you about a setting that is
+       not the one in effect. */
+    var nowEl = pop.querySelector("[data-ta-now]");
+    if (nowEl) {
+      var bits = [];
+      if (state.every > 0) bits.push("every " + state.every + " min");
+      if (state.at.length) bits.push("at " + state.at.join(", "));
+      var what = bits.length ? bits.join(", plus ") : "nothing scheduled";
+      if (state.label) what += " \u2014 saying \u201c" + state.label + "\u201d first";
+      nowEl.textContent = (state.mode === "on" ? "Saved & running: "
+                           : state.mode === "paused" ? "Saved, paused: "
+                           : "Saved, stopped: ") + what;
+    }
+
     /* THE HEALTH LINE. The whole reason this feature could fail unnoticed
        was that nothing on screen ever said whether it had worked. */
     var h = pop.querySelector("[data-ta-health]");
@@ -573,10 +595,12 @@
   function savedFlash() {
     var el = pop && pop.querySelector("[data-ta-saved]");
     if (!el) return;
-    el.textContent = "Saved";
+    el.textContent = "\u2713 Saved";
     el.classList.add("show");
     if (savedTimer) clearTimeout(savedTimer);
-    savedTimer = setTimeout(function () { el.classList.remove("show"); }, 1400);
+    // Long enough to notice and read. The first version held it 1.4s at
+    // 10.5px, which is the same as not showing it.
+    savedTimer = setTimeout(function () { el.classList.remove("show"); }, 2600);
   }
 
   function paintAtEcho() {
@@ -626,6 +650,7 @@
       '</div>' +
       '<p class="ta-auto">Everything here saves as you type &mdash; there is no ' +
       'Save button, and closing this panel keeps your settings.</p>' +
+      '<p class="ta-now" data-ta-now></p>' +
       '<div class="ta-row"><button type="button" data-ta-test>Test the voice now</button></div>' +
       '<p class="ta-health" data-ta-health></p>' +
       '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
@@ -658,6 +683,7 @@
         // to the user that sound works before they walk away from the desk.
         if (state.mode === "on") { armed = true; speak(phrase(new Date())); }
         applyMode();
+        savedFlash();
         return;
       }
       var k = ev.target.closest("[data-ta-keep]");
@@ -666,6 +692,7 @@
         applyKeepalive();
         save();
         paint();
+        savedFlash();
         return;
       }
       var e = ev.target.closest("[data-ta-every]");
@@ -673,6 +700,7 @@
         state.every = parseInt(e.getAttribute("data-ta-every"), 10) || 15;
         state.lastSlot = null;
         applyMode();
+        savedFlash();
         return;
       }
       if (ev.target.closest("[data-ta-custom]")) {
