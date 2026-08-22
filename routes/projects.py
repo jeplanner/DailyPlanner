@@ -171,6 +171,10 @@ def projects():
         all_tasks = get("project_tasks", params={
             "project_id": f"in.({ids_str})",
             "is_eliminated": "eq.false",
+            # Trashed work must not sit in the denominator either, or a
+            # project's completion percentage counts tasks the user has
+            # explicitly put in the bin.
+            "status": _NOT_LIVE_FILTER,
             "select": "project_id,status",
         }) or []
 
@@ -255,11 +259,10 @@ def project_tasks(project_id):
         "limit": 500,
     }
 
-    # Push filters to database
-    if hide_completed:
-        params["status"] = "neq.done"
+    # Push filters to database. ONE status filter, always — a task in the
+    # recycle bin must not also be in the list, whatever else is toggled.
+    params["status"] = _live_status_filter(also_hide_done=hide_completed or overdue_only)
     if overdue_only:
-        params["status"] = "neq.done"
         params["due_date"] = f"lt.{today.isoformat()}"
 
     raw_tasks = get("project_tasks", params=params) or []
@@ -548,6 +551,37 @@ def update_project_task_status():
 
 _PT_VALID_PRIORITIES = {"low", "medium", "high"}
 _PT_PRIORITY_RANK = {"high": 1, "medium": 2, "low": 3}
+#: Statuses the RECYCLE BIN claims. Anything here is not live work, and the
+#: project's task list must agree — see _NOT_LIVE_FILTER below.
+_PT_TRASHED_STATUSES = ("deleted", "skipped", "not_required")
+
+#: The filter that keeps the two in step.
+#:
+#: THE BUG THIS FIXES. The live list filtered ONLY on is_eliminated, while
+#: the trash page selects `status in (deleted, skipped, not_required) OR
+#: is_eliminated`. Setting a task to "deleted" happens to flip is_eliminated
+#: as well, so that case looked fine — but "skipped" does not, so a skipped
+#: task appeared in the project AND in its own recycle bin at the same time.
+#:
+#: Fixed by filtering on the STATUS rather than by making every writer
+#: remember to set a second flag. Two flags kept in sync by convention is
+#: precisely how they drift apart.
+_NOT_LIVE_FILTER = "not.in.(%s)" % ",".join(_PT_TRASHED_STATUSES)
+
+
+def _live_status_filter(also_hide_done=False):
+    """PostgREST filter for "still live", optionally hiding completed too.
+
+    Built as ONE filter because `status` is a single query parameter — a
+    second assignment silently replaces the first, which is how a
+    hide-completed toggle could have quietly undone this.
+    """
+    hidden = list(_PT_TRASHED_STATUSES)
+    if also_hide_done:
+        hidden.append("done")
+    return "not.in.(%s)" % ",".join(hidden)
+
+
 _PT_OPEN_STATUSES = {"open", "in_progress"}
 _PT_RESOLVED_STATUSES = {"done", "skipped", "deleted"}
 _PT_ALL_STATUSES = _PT_OPEN_STATUSES | _PT_RESOLVED_STATUSES

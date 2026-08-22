@@ -3351,3 +3351,51 @@ def test_backlog_agrees_with_the_bucket_page_about_future(auth_client, monkeypat
     assert "Pinned next week" in html, "a future-dated pin belongs in the backlog"
     assert "Pinned today" not in html, "today's work is not backlog"
     assert "Due in an hour" not in html, "a deadline bucket is not backlog"
+
+
+def test_a_trashed_project_task_is_not_also_in_the_live_list(auth_client, monkeypatch):
+    """The project's task list filtered ONLY on is_eliminated, while its
+    recycle bin selects `status in (deleted, skipped, not_required) OR
+    is_eliminated`. Setting a task to "deleted" happens to flip
+    is_eliminated too, so that case looked fine — but "skipped" does not, so
+    a skipped task appeared in the project AND in its own bin at once.
+
+    Fixed on the STATUS rather than by making every writer remember a second
+    flag: two flags kept in sync by convention is precisely how they drift.
+    """
+    import routes.projects as pr
+
+    live = pr._live_status_filter()
+    for s in ("deleted", "skipped", "not_required"):
+        assert s in live, f"{s} is in the bin but not excluded from the list"
+    assert "done" not in live, "completed work is still live unless hidden"
+
+    # `status` is a single query parameter, so a second assignment would
+    # silently replace the first — hence one combined filter.
+    both = pr._live_status_filter(also_hide_done=True)
+    assert "done" in both and "skipped" in both
+
+    captured = {}
+
+    def fake_get(table, params=None, **k):
+        if table == "project_tasks" and params and "order" in params:
+            captured["params"] = params
+        if table == "projects":
+            return [{"project_id": "p1", "name": "Office", "user_id": "u"}]
+        return []
+
+    monkeypatch.setattr(pr, "get", fake_get)
+    auth_client.get("/projects/p1/tasks")
+    assert "status" in captured.get("params", {}), "the list has no status filter"
+    assert "skipped" in captured["params"]["status"]
+
+
+def test_project_progress_excludes_binned_work():
+    """A completion percentage that counts tasks the user has explicitly put
+    in the bin is reporting on work that no longer exists."""
+    import inspect
+    import routes.projects as pr
+    src = inspect.getsource(pr.projects_page) if hasattr(pr, "projects_page") else \
+        open("routes/projects.py", encoding="utf-8").read()
+    block = src.split('"select": "project_id,status"')[0][-500:]
+    assert "_NOT_LIVE_FILTER" in block, "the denominator still counts binned tasks"
