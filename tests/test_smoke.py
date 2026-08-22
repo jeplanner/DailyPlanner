@@ -2669,3 +2669,105 @@ def test_day_board_strikes_out_anything_completed(auth_client, monkeypatch):
     assert "li.done .txt{text-decoration:line-through}" in html
     # Done is dimmed, not hidden.
     assert ".ev.done{opacity:.55" in html
+
+
+# ═══════════════════════════════════════════════════
+# Ticking a topic studied completes what it scheduled
+# ═══════════════════════════════════════════════════
+
+def test_marking_a_topic_studied_closes_its_task_event_and_bucket_row(auth_client, monkeypatch):
+    """Reported: ticking the checkbox on a prep page did not mark the item
+    complete on the Day Board or in the Quick Bucket.
+
+    It never could. The tick updated the STUDY record only, while scheduling
+    a topic writes three OTHER rows — a project task, a calendar event and a
+    bucket line — and none of them heard about it. The topic read done in
+    one place and outstanding in three.
+    """
+    import routes.interview_prep as ip
+    updates = []
+    monkeypatch.setattr(ip, "_find_prep_project", lambda u, b: "PROJ")
+    monkeypatch.setattr(ip, "get", lambda t, params=None, **k: (
+        [{"id": "EV1", "description": "AI/SDE prep — open the topic at /ai-sde"},
+         {"id": "EV2", "description": "Dentist, nothing to do with prep"}]
+        if t == "daily_events" else []))
+    monkeypatch.setattr(ip, "update",
+                        lambda t, params=None, json=None, **k: updates.append((t, params, json)))
+
+    r = auth_client.post("/api/prep/complete", json={
+        "bank": "ai_sde", "title": "Balanced Binary Tree", "done": True})
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+    tables = [t for t, _p, _j in updates]
+    assert "project_tasks" in tables and "daily_events" in tables and "quick_bucket" in tables
+
+    task = next(j for t, _p, j in updates if t == "project_tasks")
+    assert task["status"] == "done"
+    bucket = next(j for t, _p, j in updates if t == "quick_bucket")
+    assert bucket["is_done"] is True
+    # Clearing the Top-5 pins matches what the bucket's own done endpoint
+    # does — otherwise the row stays pinned and crossed out in today's panel.
+    assert bucket["top5_date"] is None and bucket["top5_position"] is None
+
+    # ONLY the prep-created calendar row. A real appointment that happens to
+    # share a title must be left alone.
+    ev_updates = [p for t, p, _j in updates if t == "daily_events"]
+    assert len(ev_updates) == 1
+    assert "EV1" in ev_updates[0]["id"]
+
+
+def test_unticking_a_topic_reopens_all_three(auth_client, monkeypatch):
+    """Un-ticking has to work, or a mis-click closes a topic for good."""
+    import routes.interview_prep as ip
+    updates = []
+    monkeypatch.setattr(ip, "_find_prep_project", lambda u, b: "PROJ")
+    monkeypatch.setattr(ip, "get", lambda t, params=None, **k: (
+        [{"id": "EV1", "description": "SQL prep — open the topic at /sql"}]
+        if t == "daily_events" else []))
+    monkeypatch.setattr(ip, "update",
+                        lambda t, params=None, json=None, **k: updates.append((t, params, json)))
+    auth_client.post("/api/prep/complete", json={
+        "bank": "sql", "title": "ORDER BY, and where NULL sorts", "done": False})
+
+    assert next(j for t, _p, j in updates if t == "project_tasks")["status"] == "open"
+    assert next(j for t, _p, j in updates if t == "daily_events")["status"] == "open"
+    b = next(j for t, _p, j in updates if t == "quick_bucket")
+    assert b["is_done"] is False and b["done_at"] is None
+
+
+def test_completing_a_never_scheduled_topic_is_not_an_error(auth_client, monkeypatch):
+    """Most topics are never put on a day. Ticking one of those has nothing
+    else to update, and must not create a project to find that out."""
+    import routes.interview_prep as ip
+    created = []
+    monkeypatch.setattr(ip, "_find_prep_project", lambda u, b: None)
+    monkeypatch.setattr(ip, "get", lambda *a, **k: [])
+    monkeypatch.setattr(ip, "update", lambda *a, **k: None)
+    monkeypatch.setattr(ip, "post", lambda *a, **k: created.append(a) or [{}])
+    r = auth_client.post("/api/prep/complete", json={
+        "bank": "java", "title": "HashMap internals", "done": True})
+    assert r.status_code == 200
+    assert r.get_json()["touched"]["tasks"] == 0
+    assert not created, "completing a topic created a project"
+
+    assert auth_client.post("/api/prep/complete",
+                            json={"bank": "java", "title": ""}).status_code == 400
+    assert auth_client.post("/api/prep/complete",
+                            json={"bank": "nope", "title": "x"}).status_code == 400
+
+
+def test_the_studied_checkbox_is_wired_without_hijacking_the_page():
+    """The pages disagree about the studied box (.q-prac on /ai-sde, a bare
+    input elsewhere), so it is matched by "a checkbox in a card that also has
+    a Plan button" — which is also how the bank and title are known.
+
+    Bound on CHANGE, not in the capture-phase click handler: that one stops
+    propagation and would prevent each page's own tick handler ever running.
+    """
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    assert "syncCompletion" in js
+    handler = js.split('root.addEventListener("change"')[1].split("});")[0]
+    assert 'box.type !== "checkbox"' in handler
+    # Our own bulk box must never be mistaken for the studied one.
+    assert 'classList.contains("prep-pickbox")' in handler
+    assert "stopPropagation" not in handler, "would break the page's own tick"

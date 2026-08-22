@@ -791,6 +791,105 @@ def _ai_sde_lookup(entry_id, title):
     return _prep_lookup("ai_sde", entry_id, title)
 
 
+@interview_prep_bp.route("/api/prep/complete", methods=["POST"])
+@login_required
+def prep_complete():
+    """Mark everything a scheduled topic created as done — or undo it.
+
+    Body: ``{bank, title, done}``
+
+    WHY THIS EXISTS. Ticking a topic as studied used to update only the
+    STUDY record (ai_sde_progress on /ai-sde, localStorage on /java and
+    /sql). But scheduling a topic writes THREE other rows — a project task,
+    a calendar event and a Quick Bucket line — and none of them heard about
+    it. So the Day Board went on showing the topic as outstanding and the
+    bucket went on listing it, after it had been done. The tick was true in
+    one place and false in three.
+
+    REVERSIBLE, because un-ticking has to work too. `done: false` puts all
+    three back to open rather than leaving a topic permanently closed after
+    a mis-click.
+
+    SILENT WHEN NOTHING WAS SCHEDULED. Most topics are never put on a day,
+    and ticking one of those is not an error — it just has nothing else to
+    update.
+    """
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+
+    bank = (data.get("bank") or "ai_sde").strip()
+    if bank not in PREP_BANKS:
+        return jsonify({"error": f"unknown bank {bank!r}"}), 400
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+    done = bool(data.get("done", True))
+
+    spec = PREP_BANKS[bank]
+    touched = {"tasks": 0, "events": 0, "bucket": 0}
+
+    # ── the project task ────────────────────────────────────────────
+    # Scoped to the bank's project so a same-named task elsewhere is not
+    # swept up. Uses the read-only lookup: completing a topic is not a
+    # reason to bring a project into existence.
+    project_id = _find_prep_project(user_id, bank)
+    if project_id:
+        try:
+            update("project_tasks",
+                   params={"user_id": f"eq.{user_id}",
+                           "project_id": f"eq.{project_id}",
+                           "task_text": _pg_eq(title),
+                           "is_deleted": "eq.false"},
+                   json={"status": "done" if done else "open"})
+            touched["tasks"] = 1
+        except Exception:
+            logger.warning("prep complete: task update failed for %r", title,
+                           exc_info=True)
+
+    # ── the calendar row ────────────────────────────────────────────
+    # Matched on title AND on the description the scheduler wrote, so a
+    # real appointment that happens to share a name is left alone.
+    try:
+        rows = get("daily_events", params={
+            "user_id": f"eq.{user_id}",
+            "title": _pg_eq(title),
+            "is_deleted": "eq.false",
+            "select": "id,description",
+            "limit": "200",
+        }) or []
+        for r in rows:
+            if spec["page"] not in (r.get("description") or ""):
+                continue
+            update("daily_events",
+                   params={"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
+                   json={"status": "done" if done else "open"})
+            touched["events"] += 1
+    except Exception:
+        logger.warning("prep complete: event update failed for %r", title,
+                       exc_info=True)
+
+    # ── the Quick Bucket line ───────────────────────────────────────
+    bucket_text = f"{spec['project']} · {title}"[:500]
+    try:
+        update("quick_bucket",
+               params={"user_id": f"eq.{user_id}",
+                       "text": _pg_eq(bucket_text),
+                       "is_deleted": "eq.false"},
+               json={"is_done": done,
+                     "done_at": _iso_now() if done else None,
+                     # Clear the Top-5 pins on completion, the same way the
+                     # bucket's own done endpoint does — otherwise the row
+                     # stays pinned and crossed out in today's panel.
+                     "top5_date": None, "top5_position": None})
+        touched["bucket"] = 1
+    except Exception:
+        logger.warning("prep complete: bucket update failed for %r", title,
+                       exc_info=True)
+
+    return jsonify({"status": "ok", "bank": bank, "title": title,
+                    "done": done, "touched": touched})
+
+
 @interview_prep_bp.route("/api/prep/scheduled", methods=["GET"])
 @login_required
 def prep_scheduled():

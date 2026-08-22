@@ -706,6 +706,53 @@
 
   var schedCache = {};
 
+  /* ══════════════════════════════════════════════════════════════════
+     TICKING A TOPIC AS STUDIED COMPLETES WHAT IT SCHEDULED
+
+     Reported: ticking the checkbox on a prep page did not mark the item
+     complete on the Day Board or in the Quick Bucket.
+
+     It never could. The tick updated the STUDY record only — ai_sde_progress
+     on /ai-sde, localStorage on /java and /sql — while scheduling a topic
+     writes three OTHER rows: a project task, a calendar event and a bucket
+     line. None of them heard about it, so the topic read done in one place
+     and outstanding in three.
+
+     WHICH CHECKBOX. The pages disagree about the studied box's class
+     (.q-prac on /ai-sde, a bare input elsewhere), so this matches any
+     checkbox inside a card that also carries a Plan button — which is how
+     the bank and title are known — and explicitly excludes the bulk-select
+     box this module adds itself.
+
+     FIRE AND FORGET, and deliberately so. The tick's own handler on each
+     page already does its work; this is a second effect that must not slow
+     the first down or fail it. If the network is gone, the study record is
+     still correct and the schedule catches up on the next tick.
+     ══════════════════════════════════════════════════════════════════ */
+
+  function syncCompletion(card, isDone) {
+    var btn = card.querySelector("[data-prep-plan]");
+    if (!btn) return;                       // not a schedulable card
+    var bank = btn.getAttribute("data-bank");
+    var title = btn.getAttribute("data-title");
+    if (!bank || !title) return;
+
+    fetch("/api/prep/complete", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+      body: JSON.stringify({ bank: bank, title: title, done: !!isDone }),
+    }).then(function () {
+      // The pill's wording depends on it ("Studied 22 Aug" rather than
+      // "Planned"), so refresh what we know rather than leaving it stale.
+      var info = schedCache[title];
+      if (info) {
+        info.status = isDone ? "done" : "open";
+        paintScheduled(bulk.root || card.closest("#list") || document, schedCache);
+      }
+    }).catch(function () { /* the study record is still right */ });
+  }
+
   var PrepScheduler = {
     /* HTML for the header button. `title` is the topic text and is what
        actually identifies it to the server; `entryId` is optional and is
@@ -731,6 +778,19 @@
       if (!root || root.dataset.prepSchedulerBound) return;
       root.dataset.prepSchedulerBound = "1";
       injectStyles();
+
+      /* The studied checkbox, on CHANGE rather than click, so a keyboard
+         toggle counts too. Not in the capture-phase click handler below,
+         because that one stops propagation and would prevent the host
+         page's own tick handler from ever running. */
+      root.addEventListener("change", function (ev) {
+        var box = ev.target;
+        if (!box || box.type !== "checkbox") return;
+        if (box.classList.contains("prep-pickbox")) return;   // ours, not theirs
+        var card = box.closest(".q-card");
+        if (!card || !root.contains(card)) return;
+        syncCompletion(card, box.checked);
+      });
 
       root.addEventListener("click", function (ev) {
         // The bulk checkbox, before anything else. It sits inside the card
