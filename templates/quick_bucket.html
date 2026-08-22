@@ -558,6 +558,12 @@
   }
   .qb-effort-field input:focus { border-color: var(--color-primary); }
 
+  .qb-backlog-link {
+    display: inline-block; margin: 0 0 12px; font-size: 12.5px; font-weight: 700;
+    text-decoration: none; color: var(--color-primary);
+  }
+  .qb-backlog-link:hover { text-decoration: underline; }
+
   /* ── Show one group at a time ── */
   .qb-groupfilter {
     display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 10px; padding: 0 2px;
@@ -1076,6 +1082,10 @@
      groups, so the chip tells you how much is in Future without switching
      to it. #}
   <div class="qb-groupfilter" id="qb-groupfilter"></div>
+  {# The Future chip above shows only the bucket's own deferred items. The
+     other half of the backlog is undated PROJECT tasks, which stay in their
+     projects — /backlog is the view that shows both together. #}
+  <a class="qb-backlog-link" href="/backlog">📋 Full backlog — bucket + undated project tasks →</a>
 
   <div class="qb-selbar" id="qb-selbar">
     <button type="button" class="qb-selbtn" id="qb-sel-toggle">Select</button>

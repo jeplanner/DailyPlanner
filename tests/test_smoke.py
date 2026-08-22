@@ -3235,3 +3235,119 @@ def test_quick_bucket_can_show_one_group_at_a_time(auth_client):
     # The default is everything — the everyday view must not change.
     state = js.split("let groupFilter =")[1][:40]
     assert '""' in state
+
+
+# ═══════════════════════════════════════════════════
+# /backlog — one view over two lists that stay put
+# ═══════════════════════════════════════════════════
+
+def _backlog_stub(monkeypatch, bucket=None, tasks=None, projects=None):
+    import routes.backlog as bk
+
+    def fake_get(table, params=None, **k):
+        if table == "quick_bucket":
+            return bucket or []
+        if table == "project_tasks":
+            return tasks or []
+        if table == "projects":
+            return projects or []
+        return []
+
+    monkeypatch.setattr(bk, "get", fake_get)
+
+
+def test_backlog_shows_both_lists_without_moving_anything(auth_client, monkeypatch):
+    """Asked for after the alternative — relocating project tasks into the
+    bucket — turned out to be destructive: project_tasks carries 40 columns
+    to quick_bucket's 21, and moving one drops its project, key result,
+    initiative, epic, sprint, priority and ordering. Project progress is
+    computed from live task counts too, so the move would silently change
+    the completion figure on every project involved.
+
+    It was a READING problem, so this reads both and writes nothing.
+    """
+    _backlog_stub(
+        monkeypatch,
+        bucket=[{"id": "b1", "text": "Renew passport", "time_bucket": "future",
+                 "due_at": None, "created_at": "2026-08-01"}],
+        tasks=[{"task_id": "t1", "task_text": "Revise the BCP/DR documentation",
+                "status": "open", "project_id": "p1", "due_date": "2026-04-06",
+                "created_at": "2026-01-01", "plan_date": None, "start_time": None}],
+        projects=[{"project_id": "p1", "name": "Office"}],
+    )
+    html = auth_client.get("/backlog").get_data(as_text=True)
+
+    assert "Renew passport" in html
+    assert "Revise the BCP/DR documentation" in html
+    # Grouped by project, and linking back to it — the grouping is the whole
+    # reason these stay where they are.
+    assert "Office" in html and "/projects/p1/tasks" in html
+    assert "nothing has been moved" in html.lower()
+
+    # It must not write. Ever.
+    import inspect
+    import routes.backlog as bk
+    src = inspect.getsource(bk)
+    for verb in ("post(", "update(", "delete("):
+        assert verb not in src, f"the backlog view calls {verb}"
+
+
+def test_backlog_excludes_finished_and_scheduled_work(auth_client, monkeypatch):
+    """A backlog is what is outstanding and undated. Anything closed, already
+    put on a day, or already in the project's recycle bin is not."""
+    tasks = [
+        {"task_id": "a", "task_text": "Open and undated", "status": "open",
+         "project_id": "p1", "created_at": "1", "plan_date": None, "start_time": None},
+        {"task_id": "b", "task_text": "Already done", "status": "done",
+         "project_id": "p1", "created_at": "1", "plan_date": None, "start_time": None},
+        {"task_id": "c", "task_text": "Has a day", "status": "open",
+         "project_id": "p1", "created_at": "1", "plan_date": "2026-08-22", "start_time": None},
+        {"task_id": "d", "task_text": "Has a time", "status": "open",
+         "project_id": "p1", "created_at": "1", "plan_date": None, "start_time": "09:00"},
+        {"task_id": "e", "task_text": "Backlog status counts", "status": "backlog",
+         "project_id": "p1", "created_at": "1", "plan_date": None, "start_time": None},
+    ]
+    _backlog_stub(monkeypatch, tasks=tasks,
+                  projects=[{"project_id": "p1", "name": "Office"}])
+    html = auth_client.get("/backlog").get_data(as_text=True)
+
+    assert "Open and undated" in html
+    assert "Backlog status counts" in html
+    assert "Already done" not in html
+    assert "Has a day" not in html
+    assert "Has a time" not in html
+
+    # is_eliminated is the flag the projects UI treats as removed — the task
+    # list does not even filter on is_deleted.
+    import inspect
+    import routes.backlog as bk
+    src = inspect.getsource(bk._undated_project_tasks)
+    assert '"is_eliminated": "eq.false"' in src
+    assert "is_deleted" not in src.split('"""')[2]
+
+
+def test_backlog_agrees_with_the_bucket_page_about_future(auth_client, monkeypatch):
+    """quick_bucket.js puts an "at" item into Future when its pinned time is
+    beyond today. This copies that rule rather than inventing one — three
+    divergent copies of the checklist schedule rule already cost this
+    codebase a bug that ran for months."""
+    from datetime import timedelta
+    from utils.user_tz import user_today
+    today = user_today()
+    _backlog_stub(monkeypatch, bucket=[
+        {"id": "1", "text": "Deferred outright", "time_bucket": "future",
+         "due_at": None, "created_at": "3"},
+        {"id": "2", "text": "Pinned next week", "time_bucket": "at",
+         "due_at": (today + timedelta(days=7)).isoformat() + "T09:00:00+00:00",
+         "created_at": "2"},
+        {"id": "3", "text": "Pinned today", "time_bucket": "at",
+         "due_at": today.isoformat() + "T09:00:00+00:00", "created_at": "1"},
+        {"id": "4", "text": "Due in an hour", "time_bucket": "1h",
+         "due_at": None, "created_at": "0"},
+    ])
+    html = auth_client.get("/backlog").get_data(as_text=True)
+
+    assert "Deferred outright" in html
+    assert "Pinned next week" in html, "a future-dated pin belongs in the backlog"
+    assert "Pinned today" not in html, "today's work is not backlog"
+    assert "Due in an hour" not in html, "a deadline bucket is not backlog"
