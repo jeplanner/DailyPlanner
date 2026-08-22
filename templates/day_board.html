@@ -217,9 +217,10 @@ li.done .txt{text-decoration:line-through}
    measures it like any other; it is styled to read as a rule, not an item. */
 li.band{
   display:flex; align-items:baseline; gap:calc(var(--u) * .4);
-  margin-top:calc(var(--u) * .5); padding-bottom:calc(var(--u) * .1);
+  margin-top:calc(var(--u) * .45);
+  padding:0 0 calc(var(--u) * .05);
   border-bottom:1px solid var(--line); color:var(--dim);
-  font-size:calc(var(--u) * .72); font-weight:700;
+  font-size:calc(var(--u) * .7); font-weight:700; line-height:1.1;
   letter-spacing:.06em; text-transform:uppercase;
 }
 li.band:first-child{margin-top:0}
@@ -273,6 +274,9 @@ li.done .when{color:var(--dim); font-weight:500}
         <input type="date" id="pick" value="{{ plan_date.isoformat() }}"
                aria-label="Choose a day to display">
       </span>
+      <button class="ico" id="size" aria-live="polite"
+              aria-label="Text size"
+              title="Text size — bigger type, fewer rows (press A)">A</button>
       {% if not is_today %}
       <button class="ico wide" id="today" title="Back to today (T)">Today</button>
       {% endif %}
@@ -445,7 +449,41 @@ li.done .when{color:var(--dim); font-weight:500}
   // one-dimensional search for the largest --u at which nothing overflows.
   // Binary search rather than a decrementing loop: ~7 measurements instead
   // of ~40, which matters because each one forces a layout.
-  var MIN_U = 5.5, MAX_U = 22;
+  var MAX_U = 22;
+
+  // A FLOOR YOU CAN ACTUALLY READ.
+  //
+  // This was a flat 5.5px, which is not a floor — it is a cliff. Because
+  // --u is ONE scale for the whole board, the single tallest column sets
+  // the type size of every other one, and the search would rather render
+  // 5.8px list text than admit the day does not fit. So adding a few rows
+  // to the checklist shrank the CALENDAR, on a 27" monitor, to something
+  // you have to lean in to read. A board you lean in to read is not a board.
+  //
+  // Below the floor the honest move is to TRUNCATE, which this page already
+  // knows how to do and says out loud ("+3 more"). Hiding three items and
+  // saying so beats shrinking twenty to illegibility and saying nothing.
+  //
+  // Derived from viewport height rather than fixed, because the floor is
+  // about how much room there is, not about what device it is: a tall
+  // desktop pane can afford bigger minimum type than a short phone.
+  function floorU() {
+    var vh = window.innerHeight || 800;
+    var auto = Math.max(9, Math.min(12.5, vh / 75));
+    return auto * SIZES[sizeIdx];
+  }
+
+  // ...and because "readable" is a fact about EYES, not about pixels, the
+  // floor is adjustable and remembered. Nudge it up and the board keeps the
+  // type big and hides the tail honestly; nudge it down to see more at once.
+  var SIZES = [0.82, 1, 1.22, 1.5], SIZE_NAMES = ["S", "M", "L", "XL"];
+  var sizeIdx = 1;
+  try {
+    var saved = parseInt(localStorage.getItem("dp-board-size"), 10);
+    if (saved >= 0 && saved < SIZES.length) sizeIdx = saved;
+  } catch (e) { /* private mode: fall back to M */ }
+
+  var MIN_U = 10;
 
   function overflows() {
     var lists = document.querySelectorAll("[data-fit]");
@@ -462,6 +500,8 @@ li.done .when{color:var(--dim); font-weight:500}
   }
 
   function fit() {
+    MIN_U = floorU();               // the viewport may have changed under us
+
     // Reveal everything first, so the search measures the true content height
     // rather than a previous pass's truncation.
     document.querySelectorAll("[data-fit] > li").forEach(function (li) {
@@ -577,6 +617,19 @@ li.done .when{color:var(--dim); font-weight:500}
   // ── WIRING ──────────────────────────────────────────────────────────
   function refit() { fit(); }
 
+  var sizeBtn = document.getElementById("size");
+  function paintSize() {
+    if (sizeBtn) sizeBtn.textContent = "A" + SIZE_NAMES[sizeIdx];
+  }
+  function cycleSize() {
+    sizeIdx = (sizeIdx + 1) % SIZES.length;
+    try { localStorage.setItem("dp-board-size", String(sizeIdx)); } catch (e) {}
+    paintSize();
+    fit();
+  }
+  paintSize();
+  if (sizeBtn) sizeBtn.addEventListener("click", cycleSize);
+
   window.addEventListener("resize", debounce(refit, 120));
   window.addEventListener("orientationchange", function () {
     setTimeout(refit, 220);          // wait for the new viewport to settle
@@ -676,6 +729,7 @@ li.done .when{color:var(--dim); font-weight:500}
     if (e.key === "ArrowLeft")  goTo("{{ prev_date }}");
     if (e.key === "ArrowRight") goTo("{{ next_date }}");
     if (e.key === "t" || e.key === "T") goTo(null);
+    if (e.key === "a" || e.key === "A") cycleSize();
     if (e.key === "Escape") location.href = "/summary?view=daily";
   });
 })();
