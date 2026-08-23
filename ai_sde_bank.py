@@ -367400,6 +367400,948 @@ regulariser there is, and it costs nothing.
   dependent rather than fixed. That makes runs slightly less reproducible,
   which matters if you are comparing configurations."""
 
+_ANSWER_V2["Zero-shot / few-shot / in-context learning"] = """Give the model the task in the prompt instead of retraining it - zero
+examples, a handful, or many, with no weight ever changing.
+
+· ZERO-SHOT — describe the task and ask. "Classify the sentiment of this
+  review." Works because instruction-tuned models have seen enormous numbers
+  of task descriptions during training.
+· FEW-SHOT — include a few worked examples in the prompt, then the real
+  input. Typically 3 to 10, and the gain over zero-shot is largest on tasks
+  with an unusual output format.
+· IN-CONTEXT LEARNING is the name for the underlying phenomenon: the model
+  adapts its behaviour from the prompt alone. Nothing is learned in the
+  training sense — close the conversation and it is gone.
+· WHY IT WORKS AT ALL, which is still not fully settled: the examples appear
+  to select and locate an ability the model already has rather than teaching
+  a new one. That framing predicts the observed behaviour better than
+  "learning".
+· THE SURPRISING FINDING — the FORMAT of the examples matters more than
+  their correctness. Deliberately mislabelled examples still improve results,
+  because they demonstrate the shape of the answer rather than the mapping.
+· WHAT FEW-SHOT IS ACTUALLY BEST FOR — pinning the output format, the tone,
+  the level of detail, and the edge cases. Those are exactly the things hard
+  to describe and easy to show.
+· THE COSTS — every example is input tokens on every request, so it is money
+  and latency. If your prompt has grown to fifteen examples, that is the
+  signal to consider fine-tuning instead.
+· THE ORDER TO TRY THINGS — zero-shot, then few-shot, then retrieval, then
+  fine-tuning. Each step costs more and is less flexible than the one before,
+  so stopping early is a win rather than a compromise.
+· EXAMPLE SELECTION matters more than example count past about five.
+  Retrieving examples SIMILAR to the current input beats a fixed set, which
+  is few-shot and RAG meeting in the middle."""
+
+_ANSWER_V2["Few-shot vs zero-shot learning"] = \
+    _ANSWER_V2["Zero-shot / few-shot / in-context learning"]
+
+_ANSWER_V2["Sliding Window Maximum (deque)"] = """Keep a deque of INDICES whose values decrease - the front is always the
+maximum of the current window.
+
+· THE PROBLEM — for every window of size k, report the maximum. The naive
+  answer rescans each window for O(n·k).
+· THE INSIGHT — if a value enters the window and something smaller is already
+  waiting behind it, that smaller value can NEVER be the maximum again. It is
+  younger and smaller, so it is dominated on both counts and can be discarded
+  permanently.
+· THE STRUCTURE — a double-ended queue holding indices, kept so their values
+  are strictly decreasing from front to back.
+· THE THREE STEPS per element. Pop from the BACK while the back's value is
+  smaller than the incoming one (they are now dominated). Push the new index.
+  Pop from the FRONT if it has fallen out of the window.
+· WHY INDICES AND NOT VALUES — you need to know when an entry expires, and
+  that is a question about position, not value.
+· THE ANSWER IS ALWAYS deque[0], once the window is full. That is the whole
+  payoff of maintaining the order.
+· WHY IT IS O(n) despite the inner while — each index is pushed once and
+  popped once, so the total work is 2n regardless of k.
+· THE HAND TRACE on [1,3,-1,-3,5,3,6,7] with k = 3: the maxima are
+  3, 3, 5, 5, 6, 7. Watch 1 being discarded the moment 3 arrives.
+· THE ALTERNATIVE — a max-heap gives O(n log k) and needs lazy deletion for
+  expired entries. Correct, slower, and more code. Offer it, then give the
+  deque."""
+
+_ANSWER_V2["Caching strategies"] = """A cache trades staleness for speed, so every strategy is really a decision
+about WHO writes, WHEN, and what happens when it is wrong.
+
+· CACHE-ASIDE (lazy loading) — the application checks the cache, and on a miss
+  reads the database and populates it. Simple, resilient (a cache failure
+  degrades to slow rather than broken), and the first request for anything is
+  always slow.
+· READ-THROUGH — the cache itself fetches on a miss. The application only ever
+  talks to the cache, which is tidier and couples you to a cache that
+  understands your storage.
+· WRITE-THROUGH — write to cache and database together. The cache is never
+  stale; every write pays both latencies.
+· WRITE-BEHIND (write-back) — write to the cache and flush to the database
+  later. Fastest writes, and a cache crash loses data that was acknowledged.
+  Only acceptable where losing recent writes is survivable.
+· WRITE-AROUND — write straight to the database and let the cache fill on the
+  next read. Good when writes are rarely read back soon after.
+· THE EVICTION POLICIES — LRU is the default and works because access is
+  usually temporally clustered. LFU suits stable popularity. TTL is the
+  simplest and often the right answer, because it bounds staleness by
+  construction.
+· INVALIDATION IS THE HARD PART, and the honest framing. Deleting the key on
+  write is simpler and safer than updating it, because an update can race with
+  a concurrent read and leave the WRONG value cached permanently.
+· THE THREE FAILURE MODES worth naming. STAMPEDE: a popular key expires and a
+  thousand requests hit the database at once — fix with a lock or a
+  probabilistic early refresh. PENETRATION: repeated requests for a key that
+  does not exist — cache the negative result. AVALANCHE: many keys expiring
+  together — jitter the TTLs.
+· WHERE CACHES LIVE — browser, CDN, application memory, a shared Redis, and
+  the database's own buffer pool. Naming the layer you mean is half of a good
+  answer."""
+
+_ANSWER_V2["Why does XOR let you find a unique number in O(1) space?"] = """Because XOR is its own inverse and order-independent, so duplicates cancel
+themselves out no matter where they sit.
+
+· THE THREE PROPERTIES that do all the work. x ^ x = 0, so a pair vanishes.
+  x ^ 0 = x, so zero is harmless. And XOR is commutative and associative, so
+  the ORDER of the array does not matter.
+· WHY ORDER-INDEPENDENCE IS THE KEY ONE — the duplicates are not adjacent, and
+  they do not need to be. Every pair cancels wherever it appears, which is why
+  no sorting and no bookkeeping is required.
+· THE ALGORITHM — XOR the whole array into a single accumulator. Whatever
+  remains is the unpaired value. One variable, one pass.
+· WHY IT IS O(1) SPACE — you never store what you have seen. A hash set would
+  also be O(n) time and would cost O(n) memory to remember every element; XOR
+  remembers only the running cancellation.
+· WHAT XOR ACTUALLY IS, since it is worth defining — bitwise "different". Each
+  output bit is 1 exactly when the two input bits differ, which is why
+  identical numbers produce all zeros.
+· THE LIMIT — it only cancels PAIRS. If every element appears three times, XOR
+  gives nothing useful, and you need bit-counting modulo 3 instead.
+· TWO UNIQUE ELEMENTS is the elegant extension: XOR everything to get a ^ b,
+  isolate any set bit with x & -x (that bit must differ between them), split
+  the array into the group with that bit and the group without, and XOR each
+  group separately.
+· THE FAMILY — Single Number, Missing Number, Find the Duplicate, and swapping
+  two variables without a temporary. Recognising "cancellation" as the tool is
+  what transfers."""
+
+_ANSWER_V2["Implement a Queue using two Stacks"] = """One stack takes the pushes, the other serves the pops - and you only move
+elements between them when the output stack runs dry.
+
+· THE PROBLEM — a stack is last-in-first-out and a queue is first-in-first-out.
+  Reversing once gives the right order; the trick is not reversing every time.
+· THE STRUCTURE — an IN stack and an OUT stack. Push always goes to IN.
+· POP — if OUT is empty, pour ALL of IN into OUT (which reverses it), then pop
+  from OUT. If OUT is not empty, just pop it.
+· THE CRITICAL RULE — only transfer when OUT is EMPTY. Transferring while OUT
+  still holds elements interleaves old and new and breaks the order entirely.
+  This one condition is the whole question.
+· WHY IT IS AMORTISED O(1) — each element is pushed to IN once, moved to OUT
+  once, and popped once. Three operations per element over its lifetime, so
+  the average is constant even though one particular pop can cost O(n).
+· AMORTISED, NOT WORST CASE, and say so. A single pop that triggers a transfer
+  of a thousand elements is O(n). It is the SEQUENCE that averages out, which
+  is exactly what amortised analysis describes.
+· PEEK works the same way — ensure OUT is populated, then look at its top.
+· THE HAND TRACE — push 1,2,3 (IN = [1,2,3]). Pop: OUT is empty so pour, OUT
+  = [3,2,1], pop gives 1. Push 4 (IN = [4]). Pop takes 2 from OUT, not 4,
+  which is the ordering the transfer rule protects.
+· THE MIRROR PROBLEM, Stack using two Queues, is harder and genuinely O(n) on
+  one operation — there is no equivalent amortisation, which is worth knowing
+  so you do not claim there is."""
+
+_ANSWER_V2["Encoder-decoder (seq2seq)"] = """One network reads the whole input, another writes the output while looking
+back at it - the shape for turning one sequence into a different one.
+
+· THE ENCODER reads the input bidirectionally and produces a representation of
+  it. It has seen everything before the decoder writes a single token.
+· THE DECODER generates left to right, attending both to what it has written
+  so far (self-attention) and to the encoder's output (CROSS-attention).
+· CROSS-ATTENTION IS THE JOIN, and the part worth naming precisely: the
+  queries come from the decoder, the keys and values from the encoder. That is
+  how "what am I writing now" gets matched against "what did the input say".
+· THE ORIGINAL BOTTLENECK — early seq2seq compressed the entire input into one
+  fixed vector, and quality collapsed on long inputs. Attention removed that
+  by letting the decoder look at every input position directly, and that fix
+  is what the transformer generalised.
+· WHAT IT SUITS — translation, summarisation, speech to text, and any task
+  with a genuinely separate input and output sequence of different lengths.
+· TEACHER FORCING during training — feed the CORRECT previous token rather
+  than the model's own guess, so a single early mistake does not corrupt the
+  whole sequence. It trains faster and creates exposure bias, since inference
+  has no correct token to feed.
+· WHY DECODER-ONLY MODELS TOOK OVER — one stack, one objective, simpler to
+  scale, and almost any task can be phrased as continuing text. Encoder-decoder
+  remains competitive per parameter on true seq2seq benchmarks, which is worth
+  saying rather than declaring it obsolete.
+· THE FAMILIES — T5 and BART are encoder-decoder; BERT is encoder-only; GPT is
+  decoder-only. Being able to place a model in the right box is most of what
+  this question checks."""
+
+_ANSWER_V2["Sharding vs Replication"] = """Replication makes COPIES of the same data; sharding SPLITS different data
+across machines. They solve opposite problems and are usually used together.
+
+· REPLICATION — the same data on several machines. It buys read throughput
+  (spread reads across replicas), availability (a replica takes over) and
+  durability. It does NOT help write throughput, because every write still has
+  to reach every copy.
+· SHARDING — different rows on different machines, split by a shard key. It
+  buys write throughput and storage capacity, because each machine owns only
+  its slice. It does not help availability at all — losing a shard loses that
+  data unless it is also replicated.
+· THE ONE-LINE TEST — too many reads, replicate. Too many writes or too much
+  data, shard.
+· THE SHARD KEY IS THE WHOLE DESIGN. Hash-based spreads evenly and destroys
+  range queries. Range-based keeps ranges together and creates HOTSPOTS if the
+  data is skewed — sharding by date means today's shard takes every write.
+· THE CROSS-SHARD PROBLEM — a query touching several shards has to fan out and
+  merge, and a transaction spanning shards needs two-phase commit or has to be
+  redesigned away. Pick a key that keeps things queried together on one shard.
+· RESHARDING IS THE PAINFUL PART, and consistent hashing exists to make it
+  bearable: adding a machine moves a fraction of keys rather than remapping
+  everything.
+· REPLICATION LAG is the trap on the read side — a write to the primary is not
+  instantly on the replicas, so a user can save something and not see it.
+  Read-your-own-writes is fixed by routing that user's reads to the primary
+  for a while.
+· IN PRACTICE YOU DO BOTH — shard for capacity, replicate each shard for
+  safety. Saying that plainly is the complete answer, and reaching for only
+  one is the incomplete one."""
+
+_ANSWER_V2["Load balancing"] = """Spread requests across servers so no one of them is the bottleneck - and the
+interesting decisions are health checks and stickiness, not the algorithm.
+
+· THE ALGORITHMS — ROUND ROBIN (simple, ignores load), LEAST CONNECTIONS
+  (better when request cost varies), WEIGHTED (for uneven machines), IP HASH
+  (the same client always lands on the same server), and RANDOM TWO CHOICES
+  (pick two at random, take the less loaded — surprisingly close to optimal
+  and far cheaper to compute).
+· LAYER 4 VS LAYER 7 — L4 balances TCP connections and is fast and blind. L7
+  reads the HTTP request, so it can route by path, host or header, terminate
+  TLS and cache. L7 costs more per request and is what most application
+  traffic uses.
+· HEALTH CHECKS ARE THE REAL FEATURE. A balancer without them faithfully sends
+  traffic to a dead machine. ACTIVE checks poll an endpoint; PASSIVE checks
+  watch real responses and eject on errors.
+· THE HEALTH ENDPOINT MUST MEAN SOMETHING — returning 200 unconditionally
+  makes the check decorative. It should verify the dependencies the request
+  path actually needs, and there is a real distinction between LIVENESS (am I
+  running) and READINESS (can I serve).
+· STICKY SESSIONS route a user to the same server so in-memory state survives.
+  It works and it is a smell: it defeats even balancing, breaks on deploys,
+  and the better answer is usually stateless servers with session state in
+  Redis.
+· DRAINING on deploy — stop sending new requests, let in-flight ones finish,
+  then stop the server. Without it every deploy drops requests.
+· BEYOND ONE BALANCER — DNS round robin and anycast spread across regions, and
+  the balancer itself needs redundancy or it is the single point of failure it
+  was meant to remove.
+· THE PATTERNS THAT PAIR WITH IT — circuit breakers so a failing dependency is
+  not hammered, and backpressure so an overloaded pool rejects fast rather
+  than queueing until everything times out."""
+
+_ANSWER_V2["Why can two O(n log n) sorts (merge sort vs quicksort) perform so differently?"] = """Because big-O hides the constant, and the constant here is dominated by memory
+behaviour rather than comparisons.
+
+· CACHE LOCALITY IS THE MAIN REASON. Quicksort partitions IN PLACE, walking
+  memory sequentially, so almost every access is already in cache. Merge sort
+  writes into a separate array and reads back, so it moves far more memory and
+  misses cache more often.
+· ALLOCATION — merge sort needs O(n) extra space, and allocating it costs time
+  and pressures the memory system. Quicksort needs O(log n) stack and nothing
+  else.
+· FEWER MOVES — quicksort's partition swaps elements at most once per pass,
+  while merge sort copies every element at every level. Same number of
+  comparisons, very different amounts of data movement.
+· THE COUNTER-CASE, which is why the answer is not "quicksort is faster":
+  quicksort's worst case is O(n²) on an adversarial or already-sorted input
+  with a naive pivot. Merge sort is O(n log n) guaranteed, always.
+· PREDICTABILITY MATTERS in a real-time or safety-critical system, where a
+  guaranteed bound beats a better average. That is a design decision, not a
+  performance one.
+· LINKED LISTS INVERT THE ANSWER — merge sort is the right choice there,
+  because merging needs no random access and can relink in O(1) extra space,
+  while quicksort's partition needs indexing.
+· STABILITY — merge sort keeps equal elements in order and quicksort does not.
+  If you are sorting by a second key, that is decisive regardless of speed.
+· WHAT LIBRARIES ACTUALLY DO tells you the answer is "both": introsort starts
+  with quicksort, switches to heapsort if recursion goes too deep (killing the
+  O(n²) case), and finishes with insertion sort on small runs. Timsort, used by
+  Python and Java for objects, is merge sort that detects already-sorted runs.
+· THE GENERAL LESSON — asymptotic complexity ranks algorithms as n grows. It
+  says nothing about the constant, and on real hardware the constant is mostly
+  about memory."""
+
+_ANSWER_V2["Prompt engineering"] = """Writing the input so the model can succeed - mostly being specific about the
+task, the format and the constraints, rather than finding magic words.
+
+· BE SPECIFIC ABOUT THE TASK. "Summarise this" is a wish; "summarise this in
+  three bullet points for a non-technical reader, each under 20 words" is a
+  specification. Most bad output is an underspecified prompt.
+· GIVE THE MODEL A ROLE only when it genuinely narrows the space. "You are a
+  senior SQL reviewer" sets vocabulary and priorities; "you are a brilliant
+  genius" sets nothing.
+· SHOW THE FORMAT rather than describing it. One example of the exact output
+  shape beats a paragraph explaining it, and this is what few-shot prompting is
+  actually best at.
+· PUT THE INSTRUCTION WHERE IT WILL BE READ — models attend most reliably to
+  the START and END of a long context. Instructions buried between two long
+  documents are measurably weaker.
+· DELIMIT UNTRUSTED CONTENT clearly, and label it as data. It does not stop
+  prompt injection, and it does reduce accidental instruction-following.
+· ASK FOR REASONING when the task needs steps, and not otherwise. It costs
+  tokens and latency, and on a simple classification it can talk the model out
+  of a correct answer.
+· GIVE IT AN EXIT. "If the context does not answer the question, say you do
+  not know" is the single highest-value line in a RAG prompt, because the
+  default behaviour is to invent something plausible.
+· CONSTRAIN THE OUTPUT — a JSON schema, an enum of allowed labels, a word
+  limit. Anything you have to parse should be constrained rather than hoped
+  for.
+· TREAT PROMPTS AS CODE. Version them, keep a golden set of inputs, and re-run
+  it on every change. A prompt edit is a deploy, and the only reason it does
+  not feel like one is that nothing compiles."""
+
+_ANSWER_V2["ROUGE"] = """Measures how much of the REFERENCE the generated summary covers - it is
+recall-oriented, which is what makes it a summarisation metric.
+
+· THE NAME — Recall-Oriented Understudy for Gisting Evaluation. The
+  recall-oriented part is the whole design.
+· ROUGE-N counts overlapping n-grams between the candidate and the reference,
+  divided by the n-grams in the REFERENCE. ROUGE-1 is unigrams, ROUGE-2
+  bigrams.
+· WHY RECALL AND NOT PRECISION — a summary is judged on whether it captured
+  the important content. Leaving something out is the characteristic failure,
+  so the denominator is the reference.
+· ROUGE-L uses the longest common subsequence, so it rewards the right words
+  in the right ORDER without requiring them to be contiguous. Usually the most
+  informative of the three.
+· THE CONTRAST WITH BLEU — BLEU is precision-oriented and was designed for
+  translation, where saying something not in the reference is the
+  characteristic failure. Same family of counting, opposite direction, because
+  the tasks fail differently.
+· THE FUNDAMENTAL LIMITATION — it counts word overlap. A perfect paraphrase
+  using different words scores badly, and a fluent nonsense summary made of
+  reference words scores well. It cannot see meaning.
+· MULTIPLE REFERENCES help, because they capture some of the legitimate
+  variation, and collecting them is expensive.
+· WHAT IS USED NOW — BERTScore compares embeddings rather than tokens, and
+  LLM-as-judge with a rubric correlates better with humans than either. ROUGE
+  survives because it is cheap, deterministic and comparable across papers.
+· HOW TO USE IT HONESTLY — as a regression detector between versions of YOUR
+  system, not as an absolute measure of quality. A ROUGE score with no
+  baseline beside it means nothing."""
+
+_ANSWER_V2["Lowest Common Ancestor of a BST"] = """Walk down from the root: if both values are smaller go left, if both are
+larger go right, and the moment they SPLIT you are standing on the answer.
+
+· WHAT LCA MEANS — the deepest node that has both targets in its subtree. A
+  node counts as its own ancestor, which is the edge case people miss.
+· WHY THE BST MAKES IT EASY — the values tell you which way to go. In a plain
+  binary tree you must search both subtrees; here you never explore a branch
+  that cannot contain them.
+· THE ALGORITHM — from the current node: if both p and q are less than it,
+  recurse left. If both are greater, recurse right. Otherwise return it.
+· WHY THE SPLIT POINT IS THE ANSWER — if one target is on each side (or one IS
+  the current node), then no node further down can contain both. This is the
+  first and therefore lowest such node.
+· WRITE IT ITERATIVELY — a simple while loop, O(1) space. There is no
+  bookkeeping to justify recursion here.
+· COST — O(h) time where h is the height, so O(log n) on a balanced tree.
+  Compare with O(n) for the general binary-tree version, and say why.
+· THE HAND TRACE on a BST rooted at 6 with p = 2 and q = 8: both are not on
+  the same side of 6, so 6 is the answer immediately.
+· THE ONE-IS-AN-ANCESTOR CASE — p = 2, q = 4 in a subtree rooted at 2. Both
+  are not less than 2 and both are not greater, so it returns 2 correctly. No
+  special case needed, which is worth pointing out.
+· THE GENERAL BINARY TREE VERSION is the natural follow-up: recurse both
+  sides, and a node whose left and right calls both return non-null is the
+  LCA. Know both and know why they differ."""
+
+_ANSWER_V2["Silhouette score"] = """For each point, how much closer it is to its own cluster than to the nearest
+other one - a way to judge clustering without labels.
+
+· THE FORMULA per point — (b - a) / max(a, b), where a is the mean distance to
+  other points in its OWN cluster and b is the mean distance to the points of
+  the NEAREST other cluster. The score is the average over all points.
+· THE RANGE — +1 means comfortably inside its own cluster, 0 means sitting on a
+  boundary, and NEGATIVE means it is closer to another cluster than its own,
+  which is a point that has probably been assigned wrongly.
+· WHY IT EXISTS — clustering is unsupervised, so there are no labels to score
+  against. Silhouette judges the geometry: are the clusters tight and are they
+  apart?
+· THE MAIN USE — choosing k. Compute the score for k = 2, 3, 4... and take the
+  peak. More principled than the elbow method, which asks you to eyeball a bend
+  in a curve.
+· PLOT THE PER-POINT SCORES, not just the average. A good average can hide one
+  cluster that is entirely negative, and that is the actionable finding.
+· THE ASSUMPTION IT SMUGGLES IN — it favours CONVEX, roughly equal-sized,
+  well-separated clusters. Two interlocking crescents are correctly clustered
+  by DBSCAN and score badly here, so a low silhouette does not always mean bad
+  clustering.
+· THE COST — O(n²) distances, which is prohibitive on large datasets. Sample
+  it rather than skipping it.
+· THE ALTERNATIVES — Davies-Bouldin (lower is better) and Calinski-Harabasz
+  (higher is better) are cheaper; adjusted Rand index and normalised mutual
+  information are for when you DO have ground truth.
+· THE HONEST FRAMING — internal metrics measure geometry, not usefulness. The
+  real test of a clustering is whether the clusters mean something to the
+  people who will use them."""
+
+_ANSWER_V2["Triplet loss"] = """Train on three things at once - an anchor, something that matches it, and
+something that does not - and push the match closer than the mismatch by a
+margin.
+
+· THE SETUP — anchor A, positive P (same identity or meaning), negative N
+  (different). The loss is max(0, d(A,P) - d(A,N) + margin).
+· WHAT THE MARGIN DOES — it demands the negative be not merely further but
+  further BY A SET AMOUNT. Without it the model can satisfy the loss with a
+  vanishingly small gap, which generalises badly.
+· WHEN THE LOSS IS ZERO the triplet already satisfies the margin and
+  contributes NO gradient. That single fact is why mining matters: most random
+  triplets are already easy and teach nothing.
+· THE THREE KINDS OF TRIPLET. EASY: already correct with margin, useless.
+  HARD: the negative is closer than the positive, most informative and
+  unstable. SEMI-HARD: the negative is further than the positive but inside
+  the margin — the sweet spot, and what FaceNet used.
+· THE COLLAPSE FAILURE — training only on the hardest triplets can drive every
+  embedding to the same point, which satisfies nothing and is a local minimum
+  the optimiser genuinely finds. Semi-hard mining exists to avoid it.
+· BATCH-HARD MINING is the practical recipe — form batches with several
+  examples per class, then within each batch pick the hardest positive and
+  hardest negative for each anchor. Mining for free from data you already
+  loaded.
+· WHERE IT IS USED — face recognition, signature verification, person
+  re-identification, and any retrieval task where the classes are open-ended
+  and a fixed softmax layer cannot work.
+· VERSUS CONTRASTIVE LOSS (InfoNCE) — triplet uses one negative per anchor;
+  InfoNCE uses many at once and generally trains faster and more stably. Most
+  modern embedding work uses the latter, which is worth saying.
+· THE OUTPUT is an embedding space where distance means similarity — the same
+  thing every vector search in production relies on."""
+
+_ANSWER_V2["Rotate Array by k (reversal trick)"] = """Reverse the whole array, then reverse the two pieces - three reversals and
+you have rotated it in place.
+
+· THE PROBLEM — move every element k positions to the right, wrapping around,
+  using O(1) extra space.
+· THE THREE STEPS. Reverse the entire array. Reverse the first k elements.
+  Reverse the remaining n - k.
+· WHY IT WORKS — reversing the whole array puts the last k elements at the
+  front, but backwards. Reversing each section separately puts them right way
+  round again. Two wrongs, precisely arranged.
+· THE HAND TRACE on [1,2,3,4,5,6,7] with k = 3. Reverse all: [7,6,5,4,3,2,1].
+  Reverse the first 3: [5,6,7,4,3,2,1]. Reverse the last 4: [5,6,7,1,2,3,4].
+· k MUST BE REDUCED FIRST — k %= n. Rotating by n is a no-op, and a k larger
+  than n otherwise indexes past the end. This is the line that most wrong
+  answers omit.
+· THE ALTERNATIVES and their costs — an extra array is O(n) space and trivially
+  correct; rotating one step k times is O(n·k) and too slow; the cyclic
+  replacement method is O(1) space and needs a GCD to know how many cycles to
+  run, which is elegant and easy to get wrong under pressure.
+· WHY THE REVERSAL VERSION IS THE ONE TO WRITE — three calls to a helper you
+  can write in one line, no cycle counting, no modular arithmetic beyond the
+  first line.
+· COST — O(n) time (each element is touched twice) and O(1) space.
+· ROTATING LEFT is the same three reversals with k replaced by n - k. Being
+  asked for the other direction is a common twist."""
+
+_ANSWER_V2["Linear Regression via Gradient Descent"] = """Fit a straight line by repeatedly nudging its slope and intercept downhill on
+the squared error.
+
+· THE MODEL — y = Xw + b. Predictions are a linear combination of the features
+  plus a bias.
+· THE LOSS — mean squared error, the average of (prediction - actual)². Squared
+  because it is differentiable everywhere and punishes large errors more.
+· THE GRADIENTS, worth being able to derive: dw = (2/n) · Xᵀ(pred - y) and
+  db = (2/n) · sum(pred - y). Both fall out of the chain rule and both are one
+  line of numpy.
+· THE LOOP — predict, compute the error, compute the gradients, then
+  w -= lr·dw and b -= lr·db. Repeat.
+· STANDARDISE THE FEATURES FIRST. With one feature in thousands and another in
+  single digits, the loss surface is a long narrow valley and gradient descent
+  zigzags down it for a very long time. This is the single most common reason a
+  correct implementation appears not to converge.
+· THE CLOSED FORM EXISTS — w = (XᵀX)⁻¹Xᵀy, the normal equation. Exact, no
+  learning rate, and O(features³) because of the inversion, so it is right for
+  a few dozen features and impossible for a million.
+· WHEN GRADIENT DESCENT WINS — many features, huge datasets that must be
+  processed in batches, or when you want the same code to extend to models
+  with no closed form. Which is nearly all of them.
+· THE LOSS IS CONVEX, so there is one global minimum and no local minima to
+  worry about. That is what makes this the right first example, and the
+  contrast to state when neural networks come up.
+· WHAT TO WATCH — print the loss every few iterations. Rising means the
+  learning rate is too high, flat means too low, and a smooth decreasing curve
+  is what you are after."""
+
+_ANSWER_V2["Cosine Similarity (from scratch)"] = """Dot product divided by both magnitudes - and the whole implementation is three
+lines plus one guard.
+
+· THE FORMULA — dot(a, b) / (norm(a) · norm(b)), where norm is the square root
+  of the sum of squares.
+· THE PURE-PYTHON VERSION — dot = sum(x*y for x, y in zip(a, b)); na =
+  sqrt(sum(x*x for x in a)); nb likewise; return dot / (na * nb).
+· THE NUMPY VERSION — np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)).
+  Say you would use this and then write the manual one, which is what is being
+  asked for.
+· GUARD THE ZERO VECTOR. A vector of all zeros has norm 0 and the division
+  raises or produces NaN. An empty document embedding is a real thing that
+  happens, so return 0.0 rather than crashing the retrieval path.
+· THE OPTIMISATION THAT MATTERS AT SCALE — normalise every vector ONCE when
+  you store it, then similarity is just the dot product. That is what vector
+  databases do, and it turns three operations per comparison into one.
+· BATCHING — for one query against a matrix of n vectors, use a single matrix
+  multiply rather than a Python loop. Orders of magnitude faster, and the
+  difference between a demo and something usable.
+· THE RANGE is -1 to 1 in theory and typically 0 to 1 for text embeddings,
+  which rarely point in genuinely opposite directions.
+· THE RELATIONSHIP worth quoting — on unit vectors, cosine IS the dot product,
+  and squared Euclidean distance equals 2 - 2·cosine. So on normalised
+  embeddings the three metrics rank identically.
+· WHY IT IS ASKED — it is five lines, so the interviewer is checking whether
+  you know why magnitude is divided out, and whether you thought about the
+  zero vector before they mentioned it."""
+
+_ANSWER_V2["Paging & virtual memory"] = """Every program gets its own pretend address space, and the hardware translates
+those addresses to real memory a page at a time.
+
+· THE PROBLEM IT SOLVES — programs would otherwise have to know where in
+  physical RAM they were loaded, could read each other's memory, and could not
+  run if RAM was fragmented or too small.
+· THE MECHANISM — the address space is cut into fixed PAGES (typically 4KB),
+  physical memory into equal-sized FRAMES, and a per-process page table maps
+  one to the other. Nothing has to be contiguous in reality.
+· WHAT IT BUYS — isolation (a process cannot name another's memory),
+  relocation (any page can live in any frame), sharing (two processes can map
+  the same frame for a shared library) and protection bits per page.
+· A PAGE FAULT is not an error. The page is simply not resident, so the OS
+  finds it on disk, loads it into a free frame, updates the table and restarts
+  the instruction. The program never notices.
+· THE TLB is why this is fast — a small cache of recent translations inside
+  the CPU. A hit costs nothing; a miss walks the page table, which is several
+  memory accesses. A context switch flushes it, which is a real part of why
+  switching is expensive.
+· MULTI-LEVEL PAGE TABLES exist because a flat table for a 64-bit space is
+  absurdly large. Only the branches actually used get allocated.
+· THRASHING is the failure mode worth naming: too little RAM for the working
+  set, so the system spends its time paging in and out and does almost no
+  work. Throughput collapses rather than degrading gently.
+· DEMAND PAGING loads pages only when touched, which is why a large program
+  starts quickly — most of it is never read.
+· THE MODERN RELEVANCE — this is why a memory-mapped file behaves like memory,
+  why fork() is cheap (copy-on-write shares frames until a write), and why
+  containers can limit memory at all."""
+
+_ANSWER_V2["TLS / HTTPS handshake"] = """Prove who the server is, agree a shared secret without ever sending it, then
+switch to fast symmetric encryption for everything after.
+
+· THE THREE THINGS IT PROVIDES — confidentiality (nobody can read it),
+  integrity (nobody can change it undetected) and authentication (you are
+  talking to who you think).
+· CLIENT HELLO — the browser offers its TLS versions, cipher suites and a
+  random number, plus the hostname via SNI so one IP can serve many sites.
+· SERVER HELLO — the server picks a cipher suite, sends its own random, and
+  presents its CERTIFICATE.
+· THE CERTIFICATE CHECK is the authentication half: the browser verifies the
+  certificate is signed by a trusted authority, matches the hostname, and has
+  not expired or been revoked. Without this, encryption would just mean a
+  private conversation with an attacker.
+· THE KEY EXCHANGE — modern TLS uses ephemeral Diffie-Hellman (ECDHE), where
+  both sides derive the same shared secret from public exchanges. The secret
+  is never transmitted, and because the keys are EPHEMERAL, recording today's
+  traffic and stealing the server key next year does not decrypt it. That
+  property is FORWARD SECRECY and is the main reason RSA key transport was
+  dropped.
+· THEN IT GOES SYMMETRIC — asymmetric crypto is slow, so it is used only to
+  agree a symmetric key (AES-GCM or ChaCha20), and all the actual data uses
+  that.
+· THE ROUND TRIPS ARE THE COST — TLS 1.2 needed two, TLS 1.3 needs ONE by
+  sending a key share optimistically in the first message. 0-RTT resumption
+  sends data immediately on a repeat visit and is replayable, so it must only
+  carry idempotent requests.
+· WHAT MAKES IT FAIL IN PRACTICE — an expired certificate, a missing
+  intermediate in the chain (works in browsers that cache it, fails in curl),
+  a hostname mismatch, or a clock skewed far enough to make a valid
+  certificate look expired."""
+
+_ANSWER_V2["DNS resolution"] = """Turn a name into an address by asking a hierarchy of servers, and cache the
+answer at every layer so most lookups never leave the machine.
+
+· THE CACHES COME FIRST, in order: the browser, the OS, the local hosts file,
+  then the configured resolver. Most lookups stop here, and saying so before
+  describing the hierarchy shows you know the fast path.
+· THE HIERARCHY — the resolver asks a ROOT server, which points to the .com
+  TLD server, which points to the domain's AUTHORITATIVE name server, which
+  gives the answer.
+· RECURSIVE VS ITERATIVE — your machine makes ONE recursive request to the
+  resolver and waits. The resolver then makes several iterative requests,
+  following referrals. The split matters and is a common follow-up.
+· THE RECORD TYPES worth knowing — A (IPv4), AAAA (IPv6), CNAME (an alias to
+  another name), MX (mail), TXT (verification and SPF), NS (delegation), and
+  SOA.
+· TTL CONTROLS THE CACHE and is why DNS changes are not instant. Lower it days
+  BEFORE a planned migration, or you will be waiting on someone else's cached
+  answer for as long as the old TTL says.
+· THE CNAME RULE that catches people — you cannot put a CNAME at the zone
+  apex (example.com itself) because it cannot coexist with the required SOA
+  and NS records. Providers offer ALIAS or ANAME records to work around it.
+· IT IS USUALLY UDP on port 53, falling back to TCP when the response is too
+  large or for zone transfers.
+· IT IS UNENCRYPTED BY DEFAULT, so anyone on the path sees every name you look
+  up. DoH and DoT fix that and move the trust to whoever runs the resolver.
+· WHY IT MATTERS OPERATIONALLY — DNS is a routine cause of outages that look
+  like application failures. It is also how load balancing across regions,
+  failover and blue-green cutovers are often implemented, so a slow TTL is a
+  slow rollback."""
+
+_ANSWER_V2["Design a News Feed Ranking system"] = """Retrieve a few hundred candidates from the people you follow, score them for
+predicted engagement, then re-rank for diversity and freshness.
+
+· CLARIFY FIRST — what is the feed optimising for? Time spent, meaningful
+  interactions, and content-creator retention pull in different directions,
+  and the ranking follows from the answer. Ask before designing.
+· THE FANOUT DECISION is the classic one. FANOUT-ON-WRITE pushes each post into
+  every follower's feed when it is created: reads are trivial, writes explode
+  for someone with ten million followers. FANOUT-ON-READ assembles the feed at
+  request time: writes are cheap, reads are expensive.
+· THE ANSWER IS HYBRID and worth stating as such — fanout-on-write for
+  ordinary accounts, fanout-on-read for celebrities, merged at read time. Every
+  large system converges on this.
+· CANDIDATE GENERATION — recent posts from people you follow, plus groups,
+  plus a recommended-content source for reach beyond your graph. A few hundred
+  candidates, favouring recall.
+· RANKING — predict the probability of each action (click, like, comment,
+  share, dwell) with a model per action, then combine them into one score with
+  weights that encode what the product values. Those weights are a product
+  decision wearing a maths costume, and saying so is the senior observation.
+· THE FEATURES THAT CARRY IT — your past interaction with this author, with
+  this content type, recency, engagement velocity relative to the author's
+  norm, and your session context.
+· RE-RANKING FOR THINGS THE MODEL WILL NOT DO ON ITS OWN — author diversity so
+  one person does not fill the feed, deduplication of near-identical posts,
+  demotion of borderline content, and an exploration slot for new creators.
+· THE FEEDBACK LOOP IS THE RISK — ranking for engagement selects for whatever
+  provokes reaction, which is not the same as what people value. Counter with
+  explicit quality signals, surveys, and a metric for time-well-spent rather
+  than time-spent alone.
+· SERVING — precompute embeddings and candidate lists offline, cache
+  aggressively, page the feed, and set a hard timeout with a recency-sorted
+  fallback so a slow ranker degrades to a worse feed rather than no feed."""
+
+_ANSWER_V2["Design a Search Ranking system"] = """Two stages: retrieve cheaply and broadly, then rank precisely - and most of
+the quality comes from features and evaluation, not the model.
+
+· CLARIFY THE CORPUS AND THE INTENT — web search, product search and
+  documentation search fail differently. Product search has inventory and
+  price; documentation has structure; web has spam. Ask.
+· QUERY UNDERSTANDING FIRST — spelling correction, synonym expansion,
+  tokenisation and intent classification. A query the retriever misreads
+  cannot be rescued by a better ranker.
+· RETRIEVAL — an inverted index with BM25 for exact and rare terms, plus a
+  vector index for semantic matches, fused by reciprocal rank. Keyword search
+  handles product codes and names that embeddings garble; vectors handle
+  paraphrase. Neither alone is enough.
+· RANKING — a learning-to-rank model (LambdaMART is still the workhorse, or a
+  neural ranker) over the top few hundred. Features: textual relevance
+  signals, document quality and popularity, freshness, personalisation, and
+  behavioural features from past sessions.
+· THE BEHAVIOURAL FEATURES ARE THE MOST POWERFUL AND THE MOST DANGEROUS —
+  click-through rate on this query-document pair is enormously predictive and
+  creates a rich-get-richer loop, plus POSITION BIAS: results rank highly
+  because they were clicked, and they were clicked because they ranked highly.
+· DEBIASING IS NOT OPTIONAL — inverse propensity weighting, or randomised
+  interleaving to collect unbiased judgements. Without it the model learns
+  position rather than relevance.
+· EVALUATION — offline NDCG against human relevance judgements, plus online
+  interleaving, which is far more statistically efficient than an A/B test for
+  ranked lists and is the right tool here.
+· THE METRICS — NDCG for graded relevance, MRR when there is one right answer,
+  recall@k for the retrieval stage measured SEPARATELY, because a ranking
+  failure and a retrieval failure need different fixes.
+· LATENCY IS A HARD CONSTRAINT — the budget is tens of milliseconds, so the
+  expensive model only ever sees a shortlist. That is the reason for the two
+  stages, and it is worth saying rather than leaving implicit."""
+
+_ANSWER_V2["Design a Video Recommendation system (YouTube-style)"] = """Candidate generation from a huge catalogue, then ranking on watch time rather
+than clicks - because clicks reward thumbnails and watch time rewards video.
+
+· THE SCALE SETS THE ARCHITECTURE — billions of videos means nothing can score
+  the catalogue per request. Two stages: retrieve a few hundred cheaply, rank
+  those expensively.
+· CANDIDATE GENERATION — a two-tower model with approximate nearest-neighbour
+  search over video embeddings, plus co-watch ("people who watched this also
+  watched"), plus subscriptions, plus trending. Union them for recall.
+· THE OBJECTIVE IS THE INTERESTING DECISION. Optimising CLICKS produces
+  clickbait: the thumbnail wins and the video disappoints. Optimising EXPECTED
+  WATCH TIME rewards content people actually stay with, and that switch is the
+  single most consequential design choice in this system.
+· PREDICT WATCH TIME PROPERLY — weight positive examples by their watch time
+  in a logistic model, so the odds output is directly interpretable as expected
+  watch time. That is the YouTube paper's trick and it is worth naming.
+· SATISFACTION SIGNALS beyond watch time — likes, surveys, "not interested",
+  and completion rate normalised by video length. Watch time alone rewards
+  length.
+· THE FEATURES — the user's watch and search history as sequences, time since
+  last watch of this channel, video age (people want new), language and
+  region, and the CONTEXT of what they just finished.
+· TRAINING DETAILS THAT MATTER — take training examples from ALL watches, not
+  just recommended ones, or the model only learns from its own past
+  recommendations. And hold out by TIME, not randomly, because predicting the
+  past from the future inflates every metric.
+· COLD START — content features (title, thumbnail, transcript, channel) give a
+  new video a usable embedding on upload, and an exploration budget gets it in
+  front of enough people to learn from.
+· RE-RANKING — diversity so one channel does not dominate, freshness,
+  deduplication, and policy filtering. The last of those is not optional at
+  scale."""
+
+_ANSWER_V2["Design a Spam / Abuse Detection system"] = """Adversaries adapt, so the design question is not accuracy but how fast you can
+respond when they change - and what happens to the people you get wrong.
+
+· THE DEFINING PROPERTY — this is an ADVERSARIAL problem. A spam filter's
+  performance decays because someone is actively working against it, which is
+  unlike almost every other ML system and changes the whole architecture.
+· THE LAYERED ANSWER — cheap rules and reputation first (known bad domains,
+  account age, rate limits), then a model, then human review for the uncertain
+  band. Rules catch what you already understand and can be changed in minutes;
+  the model catches what you have not enumerated.
+· THE FEATURES THAT SURVIVE ADAPTATION are behavioural rather than textual.
+  Content features get evaded quickly (character substitution, images of text);
+  posting velocity, account age, device and IP reuse across accounts, and the
+  shape of the follower graph are much harder to fake cheaply.
+· THE GRAPH IS WHERE THE REAL SIGNAL IS — abuse operates in rings that share
+  infrastructure. Connected-component features over shared devices and payment
+  methods routinely outperform anything computed from a single message.
+· THE ASYMMETRIC COST — a false positive silences a real person, and they
+  cannot appeal to a model. Set the automatic-action threshold conservatively
+  and route the middle band to humans, whose decisions become training data.
+· LABELS ARE NOISY AND DELAYED — user reports are biased and sparse, moderator
+  decisions are slow. Treat reports as weak labels and reserve moderator
+  labels for evaluation.
+· MONITORING FOR ADAPTATION rather than for drift — a sudden precision drop
+  means someone found a hole. Alert on the rate of a rule firing as much as on
+  model metrics.
+· THE FEEDBACK LOOP — do not train only on what you caught, or the model
+  learns the current attack and nothing else. Hold out a random unfiltered
+  sample for evaluation, uncomfortable as that is.
+· DO NOT PUBLISH THE RULES, and expect them to be probed anyway. Rate-limit
+  the probing, and prefer signals an attacker cannot observe the effect of."""
+
+_ANSWER_V2["Design a Near-Duplicate Detection system"] = """Exact hashing finds identical files; near-duplicates need a hash where SIMILAR
+inputs collide on purpose.
+
+· THE PROBLEM WITH ORDINARY HASHING — changing one character changes the hash
+  completely. That is the point of a cryptographic hash and exactly wrong here.
+· THE REFRAME — you want a fingerprint where similar documents produce similar
+  fingerprints, so similarity becomes a lookup rather than a comparison.
+· SHINGLING first — represent a document as the set of its overlapping k-word
+  sequences. Similarity is then Jaccard: the size of the intersection over the
+  union.
+· MINHASH — hash each shingle many times and keep the minimum per hash
+  function. The probability that two documents share a minimum EQUALS their
+  Jaccard similarity, so a short signature estimates it. That identity is the
+  whole trick.
+· LSH (locality-sensitive hashing) makes it searchable — split signatures into
+  bands and hash each band. Two documents become candidates if ANY band
+  matches, which turns an O(n²) comparison into a bucket lookup. Band count
+  and size tune the precision-recall trade directly.
+· SIMHASH is the alternative for shorter text — produce one 64-bit fingerprint
+  and compare by Hamming distance. Cheaper, and it is what web crawlers use for
+  page deduplication.
+· FOR IMAGES — perceptual hashes (pHash, dHash) survive resizing, compression
+  and minor edits, and embeddings from a vision model handle crops and
+  recolouring that perceptual hashes miss.
+· THE THRESHOLD IS A PRODUCT DECISION — how similar is "duplicate"? A quoted
+  paragraph, a retweet with a comment, and a plagiarised article are different
+  answers, and no threshold gets all three right.
+· AT SCALE, the pipeline is: fingerprint on write, LSH to a candidate set, then
+  an exact similarity check on the few candidates. Cheap-and-broad then
+  precise, which is the same shape as search and recommendation."""
+
+_ANSWER_V2["Learning-rate warmup"] = """Start with a tiny learning rate and raise it over the first few hundred steps,
+because the model at initialisation is in no state to take a full step.
+
+· THE PROBLEM — at step zero the weights are random, the gradients are large
+  and badly correlated, and a full-size step sends the model somewhere useless
+  or produces NaNs immediately.
+· ADAM MAKES IT WORSE, which is the specific reason warmup became standard.
+  Adam divides by a running estimate of gradient variance, and early on that
+  estimate is based on almost no samples, so the adaptive step size is wildly
+  unreliable. Warmup gives the estimates time to settle.
+· THE SHAPE — linear from ~0 to the target rate over the first 1-10% of
+  training, then whatever decay schedule you were going to use anyway (usually
+  cosine).
+· WHERE IT MATTERS MOST — transformers and large batches. Both amplify the
+  early instability, and the original transformer paper's schedule is warmup
+  followed by inverse-square-root decay.
+· LARGE BATCHES NEED IT MORE — scaling the batch means scaling the learning
+  rate to match, and a large rate applied at initialisation is exactly the
+  failure warmup prevents.
+· THE SYMPTOM IT FIXES — a loss that spikes or goes to NaN in the first few
+  hundred steps, then never recovers. If that is what you are seeing, warmup
+  is the first thing to try, before lowering the rate everywhere.
+· PRE-NORM TRANSFORMERS need much less of it, because putting layer norm
+  before each sublayer stabilises the early gradients directly. Knowing that
+  connection is what distinguishes a recited answer.
+· IT IS CHEAP — a few hundred steps out of hundreds of thousands. The cost of
+  omitting it is a training run that fails at step 200 and wastes a day.
+· THE RELATED TRICKS — gradient clipping for the same instability later in
+  training, and a lower rate for pretrained layers when fine-tuning, which is
+  warmup's cousin."""
+
+_ANSWER_V2["Exploding gradient"] = """The chain rule multiplies many terms, and if they are bigger than one the
+product grows until the weights become NaN.
+
+· THE MECHANISM — backpropagation multiplies gradients layer by layer. Factors
+  consistently above 1 compound: 1.5 to the fiftieth power is about 600
+  million.
+· THE SYMPTOM IS UNMISTAKABLE — the loss suddenly jumps to a huge value or
+  NaN, and the model never recovers. Unlike vanishing gradients, which fail
+  silently and slowly, this one announces itself.
+· WHERE IT HAPPENS MOST — recurrent networks unrolled over long sequences,
+  which is a very deep network in disguise; and very deep networks generally.
+· THE FIX IS GRADIENT CLIPPING, and it is nearly always sufficient. Clip by
+  NORM (scale the whole gradient vector down if its norm exceeds a threshold)
+  rather than by value, because clipping each component separately changes the
+  DIRECTION of the update, not just its size. A threshold of 1.0 is a sensible
+  default.
+· THE OTHER MITIGATIONS — careful initialisation (Xavier or He, chosen so the
+  variance of activations is preserved through layers), layer or batch
+  normalisation, a lower learning rate, and residual connections.
+· THE MIRROR PROBLEM is vanishing gradients: factors below 1 compound the other
+  way and the early layers stop learning. Same cause, opposite direction, and
+  the fixes overlap. Vanishing is harder because it looks like a model that is
+  merely training slowly.
+· WHY LSTMs EXIST — the gating mechanism gives gradients an additive path
+  through time rather than a purely multiplicative one, which is the same idea
+  residual connections later applied to depth.
+· HOW TO DIAGNOSE — log the gradient norm each step. A spike before the loss
+  spikes is the confirmation, and it tells you whether clipping will help
+  before you spend a run finding out.
+· BF16 IS PART OF THE MODERN ANSWER — its wider exponent range tolerates large
+  values where fp16 overflows, which is why large-scale training moved to it."""
+
+_ANSWER_V2["Why can a model score great offline but fail once deployed online?"] = """Because the offline test measures a different thing from the live system, and
+the gaps between them are where the failures live.
+
+· TRAINING-SERVING SKEW is the commonest cause. A feature computed one way in
+  a notebook and another way in the serving code produces silent, gradual
+  wrongness. A feature store exists mostly to prevent this.
+· DATA LEAKAGE — a feature that would not be available at prediction time
+  inflates offline scores and vanishes in production. A "cancellation
+  requested" flag predicts churn perfectly and is useless.
+· THE SPLIT WAS WRONG — a random split on time-series or on grouped data lets
+  the model see the future or the same entity in both halves. The offline
+  number is then measuring interpolation, not prediction.
+· DISTRIBUTION SHIFT between the training window and today. The model was
+  right about last year's users.
+· THE FEEDBACK LOOP — the model's own predictions change what data it later
+  sees. A recommender trained on what it recommended cannot learn about
+  anything it never showed.
+· THE METRIC DOES NOT MATCH THE GOAL — better AUC does not imply more
+  conversions. Ranking a hard case slightly better may change no decision at
+  all, while a small latency regression changes many.
+· LATENCY AND TIMEOUTS — a model that is 2% more accurate and 300ms slower
+  will lose, because users leave. Offline evaluation has no clock.
+· THE LONG TAIL — offline test sets are usually sampled and under-represent
+  the odd inputs production is full of: empty fields, unusual locales,
+  automated traffic.
+· HOW TO CLOSE THE GAP — shadow mode first (run on real traffic, log the
+  output, show nobody) to check latency, cost and crash rate; then a small
+  canary; then an A/B test on the BUSINESS metric. And monitor input
+  distributions, because those tell you something is wrong before the labels
+  arrive to confirm it."""
+
+_ANSWER_V2["Gas Station (greedy circuit)"] = """If the total fuel covers the total cost, a solution exists - and the start is
+just after wherever the running tank last went negative.
+
+· THE PROBLEM — stations in a circle, each giving gas[i] and costing cost[i]
+  to reach the next. Find a starting station from which you can complete the
+  loop, or -1.
+· THE FEASIBILITY CHECK — if sum(gas) < sum(cost) the answer is -1, because no
+  starting point can conjure fuel that does not exist. If the totals are
+  equal or better, a solution is GUARANTEED to exist, which is the fact the
+  algorithm leans on.
+· THE ALGORITHM — one pass with a running tank. When the tank goes negative at
+  station i, reset the tank to 0 and set the candidate start to i + 1.
+· WHY THAT IS CORRECT, and this is the argument being tested: if you cannot
+  reach station i+1 starting from `start`, you cannot reach it from any station
+  BETWEEN start and i either — those starts have less fuel available, since
+  every prefix from `start` was non-negative. So the whole range can be skipped
+  in one step.
+· THAT SKIP IS WHY IT IS O(n) rather than O(n²). The naive answer tries every
+  start and simulates the loop.
+· TWO ACCUMULATORS — `total` over the whole array decides feasibility, and
+  `tank` since the current candidate decides where to restart. Mixing them up
+  is the standard bug.
+· THE HAND TRACE on gas [1,2,3,4,5], cost [3,4,5,1,2]: the tank goes negative
+  at index 2, so the candidate becomes 3. From 3 onwards it stays
+  non-negative, and the total is 0, so 3 is the answer.
+· NO SIMULATION IS NEEDED at the end. The existence guarantee from the totals
+  means the surviving candidate must work, and verifying it would be an extra
+  pass for nothing.
+· THE FAMILY — this is the circular cousin of Kadane's "extend or restart"
+  decision, which is worth noticing because it makes both easier to remember."""
+
+_ANSWER_V2["Byte-Pair Encoding (BPE)"] = """Start from single characters and repeatedly merge the most frequent adjacent
+pair - frequency decides which words become one token.
+
+· THE ORIGIN — it was a data compression algorithm from 1994, repurposed for
+  tokenisation. Worth knowing, because the mechanism is compression and the
+  effect on vocabulary is a side effect.
+· THE TRAINING LOOP — begin with every character as its own token. Count all
+  adjacent pairs across the corpus, merge the most frequent into a new token,
+  recount, repeat until the vocabulary reaches its target size (30k-100k).
+· THE RESULT — frequent words end up as single tokens, rare words decompose
+  into fragments, and the granularity is decided by the data rather than by a
+  linguist.
+· NO OUT-OF-VOCABULARY PROBLEM — any string can be built from smaller pieces,
+  and BYTE-level BPE guarantees this absolutely by starting from raw bytes
+  rather than characters, so even unseen scripts and emoji encode.
+· ENCODING AT INFERENCE applies the learned merges IN THE ORDER THEY WERE
+  LEARNED. It is deterministic and fast, and that ordering is what makes the
+  encoder reproducible.
+· THE LEADING SPACE — most implementations treat " the" and "the" as different
+  tokens. This is why a trailing space in a prompt can measurably change
+  behaviour, and it surprises people every time.
+· THE VARIANTS — WordPiece (BERT) merges by likelihood gain rather than raw
+  frequency; SentencePiece treats input as a raw stream with no
+  pre-tokenisation, which is what makes it work for languages without spaces;
+  Unigram prunes a large candidate vocabulary instead of building up.
+· THE CONSEQUENCES YOU PAY FOR — billing is per token, the context window is
+  measured in tokens, and models are poor at spelling or counting letters
+  because they never see letters.
+· THE FAIRNESS ISSUE — vocabularies trained mostly on English make the same
+  sentence cost several times more tokens in Hindi or Thai. That is a real
+  cost and latency penalty falling on some users and not others."""
+
+_ANSWER_V2["Weight decay (L2 regularization)"] = """Shrink every weight slightly on each step, so the model only keeps a large
+weight if the data really pays for it.
+
+· THE MECHANISM — add λ·||w||² to the loss. Its gradient is 2λw, so each update
+  subtracts a little of the weight itself. Hence the name.
+· WHY IT HELPS — large weights mean a function that reacts sharply to small
+  input changes, which is what fitting noise looks like. Penalising magnitude
+  biases the model toward smoother functions.
+· IT SHRINKS, IT DOES NOT ZERO — the gradient of the squared penalty gets
+  smaller as the weight does, so weights approach zero without reaching it.
+  L1's constant gradient is what makes IT produce exact zeros.
+· λ IS TUNED ON VALIDATION, on a log scale. Too small does nothing; too large
+  underfits until the model predicts the mean.
+· SCALE THE FEATURES FIRST. The penalty applies to weights, and unscaled
+  features force wildly different weight magnitudes, so the penalty lands
+  unevenly across features. This is a correctness issue, not a nicety.
+· DO NOT PENALISE THE BIAS. It shifts the output rather than controlling
+  sensitivity to inputs, and shrinking it just biases predictions toward zero.
+· THE ADAM SUBTLETY worth knowing — L2 added to the loss and "weight decay"
+  are NOT equivalent under Adam, because Adam rescales the gradient and
+  therefore rescales the penalty inconsistently across parameters. AdamW
+  decouples them by applying the decay directly to the weights, and it is the
+  reason AdamW replaced Adam as the default.
+· THE BAYESIAN READING — L2 is a Gaussian prior on the weights, and L1 a
+  Laplace prior. The regulariser is an assumption about what weights are
+  plausible before seeing data.
+· IN PRACTICE it is one of the two or three settings worth tuning at all, along
+  with the learning rate — and it interacts with the schedule, so tune them
+  together rather than one at a time."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
