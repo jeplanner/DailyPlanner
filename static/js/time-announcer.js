@@ -590,7 +590,11 @@
       "background:var(--color-surface,#fff);color:var(--color-text,#111827);",
       "box-shadow:0 16px 40px rgba(0,0,0,.18);font-size:13px}",
       ".ta-pop[hidden]{display:none}",
-      ".ta-pop h4{margin:0 0 3px;font-size:13.5px;font-weight:800}",
+      ".ta-pop h4{margin:0 0 3px;font-size:13.5px;font-weight:800;padding-right:22px}",
+      ".ta-x{position:absolute;top:6px;right:7px;border:0;background:none;",
+      "cursor:pointer;font-size:19px;line-height:1;padding:2px 5px;border-radius:6px;",
+      "color:var(--color-text-secondary,#9ca3af)}",
+      ".ta-x:hover{background:var(--color-bg,#f3f4f6);color:var(--color-text,#111827)}",
       ".ta-pop p{margin:0 0 10px;font-size:11.5px;line-height:1.45;",
       "color:var(--color-text-secondary,#6b7280)}",
       ".ta-row{display:flex;gap:6px;margin-bottom:8px}",
@@ -871,6 +875,8 @@
     pop.className = "ta-pop";
     pop.hidden = true;
     pop.innerHTML =
+      '<button type="button" class="ta-x" data-ta-close ' +
+        'aria-label="Close">&times;</button>' +
       '<h4>Announce the time <span class="ta-saved" data-ta-saved></span></h4>' +
       '<p>Spoken on the clock, not from when you pressed start. A missed one ' +
       'is skipped rather than read out late.</p>' +
@@ -936,6 +942,16 @@
     document.body.appendChild(pop);
 
     pop.addEventListener("click", function (ev) {
+      // Anything handled in here is by definition an inside click. Saying so
+      // explicitly means the outside-click handler above never has to reason
+      // about a node this function may be about to remove.
+      if (ev.target.closest("button, input, label")) ev.stopPropagation();
+
+      if (ev.target.closest("[data-ta-close]")) {
+        pop.hidden = true;
+        if (btn) btn.focus();
+        return;
+      }
       var m = ev.target.closest("[data-ta-mode]");
       if (m) {
         state.mode = m.getAttribute("data-ta-mode");
@@ -1058,8 +1074,26 @@
     });
     document.addEventListener("click", function (ev) {
       if (pop.hidden) return;
+      // A CLICK THAT DELETED ITS OWN BUTTON IS STILL AN INSIDE CLICK.
+      //
+      // Deleting an announcement rebuilds the list with innerHTML, which
+      // DETACHES the button that was clicked. The event then carries on
+      // bubbling to here, where ev.target.closest(".ta-pop") walks up from a
+      // node that is no longer in the document and finds nothing — so the
+      // panel treated its own delete as an outside click and shut itself,
+      // dropping you back on the page behind it.
+      if (!document.contains(ev.target)) return;
       if (ev.target.closest(".ta-pop") || ev.target.closest(".ta-btn")) return;
       pop.hidden = true;
+    });
+
+    // Escape closes it, which is what every panel should do and what people
+    // try first.
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape" && !pop.hidden) {
+        pop.hidden = true;
+        if (btn) btn.focus();
+      }
     });
 
     if (window.feather) { try { window.feather.replace(); } catch (_) {} }

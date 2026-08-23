@@ -3712,3 +3712,50 @@ def test_announcer_supports_multiple_named_announcements_with_dates():
     assert "parts.join" in js
     # The old settings must survive the upgrade.
     assert "MIGRATION" in js
+
+
+def test_announcer_panel_close_and_inside_click_guards_are_present():
+    """The source half of the delete-closes-the-panel fix.
+
+    Kept separate from the jsdom test below so it REPORTS as passing rather
+    than being swallowed by that test's skip — a guard that silently does not
+    run is the thing this whole file keeps learning about.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    # The fix itself: a click whose target has been removed from the document
+    # is still an inside click.
+    assert "if (!document.contains(ev.target)) return;" in js, \
+        "the panel will close itself again when a row is deleted"
+    # And a handled click never reaches the outside-click listener at all.
+    assert "ev.stopPropagation()" in js
+    # The close control that was missing entirely.
+    assert "data-ta-close" in js
+
+
+def test_announcer_panel_survives_its_own_delete():
+    """Reported 2026-08-23: "if i delete something it goes to home page."
+
+    It was not navigating — the panel was closing itself, leaving the page
+    behind it on screen. Deleting rebuilds the list with innerHTML, which
+    DETACHES the clicked button, and the outside-click listener then ran
+    closest(".ta-pop") on a node no longer in the document, got null, and
+    concluded the click had been outside the panel.
+
+    Reproducing it FULLY needs a real DOM, so the behavioural half runs under
+    jsdom and skips where jsdom is absent (it is not a repo dependency —
+    `npm i jsdom` in the repo root enables it). The source guards below run
+    everywhere, because a test that only runs on one machine protects only
+    that machine.
+    """
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
+                           capture_output=True, text=True)
+    if probe.returncode != 0:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run(["node", "tests/js/ta_panel.test.js"],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "0 failed" in r.stdout, r.stdout
