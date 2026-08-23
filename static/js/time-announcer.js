@@ -52,10 +52,21 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v255";
+  var BUILD = "v256";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
+  /* HOW LATE A NAMED ANNOUNCEMENT IS STILL WORTH SAYING.
+
+     Reported: a 7:14pm daily reminder never fired, on a phone that was
+     checking every 15 seconds when looked at afterwards. It was asleep at
+     7:14. Android freezes a backgrounded page, and by the time it thawed
+     the 90-second grace had passed, so the slot was discarded in silence.
+
+     "Tell slokas" is worth hearing at 7:25. "It's 7:14 PM" is not, so this
+     applies to the NAMED announcements only — the repeating clock keeps
+     the 90-second rule, because a stale time is just wrong. */
+  var LATE_MS = 30 * 60 * 1000;
   var TICK_MS = 15 * 1000;       // cheap: the work is one Date comparison
   var INTERVALS = [15, 30, 45, 60];   // 45 was simply missing before
   var MAX_EVERY = 720;                // 12h; beyond that use exact times
@@ -439,10 +450,15 @@
       var slots = slotsFor(it);
       for (var k = 0; k < slots.length; k++) {
         var late = (mins - slots[k]) * 60000 + now.getSeconds() * 1000;
-        if (late < 0 || late > GRACE_MS) continue;   // not yet, or slept past
+        // Catch-up is for a once-a-day reminder that the device slept
+        // through. An item that repeats THROUGH the day does not need it:
+        // the next slot is minutes away, and firing the previous one late
+        // would announce 9:00 at 9:30 with 10:00 about to arrive.
+        var limit = (it.mins > 0) ? GRACE_MS : LATE_MS;
+        if (late < 0 || late > limit) continue;      // not yet, or long gone
         var key = today + "|" + minsToHHMM(slots[k]);
         if (state.said[it.id] === key) continue;     // already said this slot
-        out.push({ item: it, slot: slots[k], key: key,
+        out.push({ item: it, slot: slots[k], key: key, lateBy: late,
                    id: it.id, text: it.text, at: it.at, on: it.on });
         break;                                       // one slot per tick
       }
@@ -562,11 +578,79 @@
     return soundEl;
   }
 
+  /* ── A SECOND ELEMENT, FOR THE WORDS ────────────────────────────────
+     Measured on a locked Android, 2026-08-23:
+
+       chime: played, speech: audio blocked, rendered audio: cached
+
+     So the audio was there and the element was allowed to play — the
+     CHIME went out through it. What failed was the second play(): the
+     chime ends, its handler assigns a new src to the same element and
+     calls play() again, and that call is refused mid-load.
+
+     One element was itself a fix for an earlier bug — Android unlocks a
+     media element on the gesture that first plays IT, so a speech element
+     nobody ever tapped was refused forever. The answer is not one element,
+     it is two elements that are BOTH unlocked by the same gesture. Then
+     neither ever has to swap a source out from under a playing stream. */
+  var speechEl = null;
+
+  function speechSound() {
+    if (speechEl) return speechEl;
+    speechEl = document.getElementById("ta-speech");
+    if (!speechEl) {
+      speechEl = document.createElement("audio");
+      speechEl.id = "ta-speech";
+      speechEl.preload = "auto";
+      speechEl.setAttribute("playsinline", "");
+      document.body.appendChild(speechEl);
+    }
+    return speechEl;
+  }
+
+  /* Unlock BOTH elements on a real gesture.
+
+     SILENCED WITH volume, NOT WITH muted, and the difference is the whole
+     point. Muted playback is permitted by the autoplay policy anyway, so a
+     muted play grants nothing — the permission it would have bought is the
+     one it never needed. A volume-0 play is real unmuted playback, which is
+     what actually flips the bit.
+
+     (The keep-alive track has the same rule for a related reason: a muted
+     track does not hold the audio session on a locked phone.)
+
+     Paused again immediately, so this is inaudible either way. What it buys
+     is that from here on EITHER element may start without a gesture, which
+     is the whole requirement for speaking from a pocket. */
+  function unlockAudio() {
+    [sound(), speechSound()].forEach(function (el) {
+      try {
+        if (el.dataset.unlocked === "1") return;
+        var was = el.src;
+        el.volume = 0;
+        if (!el.src) el.src = "/static/audio-keepalive.wav";
+        var p = el.play();
+        var settle = function () {
+          try {
+            el.pause();
+            el.volume = 1;
+            el.dataset.unlocked = "1";
+            // Put back whatever was queued; the unlock must not throw away
+            // a rendered announcement already loaded into the element.
+            if (was && el.src !== was) el.src = was;
+          } catch (e) {}
+        };
+        if (p && p.then) p.then(settle).catch(function () { el.volume = 1; });
+        else settle();
+      } catch (e) {}
+    });
+  }
+
   /* Play one source on the shared element. onDone fires when it finishes,
      onFail when the browser refuses to start it — play() is asynchronous,
      so starting is not the same as being heard. */
-  function playThrough(src, onDone, onFail) {
-    var el = sound();
+  function playThrough(src, onDone, onFail, el) {
+    el = el || sound();
     try {
       el.onended = null;
       el.src = src;
@@ -627,6 +711,7 @@
         var url = URL.createObjectURL(b);
         sayCache[text] = url;
         sayState = "ready";
+        if (text === nextWords) preloadSpeech(text);
         paint();
         return url;
       });
@@ -650,12 +735,36 @@
     if (!url) return false;
     return playThrough(url, function () {
       if (lastFire) { lastFire.spoke = "played (audio)"; paint(); }
-    }, function () {
+    }, function (err) {
+      // NAME THE ERROR. "audio blocked" covered two completely different
+      // faults — NotAllowedError is the autoplay policy, AbortError is a
+      // play() cut short by a new load — and they have opposite fixes.
+      // Guessing between them cost a day.
       if (lastFire && !lastFire.spoke) {
-        lastFire.spoke = "audio blocked"; paint();
+        lastFire.spoke = "audio refused (" +
+                         ((err && err.name) || "unknown") + ")";
+        paint();
       }
       if (onFail) onFail();
-    });
+    }, speechSound());
+  }
+
+  /* Load the next announcement's audio into the element BEFORE it is due.
+
+     A play() issued against a src assigned microseconds earlier can be
+     rejected while the new source is still loading — which looks exactly
+     like an autoplay block and is not one. Loading it in advance means the
+     only thing left to do at fire time is press play. */
+  function preloadSpeech(text) {
+    var url = text && sayCache[text];
+    if (!url) return;
+    try {
+      var el = speechSound();
+      if (el.src === url || el.dataset.queued === text) return;
+      el.dataset.queued = text;
+      el.src = url;
+      el.load();
+    } catch (e) {}
   }
 
   function speak(text, isRetry) {
@@ -794,8 +903,13 @@
      walks the upcoming fire minutes and renders them AHEAD of time — the
      work happens while the app is on screen, and the frozen page that
      wakes up to announce finds the audio already in memory. */
+  //: The words of the SOONEST upcoming announcement. Only this one can be
+  //: sitting in the element, so it is tracked rather than guessed.
+  var nextWords = null;
+
   function prefetchWindow(now, minutes) {
     if (state.mode !== "on") return;
+    nextWords = null;
     var base = new Date(now.getTime());
     base.setSeconds(0, 0);
     var budget = 12;                      // ~12 small MP3s, not a whole day
@@ -808,7 +922,12 @@
       var boundary = dueSlot(t);
       var due = dueItems(t).filter(function (d) { return d.slot === mins; });
       if (!due.length && boundary !== mins) continue;
-      prefetchSpeech(wordsFor(t, due));
+      var words = wordsFor(t, due);
+      if (nextWords === null) {
+        nextWords = words;
+        preloadSpeech(words);     // no-op until the blob exists
+      }
+      prefetchSpeech(words);
       budget--;
     }
   }
@@ -842,7 +961,26 @@
     // ONE UTTERANCE, not several. Two announcements landing on the same
     // minute must not talk over each other, and queueing them would let a
     // backlog build up — which is the failure people remember.
-    var words = wordsFor(now, items);
+    /* BUILT FROM THE SLOT, NOT FROM NOW.
+
+       The grace window is 90 seconds, so a fire may legitimately happen in
+       the minute AFTER the one it belongs to — the page was busy, or the
+       tick landed late. phrase() is minute-precise, so building the words
+       from `now` then produced "It's 7:15 PM" for the 7:14 slot, which is
+       not the string the prefetch cached under. The audio missed, and the
+       announcement fell through to speechSynthesis, which a hidden Android
+       refuses. Intermittent, and only on the fires that ran late.
+
+       Taking the time from the slot also makes a LATE announcement say
+       what it was always going to say, rather than a time that has since
+       moved on. */
+    var slotMins = intervalDue ? boundary
+                 : (items.length ? items[0].slot : null);
+    var slotAt = new Date(now.getTime());
+    if (slotMins !== null) {
+      slotAt.setHours(Math.floor(slotMins / 60), slotMins % 60, 0, 0);
+    }
+    var words = wordsFor(slotAt, items);
 
     items.forEach(function (d) {
       state.said[d.id] = d.key;
@@ -2482,7 +2620,11 @@
         state.mode = m.getAttribute("data-ta-mode");
         // Starting IS the gesture, so speak a confirmation — it also proves
         // to the user that sound works before they walk away from the desk.
-        if (state.mode === "on") { armed = true; speak(phrase(new Date())); }
+        if (state.mode === "on") {
+          armed = true;
+          try { unlockAudio(); } catch (e) {}
+          speak(phrase(new Date()));
+        }
         applyMode();
         savedFlash();
         return;
@@ -2515,7 +2657,7 @@
         // Playing it here is not only a confirmation: this is the GESTURE
         // that unlocks the shared audio element, without which a locked
         // phone can never play anything through it.
-        if (state.chime) { armed = true; playChime(); }
+        if (state.chime) { armed = true; try { unlockAudio(); } catch (e) {} playChime(); }
         return;
       }
       var k = ev.target.closest("[data-ta-keep]");
@@ -2630,6 +2772,7 @@
         // Pressing it IS the gesture, so this is also the way to re-arm a
         // page that has not been touched yet.
         armed = true;
+        try { unlockAudio(); } catch (e) {}
         note(null, "");
         playChime();
         speak(phrase(new Date()));
@@ -2815,6 +2958,10 @@
       // Without this the keep-alive stays dead for the whole page load and
       // the phone hears nothing once it locks.
       try { applyKeepalive(); } catch (e) {}
+      // BOTH audio elements, not just the one the chime uses. Android
+      // grants the permission per ELEMENT, so the words' element has to be
+      // unlocked by this same gesture or it is refused forever.
+      try { unlockAudio(); } catch (e) {}
       paint();
     }, { once: true, capture: true });
   });

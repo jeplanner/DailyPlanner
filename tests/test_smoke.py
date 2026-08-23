@@ -3552,6 +3552,11 @@ def test_day_board_shows_quick_bucket_items_for_that_day(auth_client, monkeypatc
          "due_at": (today + timedelta(days=1)).isoformat() + "T09:00:00+00:00"},
         {"id": "5", "text": "Already ticked", "time_bucket": "now",
          "is_done": True, "due_at": None},
+        {"id": "6", "text": "Finished in May", "time_bucket": "now",
+         "is_done": True, "due_at": None, "done_at": "2026-05-11T02:19:58"},
+        {"id": "7", "text": "Finished today", "time_bucket": "now",
+         "is_done": True, "due_at": None,
+         "done_at": today.isoformat() + "T09:12:00"},
     ] if t == "quick_bucket" else []))
 
     html = auth_client.get("/day-board").get_data(as_text=True)
@@ -3560,6 +3565,15 @@ def test_day_board_shows_quick_bucket_items_for_that_day(auth_client, monkeypatc
     assert "Already ticked" in html        # done, struck out rather than hidden
     assert "Someday backlog" not in html, "the backlog leaked onto the board"
     assert "Due tomorrow" not in html, "another day's deadline is not today's"
+
+    # ── FINISHED WORK BELONGS TO THE DAY IT WAS FINISHED ──────────────
+    # A "now" row carries no date, so every one ever created landed on
+    # every board forever. Measured on real data 2026-08-23: 61 rows in To
+    # do, 53 of them closed in May and July. The COUNT filtered done, so it
+    # said 8 while the list underneath was 87% archive — reported as "it
+    # does not take into account completed tasks".
+    assert "Finished in May" not in html, "months-old work is still on today's board"
+    assert "Finished today" in html, "what you got through today is today's business"
 
     # Done rows are struck out, consistent with every other row on the board.
     seg = html[max(0, html.find("Already ticked") - 500):html.find("Already ticked")]
@@ -4480,9 +4494,21 @@ def test_announcement_chime_is_real_audio_and_on_by_default():
     assert '"/static/audio-chime.wav"' in js
     assert "function playThrough" in js
     assert 'soundEl = document.createElement("audio")' in js
-    # And exactly one audio element for announcements, or the bug returns.
-    assert js.count('createElement("audio")') <= 2, \
-        "a second audio element is back; it will be blocked when locked"
+    # ── ONE ELEMENT WAS THE OLD FIX; IT WAS THE WRONG HALF ────────────
+    # A second element WAS the bug, because Android grants playback per
+    # ELEMENT and one nobody ever tapped stays refused forever. Sharing one
+    # element then produced the next failure: the chime ends, its handler
+    # assigns a new src and calls play() again, and that second call is
+    # refused mid-load — measured as "chime: played, speech: audio blocked,
+    # rendered audio: cached".
+    #
+    # So the rule is not "one element". It is that every element used for
+    # an announcement must be unlocked by the SAME gesture. Then neither
+    # has to swap a source out from under a playing stream.
+    assert "function unlockAudio" in js
+    unlock = js.split("function unlockAudio")[1].split("\n  }")[0]
+    assert "sound(), speechSound()" in unlock, \
+        "an announcement element is not unlocked with the others"
     # Chime BEFORE speak, so it cannot wait behind a speech call that may
     # never start. Asserted on the ORDER of the two calls rather than on
     # the exact lines around them, which now carry the per-fire recording.
@@ -5440,3 +5466,152 @@ def test_finished_things_get_a_clap():
     # the checklist, /java and the board carry their own include.
     for tpl in ("_top_nav.html", "java.html", "day_board.html"):
         assert "celebrate.js" in open(f"templates/{tpl}", encoding="utf-8").read(), tpl
+
+
+def test_backlog_capture_takes_effort_and_a_deadline(auth_client, monkeypatch):
+    """"when i add to backlog it should capture the planned minutes" and
+    "has to do by X days (take the current date as the baseline)".
+
+    Counted from today rather than asked for as a date: while emptying your
+    head onto a page, "3 days" is what you know and "the 26th" is
+    arithmetic you have to stop and do.
+    """
+    from datetime import timedelta
+    import routes.backlog as bk
+    from utils.user_tz import user_today
+
+    made = []
+    monkeypatch.setattr(bk, "post",
+                        lambda t, j, **k: made.append(j) or [{"id": "x"}])
+
+    r = auth_client.post("/api/backlog/capture",
+                         json={"text": "Renew passport\nBook dentist",
+                               "minutes": 25, "days": 3})
+    assert r.status_code == 200
+    want = (user_today() + timedelta(days=3)).isoformat()
+    # Applied to EVERY line of a pasted block — the common case is a list
+    # of similar small jobs.
+    assert [j["planned_minutes"] for j in made] == [25, 25]
+    assert [j["backlog_due"] for j in made] == [want, want]
+
+    # Both optional, and absent rather than zero — a 0-minute estimate is
+    # not the same as no estimate.
+    made.clear()
+    auth_client.post("/api/backlog/capture", json={"text": "Just a thought"})
+    assert "planned_minutes" not in made[0] and "backlog_due" not in made[0]
+
+    # Nonsense must not become a date in the year 4000.
+    made.clear()
+    auth_client.post("/api/backlog/capture",
+                     json={"text": "x", "days": 99999, "minutes": -5})
+    assert made[0]["backlog_due"] <= (user_today() + timedelta(days=3650)).isoformat()
+    assert "planned_minutes" not in made[0]
+
+
+def test_backlog_puts_missed_deadlines_first(auth_client, monkeypatch):
+    """"Highlight things which have missed the date."
+
+    Sorted late-first, then by how little time is left. A backlog ordered
+    purely by capture date buries the thing that is already overdue under
+    everything typed since — which is the one item that needed to be seen.
+    """
+    from datetime import timedelta
+    from utils.user_tz import user_today
+    today = user_today()
+
+    _backlog_stub(
+        monkeypatch,
+        bucket=[
+            {"id": "b1", "text": "Captured just now", "time_bucket": "future",
+             "due_at": None, "created_at": "2026-08-23", "backlog_due": None},
+            {"id": "b2", "text": "Was due last week", "time_bucket": "future",
+             "due_at": None, "created_at": "2026-08-01",
+             "backlog_due": (today - timedelta(days=7)).isoformat()},
+            {"id": "b3", "text": "Due in two days", "time_bucket": "future",
+             "due_at": None, "created_at": "2026-08-02",
+             "backlog_due": (today + timedelta(days=2)).isoformat()},
+        ],
+    )
+    html = auth_client.get("/backlog").get_data(as_text=True)
+
+    # Overdue first, then soonest, then the undated capture.
+    order = [html.index(t) for t in
+             ("Was due last week", "Due in two days", "Captured just now")]
+    assert order == sorted(order), "the overdue item is not at the top"
+
+    assert "7d late" in html
+    # Count the class ON A ROW, not the string — the stylesheet declares
+    # `.bk-item.is-late` too, and matching that made the count read 2.
+    assert html.count('class="bk-item is-late"') == 1, \
+        "exactly one row should be marked missed"
+    # "Due in 2 days" must not be painted the same as "already missed", or
+    # the colour stops meaning anything.
+    assert "bk-tag soon" in html
+
+
+def test_top5_panel_drop_is_wired_once_not_once_per_render():
+    """Reported: "when i am dragging and dropping in quick bucket..if i try
+    to drag again it looks like it is going in continous loop."
+
+    renderTop5() replaces the panel's CHILDREN via innerHTML, so the row
+    listeners die with the rows. The panel itself survives — and its
+    dragover/dragleave/drop handlers were being added again on every
+    render. After ten renders one drop ran the drop handler ten times, each
+    saving and re-rendering and adding ten more.
+
+    The "a single drag can fire the drop handler several times in some
+    browsers" comment in that same function was this bug seen from the
+    outside; the toast debounce underneath it was hiding the symptom.
+    """
+    js = open("static/js/quick_bucket.js", encoding="utf-8").read()
+    body = js.split("const wireTop5Rows")[1].split("const wireDragDrop")[0]
+
+    assert 'panel.dataset.dropWired' in body, "the panel is still rebound per render"
+    # The guard has to sit BEFORE the panel handlers and AFTER the row loop:
+    # rows are new every render and must keep being wired.
+    guard = body.index("dropWired")
+    assert guard < body.index('panel.addEventListener("dragover"')
+    assert guard > body.index('.qb-top5-item'), \
+        "the guard also skips wiring the freshly rendered rows"
+
+
+def test_announcer_speaks_the_slot_not_the_moment_it_noticed():
+    """Two faults behind "speech: audio blocked" on a locked Android.
+
+    The words were built from `now`, but the grace window is 90 seconds —
+    so a fire could land in the minute AFTER the slot it belongs to, and
+    phrase() is minute-precise. It then asked for "It's 7:15 PM" while the
+    prefetch had cached "It's 7:14 PM", missed, and fell through to
+    speechSynthesis, which a hidden Android refuses. Intermittent, and only
+    on fires that ran late.
+
+    And the words shared ONE audio element with the chime: the chime ended,
+    its handler assigned a new src to the same element and called play()
+    again, and that second call was refused mid-load. Two elements, both
+    unlocked by the same gesture, means neither ever swaps a source out
+    from under a playing stream.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+
+    assert "var slotAt = new Date(now.getTime())" in js
+    assert "wordsFor(slotAt, items)" in js, "the words still come from `now`"
+
+    assert "function speechSound" in js and 'ta-speech' in js
+    assert "function unlockAudio" in js
+    # Android grants the permission per ELEMENT, so a speech element nobody
+    # ever tapped is refused forever — both must be unlocked together.
+    unlock = js.split("function unlockAudio")[1].split("\n  }")[0]
+    assert "sound(), speechSound()" in unlock
+    # volume, NOT muted: muted playback is permitted by the autoplay policy
+    # anyway, so a muted play grants none of the permission it exists to buy.
+    assert "el.volume = 0" in unlock, "the unlock must be inaudible"
+    assert "muted" not in unlock, "a muted play unlocks nothing"
+
+    # Loaded before it is due: a play() against a src assigned microseconds
+    # earlier can be rejected while the source is still loading, which looks
+    # exactly like an autoplay block and is not one.
+    assert "function preloadSpeech" in js
+
+    # And when it IS refused, say which refusal it was — NotAllowedError and
+    # AbortError have opposite fixes.
+    assert 'lastFire.spoke = "audio refused ("' in js

@@ -55,7 +55,28 @@
       resize:vertical;min-height:66px}
     .bk-cap textarea:focus{outline:2px solid var(--color-primary);outline-offset:-1px}
     .bk-cap-row{display:flex;align-items:center;gap:9px;margin-top:8px;flex-wrap:wrap}
-    .bk-cap-hint{flex:1;min-width:0;font-size:11.5px;color:var(--color-text-secondary)}
+    .bk-cap-hint{margin:7px 2px 0;font-size:11.5px;line-height:1.5;
+      color:var(--color-text-secondary)}
+    .bk-mini{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;
+      font-weight:700;color:var(--color-text-secondary);white-space:nowrap}
+    .bk-mini input{width:62px;font-family:inherit;font-size:13.5px;
+      padding:7px 8px;border-radius:8px;border:1px solid var(--color-border);
+      background:var(--color-bg);color:var(--color-text)}
+    .bk-mini input:focus{outline:2px solid var(--color-primary);outline-offset:-1px}
+    .bk-mini span{font-weight:600}
+
+    /* THE DEADLINE, AND WHETHER IT HAS GONE. Late is the only state that
+       gets a colour of its own — if "due in 6 days" were red too, red
+       would stop meaning anything. */
+    .bk-tag.late{color:#991b1b;border-color:#fca5a5;background:#fee2e2}
+    .bk-tag.soon{color:#b45309;border-color:#f59e0b;background:#fffbeb}
+    html.dark .bk-tag.late{background:#3f1d1d;color:#fca5a5}
+    html.dark .bk-tag.soon{background:#3a2a06;color:#fcd34d}
+    .bk-item.is-late{border-color:#fca5a5;
+      background:color-mix(in srgb,#ef4444 6%,var(--color-surface))}
+    .bk-mins{flex:none;font-size:10.5px;font-weight:700;
+      color:var(--color-text-secondary);white-space:nowrap;
+      font-variant-numeric:tabular-nums}
     .bk-btn{border:1px solid var(--color-primary);background:var(--color-primary);
       color:#fff;font-weight:700;font-size:13px;border-radius:9px;padding:8px 15px;
       cursor:pointer;font-family:inherit}
@@ -166,12 +187,22 @@
     <textarea data-bk-text rows="3"
       placeholder="What is on your mind? One per line — paste a whole list and each line becomes its own item."></textarea>
     <div class="bk-cap-row">
+      <label class="bk-mini">Takes
+        <input type="number" min="0" max="600" step="5" data-bk-mins
+               placeholder="30" aria-label="Minutes it will take"><span>min</span>
+      </label>
+      <label class="bk-mini">Do within
+        <input type="number" min="0" max="365" step="1" data-bk-days
+               placeholder="7" aria-label="Days to do it within"><span>days</span>
+      </label>
       <button type="submit" class="bk-btn" data-bk-add>+ Add to backlog</button>
-      <span class="bk-cap-hint">
-        No times here on purpose — something with a time on it is not backlog.
-        Use the Quick Bucket for that.
-      </span>
     </div>
+    <p class="bk-cap-hint">
+      Both optional, and both applied to every line you paste. Counted from
+      today, because "3 days" is what you know while emptying your head and
+      "the 26th" is arithmetic. No clock times here on purpose — something
+      with a time on it is not backlog; the Quick Bucket is for that.
+    </p>
   </form>
 
   <p class="bk-msg" data-bk-msg role="status" aria-live="polite"></p>
@@ -189,9 +220,23 @@
     <p class="bk-sec-note">Captured here, or deferred with no deadline and no alarm.</p>
     <ul class="bk-list" data-bk-list-future>
       {% for it in future %}
-        <li class="bk-item" data-kind="bucket" data-id="{{ it.id }}"
-            data-text="{{ it.text }}">
+        <li class="bk-item{% if it.overdue %} is-late{% endif %}"
+            data-kind="bucket" data-id="{{ it.id }}" data-text="{{ it.text }}">
           <span class="t">{{ it.text }}</span>
+          {% if it.planned_minutes %}
+            <span class="bk-mins">{{ it.planned_minutes }}m</span>
+          {% endif %}
+          {% if it.by %}
+            <span class="bk-tag {% if it.overdue %}late{% elif it.due_in is not none and it.due_in <= 2 %}soon{% else %}due{% endif %}">
+              {%- if it.overdue -%}
+                {{ -it.due_in }}d late
+              {%- elif it.due_in == 0 -%}
+                today
+              {%- else -%}
+                {{ it.due_in }}d &middot; {{ it.by }}
+              {%- endif -%}
+            </span>
+          {% endif %}
           {% if it.when %}<span class="bk-tag due">{{ it.when }}</span>{% endif %}
           <button type="button" class="bk-send" data-bk-send>Send →</button>
         </li>

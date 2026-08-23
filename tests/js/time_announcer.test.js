@@ -116,8 +116,26 @@ TA._set({items:[item({id:"h", at:"09:00"})], said:{h: TODAY+"|09:00"}});
 ok("not repeated once said",      TA._dueItems(at(9,0,0)).length===0);
 TA._set({items:[item({id:"i", at:"09:00"})], said:{}});
 ok("60s late still fires",        TA._dueItems(at(9,1,0)).length===1);
-ok("2m late is skipped",          TA._dueItems(at(9,2,0)).length===0);
 ok("never fires early",           TA._dueItems(at(8,59,0)).length===0);
+
+// ── CATCHING UP AFTER THE DEVICE SLEPT (2026-08-23) ─────────────────
+// "in android i had a notification set up at 7.14 pm everyday with tell
+// slokas.. but it was not fired", on a phone that was checking every 15
+// seconds when it was looked at afterwards. It was asleep at 7:14, and by
+// the time Android thawed the page the 90-second grace had gone, so the
+// slot was discarded in silence.
+//
+// A once-a-day reminder is worth hearing late; the repeating clock is not,
+// because a stale time is simply wrong.
+TA._set({items:[item({id:"late1", at:"09:00"})], said:{}});
+ok("a slept-through reminder still fires 10m late",
+   TA._dueItems(at(9,10,0)).length===1);
+ok("...and 29m late",             TA._dueItems(at(9,29,0)).length===1);
+ok("...but is given up on after 30m", TA._dueItems(at(9,31,0)).length===0);
+// The repeating clock keeps the tight rule — "It's 9 o'clock" at 9:10 is
+// not a late announcement, it is a wrong one.
+TA._set({mode:"on", every:15, items:[], said:{}, at:[], label:""});
+ok("the clock does NOT catch up", TA._dueSlot(at(9,10,0))===null);
 
 // The interval is independent of the items and still works alongside them.
 TA._set({mode:"on", every:60, items:[item({id:"j", at:"09:00"})], said:{}});

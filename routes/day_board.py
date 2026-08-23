@@ -233,6 +233,26 @@ def _bucket_for(user_id, plan_date, is_today):
         if bucket == "future":
             continue
 
+        # ── FINISHED WORK BELONGS TO THE DAY IT WAS FINISHED ──────
+        # A "now" row carries no date, so every one ever created landed on
+        # every day's board forever. Measured 2026-08-23: 61 rows in To do,
+        # 53 of them completed in May and July. The count said 8 because it
+        # filtered done; the LIST did not, so the panel was 87% archive.
+        # Reported as "it does not take into account completed tasks".
+        #
+        # Same rule the bucket page already applies: done today is today's
+        # business — it is how you see what you have got through — and done
+        # in May is the archive's.
+        if r.get("is_done"):
+            # A row with NO done_at cannot be placed, and every row the API
+            # closes has carried one for months — so the unplaceable ones
+            # are old and rare. Kept rather than hidden: dropping a row on a
+            # guess is worse than showing one extra, and the 53 that caused
+            # this all have a date.
+            done_day = (r.get("done_at") or "")[:10]
+            if done_day and done_day != day:
+                continue
+
         when = None
         if r.get("due_at"):
             try:
@@ -725,6 +745,27 @@ def _link_bucket(item, plan_date):
     return url_for("quick_bucket.quick_bucket_page", **_back_args(plan_date))
 
 
+def _quote_of_day(plan_date):
+    """One quote, and the SAME one all day.
+
+    Picked by date rather than at random: a line that changes every time
+    the board refreshes itself is wallpaper, and you stop reading it by
+    lunchtime. One a day is something you can actually carry around.
+    """
+    try:
+        rows = get("quotes", params={
+            "is_active": "eq.true", "select": "text,author",
+            "order": "id.asc", "limit": "500",
+        }) or []
+    except Exception:
+        logger.warning("day board: quote read failed", exc_info=True)
+        return None
+    rows = [r for r in rows if (r.get("text") or "").strip()]
+    if not rows:
+        return None
+    return rows[plan_date.toordinal() % len(rows)]
+
+
 def _display_name(user_id):
     """The name to greet, or "" — never an exception and never an email.
 
@@ -923,6 +964,22 @@ def day_board():
     open_tasks = [t for t in tasks
                   if not (t.get("is_done") or t.get("status") == "done")]
     open_bucket = [b for b in bucket if not b["done"]]
+
+    # ── HOW THE DAY IS GOING, not just what is left ───────────────────
+    # "dayboard should highlight how i am progressing." A count of what
+    # remains is the same number whether you have done nothing or nine
+    # things, which is exactly the wrong signal on a day you are winning.
+    done_tasks = len(tasks) - len(open_tasks)
+    done_bucket = len(bucket) - len(open_bucket)
+    done_checks = sum(1 for c in checklist if c["done"])
+    done_now = done_tasks + done_bucket + done_checks
+    total_now = len(tasks) + len(bucket) + len(checklist)
+    progress = {
+        "done": done_now,
+        "total": total_now,
+        "left": total_now - done_now,
+        "pct": int(round(done_now * 100.0 / total_now)) if total_now else 0,
+    }
     for _b in bucket:
         _b["href"] = _link_bucket(_b, plan_date)
         # "AISDEPrep — Two-pointer technique" is a ROUTING prefix, and it is
@@ -969,6 +1026,8 @@ def day_board():
         display_name=_display_name(user_id),
         appreciation=_appreciation(chain, is_today),
         perf=_performance(chain),
+        progress=progress,
+        quote=_quote_of_day(plan_date),
         refresh=refresh,
         theme=(request.args.get("theme") or "dark").lower(),
     )

@@ -22,6 +22,8 @@
   var capForm = document.querySelector("[data-bk-capture]");
   var capText = document.querySelector("[data-bk-text]");
   var addBtn  = document.querySelector("[data-bk-add]");
+  var capMins = document.querySelector("[data-bk-mins]");
+  var capDays = document.querySelector("[data-bk-days]");
 
   var projects = [];
   try {
@@ -477,13 +479,27 @@
   function capture() {
     var text = (capText && capText.value || "").trim();
     if (!text) { capText && capText.focus(); return; }
+    var dated = !!(capDays && capDays.value) || !!(capMins && capMins.value);
     addBtn.disabled = true;
-    postJSON("/api/backlog/capture", { text: text })
+    postJSON("/api/backlog/capture", {
+      text: text,
+      minutes: capMins && capMins.value ? parseInt(capMins.value, 10) : 0,
+      days: capDays && capDays.value ? parseInt(capDays.value, 10) : 0,
+    })
       .then(function (res) {
         var made = (res && res.created) || [];
         capText.value = "";
+        if (capMins) capMins.value = "";
+        if (capDays) capDays.value = "";
         say(made.length === 1 ? "Added to the backlog."
                               : "Added " + made.length + " items.", false);
+        // A DEADLINE CHANGES WHERE THE ROW BELONGS. The list is sorted
+        // late-first, then by time remaining, so a dated capture inserted
+        // at the top would be sitting in the wrong place until the next
+        // load — and the whole point of the date is the ordering it buys.
+        // Undated captures still go straight in, which is the fast path
+        // that matters when emptying your head one line at a time.
+        if (dated) { window.location.reload(); return; }
         // Reload only when there is no Future list to insert into — the
         // section is rendered server-side and does not exist on a page
         // that had nothing in it.

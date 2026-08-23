@@ -53,7 +53,7 @@ different answer.
 """
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import Blueprint, jsonify, render_template, request, session
 
@@ -69,21 +69,50 @@ backlog_bp = Blueprint("backlog", __name__)
 _CLOSED = {"done", "skipped", "deleted", "not_required"}
 
 
+class _neg_str:
+    """Sort a string DESCENDING inside an otherwise ascending key."""
+
+    __slots__ = ("s",)
+
+    def __init__(self, s):
+        self.s = s
+
+    def __lt__(self, other):
+        return self.s > other.s
+
+    def __eq__(self, other):
+        return self.s == other.s
+
+
 def _future_bucket(user_id, today):
     """Quick Bucket rows that are deferred with no deadline."""
     rows = get("quick_bucket", params={
         "user_id": f"eq.{user_id}",
         "is_deleted": "eq.false",
         "is_done": "eq.false",
-        "select": "id,text,time_bucket,due_at,priority_label,created_at",
+        "select": "id,text,time_bucket,due_at,priority_label,created_at,"
+                  "planned_minutes,backlog_due",
         "limit": "1000",
     }) or []
+
+    def _dated(r):
+        """Attach how the deadline is going: late, today, or n days out."""
+        by = r.get("backlog_due")
+        if not by:
+            return {**r, "overdue": False, "due_in": None, "by": None}
+        try:
+            d = date.fromisoformat(str(by)[:10])
+        except (TypeError, ValueError):
+            return {**r, "overdue": False, "due_in": None, "by": None}
+        left = (d - today).days
+        return {**r, "by": d.strftime("%d %b"), "due_in": left,
+                "overdue": left < 0}
 
     out = []
     for r in rows:
         bucket = (r.get("time_bucket") or "").lower()
         if bucket == "future":
-            out.append({**r, "when": None})
+            out.append(_dated({**r, "when": None}))
             continue
         # An "at" item is Future only when its pinned moment is past today —
         # the same test the bucket page applies.
@@ -94,8 +123,17 @@ def _future_bucket(user_id, today):
             except (ValueError, TypeError):
                 continue
             if due.date() > today:
-                out.append({**r, "when": due.strftime("%d %b")})
-    out.sort(key=lambda r: (r.get("created_at") or ""), reverse=True)
+                out.append(_dated({**r, "when": due.strftime("%d %b")}))
+
+    # LATE FIRST, then by how little time is left, then newest. A backlog
+    # sorted purely by capture date buries the thing that is already
+    # overdue under everything typed since.
+    out.sort(key=lambda r: (
+        0 if r.get("overdue") else 1,
+        r["due_in"] if r.get("due_in") is not None else 10 ** 6,
+        # Newest first inside a group, so recent captures stay findable.
+        _neg_str(r.get("created_at") or ""),
+    ))
     return out
 
 
@@ -231,16 +269,44 @@ def capture():
     if not lines:
         return jsonify({"error": "Text required"}), 400
 
+    # HOW LONG IT WILL TAKE, captured while you still know.
+    # Estimating an hour of backlog later, item by item, is a job nobody
+    # does — so the effort figures stay empty and "what can I fit in the
+    # next 40 minutes" can never be answered. Optional, and applied to
+    # every line of a pasted block, which is the common case: a list of
+    # similar small jobs.
+    try:
+        minutes = int(data.get("minutes") or 0)
+    except (TypeError, ValueError):
+        minutes = 0
+    minutes = max(0, min(600, minutes))
+
+    # "has to do by X days (take the current date as the baseline)."
+    # Counted from today rather than asked for as a date: when you are
+    # emptying your head onto a page, "3 days" is the thing you know and
+    # "the 26th" is arithmetic you have to stop and do.
+    try:
+        days = int(data.get("days") or 0)
+    except (TypeError, ValueError):
+        days = 0
+    days = max(0, min(3650, days))
+    due = (user_today() + timedelta(days=days)).isoformat() if days else None
+
     made = []
     for ln in lines:
         try:
-            res = post("quick_bucket", {
+            row = {
                 "user_id": user_id,
                 "text": ln[:2000],
                 "time_bucket": "future",
                 "is_done": False,
                 "is_deleted": False,
-            })
+            }
+            if minutes:
+                row["planned_minutes"] = minutes
+            if due:
+                row["backlog_due"] = due
+            res = post("quick_bucket", row)
             if res:
                 made.append(res[0])
         except Exception:

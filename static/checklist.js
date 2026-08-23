@@ -311,6 +311,12 @@
     }
     render();
 
+    // Ticking is the achievement; unticking is a correction.
+    if (!wasTicked && window.dpParty) {
+      window.dpParty(document.querySelector(`[data-id="${it.id}"] .cl-check`),
+                     it.name);
+    }
+
     const endpoint = wasTicked ? "untick" : "tick";
     const body = times.length ? { all: true } : {};
     try {

@@ -99,40 +99,151 @@
     if (!box.closest || !box.closest(".q-card")) return;
     if (!box.classList.contains("q-prac") && !box.hasAttribute("data-title")) return;
     // Unticking is a correction, not an achievement — only the tick claps.
-    window.dpClap(box, "Studied");
+    window.dpParty(box, "Studied \u2014 nicely done");
   });
 
-  window.dpClap = function (el, message) {
+  /* ── THE LONG CELEBRATION ────────────────────────────────────────
+     "claps should be for atleast 20 seconds... Along with clap dancing and
+     singing girl should be shown."
+
+     IT RESTARTS, IT DOES NOT STACK. Twenty seconds is a long time on a
+     prep page where ten topics get ticked in a row — ten overlapping
+     parties would be unusable and would drown the page in DOM. A new
+     celebration resets the clock on the running one instead.
+
+     It sits in a corner, ignores the pointer, and can be dismissed by
+     clicking it. Nothing about it blocks the work being celebrated. */
+  var HOLD_MS = 20000;
+  var party = null, partyEnds = 0, partyTimer = null;
+
+  function endParty() {
+    if (partyTimer) { clearInterval(partyTimer); partyTimer = null; }
+    if (party) { party.remove(); party = null; }
+  }
+
+  function ensureParty(message) {
+    if (party && party.isConnected) {
+      if (message) {
+        var m = party.querySelector(".dp-party-say");
+        if (m) m.textContent = message;
+      }
+      return party;
+    }
+    party = document.createElement("div");
+    party.className = "dp-party";
+    party.setAttribute("aria-hidden", "true");
+    party.innerHTML =
+      '<div class="dp-party-cast">' +
+        '<span class="dp-dancer dp-d1">\uD83D\uDC83</span>' +
+        '<span class="dp-dancer dp-d2">\uD83D\uDD7A</span>' +
+        '<span class="dp-note dp-n1">\uD83C\uDFB5</span>' +
+        '<span class="dp-note dp-n2">\uD83C\uDFB6</span>' +
+        '<span class="dp-note dp-n3">\u2728</span>' +
+      '</div>' +
+      '<b class="dp-party-say"></b>';
+    party.querySelector(".dp-party-say").textContent = message || "Nicely done";
+    // Clicking it out is the only control it needs — it leaves on its own.
+    party.addEventListener("click", endParty);
+    document.body.appendChild(party);
+    return party;
+  }
+
+  function partyStyle() {
+    if (document.getElementById("dp-party-style")) return;
+    var css =
+      ".dp-party{position:fixed;right:16px;bottom:16px;z-index:99998;" +
+        "display:flex;flex-direction:column;align-items:center;gap:6px;" +
+        "padding:12px 16px 10px;border-radius:16px;cursor:pointer;" +
+        "background:rgba(15,23,42,.92);color:#fff;" +
+        "box-shadow:0 14px 40px rgba(0,0,0,.35);" +
+        "animation:dp-party-in .4s cubic-bezier(.2,.9,.25,1)}" +
+      ".dp-party-cast{position:relative;display:flex;gap:4px;font-size:34px;" +
+        "line-height:1}" +
+      ".dp-dancer{display:inline-block;transform-origin:50% 90%}" +
+      ".dp-d1{animation:dp-dance .62s ease-in-out infinite alternate}" +
+      ".dp-d2{animation:dp-dance .62s ease-in-out infinite alternate-reverse}" +
+      ".dp-note{position:absolute;top:-2px;font-size:15px;opacity:0;" +
+        "animation:dp-note-up 2.1s ease-out infinite}" +
+      ".dp-n1{left:-6px;animation-delay:0s}" +
+      ".dp-n2{left:26px;animation-delay:.7s}" +
+      ".dp-n3{left:56px;animation-delay:1.4s}" +
+      ".dp-party-say{font-size:12.5px;font-weight:800;letter-spacing:.01em;" +
+        "white-space:nowrap;max-width:46vw;overflow:hidden;" +
+        "text-overflow:ellipsis}" +
+      "@keyframes dp-party-in{from{opacity:0;transform:translateY(18px) scale(.9)}" +
+        "to{opacity:1;transform:none}}" +
+      "@keyframes dp-dance{from{transform:rotate(-13deg) translateY(0)}" +
+        "to{transform:rotate(13deg) translateY(-7px)}}" +
+      "@keyframes dp-note-up{0%{opacity:0;transform:translateY(0) scale(.7)}" +
+        "20%{opacity:1}100%{opacity:0;transform:translateY(-40px) scale(1.1)}}" +
+      "@media (max-width:520px){.dp-party{right:10px;bottom:10px;" +
+        "padding:9px 12px 8px}.dp-party-cast{font-size:28px}}";
+    var el = document.createElement("style");
+    el.id = "dp-party-style";
+    el.textContent = css;
+    document.head.appendChild(el);
+  }
+
+  function burst(el) {
+    var host = ensureLayer();
+    var p = pointFor(el);
+    var n = 10;
+    for (var i = 0; i < n; i++) {
+      var s = document.createElement("span");
+      s.textContent = HANDS[i % HANDS.length];
+      s.style.left = p.x + "px";
+      s.style.top = p.y + "px";
+      // Fanned upward and outward: a burst that also falls downward reads
+      // as something breaking rather than something achieved.
+      var ang = (Math.PI * (0.15 + 0.7 * (i / (n - 1)))) + Math.PI;
+      var dist = 46 + (i % 4) * 22;
+      s.style.setProperty("--dx", Math.cos(ang) * dist + "px");
+      s.style.setProperty("--dy", Math.sin(ang) * dist + "px");
+      s.style.setProperty("--rot", ((i % 2 ? 1 : -1) * (20 + i * 7)) + "deg");
+      s.style.animationDelay = (i * 18) + "ms";
+      s.addEventListener("animationend", function () { this.remove(); });
+      host.appendChild(s);
+    }
+  }
+
+  function badge(el, message) {
+    var host = ensureLayer();
+    var p = pointFor(el);
+    var b = document.createElement("b");
+    b.textContent = message;
+    b.style.left = p.x + "px";
+    b.style.top = (p.y - 26) + "px";
+    b.addEventListener("animationend", function () { this.remove(); });
+    host.appendChild(b);
+  }
+
+  window.dpClap = function (el, message, opts) {
     if (reduced()) return;
     try {
       ensureStyle();
-      var host = ensureLayer();
-      var p = pointFor(el);
-      var n = 10;
-      for (var i = 0; i < n; i++) {
-        var s = document.createElement("span");
-        s.textContent = HANDS[i % HANDS.length];
-        s.style.left = p.x + "px";
-        s.style.top = p.y + "px";
-        // Fanned upward and outward: a burst that also falls downward reads
-        // as something breaking rather than something achieved.
-        var ang = (Math.PI * (0.15 + 0.7 * (i / (n - 1)))) + Math.PI;
-        var dist = 46 + (i % 4) * 22;
-        s.style.setProperty("--dx", Math.cos(ang) * dist + "px");
-        s.style.setProperty("--dy", Math.sin(ang) * dist + "px");
-        s.style.setProperty("--rot", ((i % 2 ? 1 : -1) * (20 + i * 7)) + "deg");
-        s.style.animationDelay = (i * 18) + "ms";
-        s.addEventListener("animationend", function () { this.remove(); });
-        host.appendChild(s);
+      burst(el);
+
+      // A short burst is enough for one checkbox. The full twenty seconds
+      // is for finishing something — passed explicitly so ordinary ticks
+      // do not each start a party.
+      if (!(opts && opts.long)) {
+        if (message) badge(el, message);
+        return;
       }
-      if (message) {
-        var b = document.createElement("b");
-        b.textContent = message;
-        b.style.left = p.x + "px";
-        b.style.top = (p.y - 26) + "px";
-        b.addEventListener("animationend", function () { this.remove(); });
-        host.appendChild(b);
+
+      partyStyle();
+      ensureParty(message);
+      partyEnds = Date.now() + HOLD_MS;
+      if (!partyTimer) {
+        partyTimer = setInterval(function () {
+          if (Date.now() >= partyEnds) { endParty(); return; }
+          burst(party);           // keep clapping for the whole twenty
+        }, 1400);
       }
     } catch (e) { /* a celebration must never break the thing it celebrates */ }
+  };
+
+  window.dpParty = function (el, message) {
+    window.dpClap(el, message, { long: true });
   };
 })();

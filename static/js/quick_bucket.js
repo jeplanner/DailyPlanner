@@ -669,6 +669,21 @@
       });
     });
 
+    // ── BOUND ONCE, NOT ONCE PER RENDER ─────────────────────────────
+    // renderTop5() replaces this panel's CHILDREN via innerHTML, so the row
+    // listeners above die with the rows they were attached to. The panel
+    // itself survives, and the three handlers below were being added to it
+    // again on every render. After ten renders a single drop ran the drop
+    // handler ten times, each one saving and re-rendering and adding ten
+    // more — reported as "if i try to drag again it looks like it is going
+    // in continous loop".
+    //
+    // The "a single drag can fire the drop handler several times in some
+    // browsers" note further down was this bug seen from the outside, and
+    // the toast debounce was hiding it rather than fixing it.
+    if (panel.dataset.dropWired === "1") return;
+    panel.dataset.dropWired = "1";
+
     panel.addEventListener("dragover", (e) => {
       if (!_dragId) return;
       e.preventDefault();
@@ -1215,6 +1230,9 @@
   const markDone = async (it) => {
     buzz(HAPTIC.pop);
     try {
+      if (window.dpParty) {
+        window.dpParty(document.querySelector(`[data-id="${it.id}"]`), it.text);
+      }
       await apiFetch(`/api/quick-bucket/${it.id}/done`, { method: "POST", body: "{}" });
       it.is_done = true;
       it.done_at = new Date().toISOString();

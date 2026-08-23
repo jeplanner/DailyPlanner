@@ -244,6 +244,23 @@ header{
 }
 [data-fit]::-webkit-scrollbar-thumb:hover{background:var(--dim)}
 
+/* ── THE DAY'S PROGRESS ──────────────────────────────────────────────
+   Sits in the header where the counts already are, because it answers the
+   same glance. Green only once the day is actually complete — a bar that
+   is green at 20% teaches you to stop reading it. */
+.dayprog{display:flex;align-items:center;gap:calc(var(--u) * .55);
+  flex-basis:100%;margin-top:calc(var(--u) * .25)}
+.dayprog-bar{flex:1;min-width:0;height:calc(var(--u) * .5);
+  background:var(--line);border-radius:999px;overflow:hidden}
+.dayprog-bar i{display:block;height:100%;border-radius:999px;
+  background:var(--accent);
+  transition:width .6s cubic-bezier(.2,.9,.25,1)}
+.dayprog.all .dayprog-bar i{background:var(--ok)}
+.dayprog-txt{flex:none;font-size:calc(var(--u) * .95);color:var(--dim);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.dayprog-txt b{color:var(--text)}
+.dayprog.all .dayprog-txt b{color:var(--ok)}
+
 /* ── THE WELCOME OVERLAY ─────────────────────────────────────────────
    Sized in px rather than --u: it is not part of the board's fit problem,
    and shrinking the one thing meant to be read on arrival along with a
@@ -292,6 +309,14 @@ header{
 .wc-bar:nth-child(6) i{animation-delay:.36s}
 .wc-bar:nth-child(7) i{animation-delay:.42s}
 .wc-foot{margin:0;font-size:11px;color:var(--dim)}
+/* THE SAME QUOTE ALL DAY, chosen by date. One that changes on every
+   refresh is wallpaper, and you stop reading it by lunchtime. */
+.wc-quote{margin:14px 0 0;padding:11px 13px;border-radius:11px;
+  background:var(--bg);border-left:3px solid var(--accent);
+  font-size:12.5px;line-height:1.6;font-style:italic;color:var(--text)}
+.wc-quote cite{display:block;margin-top:5px;font-style:normal;font-weight:700;
+  font-size:11px;color:var(--dim)}
+.wc-quote cite::before{content:"\2014\00a0"}
 
 @keyframes wc-in{from{opacity:0}to{opacity:1}}
 @keyframes wc-rise{from{opacity:0;transform:translateY(14px) scale(.97)}
@@ -531,6 +556,17 @@ li.done .when{color:var(--dim); font-weight:500}
       <span><b>{{ checklist_done }}/{{ checklist|length }}</b> checklist</span>
       <span id="freshness"></span>
     </div>
+    {% if progress and progress.total %}
+    {# HOW THE DAY IS GOING. A count of what is LEFT reads the same whether
+       you have done nothing or nine things — the wrong signal on a day you
+       are winning. This is the one place the board says you are ahead. #}
+    <div class="dayprog{% if progress.pct >= 100 %} all{% endif %}"
+         title="{{ progress.done }} of {{ progress.total }} finished today">
+      <div class="dayprog-bar"><i style="width:{{ progress.pct }}%"></i></div>
+      <span class="dayprog-txt"><b>{{ progress.done }}</b>/{{ progress.total }}
+        done{% if progress.left %} &middot; {{ progress.left }} left{% endif %}</span>
+    </div>
+    {% endif %}
   </header>
 
   <div class="cols">
@@ -723,6 +759,12 @@ li.done .when{color:var(--dim); font-weight:500}
     </div>
     <p class="wc-foot">The bar is {{ perf.bar }} things a day. Averaging
       {{ perf.avg }}.</p>
+    {% if quote %}
+    <blockquote class="wc-quote">
+      {{ quote.text }}
+      {% if quote.author %}<cite>{{ quote.author }}</cite>{% endif %}
+    </blockquote>
+    {% endif %}
   </div>
 </div>
 {% endif %}
@@ -1009,7 +1051,7 @@ li.done .when{color:var(--dim); font-weight:500}
       // Clap for the day being MET, not merely for the board opening.
       // Applause for showing up is applause that stops meaning anything.
       setTimeout(function () {
-        window.dpClap(wc.querySelector(".wc-nums"), "Today is done");
+        window.dpParty(wc.querySelector(".wc-nums"), "Today is done");
       }, 420);
     }
   }
