@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v242";
+  var BUILD = "v243";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -543,8 +543,11 @@
       chimeEl.volume = 1;
       chimeEl.currentTime = 0;
       var p = chimeEl.play();
-      if (p && p.catch) {
-        p.catch(function (err) {
+      if (p && p.then) {
+        p.then(function () {
+          if (lastFire) { lastFire.chime = "played"; paint(); }
+        }).catch(function (err) {
+          if (lastFire) { lastFire.chime = "blocked"; paint(); }
           note(false, "the chime was blocked (" +
                       ((err && err.name) || "autoplay policy") + ")");
         });
@@ -603,12 +606,17 @@
         u.onstart = function () {
           started = true;
           noVoice = false;              // whatever we chose, it worked
+          if (lastFire) { lastFire.spoke = "spoke"; paint(); }
           note(true, "", text);
         };
         u.onend = function () { speaking = null; };
         u.onerror = function (ev) {
           errored = true;
           speaking = null;
+          if (lastFire && !lastFire.spoke) {
+            lastFire.spoke = "refused: " + ((ev && ev.error) || "error");
+            paint();
+          }
           note(false, (ev && ev.error) || "the browser refused to speak");
           // RETRY WITHOUT A VOICE. The commonest cause of a refusal is a
           // voice that cannot be reached right now — a network voice on a
@@ -629,6 +637,10 @@
         // no error either, this is the silent case that had no evidence.
         setTimeout(function () {
           if (!started && !errored) {
+            if (lastFire && !lastFire.spoke) {
+              lastFire.spoke = "accepted but silent";
+              paint();
+            }
             note(false, armed
               ? "the browser accepted it but said nothing"
               : "blocked until you tap the page once");
@@ -699,8 +711,30 @@
     });
 
     save();
+
+    // ── WHAT ACTUALLY HAPPENED, RECORDED PER FIRE ────────────────────
+    // Android speaks only while the app is visible; iPhone speaks while
+    // locked. Two causes produce that and they need opposite fixes:
+    //
+    //   (a) the PAGE is frozen when hidden — then nothing runs, and even
+    //       the chime is silent. The fix is the keep-alive.
+    //   (b) the page runs but SPEECH is gated on visibility — then the
+    //       chime plays and only the words are missing. The fix is
+    //       pre-rendered audio, because no amount of work on the browser
+    //       API will make it speak.
+    //
+    // The difference is invisible from the outside and decisive, so it is
+    // recorded rather than guessed at.
+    lastFire = {
+      at: new Date(),
+      hidden: (typeof document.visibilityState === "string")
+        ? document.visibilityState !== "visible" : null,
+      chime: null,
+      spoke: null,
+    };
     playChime();
     speak(parts.join(". "));
+    paint();
   }
 
   //: When check() last ran. A page the OS has frozen stops ticking, and
@@ -708,6 +742,10 @@
   //: look right, the schedule is still there, and the clock simply is not
   //: being read. "Last checked 14 minutes ago" is the whole diagnosis.
   var lastTick = 0;
+  //: The last announcement attempt and what each half of it did. This is
+  //: the evidence that separates "the page was asleep" from "the page was
+  //: awake and the browser refused to speak".
+  var lastFire = null;
 
   function start() {
     stopTimer();
@@ -1199,6 +1237,25 @@
       nowEl.textContent = (state.mode === "on" ? "Saved & running: "
                            : state.mode === "paused" ? "Saved, paused: "
                            : "Saved, stopped: ") + what;
+    }
+
+    /* THE LAST ANNOUNCEMENT, AND WHAT EACH HALF OF IT DID. */
+    var fire = pop.querySelector("[data-ta-fire]");
+    if (fire) {
+      if (!lastFire) {
+        fire.className = "ta-health";
+        fire.textContent = "No announcement has fired on this device yet.";
+      } else {
+        var when = lastFire.at.toTimeString().slice(0, 5);
+        var where = lastFire.hidden === null ? "" :
+          lastFire.hidden ? " while HIDDEN" : " while visible";
+        var ch = lastFire.chime || "no result";
+        var sp = lastFire.spoke || "no result";
+        fire.className = "ta-health " +
+          (lastFire.spoke === "spoke" ? "good" : "bad");
+        fire.textContent = "Last fired " + when + where +
+          " \u2014 chime: " + ch + ", speech: " + sp;
+      }
     }
 
     /* THE TWO FACTS THAT MAKE EVERY OTHER DIAGNOSIS MEANINGFUL:
@@ -2070,6 +2127,7 @@
         '<div class="ta-row"><button type="button" data-ta-test>Test the voice now</button></div>' +
         '<p class="ta-health" data-ta-health></p>' +
         '<p class="ta-health" data-ta-hold></p>' +
+        '<p class="ta-health" data-ta-fire></p>' +
         '<p class="ta-build" data-ta-build></p>' +
         '<p class="ta-auto">Everything here saves as you type &mdash; there ' +
         'is no Save button.</p>' +

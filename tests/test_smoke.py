@@ -4593,3 +4593,32 @@ def test_push_delivery_failures_are_visible_not_just_logged():
     assert "send failed (HTTP" in src
     # And an unexpected exception is not swallowed either.
     assert 'loud.bailed("push delivery", "send raised unexpectedly"' in src
+
+
+def test_each_fire_records_visibility_chime_and_speech():
+    """Reported 2026-08-23: the clock speaks on iPhone locked OR unlocked;
+    on Android it speaks only while the app is visible.
+
+    Two causes produce exactly that and they need OPPOSITE fixes:
+
+      (a) the PAGE is frozen when hidden — nothing runs, and even the
+          chime is silent. The fix is the keep-alive.
+      (b) the page runs but SPEECH is gated on visibility — the chime
+          plays and only the words are missing. The fix is pre-rendered
+          audio, because no amount of work on the browser API will make
+          it speak.
+
+    From the outside those are indistinguishable, and guessing wrong means
+    building the wrong thing. So every fire records which state the page
+    was in and what each half of the attempt did.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "lastFire = {" in js
+    assert "document.visibilityState" in js, "visibility is not recorded"
+    # Both halves report their own outcome, because it is the DIFFERENCE
+    # between them that identifies the cause.
+    assert 'lastFire.chime = "played"' in js and 'lastFire.chime = "blocked"' in js
+    assert 'lastFire.spoke = "spoke"' in js
+    assert 'lastFire.spoke = "accepted but silent"' in js
+    assert "data-ta-fire" in js
+    assert "while HIDDEN" in js
