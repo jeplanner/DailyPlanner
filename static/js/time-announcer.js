@@ -2437,6 +2437,7 @@
     _pullState: pullState,
     _friendly: friendly,
     _scheduleWords: scheduleWords,
+    _build: function () { return BUILD; },
     _health: function () { return health; },
     _voiceFor: function (voices, lang) {
       // Exposed so the selection rule can be tested without a speech engine.

@@ -4537,3 +4537,33 @@ def test_announcer_reports_its_build_and_last_tick():
         "bump both together")
     assert "lastTick = Date.now();" in js
     assert "this page was asleep" in js
+
+
+def test_settings_shows_server_and_device_build(auth_client):
+    """Asked 2026-08-23: put a build mark on Settings so the app version can
+    be confirmed.
+
+    TWO numbers, and the gap between them is the point. The SERVER build is
+    what has been deployed; THIS DEVICE is what the browser actually
+    executed. An installed PWA can serve a cached script for a long time,
+    and until you know those match, no other diagnosis on this page means
+    anything — which is exactly the position we were in when an
+    announcement did not fire and nothing could say why.
+    """
+    from settings import BaseConfig
+    build = BaseConfig.APP_BUILD
+    assert build and build != "unknown", "the build could not be read"
+    # It comes from the service worker's CACHE_VERSION, which already has
+    # to change on every deploy. A second, separately-maintained version
+    # string would give two answers to one question.
+    sw = open("static/service-worker.js", encoding="utf-8").read()
+    assert f'CACHE_VERSION = "{build}"' in sw
+
+    html = auth_client.get("/settings").get_data(as_text=True)
+    assert build in html, "the server build is not shown"
+    assert 'id="ver-device"' in html, "the device build is not shown"
+    # A mismatch must be stated, not left for the reader to spot by
+    # comparing two strings.
+    assert 'id="ver-warn"' in html
+    # ...and there must be a way to act on it from the page.
+    assert 'id="ver-update"' in html and "SKIP_WAITING" in html

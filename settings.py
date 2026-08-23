@@ -8,6 +8,26 @@ from datetime import timedelta
 _DEV_SECRET_FALLBACK = "dev-only-not-for-production"
 
 
+def _read_build():
+    """The deployed build, taken from the service worker's CACHE_VERSION.
+
+    ONE SOURCE OF TRUTH. That constant already has to change on every
+    deploy or browsers serve stale assets, so it is the string that is
+    reliably correct — inventing a second version number beside it would
+    give two answers to one question, and the wrong one would be believed.
+    """
+    import os
+    import re
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "static", "service-worker.js")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            m = re.search(r'CACHE_VERSION\s*=\s*"([^"]+)"', fh.read(8000))
+        return m.group(1) if m else "unknown"
+    except Exception:
+        return "unknown"
+
+
 class BaseConfig:
     SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", _DEV_SECRET_FALLBACK)
     SESSION_COOKIE_SECURE = True
@@ -30,6 +50,11 @@ class BaseConfig:
     #: The handbook, published as a private page. Defined here rather than
     #: written into two templates, so moving it is one edit — and settable
     #: per environment without a code change.
+    #: Shown on Settings so "which version is this device running" is a
+    #: fact rather than a guess. Read once at import; it cannot change
+    #: without a redeploy, which restarts the process anyway.
+    APP_BUILD = _read_build()
+
     USER_GUIDE_URL = os.environ.get(
         "USER_GUIDE_URL",
         "https://claude.ai/code/artifact/1848f7ec-2746-49b4-8d01-7f9f2fb8eb79",
