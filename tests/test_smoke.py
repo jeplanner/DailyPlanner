@@ -4364,13 +4364,21 @@ def test_announcement_chime_is_real_audio_and_on_by_default():
     assert "chime: true" in js
     # A real <audio> element, not Web Audio — Web Audio is not treated as
     # playback and is exactly what a locked phone declines to run.
-    chime = js.split("function playChime")[1].split("\n  function ")[0]
-    assert 'createElement("audio")' in chime
-    assert "audio-chime.wav" in chime
+    # Slicing the function body broke as soon as neighbouring code moved.
+    # These two facts are what matter and they are unambiguous in the file:
+    # a real <audio> element (Web Audio is not treated as playback and is
+    # exactly what a locked phone declines to run) pointed at a real file.
+    assert 'chimeEl.id = "ta-chime"' in js
+    assert 'chimeEl.src = "/static/audio-chime.wav"' in js
     # Chime BEFORE speak, so it cannot wait behind a speech call that may
-    # never start.
-    fire = js.split("save();\n    playChime();")[1][:60]
-    assert "speak(" in fire, "the chime is not played before speaking"
+    # never start. Asserted on the ORDER of the two calls rather than on
+    # the exact lines around them, which now carry the per-fire recording.
+    # The words are now joined before the branch that chooses audio vs
+    # speech, so the assertion follows the chime against whichever of the
+    # two actually carries them.
+    ci = js.index("playChime();\n\n    var words")
+    si = js.index("if (!usedAudio) speak(words);")
+    assert ci < si, "the chime is not played before the words"
 
     with wave.open("static/audio-chime.wav", "rb") as w:
         seconds = w.getnframes() / float(w.getframerate())
@@ -4622,3 +4630,53 @@ def test_each_fire_records_visibility_chime_and_speech():
     assert 'lastFire.spoke = "accepted but silent"' in js
     assert "data-ta-fire" in js
     assert "while HIDDEN" in js
+
+
+def test_words_are_rendered_as_audio_for_a_hidden_page(auth_client, monkeypatch):
+    """Reported 2026-08-23: "in android only get the chime sound, not the
+    text when the phone is locked."
+
+    That is the decisive measurement. The chime PLAYED, so the page was
+    awake and background media playback was permitted; the words did not,
+    so Android Chrome refuses speechSynthesis while the page is hidden.
+    iPhone speaks fine in the same state.
+
+    No amount of work on the Web Speech API fixes that. Words have to
+    arrive as AUDIO, through the same element the chime already proves can
+    play in the background.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    # Rendered audio is used when the page is HIDDEN, and speech otherwise —
+    # speech is better when it works, and on iOS it always does.
+    assert "if (lastFire && lastFire.hidden) usedAudio = playSpeech(words);" in js
+    assert "if (!usedAudio) speak(words);" in js
+    # PREFETCHED, or the sound waits on a network round trip at the exact
+    # moment it is due — and a phone that dropped offline would be silent.
+    assert "function prefetchNext" in js and "prefetchSpeech" in js
+    assert "90 * 1000" in js, "the prefetch has no lead time"
+
+    routes = open("routes/announcer.py", encoding="utf-8").read()
+    assert '"/api/announcer/say"' in routes
+    # A missing or failing TTS must degrade to "no audio this time", never
+    # to an application error — it is an unofficial upstream.
+    assert "tts unavailable" in routes and "tts failed" in routes
+    assert 'loud.bailed("announcer speech"' in routes
+    # Cached both server-side and in the browser: the same words always
+    # sound the same, so re-rendering them is pure waste.
+    assert "_SAY_CACHE" in routes and "Cache-Control" in routes
+    assert "_SAY_CACHE_MAX" in routes, "an unbounded cache in a long-lived worker"
+
+
+def test_say_endpoint_degrades_when_tts_is_missing(auth_client, monkeypatch):
+    import builtins
+    real = builtins.__import__
+
+    def no_gtts(name, *a, **k):
+        if name == "gtts":
+            raise ImportError("not installed")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_gtts)
+    r = auth_client.get("/api/announcer/say?text=hello")
+    assert r.status_code == 503, r.status_code
+    assert r.get_json()["error"] == "tts unavailable"

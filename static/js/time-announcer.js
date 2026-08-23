@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v243";
+  var BUILD = "v244";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -562,6 +562,66 @@
   //: Set after a failure, so the retry asks for no particular voice at all.
   var noVoice = false;
 
+  /* ── SPOKEN AUDIO, FOR WHEN THE BROWSER WILL NOT SPEAK ──────────────
+     Android Chrome refuses speechSynthesis while the page is hidden.
+     Measured: a locked Android played the CHIME — so the page was awake
+     and media playback was permitted — and spoke nothing. iPhone spoke
+     fine in the same state.
+
+     Media playback is allowed in the background everywhere here, so the
+     words are fetched as audio and played through an element, exactly
+     like the chime. That is the only mechanism that can carry words to a
+     locked Android.
+
+     PREFETCHED, not fetched at fire time: the sound must not wait on a
+     network round trip at the moment it is due, and a phone that went
+     offline after the prefetch still speaks. */
+  var sayEl = null, sayCache = {}, sayPending = {};
+
+  function sayUrl(text) {
+    return "/api/announcer/say?text=" + encodeURIComponent(text);
+  }
+
+  function prefetchSpeech(text) {
+    if (!text || sayCache[text] || sayPending[text]) return;
+    sayPending[text] = true;
+    fetch(sayUrl(text), { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.blob() : null; })
+      .then(function (b) {
+        if (b) sayCache[text] = URL.createObjectURL(b);
+        delete sayPending[text];
+      })
+      .catch(function () { delete sayPending[text]; });
+  }
+
+  /* Returns true if it managed to start playing rendered audio. */
+  function playSpeech(text) {
+    var url = sayCache[text];
+    if (!url) return false;
+    try {
+      if (!sayEl) {
+        sayEl = document.createElement("audio");
+        sayEl.id = "ta-say";
+        sayEl.preload = "auto";
+        sayEl.setAttribute("playsinline", "");
+        document.body.appendChild(sayEl);
+      }
+      sayEl.src = url;
+      sayEl.volume = 1;
+      var p = sayEl.play();
+      if (p && p.then) {
+        p.then(function () {
+          if (lastFire) { lastFire.spoke = "played (audio)"; paint(); }
+        }).catch(function () {
+          if (lastFire && !lastFire.spoke) {
+            lastFire.spoke = "audio blocked"; paint();
+          }
+        });
+      }
+      return true;
+    } catch (e) { return false; }
+  }
+
   function speak(text, isRetry) {
     if (!supported()) {
       note(false, "this browser has no speech synthesis");
@@ -671,9 +731,23 @@
     return fire();
   }
 
+  //: Prefetching runs from the tick, so the audio for the NEXT slot is
+  //: already downloaded before that slot arrives.
+  function prefetchNext(now) {
+    if (state.mode !== "on") return;
+    var ahead = new Date(now.getTime() + 90 * 1000);
+    var b = dueSlot(ahead);
+    if (b !== null) prefetchSpeech(phrase(ahead));
+    dueItems(ahead).forEach(function (d) {
+      var t = (d.text || "").replace(/[.!?]*$/, "") || "Reminder";
+      prefetchSpeech(t + ". " + phrase(ahead));
+    });
+  }
+
   function check(now) {
     lastTick = Date.now();
     if (state.mode !== "on") return;
+    try { prefetchNext(now || new Date()); } catch (e) {}
     now = now || new Date();
     var today = todayYMD(now);
 
@@ -733,7 +807,15 @@
       spoke: null,
     };
     playChime();
-    speak(parts.join(". "));
+
+    var words = parts.join(". ");
+    // WHEN HIDDEN, PLAY AUDIO. speechSynthesis is refused there on Android
+    // and works on iOS, so try the audio first and fall through to speech
+    // if it is not ready — on iOS the speech will simply win the race and
+    // nothing is lost.
+    var usedAudio = false;
+    if (lastFire && lastFire.hidden) usedAudio = playSpeech(words);
+    if (!usedAudio) speak(words);
     paint();
   }
 
@@ -2485,6 +2567,8 @@
     _matchesOn: matchesOn,
     _slotsFor: slotsFor,
     _playChime: playChime,
+    _prefetchSpeech: prefetchSpeech,
+    _sayUrl: sayUrl,
     _timeWords: timeWords,
     _repeatWords: repeatWords,
     _isExpired: isExpired,

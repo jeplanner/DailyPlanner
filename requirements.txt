@@ -34,3 +34,15 @@ pypdf>=4.0
 # behavioral). Pure Python, no native deps. Imported lazily in the route,
 # so a missing install degrades to the browser print/export view.
 fpdf2>=2.7
+# Server-rendered speech for the announcer.
+#
+# WHY THIS EXISTS: Android Chrome refuses speechSynthesis while the page is
+# hidden — measured 2026-08-23, where a locked phone played the chime (so
+# the page was awake) and spoke nothing. Media playback IS permitted there,
+# so the words have to arrive as AUDIO rather than as a speech call.
+#
+# gTTS is a thin client for Google's translate TTS endpoint: pure Python,
+# no native dependency, and small. It is an unofficial endpoint, so the
+# route treats a failure as "no audio this time" and the app falls back to
+# speechSynthesis, which still works whenever the page is visible.
+gTTS>=2.5

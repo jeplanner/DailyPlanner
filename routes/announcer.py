@@ -25,7 +25,7 @@ phone talking over a mobile connection.
 """
 import logging
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, current_app, jsonify, request, session
 
 from auth import login_required
 from services import loud
@@ -187,6 +187,69 @@ def delete_item(client_id):
                        exc_info=True)
         return jsonify({"ok": False}), 500
     return jsonify({"ok": True})
+
+
+#: Rendered speech, keyed by the exact text. Announcements repeat — the
+#: same words at the same minute every day — so a small cache turns most
+#: requests into a memory read. Bounded, because this is a personal app and
+#: an unbounded cache in a long-lived worker is a slow leak.
+_SAY_CACHE = {}
+_SAY_CACHE_MAX = 200
+
+
+@announcer_bp.route("/api/announcer/say", methods=["GET"])
+@login_required
+def say():
+    """Return the announcement text as AUDIO.
+
+    WHY THIS EXISTS. Android Chrome refuses speechSynthesis while the page
+    is hidden. Measured on 2026-08-23: a locked Android played the chime —
+    so the page was awake and media playback was permitted — and spoke
+    nothing at all. iPhone spoke fine in the same state.
+
+    Media playback IS allowed in the background on every platform here.
+    So the words have to arrive as audio rather than as a speech call, and
+    the browser plays them through the same element the chime uses.
+
+    The client PREFETCHES this before a slot arrives, so the sound at fire
+    time needs no network and works offline once cached.
+    """
+    text = (request.args.get("text") or "").strip()[:300]
+    if not text:
+        return jsonify({"error": "no text"}), 400
+
+    key = text
+    if key in _SAY_CACHE:
+        audio = _SAY_CACHE[key]
+    else:
+        try:
+            from gtts import gTTS
+        except Exception:
+            # Not installed: the client falls back to speechSynthesis,
+            # which still works whenever the page is visible.
+            return jsonify({"error": "tts unavailable"}), 503
+        try:
+            import io
+            buf = io.BytesIO()
+            # tld='co.in' gives an Indian English voice, which is what this
+            # household actually speaks.
+            gTTS(text, lang="en", tld="co.in").write_to_fp(buf)
+            audio = buf.getvalue()
+        except Exception:
+            # An unofficial endpoint, so a failure is expected occasionally
+            # and must not look like an application error.
+            loud.bailed("announcer speech", "could not render audio")
+            logger.warning("gTTS failed", exc_info=True)
+            return jsonify({"error": "tts failed"}), 503
+        if len(_SAY_CACHE) >= _SAY_CACHE_MAX:
+            _SAY_CACHE.clear()
+        _SAY_CACHE[key] = audio
+
+    resp = current_app.response_class(audio, mimetype="audio/mpeg")
+    # Cacheable by the browser and the service worker: the same words
+    # always sound the same, so a re-fetch is pure waste.
+    resp.headers["Cache-Control"] = "private, max-age=604800"
+    return resp
 
 
 @announcer_bp.route("/api/announcer/settings", methods=["POST"])
