@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v244";
+  var BUILD = "v246";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -1115,6 +1115,35 @@
       ".ta-perm button{display:block;margin-top:7px;font:inherit;",
       "font-size:11.5px;font-weight:800;padding:6px 12px;border-radius:8px;",
       "border:0;background:#4338ca;color:#fff;cursor:pointer}",
+      /* Collapsed settings. Each row states its VALUE on the right, which
+         is the thing tabs could not do — a tab hides its contents
+         entirely, so you had to open all four to see what was set. */
+      ".ta-fold{margin-top:8px;border:1px solid var(--color-border,#e5e7eb);",
+      "border-radius:10px;overflow:hidden}",
+      ".ta-fold > summary{list-style:none;cursor:pointer;display:flex;",
+      "align-items:baseline;gap:8px;padding:9px 11px;font-size:12px;",
+      "font-weight:700;background:var(--color-bg,#f9fafb)}",
+      ".ta-fold > summary::-webkit-details-marker{display:none}",
+      ".ta-fold > summary::before{content:'\\25B8';font-size:10px;",
+      "color:var(--color-text-secondary,#9ca3af);transition:transform .12s}",
+      ".ta-fold[open] > summary::before{transform:rotate(90deg)}",
+      ".ta-fold > summary b{margin-left:auto;font-weight:600;font-size:11px;",
+      "color:var(--color-text-secondary,#6b7280);font-variant-numeric:tabular-nums}",
+      ".ta-fold > *:not(summary){padding:0 11px}",
+      ".ta-fold > *:last-child{padding-bottom:11px}",
+      ".ta-fold p{margin:9px 0;font-size:11.5px;line-height:1.5;",
+      "color:var(--color-text-secondary,#6b7280)}",
+      /* The section heading and its one action. */
+      ".ta-sec-row{display:flex;align-items:center;gap:8px;margin:14px 0 6px}",
+      ".ta-sec-row .ta-sec{margin:0;flex:1}",
+      ".ta-new{font:inherit;font-size:11.5px;font-weight:800;padding:5px 11px;",
+      "border-radius:999px;border:1px solid #4338ca;background:#fff;",
+      "color:#4338ca;cursor:pointer}",
+      ".ta-new:hover{background:#4338ca;color:#fff}",
+      ".ta-new[hidden]{display:none}",
+      ".ta-add[hidden]{display:none}",
+      ".ta-actions{margin-top:9px}",
+      "[data-ta-cancel]{flex:0 0 auto}",
       ".ta-tabs{display:flex;gap:2px;margin:12px 0 0;",
       "border-bottom:1px solid var(--color-border,#e5e7eb)}",
       ".ta-tabs button{flex:1;font:inherit;font-size:11.5px;font-weight:700;",
@@ -1288,6 +1317,25 @@
     var cancelBtn = pop.querySelector("[data-ta-cancel]");
     if (addBtn) addBtn.textContent = editingId ? "Save" : "Add";
     if (cancelBtn) cancelBtn.hidden = !editingId;
+
+    var sc = pop.querySelector("[data-ta-sum-clock]");
+    if (sc) sc.textContent = state.every > 0
+      ? "every " + state.every + " min" : "off";
+    var sn = pop.querySelector("[data-ta-sum-notify]");
+    if (sn) {
+      var muted = (mutes || []).filter(function (m) { return m.muted; }).length;
+      sn.textContent = !mutes ? "" :
+        muted ? muted + " muted of " + mutes.length : String(mutes.length);
+    }
+    var sd = pop.querySelector("[data-ta-sum-device]");
+    if (sd) {
+      var kel0 = document.getElementById("ta-keepalive");
+      sd.textContent = (state.chime ? "chime on" : "chime off") +
+        (state.keepalive ? (kel0 && !kel0.paused ? " · holding" : " · not holding")
+                         : "");
+    }
+    var sb = pop.querySelector("[data-ta-build-sum]");
+    if (sb) sb.textContent = BUILD;
 
     var custom = INTERVALS.indexOf(state.every) === -1;
     var cbtn = pop.querySelector("[data-ta-custom]");
@@ -1879,7 +1927,7 @@
       adv.hidden = false;
       if (mb) mb.setAttribute("aria-expanded", "true");
     }
-    showTab("items");
+    openForm();
     paint();
     var f = pop.querySelector("[data-ta-new-at]");
     if (f) { f.focus(); f.select(); }
@@ -1989,6 +2037,7 @@
       editingId = null;
       state.lastSlot = null;
       save(); paint(); savedFlash();
+      closeForm();
       pushItems([updated]);
       atEl.value = ""; uEl.value = ""; mEl.value = ""; tEl.value = "";
       newDays = [];
@@ -2008,6 +2057,7 @@
     newMer = { at: "am", until: "am" };
     state.lastSlot = null;
     save(); paint(); savedFlash();
+    closeForm();
     pushItems(state.items.slice(-times.length));
     atEl.focus();
   }
@@ -2046,6 +2096,27 @@
        always visible: the master Start/Pause/Stop, and one line stating
        what is currently saved and running. Those are the two things you
        open this panel to check. */
+    /* ── LAYOUT, REBUILT ───────────────────────────────────────────
+       This panel accumulated one control at a time across a day and
+       ended up showing everything at once: three status lines, four
+       tabs, a seven-field form and eight paragraphs of explanation.
+
+       The rebuild follows one rule — SHOW THE LIST, HIDE EVERYTHING
+       ELSE. Opening this panel is almost always about seeing or changing
+       an announcement, so that is the only thing visible by default.
+
+         * The add form is behind "+ New", so the resting state is a list
+           rather than a form you did not ask for.
+         * Settings become collapsed rows that state their VALUE on the
+           right, so you can read the setting without opening it. That is
+           what tabs could not do: a tab hides its contents completely,
+           so you had to open all four to see what was configured.
+         * Diagnostics move out of settings entirely. They answer "why did
+           nothing happen", which is a different question from "what
+           should happen", and mixing them is most of why this felt
+           cluttered.
+         * Prose is cut to labels. What survives sits inside the section
+           it explains, not above it. */
     pop.innerHTML =
       '<button type="button" class="ta-x" data-ta-close ' +
         'aria-label="Close">&times;</button>' +
@@ -2058,20 +2129,18 @@
       '</div>' +
       '<p class="ta-now" data-ta-now></p>' +
       '<p class="ta-idle" data-ta-idle hidden></p>' +
-      '<p class="ta-warn" hidden>Your browser needs a tap on this page before ' +
-        'it will speak. Interact anywhere and the next announcement will play.</p>' +
+      '<p class="ta-warn" hidden>This browser needs one tap on the page ' +
+        'before it will speak.</p>' +
 
-      '<div class="ta-tabs" role="tablist">' +
-        '<button type="button" role="tab" data-ta-tab="items">Announcements</button>' +
-        '<button type="button" role="tab" data-ta-tab="clock">Clock</button>' +
-        '<button type="button" role="tab" data-ta-tab="notify">Reminders</button>' +
-        '<button type="button" role="tab" data-ta-tab="device">Device</button>' +
-      '</div>' +
-
-      /* ── ANNOUNCEMENTS ──────────────────────────────────────────── */
+      /* ── the list, always visible ─────────────────────────────── */
       '<div class="ta-pane" data-ta-pane="items">' +
+        '<div class="ta-sec-row">' +
+          '<span class="ta-sec">Your announcements</span>' +
+          '<button type="button" class="ta-new" data-ta-new>+ New</button>' +
+        '</div>' +
         '<ul class="ta-list" data-ta-list></ul>' +
-        '<div class="ta-add">' +
+
+        '<div class="ta-add" data-ta-form hidden>' +
           '<div class="ta-add-row">' +
             '<span class="ta-timefld">' +
               '<input type="text" data-ta-new-at placeholder="5.00" ' +
@@ -2099,13 +2168,8 @@
           '<div class="ta-add-row">' +
             '<input type="text" data-ta-new-text maxlength="120" ' +
               'placeholder="What to say" aria-label="What to say">' +
-            '<button type="button" data-ta-add>Add</button>' +
-            '<button type="button" data-ta-cancel hidden>Cancel</button>' +
           '</div>' +
           '<small class="ta-preview" data-ta-preview></small>' +
-          /* THE ADVANCED FIELDS ARE FOLDED AWAY. Four of the seven inputs
-             are used by a minority of announcements, and showing all
-             seven at once is most of why this looked forbidding. */
           '<button type="button" class="ta-more" data-ta-more ' +
             'aria-expanded="false">Repeat through the day, or set dates</button>' +
           '<div data-ta-advanced hidden>' +
@@ -2118,29 +2182,29 @@
                     '<button type="button" data-ta-mer="until" data-v="pm">PM</button>' +
                   '</span>' +
                 '</span></label>' +
-              '<label class="ta-dt">Repeat every' +
+              '<label class="ta-dt">Every' +
                 '<input type="number" min="0" max="720" step="5" ' +
                 'data-ta-new-mins placeholder="60 min"></label>' +
             '</div>' +
             '<div class="ta-add-row">' +
               '<label class="ta-dt">Starts' +
                 '<input type="date" data-ta-new-start></label>' +
-              '<label class="ta-dt">Ends <i>optional</i>' +
+              '<label class="ta-dt">Ends' +
                 '<input type="date" data-ta-new-end></label>' +
             '</div>' +
-            '<small class="ta-hint"><b>Until</b> and <b>repeat every</b> make ' +
-            'one announcement speak through the day &mdash; 8am to 8pm every ' +
-            '60 minutes is one row, not thirteen. A monthly reminder on the ' +
-            '31st still fires on the last day of a short month.</small>' +
+          '</div>' +
+          '<div class="ta-add-row ta-actions">' +
+            '<button type="button" data-ta-add>Add</button>' +
+            '<button type="button" data-ta-cancel>Cancel</button>' +
           '</div>' +
         '</div>' +
       '</div>' +
 
-      /* ── THE REPEATING CLOCK ────────────────────────────────────── */
-      '<div class="ta-pane" data-ta-pane="clock" hidden>' +
-        '<p>Says the time on the clock &mdash; :00, :15, :30, :45 &mdash; ' +
-        'not from when you pressed Start. A missed one is skipped rather ' +
-        'than read out late.</p>' +
+      /* ── collapsed settings, each showing its value ───────────── */
+      '<details class="ta-fold" data-ta-pane="clock">' +
+        '<summary>Repeating clock<b data-ta-sum-clock></b></summary>' +
+        '<p>Says the time on the clock &mdash; :00, :15, :30 &mdash; not ' +
+        'from when you pressed Start.</p>' +
         '<div class="ta-int"><span>Every</span>' +
           INTERVALS.map(function (n) {
             return '<button type="button" data-ta-every="' + n + '">' + n + 'm</button>';
@@ -2157,63 +2221,41 @@
           '<label>Say this first' +
           '<input type="text" maxlength="60" data-ta-label ' +
           'placeholder="e.g. Stand up and stretch"></label>' +
-          '<small>Read out before the time on every one of these. Leave it ' +
-          'blank for just the time.</small>' +
         '</div>' +
-      '</div>' +
+      '</details>' +
 
-      /* ── REMINDER NOTIFICATIONS ─────────────────────────────────── */
-      '<div class="ta-pane" data-ta-pane="notify" hidden>' +
-        '<p>Your checklist reminders, which arrive even when the app is ' +
-        'closed. Muting one keeps its times &mdash; switch it back on and ' +
-        'the schedule returns exactly as it was.</p>' +
+      '<details class="ta-fold" data-ta-pane="notify">' +
+        '<summary>Reminder notifications<b data-ta-sum-notify></b></summary>' +
+        '<p>Your checklist reminders. Muting one keeps its times.</p>' +
         '<ul class="ta-list" data-ta-mutes></ul>' +
-        '<small class="ta-hint">The master switch for all notifications is ' +
-        'in Settings.</small>' +
-      '</div>' +
+      '</details>' +
 
-      /* ── DEVICE ─────────────────────────────────────────────────── */
-      '<div class="ta-pane" data-ta-pane="device" hidden>' +
+      '<details class="ta-fold" data-ta-pane="device">' +
+        '<summary>Sound &amp; this device<b data-ta-sum-device></b></summary>' +
         '<p class="ta-perm" data-ta-perm></p>' +
         '<label class="ta-keep"><input type="checkbox" data-ta-chime> ' +
           'Play a chime with every announcement</label>' +
-        '<p class="ta-note">A real sound, which is the ONLY thing that can be ' +
-        'heard with the screen off &mdash; speech is suspended there and a ' +
-        'notification\u2019s sound belongs to the operating system. At your ' +
-        'desk you get both: the chime for attention, the words for content.</p>' +
         '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
           'Keep going when minimised or locked</label>' +
-        '<small class="ta-hint">On by default. It only holds anything open ' +
-        'while announcements are actually running, so a stopped device ' +
-        'costs nothing for it.</small>' +
-        '<p class="ta-note">This holds an inaudible sound playing, which is ' +
-        'what stops the system suspending the app. A media entry appears on ' +
-        'the lock screen while it runs &mdash; its pause button really does ' +
-        'stop the announcements. <b>Battery:</b> the announcements themselves ' +
-        'cost nothing measurable. This checkbox is the part that costs, ' +
-        'roughly like leaving a podcast paused-but-loaded.</p>' +
+        '<p class="ta-note">The chime is the only sound that reaches a ' +
+        'locked screen on some phones. Keeping the app going is what lets ' +
+        'anything happen at all once the screen is off; it only holds while ' +
+        'announcements are running, and costs a little battery while it ' +
+        'does. Nothing is spoken once the app is fully closed &mdash; ' +
+        'notifications still arrive.</p>' +
         '<p class="ta-tip" hidden>You are running the installed app &mdash; ' +
-        'turn this on, or the system will freeze it once the window is ' +
-        'minimised and the announcements stop.</p>' +
-        '<p class="ta-note"><b>On a locked phone the voice is best-effort, ' +
-        'but it does work</b> &mdash; provided the box above is ticked, so ' +
-        'the app is still running, and the phone has an OFFLINE voice ' +
-        'installed. A cloud voice needs a live request at the moment it ' +
-        'speaks, and a locked phone will not make one. Nothing is spoken ' +
-        'once the app is fully CLOSED, which no setting changes.</p>' +
-        '<p class="ta-note"><b>That is why each announcement is also sent as ' +
-        'a notification.</b> A notification reaches a locked phone AND a ' +
-        'closed app, which speech never can. Turn notifications on in ' +
-        'Settings and every announcement arrives whether or not the voice ' +
-        'does.</p>' +
-        '<div class="ta-row"><button type="button" data-ta-test>Test the voice now</button></div>' +
+        'leave the second box ticked or the system will freeze it.</p>' +
+        '<div class="ta-row"><button type="button" data-ta-test>Test the sound</button></div>' +
+      '</details>' +
+
+      '<details class="ta-fold" data-ta-pane="diag">' +
+        '<summary>Diagnostics<b data-ta-build-sum></b></summary>' +
         '<p class="ta-health" data-ta-health></p>' +
         '<p class="ta-health" data-ta-hold></p>' +
         '<p class="ta-health" data-ta-fire></p>' +
         '<p class="ta-build" data-ta-build></p>' +
-        '<p class="ta-auto">Everything here saves as you type &mdash; there ' +
-        'is no Save button.</p>' +
-      '</div>';
+        '<p class="ta-auto">Everything saves as you type.</p>' +
+      '</details>';
 
     document.body.appendChild(pop);
 
@@ -2303,7 +2345,9 @@
         if (erow) startEdit(erow.getAttribute("data-id"));
         return;
       }
-      if (ev.target.closest("[data-ta-cancel]")) { cancelEdit(); return; }
+      if (ev.target.closest("[data-ta-cancel]")) {
+        cancelEdit(); closeForm(); return;
+      }
       var del = ev.target.closest("[data-ta-del]");
       if (del) {
         var li2 = del.closest("[data-id]");
@@ -2335,8 +2379,7 @@
         if (msr && fld) saveMuteTimes(msr.getAttribute("data-mute-id"), fld.value);
         return;
       }
-      var tab = ev.target.closest("[data-ta-tab]");
-      if (tab) { showTab(tab.getAttribute("data-ta-tab")); return; }
+      if (ev.target.closest("[data-ta-new]")) { openForm(); return; }
       if (ev.target.closest("[data-ta-more]")) {
         var adv = pop.querySelector("[data-ta-advanced]");
         var mb = pop.querySelector("[data-ta-more]");
@@ -2430,20 +2473,30 @@
   //: however you left it last time.
   var tab = "items";
 
-  function showTab(name) {
-    tab = name;
+  /* The form is hidden until asked for, so the resting state of this
+     panel is a LIST rather than a form nobody requested. */
+  function openForm() {
+    var f = pop.querySelector("[data-ta-form]");
+    var nb = pop.querySelector("[data-ta-new]");
+    if (f) f.hidden = false;
+    if (nb) nb.hidden = true;
+    var st = pop.querySelector("[data-ta-new-start]");
+    if (st && !st.value) st.value = todayYMD();
+    paint();
+    var first = pop.querySelector("[data-ta-new-at]");
+    if (first) { try { first.focus(); } catch (e) {} }
+  }
+
+  function closeForm() {
+    var f = pop.querySelector("[data-ta-form]");
+    var nb = pop.querySelector("[data-ta-new]");
+    if (f) f.hidden = true;
+    if (nb) nb.hidden = false;
+  }
+
+  function showTab(name) {           // kept: openPanel and startEdit call it
     if (!pop) return;
-    pop.querySelectorAll("[data-ta-pane]").forEach(function (p) {
-      p.hidden = p.getAttribute("data-ta-pane") !== name;
-    });
-    pop.querySelectorAll("[data-ta-tab]").forEach(function (b) {
-      var on = b.getAttribute("data-ta-tab") === name;
-      b.classList.toggle("on", on);
-      b.setAttribute("aria-selected", on ? "true" : "false");
-    });
-    // The panel scrolls; switching tab must not leave you halfway down the
-    // previous one.
-    try { pop.scrollTop = 0; } catch (e) {}
+    if (name === "items") closeForm();
   }
 
   function openPanel() {

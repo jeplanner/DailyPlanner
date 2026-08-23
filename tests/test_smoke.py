@@ -4207,20 +4207,50 @@ def test_announcement_push_claim_is_unique_per_slot():
     assert "add column if not exists notify" in sql
 
 
-def test_announcer_panel_is_tabbed_not_one_long_scroll():
-    """Reported: "UX is not friendly". The panel had grown into a single
-    scroll of eleven unrelated controls."""
+def test_announcer_panel_shows_the_list_and_hides_the_rest():
+    """Reported twice: "UX is not friendly", then "very clumsy, cluttered
+    and hard to navigate".
+
+    The panel had accumulated one control at a time across a day and ended
+    up showing everything at once: three status lines, four tabs, a
+    seven-field form and eight paragraphs.
+
+    The rebuild follows one rule — show the LIST, hide everything else.
+    Opening this panel is almost always about seeing or changing an
+    announcement.
+    """
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
-    for pane in ("items", "clock", "notify", "device"):
+    for pane in ("items", "clock", "notify", "device", "diag"):
         assert 'data-ta-pane="' + pane + '"' in js
-    assert "function showTab" in js
-    # The master controls and the status line must stay OUTSIDE the tabs —
+
+    # THE FORM IS HIDDEN until asked for, so the resting state is a list
+    # rather than a form nobody requested. This is the biggest single
+    # change and the one the complaint was really about.
+    assert "data-ta-form" in js and "data-ta-new>" in js
+    assert "function openForm" in js and "function closeForm" in js
+
+    # TABS ARE GONE. A tab hides its contents completely, so you had to
+    # open all four to see what was configured. Collapsed rows state their
+    # VALUE on the summary line instead.
+    assert "data-ta-tab=" not in js, "tabs are back"
+    assert "ta-fold" in js
+    for summary in ("data-ta-sum-clock", "data-ta-sum-notify",
+                    "data-ta-sum-device", "data-ta-build-sum"):
+        assert summary in js, f"{summary} does not state its value"
+
+    # DIAGNOSTICS ARE NOT SETTINGS. They answer "why did nothing happen",
+    # which is a different question from "what should happen", and mixing
+    # them is most of why this felt cluttered.
+    diag = js.split('data-ta-pane="diag"')[1]
+    for probe in ("data-ta-health", "data-ta-hold", "data-ta-fire",
+                  "data-ta-build"):
+        assert probe in diag, f"{probe} is not in the diagnostics section"
+
+    # The master controls and the status line stay outside every fold —
     # they are what the panel is opened to check.
-    head = js.split('data-ta-tab="items"')[0]
-    assert 'data-ta-mode="on"' in head, "Start/Pause/Stop got buried in a tab"
-    assert "data-ta-now" in head, "the status line got buried in a tab"
-    # The four advanced inputs fold away by default.
-    assert "data-ta-advanced" in js and "data-ta-more" in js
+    head = js.split('data-ta-pane="items"')[0]
+    assert 'data-ta-mode="on"' in head, "Start/Pause/Stop got buried"
+    assert "data-ta-now" in head, "the status line got buried"
 
 
 def test_client_and_server_recurrence_rules_agree_exactly():

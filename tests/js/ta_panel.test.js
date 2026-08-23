@@ -169,11 +169,35 @@ ok("Escape closes it", q(".ta-pop").hidden === true);
 // is what "the UX is not friendly" meant. Four tabs, grouped by how often
 // each is touched.
 click(q(".ta-btn"));
-ok("four tabs", doc.querySelectorAll("[data-ta-tab]").length === 4);
-ok("opens on Announcements",
+// The tabs are gone. Four tabs hid their contents COMPLETELY, so you had
+// to open all four to see what was configured. Collapsed rows state their
+// value on the summary line instead.
+ok("no tabs remain", doc.querySelectorAll("[data-ta-tab]").length === 0);
+ok("four collapsed sections", doc.querySelectorAll("details.ta-fold").length === 4);
+ok("the list is always visible",
    doc.querySelector('[data-ta-pane="items"]').hidden === false);
-ok("other panes hidden",
-   doc.querySelector('[data-ta-pane="clock"]').hidden === true);
+ok("settings start collapsed",
+   doc.querySelector('[data-ta-pane="clock"]').open !== true);
+
+// THE RESTING STATE IS A LIST, not a form nobody asked for. That is the
+// single biggest change: the add form used to be permanently on screen
+// with seven inputs.
+ok("the add form is hidden until asked for",
+   q("[data-ta-form]").hidden === true);
+ok("...behind a New button", !!q("[data-ta-new]"));
+click(q("[data-ta-new]"));
+ok("New opens the form", q("[data-ta-form]").hidden === false);
+ok("...and the New button steps aside", q("[data-ta-new]").hidden === true);
+click(q("[data-ta-cancel]"));
+ok("Cancel closes it again", q("[data-ta-form]").hidden === true);
+ok("...and New comes back", q("[data-ta-new]").hidden === false);
+
+// Each collapsed row shows its VALUE, so a setting can be read without
+// opening it.
+ok("the clock row shows its interval",
+   /every \d+ min|off/.test(q("[data-ta-sum-clock]").textContent));
+ok("the diagnostics row shows the build",
+   /^v\d+/.test(q("[data-ta-build-sum]").textContent));
 
 // Start/Pause/Stop and the status line stay OUTSIDE the tabs, because they
 // are what you open the panel to check.
@@ -181,17 +205,16 @@ ok("mode buttons are not in a pane",
    !q('[data-ta-mode="on"]').closest("[data-ta-pane]"));
 ok("status line is not in a pane", !q("[data-ta-now]").closest("[data-ta-pane]"));
 
-click(doc.querySelector('[data-ta-tab="clock"]'));
-ok("clock tab shows", doc.querySelector('[data-ta-pane="clock"]').hidden === false);
-ok("...and items hides", doc.querySelector('[data-ta-pane="items"]').hidden === true);
-ok("...and the tab is marked selected",
-   doc.querySelector('[data-ta-tab="clock"]').getAttribute("aria-selected") === "true");
-click(doc.querySelector('[data-ta-tab="items"]'));
-ok("back to announcements",
+// Opening a section must not hide the list — that was the tab behaviour
+// and it is what made this hard to navigate.
+doc.querySelector('[data-ta-pane="clock"]').open = true;
+ok("opening a section leaves the list visible",
    doc.querySelector('[data-ta-pane="items"]').hidden === false);
+doc.querySelector('[data-ta-pane="clock"]').open = false;
 
 // The four advanced fields are folded away by default — showing all seven
 // inputs at once is most of why this looked forbidding.
+click(q("[data-ta-new]"));      // the form is closed by default now
 ok("advanced fields start hidden", q("[data-ta-advanced]").hidden === true);
 click(q("[data-ta-more]"));
 ok("...and open on request", q("[data-ta-advanced]").hidden === false);
@@ -220,7 +243,7 @@ click(q("[data-ta-close]"));
 // with the screen off and a push notification's sound belongs to the OS,
 // so a real audio file is the only sound this app can make when locked.
 click(q(".ta-btn"));
-click(doc.querySelector('[data-ta-tab="device"]'));
+doc.querySelector('[data-ta-pane="device"]').open = true;
 // Permission state must be STATED. The self-heal never prompts, so on a
 // device where permission was never granted it does nothing — correctly,
 // and silently. That silence is why a phone received nothing for a day
@@ -247,7 +270,7 @@ click(q("[data-ta-chime]"));
 ok("chime can be switched off", q("[data-ta-chime]").checked === false);
 click(q("[data-ta-chime]"));
 ok("...and back on", q("[data-ta-chime]").checked === true);
-click(doc.querySelector('[data-ta-tab="items"]'));
+doc.querySelector('[data-ta-pane="device"]').open = false;
 click(q("[data-ta-close]"));
 
 // ── the AM/PM chooser ────────────────────────────────────────────────
