@@ -47,6 +47,13 @@
   "use strict";
   if (window.TimeAnnouncer) return;
 
+  //: The build this file came from. Shown in the Device tab so "is the
+  //: phone even running the new code" stops being a guess — an installed
+  //: PWA can serve a cached script for a long time, and every diagnosis
+  //: after that is worthless if the answer is "no".
+  //: Kept equal to CACHE_VERSION's leading token by a test.
+  var BUILD = "v241";
+
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
   var TICK_MS = 15 * 1000;       // cheap: the work is one Date comparison
@@ -653,6 +660,7 @@
   }
 
   function check(now) {
+    lastTick = Date.now();
     if (state.mode !== "on") return;
     now = now || new Date();
     var today = todayYMD(now);
@@ -694,6 +702,12 @@
     playChime();
     speak(parts.join(". "));
   }
+
+  //: When check() last ran. A page the OS has frozen stops ticking, and
+  //: nothing else in this panel can tell you that — the settings still
+  //: look right, the schedule is still there, and the clock simply is not
+  //: being read. "Last checked 14 minutes ago" is the whole diagnosis.
+  var lastTick = 0;
 
   function start() {
     stopTimer();
@@ -975,6 +989,9 @@
       "border:1px solid #a7d7c5}",
       ".ta-perm.default,.ta-perm.denied{background:#fdf1e3;",
       "color:#8a4b09 !important;border:1px solid #f0c98a}",
+      ".ta-build{margin:8px 0 0 !important;font-size:10.5px !important;",
+      "font-family:ui-monospace,Menlo,monospace;",
+      "color:var(--color-text-secondary,#6b7280) !important}",
       ".ta-perm button{display:block;margin-top:7px;font:inherit;",
       "font-size:11.5px;font-weight:800;padding:6px 12px;border-radius:8px;",
       "border:0;background:#4338ca;color:#fff;cursor:pointer}",
@@ -1182,6 +1199,21 @@
       nowEl.textContent = (state.mode === "on" ? "Saved & running: "
                            : state.mode === "paused" ? "Saved, paused: "
                            : "Saved, stopped: ") + what;
+    }
+
+    /* THE TWO FACTS THAT MAKE EVERY OTHER DIAGNOSIS MEANINGFUL:
+       which build this device is running, and when the clock was last
+       actually read. A frozen page keeps its settings and stops ticking,
+       so a stale "last checked" is the difference between "the feature is
+       broken" and "this page was asleep". */
+    var build = pop.querySelector("[data-ta-build]");
+    if (build) {
+      var ago = lastTick ? Math.round((Date.now() - lastTick) / 1000) : null;
+      var agoTxt = ago === null ? "never (not started on this device)"
+        : ago < 60 ? ago + "s ago"
+        : Math.round(ago / 60) + " min ago \u2014 this page was asleep";
+      build.textContent = "Build " + BUILD + " \u00b7 checks every " +
+        (TICK_MS / 1000) + "s \u00b7 last check " + agoTxt;
     }
 
     /* IS THE PAGE ACTUALLY BEING HELD ALIVE?
@@ -2038,6 +2070,7 @@
         '<div class="ta-row"><button type="button" data-ta-test>Test the voice now</button></div>' +
         '<p class="ta-health" data-ta-health></p>' +
         '<p class="ta-health" data-ta-hold></p>' +
+        '<p class="ta-build" data-ta-build></p>' +
         '<p class="ta-auto">Everything here saves as you type &mdash; there ' +
         'is no Save button.</p>' +
       '</div>';

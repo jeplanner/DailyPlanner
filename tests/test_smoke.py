@@ -4512,3 +4512,28 @@ def test_keepalive_flag_follows_reality_not_intent():
     assert "setInterval(keepaliveWatch" in js
     # The panel must show what is TRUE, not what was asked for.
     assert "data-ta-hold" in js and "Holding audio" in js
+
+
+def test_announcer_reports_its_build_and_last_tick():
+    """An installed PWA can serve a cached script for a long time, and every
+    diagnosis after that is worthless if the device is running old code.
+
+    And a page the OS has FROZEN keeps all its settings and simply stops
+    reading the clock — the panel looks perfect and nothing fires. "Last
+    check 14 minutes ago" is the whole diagnosis, and there was no way to
+    see it.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    sw = open("static/service-worker.js", encoding="utf-8").read()
+    import re
+    build = re.search(r'var BUILD = "(v\d+)"', js)
+    assert build, "no build marker"
+    cache = re.search(r'CACHE_VERSION = "(v\d+)', sw)
+    assert cache, "no cache version"
+    # They must agree, or the number shown on the device is a lie about
+    # which deploy it came from — which is worse than showing nothing.
+    assert build.group(1) == cache.group(1), (
+        f"BUILD {build.group(1)} != CACHE_VERSION {cache.group(1)}; "
+        "bump both together")
+    assert "lastTick = Date.now();" in js
+    assert "this page was asleep" in js
