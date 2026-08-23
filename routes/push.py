@@ -80,6 +80,25 @@ def subscribe():
     return jsonify({"success": True})
 
 
+@push_bp.route("/api/push/diagnose", methods=["POST"])
+@login_required
+def diagnose():
+    """Why is this device not receiving anything? Ask the push service.
+
+    Sends a real notification to every registration on this account —
+    including the retired ones, which are the ones under suspicion — and
+    reports the HTTP status each one came back with. 403 means the signing
+    keys changed since that subscription was made; 410 means the browser
+    revoked it; a network error means the server could not reach the push
+    service at all. Those have completely different fixes and were
+    previously indistinguishable: reminders just stopped.
+
+    Runs on the server because that is where VAPID_PRIVATE_KEY already is,
+    so nothing secret has to be copied anywhere to answer the question.
+    """
+    return jsonify(push_service.diagnose(session["user_id"]))
+
+
 @push_bp.route("/api/push/status", methods=["POST"])
 @login_required
 def status():

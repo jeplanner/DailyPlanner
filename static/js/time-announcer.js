@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v261";
+  var BUILD = "v262";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -2681,6 +2681,9 @@
         '<p class="ta-health" data-ta-hold></p>' +
         '<p class="ta-health" data-ta-say></p>' +
         '<p class="ta-health" data-ta-fire></p>' +
+        '<div class="ta-row"><button type="button" data-ta-diag>' +
+          'Why is a device not receiving?</button></div>' +
+        '<p class="ta-health" data-ta-diagout hidden></p>' +
         '<p class="ta-build" data-ta-build></p>' +
         '<p class="ta-auto">Everything saves as you type.</p>' +
       '</details>';
@@ -2720,7 +2723,23 @@
                 paint(); savedFlash();
               })
               .catch(function (e) {
-                note(false, (e && e.message) || "could not turn on notifications");
+                // "permission denied" on its own is unhelpful and, when the
+                // browser has actually BLOCKED the site, actively wrong —
+                // there is nothing to press again. Re-read the permission
+                // so the panel switches to the state it is really in, which
+                // carries the unblock instructions.
+                var msg = (e && e.message) || "could not turn on notifications";
+                if (typeof Notification !== "undefined" &&
+                    Notification.permission === "denied") {
+                  msg = "your browser has BLOCKED notifications for this " +
+                        "site \u2014 unblock them in the browser\u2019s site " +
+                        "settings; this app cannot ask again once blocked";
+                } else if (/denied/i.test(msg)) {
+                  msg = "the permission prompt was dismissed \u2014 press " +
+                        "again and choose Allow";
+                }
+                note(false, msg);
+                pushReach = "unknown";
                 paint();
               });
           } else {
@@ -2847,6 +2866,43 @@
         return;
       }
       if (ev.target.closest("[data-ta-add]")) { addItem(); return; }
+      if (ev.target.closest("[data-ta-diag]")) {
+        var outEl = pop.querySelector("[data-ta-diagout]");
+        outEl.hidden = false;
+        outEl.className = "ta-health";
+        outEl.textContent = "Asking the push service\u2026";
+        apiPost("/api/push/diagnose", {}).then(function (r) {
+          if (!r || !r.ok) {
+            outEl.className = "ta-health bad";
+            outEl.textContent = (r && r.note) || "Could not run the check.";
+            return;
+          }
+          if (!r.results.length) {
+            outEl.className = "ta-health bad";
+            outEl.textContent = r.note || "No devices are registered.";
+            return;
+          }
+          // One line per registration, worst first — the reason a phone is
+          // silent is the line that failed, and it must not be buried under
+          // the ones that worked.
+          var rows = r.results.slice().sort(function (a, b) {
+            return (a.status === 201 ? 1 : 0) - (b.status === 201 ? 1 : 0);
+          });
+          var ok = rows.filter(function (x) { return x.status === 201; }).length;
+          outEl.className = "ta-health " + (ok === rows.length ? "good" : "bad");
+          outEl.innerHTML = rows.map(function (x) {
+            return "<b>" + x.device + "</b> \u2026" + x.tail +
+                   (x.was_active ? "" : " (retired)") + " \u2014 " +
+                   (x.status === 201 ? "\u2713 " : "\u26a0 ") +
+                   x.outcome + (x.status ? " [" + x.status + "]" : "") +
+                   (x.detail ? "<br><small>" + x.detail + "</small>" : "");
+          }).join("<br>");
+        }).catch(function () {
+          outEl.className = "ta-health bad";
+          outEl.textContent = "Could not reach the server.";
+        });
+        return;
+      }
       if (ev.target.closest("[data-ta-test]")) {
         // Pressing it IS the gesture, so this is also the way to re-arm a
         // page that has not been touched yet.

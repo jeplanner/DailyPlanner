@@ -189,3 +189,118 @@ def send_to_user(user_id, title, body, url="/checklist", tag=None, icon=None,
                         error=type(exc).__name__)
 
     return sent, failed
+
+
+def diagnose(user_id):
+    """Try a real send to EVERY subscription and report exactly what came back.
+
+    WHY THIS EXISTS. Seven of one phone's subscriptions were retired over
+    months and nothing anywhere recorded WHY. A subscription is deactivated
+    on a 404 or 410, but 403 (the signing key does not match the one the
+    subscription was created with), 401, 429 and a plain network failure all
+    look identical from the outside: reminders simply stop.
+
+    The one place that can answer it is wherever VAPID_PRIVATE_KEY already
+    lives, so the diagnosis runs there and reports back. No key ever has to
+    leave the server, be pasted anywhere, or be copied to a second machine.
+
+    INACTIVE SUBSCRIPTIONS ARE INCLUDED ON PURPOSE — they are the ones being
+    investigated. Nothing is deactivated or revived here; this only reads
+    and reports, so running it cannot make the situation worse.
+    """
+    out = {"ok": True, "results": [], "note": ""}
+
+    try:
+        from pywebpush import WebPushException, webpush
+    except ImportError:
+        out["ok"] = False
+        out["note"] = "pywebpush is not installed on this server."
+        return out
+
+    private_key = _private_key()
+    if not private_key:
+        out["ok"] = False
+        out["note"] = "VAPID_PRIVATE_KEY is not set on this server."
+        return out
+
+    try:
+        subs = get("push_subscriptions", {
+            "user_id": f"eq.{user_id}",
+            "select": "endpoint,p256dh,auth,user_agent,is_active",
+            "limit": "50",
+        }) or []
+    except Exception:
+        out["ok"] = False
+        out["note"] = "Could not read the subscription list."
+        return out
+
+    if not subs:
+        out["note"] = "This account has no push subscriptions at all."
+        return out
+
+    payload = json.dumps({
+        "title": "DailyPlanner check",
+        "body": "If you can see this, this device can be reached.",
+        "url": "/settings",
+        "tag": "dp-diagnose",
+        "icon": "/static/icons/icon.svg",
+    })
+    claims = _vapid_claims()
+
+    for sub in subs:
+        ua = (sub.get("user_agent") or "")
+        device = ("Android" if "Android" in ua else
+                  "iPhone" if "iPhone" in ua else
+                  "iPad" if "iPad" in ua else
+                  "Windows" if "Windows" in ua else
+                  "Mac" if "Macintosh" in ua else "device")
+        endpoint = sub.get("endpoint") or ""
+        host = endpoint.split("/")[2] if "://" in endpoint else "?"
+        row = {
+            "device": device,
+            "host": host,
+            "was_active": bool(sub.get("is_active")),
+            # Enough to tell two registrations on the same phone apart,
+            # and far too little to be a credential.
+            "tail": endpoint[-12:],
+            "status": None,
+            "outcome": "",
+            "detail": "",
+        }
+        try:
+            webpush(
+                subscription_info={
+                    "endpoint": endpoint,
+                    "keys": {"p256dh": sub.get("p256dh"),
+                             "auth": sub.get("auth")},
+                },
+                data=payload,
+                vapid_private_key=private_key,
+                vapid_claims=dict(claims),
+                ttl=60,
+            )
+            row["status"] = 201
+            row["outcome"] = "delivered to the push service"
+        except WebPushException as e:
+            status = getattr(e.response, "status_code", None)
+            row["status"] = status
+            try:
+                row["detail"] = ((e.response.text or "")[:160]) if e.response else ""
+            except Exception:
+                row["detail"] = ""
+            row["outcome"] = {
+                400: "the push service rejected the request as malformed",
+                401: "the signing key was not accepted (VAPID mismatch)",
+                403: "the signing key does not match this subscription "
+                     "(VAPID keys changed since it was registered)",
+                404: "the subscription no longer exists",
+                410: "the subscription was revoked by the browser or device",
+                413: "the payload was too large",
+                429: "rate limited by the push service",
+            }.get(status, "send failed")
+        except Exception as exc:                       # network, DNS, TLS
+            row["outcome"] = "could not reach the push service"
+            row["detail"] = str(exc)[:160]
+        out["results"].append(row)
+
+    return out

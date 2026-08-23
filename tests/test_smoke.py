@@ -6055,3 +6055,103 @@ def test_a_late_announcement_says_it_is_late():
     # And only for NAMED announcements: the repeating clock is not caught
     # up at all, so it can never reach here.
     assert "items.length" in late
+
+
+def test_push_diagnose_reports_each_devices_status(auth_client, monkeypatch):
+    """Seven of one phone's subscriptions were retired over months and
+    nothing recorded WHY.
+
+    A subscription is deactivated on 404/410, but 403 (the signing keys
+    changed since it was registered), 401, 429 and a plain network failure
+    all look identical from outside: reminders simply stop. Those have
+    completely different fixes.
+
+    It runs on the server because that is where VAPID_PRIVATE_KEY already
+    is — so nothing secret has to be copied anywhere to answer the question.
+    """
+    import services.push_service as ps
+
+    subs = [
+        {"endpoint": "https://fcm.googleapis.com/x/ANDROIDENDPOINT1",
+         "p256dh": "k", "auth": "a", "is_active": False,
+         "user_agent": "Mozilla/5.0 (Linux; Android 10; K)"},
+        {"endpoint": "https://web.push.apple.com/y/IPHONEENDPOINT9",
+         "p256dh": "k", "auth": "a", "is_active": True,
+         "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7)"},
+    ]
+    monkeypatch.setattr(ps, "get", lambda *a, **k: subs)
+    monkeypatch.setattr(ps, "_private_key", lambda: "key")
+    monkeypatch.setattr(ps, "_vapid_claims", lambda: {"sub": "mailto:x@y.z"})
+
+    class Resp:
+        status_code = 403
+        text = "the key in the token does not match"
+
+    class Boom(Exception):
+        response = Resp()
+
+    import sys
+    import types
+    fake = types.ModuleType("pywebpush")
+    fake.WebPushException = Boom
+
+    def webpush(**kw):
+        if "fcm.googleapis.com" in kw["subscription_info"]["endpoint"]:
+            raise Boom()
+        return True
+
+    fake.webpush = webpush
+    monkeypatch.setitem(sys.modules, "pywebpush", fake)
+
+    r = auth_client.post("/api/push/diagnose")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True
+    by = {x["device"]: x for x in body["results"]}
+
+    # THE RETIRED ONE IS INCLUDED — it is the one under suspicion. Testing
+    # only the live subscriptions would answer a question nobody asked.
+    assert by["Android"]["was_active"] is False
+    assert by["Android"]["status"] == 403
+    assert "VAPID keys changed" in by["Android"]["outcome"]
+    assert "does not match" in by["Android"]["detail"]
+
+    assert by["iPhone"]["status"] == 201
+
+    # The endpoint is a credential; only enough of its tail is returned to
+    # tell two registrations on the same phone apart.
+    for row in body["results"]:
+        assert len(row["tail"]) <= 12
+        assert "https://" not in row["tail"]
+
+    # And nothing is deactivated or revived: a diagnostic that changes the
+    # thing it measures cannot be run twice.
+    monkeypatch.setattr(ps, "update", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("diagnose must not write")))
+    auth_client.post("/api/push/diagnose")
+
+
+def test_push_diagnose_says_when_it_cannot_run(auth_client, monkeypatch):
+    """A blank result would read as "all your devices are fine"."""
+    import sys
+    import types
+    import services.push_service as ps
+
+    # pywebpush is checked first and is genuinely absent on this machine,
+    # so stub it to reach the case under test rather than asserting on
+    # whichever guard happens to fire first.
+    fake = types.ModuleType("pywebpush")
+    fake.WebPushException = type("E", (Exception,), {})
+    fake.webpush = lambda **k: True
+    monkeypatch.setitem(sys.modules, "pywebpush", fake)
+
+    monkeypatch.setattr(ps, "_private_key", lambda: None)
+    body = auth_client.post("/api/push/diagnose").get_json()
+    assert body["ok"] is False and "VAPID_PRIVATE_KEY" in body["note"]
+
+    # And with keys but no devices, say THAT rather than nothing.
+    monkeypatch.setattr(ps, "_private_key", lambda: "key")
+    monkeypatch.setattr(ps, "_vapid_claims", lambda: {"sub": "mailto:x@y.z"})
+    monkeypatch.setattr(ps, "get", lambda *a, **k: [])
+    body = auth_client.post("/api/push/diagnose").get_json()
+    assert body["ok"] is True and "no push subscriptions" in body["note"]
