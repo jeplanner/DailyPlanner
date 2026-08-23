@@ -324,10 +324,35 @@ ok("falls back to the local default when no language matches", (() => {
 ok("no voices at all => null, not a crash", TA._voiceFor([], "en-US") === null);
 ok("undefined list => null", TA._voiceFor(undefined, "en-US") === null);
 
+// ── KEEP-ALIVE DEFAULT (2026-08-23) ─────────────────────────────────
+// Declared here rather than in the migration block below, which used to own
+// it — a `const` further down the file is in its temporal dead zone up here.
+const KEY = "dp-time-announcer";
+// "sometimes gets cleared. it should be on by default." The flag is
+// device-local by design, and a browser may evict site data — Android
+// under pressure, iOS after a stretch unused. The announcements survive
+// that now (they are server-side); the device flags do not. So an
+// eviction silently turned this off while everything else looked right.
+delete store[KEY];
+ok("defaults ON with nothing stored", TA._load().keepalive === true);
+
+// Everyone currently stored is stored as false, because it USED to default
+// false. Honouring that would mean the new default reached nobody.
+store[KEY] = JSON.stringify({mode:"on", keepalive:false});
+ok("an old stored false does NOT pin it off", TA._load().keepalive === true);
+
+// But a deliberate choice must stick, in both directions.
+store[KEY] = JSON.stringify({mode:"on", keepalive:false, keepaliveSet:true});
+ok("a chosen false is respected", TA._load().keepalive === false);
+store[KEY] = JSON.stringify({mode:"on", keepalive:true, keepaliveSet:true});
+ok("a chosen true is respected", TA._load().keepalive === true);
+ok("...and the choice flag survives the round trip",
+   TA._load().keepaliveSet === true);
+delete store[KEY];
+
 // ── MIGRATION from the shapes already in people's browsers ──────────
 // _set bypasses load(), so the migration needs its own exercise. Anyone
 // upgrading has data in one of the two older shapes and must lose nothing.
-const KEY = "dp-time-announcer";
 store[KEY] = JSON.stringify({
   mode:"on", every:30, at:["05:00","18:45"], label:"Stand up", keepalive:true});
 let mig = TA._load();

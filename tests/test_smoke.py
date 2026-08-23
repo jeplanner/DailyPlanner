@@ -2202,7 +2202,12 @@ def test_announcer_keepalive_is_opt_in_and_not_actually_silent():
     """
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
     assert "keepaliveOn" in js and "data-ta-keep" in js
-    assert "keepalive: false" in js, "the keep-alive defaults to on"
+    # It now defaults ON, asked for on 2026-08-23 because browser storage
+    # eviction was silently turning it off. What still matters — and is
+    # what this test was really protecting — is that it only HOLDS audio
+    # while announcements are running, so the default costs an idle device
+    # nothing. That is asserted below.
+    assert "keepalive: true" in js
     # Only held while announcements are actually due to happen.
     body = js.split("function applyKeepalive()")[1].split("}")[0]
     assert 'state.mode === "on"' in body and "state.keepalive" in body
@@ -4446,3 +4451,31 @@ def test_panel_states_the_notification_permission():
     assert "cannot ask again once blocked" in js
     # And the un-granted state offers the one action that changes it.
     assert "data-ta-perm-on" in js and "ClPush.subscribe" in js
+
+
+def test_keepalive_defaults_on_and_survives_storage_eviction():
+    """Asked 2026-08-23: "keep going when minimised or locked sometimes gets
+    cleared. it should be on by default."
+
+    The clearing has a cause worth recording. The flag is device-local by
+    design — holding audio open is a battery decision belonging to the
+    device making it — and a browser may evict site data: Android under
+    storage pressure, iOS after a stretch of not opening the app. The
+    ANNOUNCEMENTS survive that now, because they moved server-side; the
+    device flags do not. So an eviction silently turned this off and left
+    everything else looking correct.
+
+    Defaulting it on means an eviction restores the useful state rather
+    than the useless one.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "keepalive: true" in js, "still defaults off"
+    # A stored false from BEFORE this change must not pin it off, or the
+    # new default reaches nobody — everyone is currently stored as false.
+    assert "raw.keepaliveSet" in js
+    # But a deliberate choice has to stick.
+    assert "state.keepaliveSet = true;" in js
+    # And it must still only hold audio while announcements are running,
+    # or an on-by-default flag would cost battery on an idle device.
+    body = js.split("function applyKeepalive()")[1].split("}")[0]
+    assert 'state.mode === "on"' in body

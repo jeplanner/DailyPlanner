@@ -62,9 +62,23 @@
   var health = { at: null, ok: null, why: "", said: "" };   // see NOISY FAILURE
 
   function load() {
+    // KEEP-ALIVE DEFAULTS ON.
+    //
+    // Asked for, and the reason it "sometimes gets cleared" is worth
+    // recording: this flag is device-local by design, and a browser is
+    // entitled to evict site data — Android under storage pressure, iOS
+    // after a stretch of not opening the app. The ANNOUNCEMENTS survive
+    // that now, because they moved to the server; the device flags do not.
+    // So an eviction used to silently turn this off and leave everything
+    // else looking correct. Defaulting it ON means an eviction restores
+    // the useful state rather than the useless one.
+    //
+    // It only actually holds audio open while mode is "on" (see
+    // applyKeepalive), so a device that is not announcing pays nothing
+    // for this default.
     var d = { mode: "off", every: 15, at: [], label: "",
-              items: [], said: {}, lastSlot: null, keepalive: false,
-              chime: true };
+              items: [], said: {}, lastSlot: null,
+              keepalive: true, keepaliveSet: false, chime: true };
     try {
       var raw = JSON.parse(localStorage.getItem(KEY));
       if (raw && typeof raw === "object") {
@@ -108,7 +122,14 @@
             };
           });
         }
-        d.keepalive = !!raw.keepalive;
+        // Only honour a STORED value once the user has actually chosen
+        // one. Without this flag, everybody who is currently off — which
+        // is everybody, since it used to default off — would stay off and
+        // the new default would reach nobody.
+        if (raw.keepaliveSet && typeof raw.keepalive === "boolean") {
+          d.keepalive = raw.keepalive;
+          d.keepaliveSet = true;
+        }
         if (typeof raw.chime === "boolean") d.chime = raw.chime;
       }
     } catch (_) {}
@@ -1934,6 +1955,9 @@
         'desk you get both: the chime for attention, the words for content.</p>' +
         '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
           'Keep going when minimised or locked</label>' +
+        '<small class="ta-hint">On by default. It only holds anything open ' +
+        'while announcements are actually running, so a stopped device ' +
+        'costs nothing for it.</small>' +
         '<p class="ta-note">This holds an inaudible sound playing, which is ' +
         'what stops the system suspending the app. A media entry appears on ' +
         'the lock screen while it runs &mdash; its pause button really does ' +
@@ -2006,6 +2030,9 @@
       var k = ev.target.closest("[data-ta-keep]");
       if (k) {
         state.keepalive = !!k.checked;
+        // From here on this device, the choice is the user's and the
+        // default no longer applies.
+        state.keepaliveSet = true;
         applyKeepalive();
         save();
         paint();
