@@ -366540,6 +366540,866 @@ _ANSWER_V2["Why does more/better data often beat a fancier algorithm?"] = \
 _ANSWER_V2["Why do we need a separate validation set AND a test set?"] = \
     _ANSWER_V2["Why split data into train / validation / test — why not just train and test?"]
 
+_ANSWER_V2["Why does batching make inference cheaper but can raise latency?"] = """A GPU is idle most of the time waiting for weights to arrive from memory -
+batching reuses those weights across many requests, and the wait to fill the
+batch is added to every request.
+
+· THE BOTTLENECK IS MEMORY BANDWIDTH, NOT ARITHMETIC. For a single request the
+  GPU loads billions of weights and does one small multiplication with each.
+  The arithmetic units sit mostly idle.
+· WHAT BATCHING CHANGES — load each weight once and use it for all 32 requests
+  in the batch. The expensive part is amortised, so throughput rises almost
+  linearly while the time per batch barely moves.
+· WHY LATENCY RISES — a request arriving first must wait for the batch to fill
+  before anything happens. That queueing delay is pure added latency for the
+  early arrivals.
+· THE TWO KNOBS — maximum batch size and maximum wait time. A larger batch is
+  cheaper per request; a longer wait is worse for the user. Serving systems
+  expose both and you tune them against your latency target.
+· THE THROUGHPUT-LATENCY TRADE IS THE WHOLE ANSWER, and Little's law formalises
+  it: concurrency equals throughput times latency, so you cannot raise one at
+  fixed concurrency without the other moving.
+· CONTINUOUS (IN-FLIGHT) BATCHING is the modern fix for LLMs — instead of
+  waiting for every sequence in a batch to finish, completed sequences leave
+  and new ones join each step. It removes most of the queueing penalty and is
+  what vLLM and TensorRT-LLM do.
+· WHY IT MATTERS ESPECIALLY FOR LLMs — generation is one token at a time and
+  strictly memory-bound, so batching gains are large. Prefill is
+  compute-bound and benefits far less, which is why the two phases are
+  sometimes scheduled separately.
+· THE OFFLINE CASE — when nobody is waiting, use the largest batch that fits.
+  This is why batch APIs are priced at a large discount: they are the same
+  hardware run at much higher utilisation.
+· THE PRACTICAL RULE — interactive traffic wants small batches and a short
+  wait; bulk jobs want the opposite. Set the timeout from your p99 target, not
+  from a round number."""
+
+_ANSWER_V2["Why is a stack the natural tool for matching and undo?"] = """Both problems are about the MOST RECENT unfinished thing, and last-in-first-out
+is exactly that.
+
+· THE SHARED SHAPE — when a closing bracket arrives, the only opener it can
+  match is the most recent unmatched one. When you press undo, the action to
+  reverse is the most recent one. Same question, same answer.
+· WHY NESTING DEMANDS IT — brackets nest, and so do function calls, HTML tags
+  and transactions. Nesting means the thing you opened last must close first,
+  which is the definition of a stack.
+· THE MATCHING ALGORITHM — push every opener, and on a closer pop and check the
+  pair. Three failure modes, all needed: wrong type on pop, popping an EMPTY
+  stack (a closer with nothing open), and a non-empty stack at the end
+  (something never closed).
+· WHY COUNTING FAILS — tracking only how many are open accepts '([)]', which is
+  balanced by count and wrong by order. Order is the whole point, and only a
+  stack captures it.
+· THE UNDO IMPLEMENTATION — push a description of each action (or its inverse)
+  onto an undo stack. Undo pops one, reverses it, and pushes it onto a REDO
+  stack. Performing a new action clears redo, which is why redo disappears
+  after you type something.
+· THE COMMAND PATTERN is this formalised — each action is an object with do()
+  and undo(), and the two stacks hold those objects.
+· WHERE ELSE THE SAME SHAPE APPEARS — the call stack itself (the most recent
+  call returns first), browser back history, expression evaluation, DFS, and
+  the monotonic-stack family of problems.
+· THE COST — O(1) push and pop, O(n) space for what is currently open. For
+  bracket matching the worst case is a string of all openers.
+· THE TELL IN A PROBLEM STATEMENT — 'nested', 'matching', 'most recent',
+  'innermost', 'undo', or 'backtrack'. Any of those should make you reach for a
+  stack before anything else."""
+
+_ANSWER_V2["Type I vs Type II error"] = """Type I is a false alarm (you rejected a true null); Type II is a miss (you
+failed to reject a false one) - and reducing one raises the other.
+
+· TYPE I, α — you concluded there was an effect when there was none. In
+  classification terms this is a FALSE POSITIVE. The significance level, usually
+  0.05, is exactly the Type I error rate you have chosen to accept.
+· TYPE II, β — you concluded there was no effect when there was one. This is a
+  FALSE NEGATIVE. Power is 1 - β, conventionally targeted at 0.8.
+· THE MEMORY AID — Type I has one letter in 'false alarm' territory: you cried
+  wolf. Type II: you missed the wolf. Or simply: I comes first, and a false
+  positive is the first cell people think of.
+· THE TRADE-OFF — lowering α (demanding stronger evidence) makes you reject less
+  often, which means missing more real effects, so β rises. You cannot lower
+  both without more data.
+· WHAT ACTUALLY LOWERS BOTH — a larger sample. That is the entire reason power
+  analysis exists, and why deciding the sample size in advance is not
+  bureaucracy.
+· THE COURTROOM ANALOGY — the null is 'innocent'. Type I convicts an innocent
+  person; Type II acquits a guilty one. Legal systems deliberately set α very
+  low, accepting more Type II errors, because the costs are asymmetric.
+· CHOOSING WHICH TO FEAR — it depends on consequences. Cancer screening
+  tolerates false alarms to avoid misses; a spam filter tolerates misses to
+  avoid deleting real mail.
+· THE MULTIPLE-COMPARISONS PROBLEM — testing 20 hypotheses at α = 0.05 gives
+  roughly a 64% chance of at least one false positive. Bonferroni or
+  Benjamini-Hochberg corrections exist for this, and it is the commonest way
+  Type I errors sneak into real analysis.
+· THE ML CONNECTION — Type I maps to precision's denominator and Type II to
+  recall's. Being able to move between the statistical and the
+  machine-learning vocabulary is what the question is often probing."""
+
+_ANSWER_V2["Why is Bayes' theorem so counterintuitive with rare events?"] = """Because a very accurate test applied to a very rare condition still produces
+mostly false positives - the base rate dominates and intuition ignores it.
+
+· THE THEOREM — P(A|B) = P(B|A) × P(A) / P(B). The posterior equals the
+  likelihood times the PRIOR, normalised.
+· THE WORKED EXAMPLE that makes it concrete. A disease affects 1 in 1,000. The
+  test is 99% accurate both ways. You test positive. What is the chance you
+  have it?
+· THE ARITHMETIC — in 100,000 people, 100 have the disease and 99 of them test
+  positive. Of the 99,900 healthy people, 1% test positive: that is 999 false
+  alarms. So 99 out of 1,098 positives are real, which is about 9%.
+· WHY IT FEELS WRONG — the test is 99% accurate and the answer is 9%. Intuition
+  latches onto the accuracy and discards the base rate entirely. This is BASE
+  RATE NEGLECT, and it is one of the most robust findings in cognitive
+  psychology.
+· THE REASON IN ONE SENTENCE — the healthy group is so much larger that even a
+  tiny false-positive RATE produces more false positives than there are true
+  cases.
+· THE FIX THAT MAKES IT INTUITIVE — think in COUNTS, not percentages. 'Out of
+  100,000 people...' is far easier to reason about than conditional
+  probabilities, and it is how doctors are now taught.
+· WHERE THIS BITES IN PRACTICE — fraud detection, medical screening, security
+  alerts, and any rare-class classifier. It is exactly why precision collapses
+  on imbalanced data while accuracy and ROC-AUC still look fine.
+· THE SECOND TEST changes everything — a positive result raises the prior for
+  the second test, so two independent positives are far more convincing. This
+  is why screening protocols confirm rather than diagnose.
+· THE INTERVIEW ANSWER — state the theorem, then immediately do the counting
+  version out loud. Interviewers are checking whether you can explain it to
+  someone else, not whether you can recite it."""
+
+_ANSWER_V2["BERT"] = """An encoder-only transformer trained by MASKING random words and predicting
+them - which lets every word see context on both sides.
+
+· THE NAME — Bidirectional Encoder Representations from Transformers. The
+  bidirectionality is the point.
+· WHY BIDIRECTIONAL MATTERS — to understand 'bank' you need the words after it
+  as well as before. A left-to-right model reading 'I sat on the bank...' has
+  not yet seen 'of the river'.
+· THE TRAINING TRICK — you cannot simply let a model see the whole sentence and
+  predict the next word, because it would see the answer. So MASK 15% of the
+  tokens and predict those from everything else. That is masked language
+  modelling.
+· THE SECOND OBJECTIVE, next sentence prediction, asked whether sentence B
+  really followed sentence A. Later work (RoBERTa) showed it contributes little
+  and dropped it — worth knowing, as it is a common follow-up.
+· THE PRETRAIN-THEN-FINETUNE RECIPE that BERT popularised — pretrain once on
+  huge unlabelled text, then fine-tune on a small labelled dataset per task.
+  This is why it changed the field: it made strong NLP possible with a few
+  thousand labels.
+· WHAT IT IS FOR — classification, named entity recognition, question answering
+  by span extraction, and sentence embeddings. Understanding tasks, not
+  generation.
+· WHY IT CANNOT GENERATE well — it is trained to fill gaps given both sides, not
+  to continue text. There is no natural left-to-right decoding procedure.
+· THE [CLS] TOKEN — a special token at the front whose final hidden state is
+  used as a whole-sentence representation for classification. Note that using it
+  raw for similarity is poor; Sentence-BERT fine-tunes specifically for that.
+· WHERE IT SITS NOW — decoder-only models dominate the headlines, and BERT-style
+  encoders remain the right tool for embeddings, reranking and classification
+  because they are small, fast and bidirectional."""
+
+_ANSWER_V2["GPT"] = """A decoder-only transformer trained to predict the next token - and almost
+everything it can do is a consequence of that one objective at scale.
+
+· THE NAME — Generative Pretrained Transformer. Trained first on a huge corpus
+  with no labels, then adapted.
+· THE OBJECTIVE — given all previous tokens, predict the next one. That is the
+  entire pretraining task, and it requires no human labelling, which is what
+  allows it to consume internet-scale data.
+· CAUSAL MASKING makes it possible — each position may only attend to positions
+  before it. Without the mask the model would see the token it is meant to
+  predict and learn nothing.
+· WHY NEXT-TOKEN PREDICTION IS SO POWERFUL — to predict well you must model
+  syntax, facts, reasoning, style and context. The task is simple; doing it
+  well requires almost everything.
+· THE SCALING STORY — GPT-2 showed the same architecture with more data and
+  parameters produced qualitatively new abilities. GPT-3 showed IN-CONTEXT
+  LEARNING: give examples in the prompt and the model performs the task with no
+  weight updates at all.
+· THE THREE-STAGE MODERN RECIPE — pretrain on raw text, supervised fine-tune on
+  instruction-following examples, then align with human preferences (RLHF or
+  DPO). The base model predicts text; the aligned model is helpful.
+· GENERATION IS SAMPLING — at each step the model outputs a probability over the
+  vocabulary and one token is drawn, controlled by temperature, top-k and
+  top-p. This is why the same prompt gives different answers.
+· THE KV-CACHE is why generation speeds up after the first token — keys and
+  values for previous tokens are immutable and reused rather than recomputed.
+· THE LIMITATIONS THAT FOLLOW FROM THE DESIGN — no access to anything after
+  training (hence retrieval), a fixed context window, confident invention when
+  uncertain, and no character-level view of text because it sees tokens."""
+
+_ANSWER_V2["Beam search"] = """Keep the k best partial sequences at every step instead of only the single
+best - a middle ground between greedy decoding and searching everything.
+
+· THE PROBLEM WITH GREEDY — taking the most likely token at each step can
+  commit early to a path that turns out badly. The globally best sequence may
+  start with a token that was only second-most likely.
+· WHY NOT SEARCH EVERYTHING — the space is vocabulary size to the power of
+  length. Exhaustive search is impossible for any real sequence.
+· THE ALGORITHM — maintain k candidate sequences (the beam). At each step,
+  extend every candidate by every possible token, score all the results, and
+  keep the best k. Repeat until they all end.
+· THE SCORE IS A SUM OF LOG PROBABILITIES, not a product, because multiplying
+  thousands of small probabilities underflows to zero.
+· THE LENGTH BIAS, and this is the detail worth knowing: every extra token adds
+  a negative log probability, so longer sequences always score worse. Beam
+  search therefore favours short outputs unless you normalise by length, and
+  length-normalised beam search is what implementations actually use.
+· BEAM WIDTH — 4 or 5 is typical for translation. Wider is not monotonically
+  better; very wide beams often produce blander, more generic text, which is a
+  genuinely counterintuitive empirical finding.
+· WHERE IT IS RIGHT — tasks with one correct answer: translation, speech
+  recognition, summarisation. There is a target and you want the most probable
+  path to it.
+· WHERE IT IS WRONG — open-ended generation like chat or story writing. The
+  most probable text is repetitive and dull, which is why sampling with
+  temperature and top-p replaced beam search for conversational models.
+· THE COST — k times the compute and memory of greedy decoding, since you carry
+  k sequences and their KV-caches. That is the practical reason it is avoided
+  in latency-sensitive serving."""
+
+_ANSWER_V2["Label smoothing"] = """Train toward 0.9 instead of 1.0 - so the model stops pushing its logits to
+infinity chasing a certainty the data does not justify.
+
+· THE PROBLEM — with hard one-hot targets, cross-entropy is only minimised as
+  the predicted probability approaches exactly 1. The optimiser keeps growing
+  the correct logit forever, which makes the model overconfident and the
+  weights large.
+· THE MECHANISM — replace the target 1 with (1 - ε) and spread ε evenly across
+  the other classes. With ε = 0.1 and ten classes, the target becomes 0.9 for
+  the right class and about 0.011 for each of the others.
+· WHAT IT ACHIEVES — the loss now has a finite minimum at a sensible confidence
+  level, so the logits stop growing. The model becomes better CALIBRATED,
+  meaning its stated probabilities more nearly match how often it is right.
+· WHY CALIBRATION MATTERS — if you use the probability for anything downstream
+  (a threshold, a ranking, a risk estimate), an overconfident model is
+  actively misleading even when its argmax is correct.
+· IT IS A REGULARISER — it discourages the model from separating classes by
+  enormous margins fitted to noise, so it typically improves generalisation
+  slightly.
+· TYPICAL ε — 0.1. It was introduced in the Inception-v3 paper and is standard
+  in image classification and machine translation.
+· THE COST — accuracy sometimes drops fractionally, and the model is
+  deliberately prevented from being certain even when it should be. If you only
+  care about argmax and never about the probability, it buys you less.
+· THE RELATED IDEA — knowledge distillation uses a teacher's soft
+  probabilities as targets, which is label smoothing with informative rather
+  than uniform off-target mass.
+· WHEN NOT TO USE IT — when you genuinely need the model to be confident, or
+  when you plan to calibrate afterwards with Platt scaling or temperature
+  scaling, which addresses the same problem after the fact."""
+
+_ANSWER_V2["Why does pretraining + fine-tuning beat training from scratch?"] = """Because general structure is learned once from enormous unlabelled data, and
+your small labelled dataset only has to supply the specialisation.
+
+· THE DATA ARITHMETIC — pretraining consumes billions of unlabelled examples;
+  your task has perhaps a few thousand labelled ones. Learning language or
+  vision from scratch on a few thousand examples is impossible, and it does not
+  have to be attempted.
+· WHAT THE PRETRAINED MODEL ALREADY KNOWS — for text: syntax, word meaning,
+  world facts, discourse structure. For images: edges, textures, shapes,
+  objects. None of that is specific to your task and all of it is required by
+  it.
+· THE LAYER HIERARCHY makes this concrete in vision — early layers learn edges
+  and colour blobs, middle layers learn textures and parts, late layers learn
+  whole objects. Only the last few are task-specific, which is why freezing the
+  early ones works.
+· THE OPTIMISATION ARGUMENT — you start in a good region of the loss landscape
+  rather than at a random point, so training converges in far fewer steps and
+  is much less sensitive to initialisation.
+· THE ECONOMICS — pretraining costs millions and is done once by someone else.
+  Fine-tuning costs hours. This is the actual reason the paradigm won.
+· THE LABEL EFFICIENCY — fine-tuning routinely matches or beats from-scratch
+  training with one or two orders of magnitude fewer labels. That is the
+  headline benefit for most teams.
+· WHEN FROM SCRATCH IS STILL RIGHT — when your domain is genuinely unlike
+  anything in the pretraining data, or when you have vast labelled data of your
+  own, or when the architecture must differ.
+· THE RISKS TO NAME — the pretrained model's biases come with it, and
+  catastrophic forgetting can destroy the general ability if the learning rate
+  is too high. Both are real and both are managed rather than eliminated.
+· THE GENERALISATION OF THE IDEA — this is transfer learning, and it is the
+  same principle behind using ImageNet weights for medical imaging or a
+  general LLM for a support bot."""
+
+_ANSWER_V2["Softmax temperature"] = """Divide the logits by T before the softmax - low T sharpens the distribution
+toward the top choice, high T flattens it toward variety.
+
+· THE FORMULA — softmax(logits / T). At T = 1 nothing changes.
+· WHAT LOW T DOES — dividing by a small number magnifies the differences
+  between logits, so the largest one dominates after the exponential. As T
+  approaches 0 the distribution becomes one-hot, which is greedy decoding.
+· WHAT HIGH T DOES — dividing by a large number compresses the differences, so
+  the probabilities move toward uniform. Output becomes varied and, past a
+  point, incoherent.
+· WHY 'TEMPERATURE' — the name comes from the Boltzmann distribution in
+  statistical physics, where high temperature means particles occupy more
+  states. The analogy is exact, which is why the term stuck.
+· PRACTICAL SETTINGS — 0 to 0.3 for factual answers, extraction and code; around
+  0.7 for conversation; 0.9 to 1.2 for brainstorming and creative writing.
+· T = 0 IS NOT PERFECTLY DETERMINISTIC IN PRODUCTION — batching and
+  floating-point non-associativity on GPUs can break ties differently. Expect
+  near-determinism, and say so if reproducibility is a requirement.
+· IT DOES NOT CHANGE THE RANKING, only the gaps. The most likely token stays the
+  most likely at any temperature; what changes is how often the others get
+  chosen.
+· IT COMBINES WITH TOP-K AND TOP-P, and the order is temperature first, then
+  the truncation, then sampling. Stacking all three makes the effect of any one
+  hard to reason about, so tune one at a time.
+· THE OTHER USE OF TEMPERATURE — calibration. Fitting a single temperature on a
+  validation set to make a classifier's probabilities match its actual accuracy
+  is 'temperature scaling', and it is the simplest effective calibration method
+  there is."""
+
+_ANSWER_V2["Tokenization / BPE"] = """Split text into sub-word pieces by repeatedly merging the most frequent
+adjacent pair - so common words are one token and rare words decompose.
+
+· THE PROBLEM IT SOLVES — word-level vocabularies are enormous and still meet
+  unknown words; character-level sequences are far too long for quadratic
+  attention. Sub-words are the compromise.
+· THE BPE TRAINING ALGORITHM — start with every character as a token. Count all
+  adjacent pairs in the corpus, merge the most frequent into a new token, and
+  repeat until the vocabulary reaches the target size (typically 30k to 100k).
+· THE RESULT — 'the' becomes one token because it is everywhere; an unusual
+  surname splits into several fragments. Frequency determines granularity,
+  automatically.
+· WHY THERE IS NO OUT-OF-VOCABULARY PROBLEM — any string can be represented by
+  falling back to shorter pieces, and byte-level BPE guarantees this by
+  starting from raw bytes rather than characters.
+· ENCODING AT INFERENCE — apply the learned merges in the order they were
+  learned. It is deterministic and fast.
+· THE VARIANTS worth naming — WordPiece (BERT) merges by likelihood gain rather
+  than raw frequency; SentencePiece treats the input as a raw byte stream with
+  no pre-tokenisation, which is what makes it work for languages without
+  spaces; Unigram picks a vocabulary by pruning a large candidate set.
+· THE LEADING-SPACE DETAIL — most tokenisers encode ' the' and 'the' as
+  DIFFERENT tokens. This is why prompt formatting and trailing spaces can
+  measurably change model behaviour, and it surprises people every time.
+· THE CONSEQUENCES — you are billed per token; the context window is measured
+  in tokens; and models are poor at spelling or letter-counting because they
+  never see letters.
+· THE FAIRNESS ISSUE — vocabularies trained mostly on English make other
+  languages cost several times more tokens for the same content, which is a
+  real cost and latency penalty, not just a technicality."""
+
+_ANSWER_V2["Contrastive learning"] = """Teach a model what is SIMILAR by pulling matching pairs together and pushing
+mismatched pairs apart - supervision without labels.
+
+· THE CORE IDEA — you do not need to know what an image IS to learn a useful
+  representation. You only need to know which pairs belong together.
+· WHERE THE PAIRS COME FROM — two augmented crops of the same photo (SimCLR),
+  an image and its caption (CLIP), a sentence and its paraphrase, a user and an
+  item they engaged with. The pairing is the supervision, and it is usually
+  free.
+· THE LOSS — InfoNCE. For each anchor, score it against its positive and
+  against many negatives, then apply cross-entropy so the positive wins. It is
+  literally a classification problem where the classes are 'which of these is
+  the match'.
+· NEGATIVES ARE THE HARD PART. In-batch negatives (treating the other items in
+  the batch as mismatches) are free, which is why contrastive methods want
+  LARGE batches. HARD negatives — plausible but wrong — teach far more than
+  random ones and are what lifts quality.
+· THE COLLAPSE FAILURE MODE — without negatives the model can map everything to
+  the same vector and score perfectly. Negatives are what prevent it, which is
+  why they are structural rather than an optimisation.
+· THE TEMPERATURE parameter in the loss controls how sharply the model
+  distinguishes; it is genuinely sensitive and worth tuning.
+· WHAT IT PRODUCES — an embedding space where distance means semantic
+  similarity. That is exactly what retrieval, deduplication, clustering and
+  recommendation all need.
+· THE ALTERNATIVES worth naming — triplet loss (anchor, positive, negative with
+  a margin) predates it and needs careful mining; BYOL and SimSiam avoid
+  negatives entirely with architectural tricks, which was a surprising result.
+· WHY IT MATTERS COMMERCIALLY — it turns unlabelled data into useful
+  representations, and every vector search system in production rests on an
+  encoder trained this way."""
+
+_ANSWER_V2["RLHF (Reinforcement Learning from Human Feedback)"] = """Train a reward model on human PREFERENCES, then optimise the language model
+against it - because 'helpful' cannot be written as a loss function.
+
+· THE PROBLEM — a pretrained model predicts likely text, which is not the same
+  as useful, honest or safe text. And there is no formula for helpfulness to
+  put in a loss.
+· THE INSIGHT — people cannot score an answer reliably on a scale, but they CAN
+  say which of two answers is better. Comparisons are far more consistent than
+  absolute ratings, and that is what the pipeline is built on.
+· STEP 1, SUPERVISED FINE-TUNING — train on human-written demonstrations of good
+  responses. This gets the model into roughly the right behaviour before any
+  reinforcement learning.
+· STEP 2, THE REWARD MODEL — collect pairs of responses ranked by humans, and
+  train a model to output a scalar score that agrees with those rankings. This
+  turns scattered human judgements into a differentiable objective.
+· STEP 3, POLICY OPTIMISATION — use PPO to update the language model to
+  maximise the reward model's score.
+· THE KL PENALTY IS ESSENTIAL — a term penalising divergence from the original
+  model. Without it the policy finds nonsense that the reward model happens to
+  score highly, which is REWARD HACKING and it happens quickly and
+  spectacularly.
+· THE LIMITATIONS to name — the reward model is a proxy and can be gamed;
+  human labellers disagree and bring their own biases; and it can push the
+  model toward answers that sound agreeable rather than correct
+  (sycophancy).
+· DPO IS THE MODERN SIMPLIFICATION — Direct Preference Optimisation derives a
+  loss that optimises the same objective directly from preference pairs, with
+  no separate reward model and no reinforcement learning loop. Simpler, more
+  stable, and now widely preferred.
+· THE ONE-LINE SUMMARY — RLHF is how a text predictor becomes an assistant, and
+  the KL penalty is what stops it becoming a reward exploiter."""
+
+_ANSWER_V2["PR-AUC (Precision-Recall AUC)"] = """The area under the precision-recall curve - the right summary metric when
+positives are rare, because it never looks at true negatives.
+
+· WHAT THE CURVE IS — sweep the decision threshold and plot precision against
+  recall at each point. The area beneath summarises performance across all
+  thresholds in one number.
+· WHY IT BEATS ROC-AUC ON IMBALANCED DATA — the ROC's false positive rate
+  divides by the number of true negatives. With 99.9% negatives that
+  denominator is enormous, so many false positives barely move it and the curve
+  looks excellent. Precision has no true-negative term and stays honest.
+· THE CONCRETE CASE — 1,000 fraud cases in a million transactions. Flagging
+  10,000 to catch 900 gives a false positive rate under 1%, so ROC-AUC looks
+  superb, while precision is 9% and 91% of alerts are wasted work.
+· THE BASELINE IS NOT 0.5 — a random classifier's PR-AUC equals the POSITIVE
+  CLASS RATE. So a PR-AUC of 0.4 is excellent when positives are 1% and
+  terrible when they are 50%. Always quote the base rate alongside it, or the
+  number is uninterpretable.
+· THAT MOVING BASELINE is also why PR-AUC cannot be compared across datasets
+  with different imbalance, which ROC-AUC can. It is the price of the honesty.
+· THE CURVE IS NOT MONOTONIC and can be jagged, especially with few positives.
+  Average precision is the standard way to compute the area and is what
+  scikit-learn's average_precision_score gives you.
+· WHEN TO USE WHICH — rare positive class that you care about: PR-AUC. Balanced
+  classes, or both classes equally important: ROC-AUC. Say the rule and the
+  reason, not just the rule.
+· IT IS THRESHOLD-INDEPENDENT, which is its purpose: it evaluates the RANKING
+  the model produces rather than one operating point.
+· CHOOSING THE THRESHOLD is still a separate decision, made from the relative
+  cost of a false positive and a false negative, not from the curve itself."""
+
+_ANSWER_V2["Confusion matrix from scratch"] = """Four counters and one pass over the paired predictions - no library needed, and
+writing it is how you stop confusing the four cells.
+
+· THE FOUR COUNTERS — tp, fp, fn, tn, all starting at zero.
+· THE LOOP — for each (actual, predicted) pair: if predicted is 1, it is a tp
+  when actual is 1 and an fp otherwise; if predicted is 0, it is an fn when
+  actual is 1 and a tn otherwise. Four cases, one branch each.
+· THE NAMING RULE that stops the confusion — the second word is what you
+  PREDICTED, the first says whether you were right. A false positive is a
+  positive prediction that was wrong.
+· THE VECTORISED VERSION — tp = sum((y == 1) & (p == 1)) and so on. Four
+  one-liners with numpy, and it is what you would actually write.
+· DERIVE THE METRICS FROM THE COUNTERS, not from memory. accuracy =
+  (tp+tn)/total, precision = tp/(tp+fp), recall = tp/(tp+fn), specificity =
+  tn/(tn+fp), f1 = 2·p·r/(p+r).
+· GUARD EVERY DIVISION — precision is undefined when the model predicts no
+  positives at all, and that happens routinely on imbalanced data or a badly
+  chosen threshold. Return 0 rather than raising, and say that you chose to.
+· THE THRESHOLD IS AN INPUT — the matrix describes ONE operating point.
+  Recomputing it across thresholds is how you build the ROC and PR curves, and
+  saying so shows you know what the matrix is a snapshot of.
+· MULTI-CLASS — build an n×n matrix indexed by [actual][predicted], and
+  increment one cell per sample. The diagonal is correct; the off-diagonal
+  shows WHICH classes get mistaken for which, which is the genuinely
+  actionable part.
+· WHY THIS IS ASKED AT ALL — it is a five-line function, so the interviewer is
+  checking whether you understand the definitions well enough to derive the
+  metrics rather than recite them. Draw the 2×2 grid before writing code."""
+
+_ANSWER_V2["Confusion Matrix (from scratch)"] = _ANSWER_V2["Confusion matrix from scratch"]
+
+_ANSWER_V2["Layer normalization"] = """Normalise across the FEATURES of each individual example, so the calculation
+does not depend on the rest of the batch at all.
+
+· THE MECHANICS — for one example, compute the mean and variance across its
+  feature dimension, subtract and divide, then apply a learned scale (gamma)
+  and shift (beta) so the network can undo the normalisation if it needs to.
+· THE CONTRAST WITH BATCH NORM, which is the whole question. Batch norm
+  normalises each FEATURE across the batch; layer norm normalises each EXAMPLE
+  across its features. Batch norm looks sideways at other examples; layer norm
+  does not.
+· WHY THAT INDEPENDENCE MATTERS — batch norm behaves differently at training
+  and inference (it keeps running statistics), breaks with batch size 1, and is
+  awkward with variable-length sequences. Layer norm has none of those
+  problems because it never looks outside the example.
+· WHY TRANSFORMERS USE IT — sequences vary in length, batches are often small
+  relative to model size, and inference frequently runs one example at a time.
+  Layer norm is the only one of the two that works cleanly in all three cases.
+· WHAT NORMALISATION BUYS generally — it keeps activations in a stable range, so
+  gradients neither vanish nor explode, training tolerates a higher learning
+  rate, and the loss landscape is smoother.
+· PRE-NORM VS POST-NORM — the original transformer normalised AFTER each
+  sublayer's residual addition; modern models normalise BEFORE the sublayer.
+  Pre-norm trains far more stably at depth and usually needs no warmup, and it
+  is the detail that separates a current answer from a 2017 one.
+· RMSNORM is the modern simplification used by Llama and others — drop the mean
+  subtraction and the bias, keeping only the scaling by root-mean-square. Nearly
+  the same quality, measurably cheaper.
+· IT IS APPLIED PER TOKEN in a transformer, across the model dimension. Being
+  precise about which axis is normalised is what the question is really
+  testing.
+· WHERE BATCH NORM STILL WINS — convolutional vision models with large batches,
+  where its cross-example statistics also act as a useful regulariser."""
+
+_ANSWER_V2["Positional encoding"] = """Attention is order-blind, so position must be injected into the input -
+otherwise 'dog bites man' and 'man bites dog' are the same computation.
+
+· WHY THE PROBLEM EXISTS — self-attention computes a weighted SUM over all
+  tokens, and a sum does not care about order. Shuffle the input and the same
+  set of values comes back. Recurrent networks got order for free by processing
+  sequentially; transformers traded that away for parallelism.
+· SINUSOIDAL, the original — add sine and cosine waves of different frequencies
+  to each token's embedding. No parameters, and the offset between two
+  positions can be expressed as a linear function of the encoding, which is
+  what makes relative distance learnable.
+· LEARNED ABSOLUTE — a lookup table with one vector per index. Simple and
+  effective, and it cannot handle sequences longer than the table, which is a
+  hard ceiling rather than a degradation.
+· WHY THE FIELD MOVED TO RELATIVE — what usually matters is how far apart two
+  tokens are, not where they sit from the start of the document. A relative
+  scheme generalises to unseen lengths far better.
+· ROPE, which nearly every current model uses — ROTATE the query and key vectors
+  by an angle proportional to their position. The dot product between them then
+  depends only on their relative offset, and that falls out of the
+  trigonometry rather than being added on.
+· WHY ROPE WON — relative positioning with no extra parameters, applied inside
+  the existing attention computation, and the frequencies can be SCALED after
+  training to stretch the context window. That last property is how models get
+  extended context.
+· ALiBi is the simpler alternative — bias the attention scores downward in
+  proportion to distance. Very cheap, and it extrapolates well beyond the
+  training length.
+· WHERE IT IS ADDED — to the token embeddings before the first block for
+  sinusoidal and learned schemes; inside every attention layer for RoPE. The
+  difference matters if you are implementing it.
+· THE ONE-LINE ANSWER — attention is a set operation, so order has to be
+  supplied, and modern models supply it as a rotation that makes attention
+  depend on relative distance."""
+
+_ANSWER_V2["Top-p (nucleus) sampling"] = """Take the smallest set of tokens whose probabilities add up to p, then sample
+from just those - so the candidate pool shrinks when the model is confident.
+
+· THE MECHANISM — sort tokens by probability, accumulate until the running total
+  reaches p (typically 0.9), keep exactly those, renormalise, and sample.
+· WHAT PROBLEM IT SOLVES — top-k keeps a FIXED number of candidates. When the
+  model is confident, k = 50 drags in 49 implausible options; when it is
+  genuinely uncertain, 50 may cut off good ones. The right number depends on
+  the moment.
+· WHY 'NUCLEUS' — the retained set is the probability mass's core. Everything in
+  the long tail is discarded, and the tail is where incoherent tokens live.
+· THE ADAPTIVE BEHAVIOUR IS THE POINT — after 'the capital of France is' the
+  model is near-certain, so the nucleus is one or two tokens. Mid-sentence in
+  open prose it might be two hundred. The same p handles both.
+· TYPICAL VALUES — 0.9 to 0.95 for general use, lower for factual tasks. p = 1
+  disables it entirely.
+· IT COMBINES WITH TEMPERATURE, and the order is temperature first (which
+  reshapes the distribution), then the nucleus cut, then sampling. Changing
+  both at once makes the effect of either hard to attribute.
+· WHY IT BEAT PURE SAMPLING — sampling from the full distribution occasionally
+  picks a very unlikely token, and one bad token derails everything after it
+  because the model conditions on its own output. Truncation removes that tail
+  risk.
+· WHY IT BEAT BEAM SEARCH for open-ended text — beam search finds the most
+  probable continuation, which for creative or conversational text is bland and
+  repetitive. Sampling from the nucleus keeps variety without incoherence.
+· MIN-P is the newer refinement worth naming — keep tokens above a fraction of
+  the TOP token's probability, which adapts even more directly to the model's
+  confidence."""
+
+_ANSWER_V2["Chain-of-thought prompting"] = """Ask the model to work through the steps before answering - the intermediate
+tokens are where the computation happens.
+
+· THE OBSERVATION — a model asked for an answer straight away must produce it in
+  one forward pass. Asking it to reason first gives it many forward passes, and
+  each generated token conditions the next.
+· THE MECHANISM in plain terms — the generated reasoning becomes part of the
+  context, so the model is effectively writing itself notes it can then read.
+  It is extra computation, not extra knowledge.
+· ZERO-SHOT CoT — simply appending 'Let's think step by step' was found to
+  improve arithmetic and logic benchmarks substantially. That such a small
+  change matters at all is the surprising part.
+· FEW-SHOT CoT — supply worked examples that show the reasoning, not just the
+  answer. Stronger than the zero-shot version, and it also fixes the output
+  format.
+· WHERE IT HELPS — multi-step arithmetic, logic puzzles, planning, and anything
+  where a human would need scratch paper.
+· WHERE IT DOES NOT — simple lookup or classification, where it adds tokens,
+  latency and cost for nothing, and can even introduce errors by
+  over-elaborating.
+· IT NEEDS SCALE — the effect is small or absent in small models and emerges in
+  large ones. Worth knowing, because it means results do not transfer down.
+· THE VARIANTS — SELF-CONSISTENCY samples several reasoning paths and takes the
+  majority answer, which reliably improves accuracy at several times the cost.
+  TREE OF THOUGHTS explores and backtracks across branches.
+· THE HONEST CAVEAT to raise — the stated reasoning is not guaranteed to be the
+  actual cause of the answer. Models can produce correct answers with
+  unfaithful reasoning, and plausible reasoning with wrong answers, so do not
+  treat the trace as an explanation you can rely on.
+· THE PRODUCT TRADE-OFF — reasoning tokens cost money and add latency. Many
+  systems generate the reasoning and hide it, which is exactly what reasoning
+  models formalise."""
+
+_ANSWER_V2["Cosine similarity"] = """The cosine of the angle between two vectors - it measures DIRECTION and
+deliberately ignores length.
+
+· THE FORMULA — the dot product divided by the product of the two magnitudes.
+  The result runs from -1 (opposite) through 0 (perpendicular) to 1 (identical
+  direction).
+· WHY IGNORE MAGNITUDE — a long document and a short one about the same topic
+  produce embeddings pointing similarly with different lengths. Cosine calls
+  them similar; a raw dot product would favour the longer one purely for being
+  longer.
+· THE TEXT EXAMPLE — 'good movie' and 'great film' share no words, and their
+  embeddings point almost the same way. That is the whole reason vector search
+  beats keyword search for meaning.
+· THE RELATIONSHIP TO THE OTHERS worth knowing — on unit-length vectors,
+  cosine IS the dot product, and squared Euclidean distance equals 2 - 2·cosine.
+  So on normalised embeddings all three metrics rank identically and the choice
+  is about compute, not results.
+· THE PRACTICAL CONSEQUENCE — normalise once at indexing time, then use the dot
+  product, which is the cheapest operation and what vector databases optimise.
+· IN PRACTICE THE RANGE IS 0 TO 1 for most embedding models, because they
+  rarely produce genuinely opposed vectors. Do not expect to see -1.
+· MATCH THE METRIC TO THE MODEL — embedding models are trained with a particular
+  objective, and most sentence encoders are trained for cosine. Using a
+  different metric quietly degrades recall, so check the model card.
+· WHERE IT IS THE WRONG CHOICE — when magnitude carries meaning. In
+  recommendation, vector length can encode popularity or confidence, and
+  normalising it away throws that signal out.
+· THE HIGH-DIMENSIONAL CAVEAT — in very high dimensions most random vectors are
+  nearly perpendicular, so cosine values cluster near zero. Absolute values are
+  hard to interpret; comparisons between them are what matter."""
+
+_ANSWER_V2["Vector database"] = """A store built for 'find the nearest vectors to this one' - which needs an
+approximate index, because exact nearest-neighbour search does not scale.
+
+· WHAT IT IS FOR — semantic search, RAG retrieval, recommendation, deduplication
+  and any similarity lookup over embeddings.
+· WHY AN ORDINARY DATABASE CANNOT DO IT — a B-tree index answers equality and
+  range queries on ordered values. 'Nearest in 768 dimensions' has no ordering
+  to index, so a relational database can only scan everything.
+· EXACT SEARCH IS O(n × d) per query — a million vectors of 768 dimensions is
+  nearly a billion multiplications for one lookup. Correct, and too slow.
+· THE TRADE THAT MAKES IT WORK — APPROXIMATE nearest neighbours. Accept
+  occasionally missing the true closest match in exchange for a hundredfold
+  speed-up. Recall becomes a tunable parameter rather than a guarantee.
+· HNSW is the dominant index — a layered graph where upper layers have long
+  links for coarse navigation and lower layers have short ones for precision.
+  Search greedily descends the layers. Excellent recall and speed; memory
+  hungry, and updates are awkward.
+· IVF is the other main family — cluster the vectors, then search only the
+  nearest few clusters. Cheaper memory, and it needs training on a sample and
+  degrades if the data distribution shifts.
+· PRODUCT QUANTISATION compresses vectors into codes so far more fit in memory,
+  at some accuracy cost. It is what makes billion-scale indexes affordable.
+· METADATA FILTERING IS THE HARD PART IN PRACTICE — 'nearest vectors WHERE
+  tenant = X and date > Y'. Filtering after the search may return nothing;
+  filtering during it complicates the graph traversal. This is where products
+  genuinely differ, and it is the right thing to ask about in a design round.
+· THE OPTIONS — dedicated stores (Pinecone, Weaviate, Qdrant, Milvus), the FAISS
+  library for embedding in your own service, or pgvector inside Postgres. For
+  under a few million vectors, pgvector alongside your existing data is
+  usually the right answer, and saying so shows judgement."""
+
+_ANSWER_V2["Vector database / ANN"] = _ANSWER_V2["Vector database"]
+
+_ANSWER_V2["Why do Transformers need positional encodings but RNNs don't?"] = """An RNN reads one token at a time, so order is built into the process. A
+transformer reads everything at once, so order has to be added as data.
+
+· THE RNN CASE — the hidden state at step t depends on step t-1. Position is
+  implicit in WHEN each token is processed, and there is nothing to encode.
+· THE TRANSFORMER CASE — self-attention computes a weighted sum over all
+  positions simultaneously. A sum is order-independent, so shuffling the input
+  produces the same output. 'Dog bites man' and 'man bites dog' would be
+  identical computations.
+· WHY TRANSFORMERS GAVE UP SEQUENTIAL PROCESSING — it is the entire reason they
+  scale. An RNN must compute step t before step t+1, so training cannot be
+  parallelised across the sequence. A transformer processes every position at
+  once, which is what makes training on internet-scale data feasible.
+· THE SECOND BENEFIT — path length. In an RNN, information from token 1 reaches
+  token 500 through 499 sequential steps, degrading on the way. In a
+  transformer it is one attention hop, which is why long-range dependencies
+  survive.
+· SO POSITIONAL ENCODING IS THE PRICE PAID for parallelism and short paths. That
+  framing is the answer; the mechanisms are detail.
+· THE MECHANISMS, briefly — sinusoidal waves added to the embeddings, learned
+  position vectors, or modern rotary embeddings (RoPE) that rotate queries and
+  keys so attention depends on relative distance.
+· WHAT WOULD HAPPEN WITHOUT IT — the model would treat text as a bag of tokens.
+  It could still learn word identity and co-occurrence and would have no notion
+  of syntax at all.
+· THE FOLLOW-UP TO EXPECT — why relative rather than absolute? Because what
+  matters is usually the distance between two tokens, and relative schemes
+  extrapolate to lengths not seen in training.
+· CNNs SIT IN BETWEEN and are worth mentioning — a convolution's kernel has an
+  inherent local ordering, so short-range position is implicit, but the
+  receptive field grows only with depth."""
+
+_ANSWER_V2["Why do Transformers need positional encoding when RNNs don't?"] = \
+    _ANSWER_V2["Why do Transformers need positional encodings but RNNs don't?"]
+
+_ANSWER_V2["Design a Fraud / Payment-Risk Detection system"] = """Extreme class imbalance, adversaries who adapt, and labels that arrive weeks
+late - the modelling is the easy part.
+
+· CLARIFY FIRST — which fraud? Stolen cards, account takeover, seller fraud and
+  refund abuse are different problems with different signals. And what is the
+  decision: block, challenge, or queue for review? A three-way outcome changes
+  the whole design.
+· THE LABEL PROBLEM IS THE DEFINING ONE. Chargebacks arrive 30 to 90 days later,
+  so today's model is trained on data whose labels you will not have for
+  months. Plan for delayed labels explicitly and use manual review outcomes as
+  a faster, biased proxy.
+· THE IMBALANCE — fraud is typically 0.1% to 1% of transactions. Evaluate with
+  PR-AUC and precision at a fixed recall, never accuracy, and never ROC-AUC
+  alone.
+· THE FEATURES THAT ACTUALLY WORK — velocity (how many transactions from this
+  card, device, or IP in the last hour, day, week), deviation from the
+  customer's own history, device fingerprint and its reuse across accounts,
+  the mismatch between billing and shipping geography, and graph features
+  linking accounts that share a device or card.
+· THE GRAPH ANGLE IS WHERE THE REAL SIGNAL IS — fraud rings share
+  infrastructure. Connected-component features over the shared-device graph
+  routinely outperform any per-transaction feature.
+· THE ARCHITECTURE — real-time rules for known patterns (fast, explainable,
+  instantly updatable) plus a gradient-boosted model for the rest. Rules catch
+  what you already understand; the model catches what you do not.
+· THE LATENCY BUDGET — the decision sits in the payment path, so typically under
+  100ms. That constrains feature computation and rules out anything needing a
+  slow join, which is why a feature store with precomputed aggregates matters.
+· THE ADVERSARIAL PROPERTY — attackers observe your decisions and adapt, so
+  performance decays continuously rather than drifting slowly. Retrain
+  frequently, monitor for sudden precision drops, and never publish your rules.
+· THE THRESHOLD IS A BUSINESS DECISION — the cost of a blocked good customer
+  against the cost of a fraudulent transaction. Present the precision-recall
+  curve and let the business pick, then monitor the false positive rate as a
+  guardrail, because blocking good customers is the failure users notice."""
+
+_ANSWER_V2["Design a Fraud Detection System"] = \
+    _ANSWER_V2["Design a Fraud / Payment-Risk Detection system"]
+
+_ANSWER_V2["Coin Change II (count ways)"] = """Count COMBINATIONS, not permutations - and the loop order is the entire
+difference between the two.
+
+· THE PROBLEM — how many distinct ways can you make an amount from unlimited
+  coins of given denominations? {1,2} making 3 has ONE way (1+2), not two.
+· THE STATE — dp[a] is the number of ways to make amount a. dp[0] = 1, because
+  there is exactly one way to make nothing: use no coins.
+· THE TRANSITION — for each coin, for each amount from coin to target:
+  dp[a] += dp[a - coin].
+· THE LOOP ORDER IS THE WHOLE QUESTION. Coin on the OUTSIDE and amount on the
+  inside counts combinations. Amount outside and coin inside counts
+  PERMUTATIONS, where 1+2 and 2+1 are different.
+· WHY THAT WORKS — with the coin outermost, each coin is fully considered before
+  the next is introduced, so a combination is only ever built in one canonical
+  order (non-decreasing coin index). There is no opportunity to count it twice.
+· THE HAND TRACE on coins [1,2] and amount 3. After coin 1: dp = [1,1,1,1].
+  After coin 2: dp[2] += dp[0] giving 2, dp[3] += dp[1] giving 2. Answer 2,
+  which is 1+1+1 and 1+2.
+· UNLIMITED USE IS WHY THE INNER LOOP GOES FORWARD — reading dp[a - coin] after
+  it has already been updated for this same coin is what allows the coin to be
+  reused. In 0/1 knapsack, where each item is used once, the inner loop runs
+  BACKWARD for exactly the opposite reason.
+· COST — O(coins × amount) time, O(amount) space.
+· THE SIBLING PROBLEM, Coin Change I, asks for the minimum NUMBER of coins and
+  uses min() instead of addition, with dp initialised to infinity. Same table,
+  different operator, and the loop order stops mattering because min is
+  order-independent."""
+
+_ANSWER_V2["F-beta score"] = """A weighted harmonic mean of precision and recall, where beta says how many
+times more you care about recall.
+
+· THE FORMULA — (1 + β²) × precision × recall / (β² × precision + recall).
+· WHAT BETA MEANS — beta is the ratio of importance you assign to recall over
+  precision. β = 1 weights them equally, which is F1. β = 2 weights recall
+  about twice as much; β = 0.5 weights precision twice as much.
+· THE LIMITS — as beta approaches 0 the score becomes precision; as it grows
+  large it becomes recall. Knowing the two endpoints makes the formula easy to
+  sanity-check.
+· WHEN TO USE F2 — screening problems where a miss is far worse than a false
+  alarm: cancer detection, safety alerts, fraud triage where flagged cases go
+  to human review anyway.
+· WHEN TO USE F0.5 — where acting on a positive is costly or annoying: spam
+  filtering, automated enforcement, anything that takes an irreversible action
+  without review.
+· WHY IT MATTERS THAT F1 IS NOT NEUTRAL — using F1 is a decision that the two
+  errors cost the same. That is rarely true and almost never examined. Choosing
+  beta deliberately is the mature version of the same choice.
+· HOW TO PICK BETA IN PRACTICE — from the actual costs. If a missed fraud costs
+  £200 and a false alarm costs £20 of review time, recall is worth about ten
+  times precision, which points to a beta near 3.
+· IT IS STILL A SINGLE-THRESHOLD METRIC — it describes one operating point.
+  PR-AUC summarises the whole curve and is the better choice before you have
+  fixed a threshold.
+· THE HONEST ALTERNATIVE worth naming — if you can quantify the costs, optimise
+  EXPECTED COST directly rather than any F-score. F-beta is a proxy for cost
+  asymmetry, and if you have the real numbers you do not need the proxy."""
+
+_ANSWER_V2["Data augmentation"] = """Create new training examples by transforming existing ones in ways that do not
+change the label - free data, and a regulariser.
+
+· THE PRINCIPLE — a rotated cat is still a cat. Any transformation that
+  preserves the label gives you another example, and it teaches the model that
+  the transformation is irrelevant.
+· WHY IT REGULARISES — the model can no longer memorise exact pixel values,
+  because it never sees the same image twice. It is forced toward features that
+  survive the transformations.
+· IMAGE TRANSFORMS — flips, crops, rotations, colour jitter, scaling, and noise.
+  These are the standard set and they are cheap.
+· THE LABEL-PRESERVATION TRAP — a horizontal flip is fine for cats and WRONG for
+  digits (2 flipped is not 2) and for text in images. Every transform encodes an
+  assumed invariance, and applying one your task does not have actively teaches
+  the model something false.
+· TEXT IS HARDER — synonym replacement, back-translation (translate out and
+  back), and random deletion. Small edits can flip sentiment or meaning, so
+  text augmentation is riskier and less standard than image augmentation.
+· AUDIO — time stretching, pitch shift, background noise, and SpecAugment,
+  which masks bands of the spectrogram.
+· THE ADVANCED MIXERS — MIXUP blends two images and their labels in the same
+  proportion; CUTMIX pastes a patch of one image into another and mixes the
+  labels by area. Both regularise strongly and both produce images that look
+  absurd to a human, which is a nice illustration that the model is not doing
+  what you are.
+· APPLY IT TO TRAINING ONLY. Augmenting validation or test data measures
+  performance on data that will never occur. The exception is deliberate
+  test-time augmentation, where several augmented predictions are averaged for a
+  small accuracy gain.
+· WHERE IT MATTERS MOST — small datasets and imbalanced classes, where you can
+  augment the minority class more aggressively. It is the cheapest intervention
+  available when labels are expensive."""
+
+_ANSWER_V2["Early stopping"] = """Stop training when validation performance stops improving - the simplest
+regulariser there is, and it costs nothing.
+
+· THE MECHANISM — evaluate on the validation set each epoch. Track the best
+  score. If it has not improved for `patience` epochs, stop and RESTORE the
+  best weights.
+· RESTORING THE BEST WEIGHTS IS NOT OPTIONAL. Stopping and keeping the final
+  weights leaves you with a model several epochs past its peak, which defeats
+  the purpose. This is the detail most implementations get right and most
+  hand-written loops forget.
+· WHY IT REGULARISES — training error falls monotonically while validation error
+  falls then rises. That turning point is where the model stops learning the
+  signal and starts memorising the noise, and early stopping simply refuses to
+  go past it.
+· PATIENCE — how many epochs of no improvement to tolerate. Too small and you
+  stop on noise; too large and you waste compute and drift into overfitting.
+  Five to ten is typical, and it should be larger when the validation set is
+  small and noisy.
+· MIN_DELTA — how much improvement counts as improvement. Without it, tiny
+  meaningless gains keep resetting the counter and the run never stops.
+· WHAT TO MONITOR — validation LOSS is smoother and more sensitive; validation
+  ACCURACY is what you care about but moves in steps and plateaus. Loss is the
+  better trigger, and it is worth saying why.
+· THE INTERACTION WITH LEARNING-RATE SCHEDULES — a decaying rate often produces
+  a plateau followed by another drop, so aggressive early stopping can quit
+  just before the improvement. Reduce-on-plateau then stop is the usual
+  combination.
+· IT IS EQUIVALENT TO L2 REGULARISATION under certain conditions in linear
+  models, which is a nice theoretical connection and explains why it works
+  rather than merely that it does.
+· THE COST — it needs a validation set, and the number of epochs becomes data
+  dependent rather than fixed. That makes runs slightly less reproducible,
+  which matters if you are comparing configurations."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
