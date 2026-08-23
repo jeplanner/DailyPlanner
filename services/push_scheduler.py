@@ -29,6 +29,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from requests.exceptions import HTTPError
 
+from services import announcer_push
 from services import push_service
 from supabase_client import get, post, update
 
@@ -295,6 +296,29 @@ def tick():
                 _refresh_day_board_pins(user_id, now_local)
             except Exception:
                 logger.debug("Day Board pin refresh skipped for %s", user_id,
+                             exc_info=True)
+
+            # ANNOUNCEMENTS. Speech needs the page visible, so a locked
+            # phone hears nothing — a browser limitation, not something we
+            # can engineer around. A notification is the only thing that
+            # reaches a locked screen, so each announcement fires as one
+            # too. In its own try for the same reason as the pins above.
+            try:
+                for a_item, a_time in announcer_push.fires_for_user(
+                        user_id, now_local):
+                    cid = a_item.get("client_id")
+                    if not announcer_push.claim(user_id, cid, today, a_time):
+                        continue
+                    body, when = announcer_push.spoken_label(a_item, a_time)
+                    push_service.send_to_user(
+                        user_id,
+                        title=f"🔔 {when}",
+                        body=body,
+                        tag=f"announce-{cid}-{a_time.replace(':', '')}",
+                        url="/day-board",
+                    )
+            except Exception:
+                logger.debug("announcement push skipped for %s", user_id,
                              exc_info=True)
 
             fires = _due_fires_for_user(user_id, hhmm, weekday, today)

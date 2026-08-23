@@ -164,6 +164,57 @@ click(q(".ta-btn"));
 doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 ok("Escape closes it", q(".ta-pop").hidden === true);
 
+// ── TABS (2026-08-23) ────────────────────────────────────────────────
+// The panel had grown into one scroll of eleven unrelated controls, which
+// is what "the UX is not friendly" meant. Four tabs, grouped by how often
+// each is touched.
+click(q(".ta-btn"));
+ok("four tabs", doc.querySelectorAll("[data-ta-tab]").length === 4);
+ok("opens on Announcements",
+   doc.querySelector('[data-ta-pane="items"]').hidden === false);
+ok("other panes hidden",
+   doc.querySelector('[data-ta-pane="clock"]').hidden === true);
+
+// Start/Pause/Stop and the status line stay OUTSIDE the tabs, because they
+// are what you open the panel to check.
+ok("mode buttons are not in a pane",
+   !q('[data-ta-mode="on"]').closest("[data-ta-pane]"));
+ok("status line is not in a pane", !q("[data-ta-now]").closest("[data-ta-pane]"));
+
+click(doc.querySelector('[data-ta-tab="clock"]'));
+ok("clock tab shows", doc.querySelector('[data-ta-pane="clock"]').hidden === false);
+ok("...and items hides", doc.querySelector('[data-ta-pane="items"]').hidden === true);
+ok("...and the tab is marked selected",
+   doc.querySelector('[data-ta-tab="clock"]').getAttribute("aria-selected") === "true");
+click(doc.querySelector('[data-ta-tab="items"]'));
+ok("back to announcements",
+   doc.querySelector('[data-ta-pane="items"]').hidden === false);
+
+// The four advanced fields are folded away by default — showing all seven
+// inputs at once is most of why this looked forbidding.
+ok("advanced fields start hidden", q("[data-ta-advanced]").hidden === true);
+click(q("[data-ta-more]"));
+ok("...and open on request", q("[data-ta-advanced]").hidden === false);
+click(q("[data-ta-more]"));
+ok("...and fold again", q("[data-ta-advanced]").hidden === true);
+
+// Editing something that USES an advanced field must reveal it, or the
+// form shows values the row displays and the inputs do not.
+q("[data-ta-new-at]").value = "8";
+click(q("[data-ta-more]"));
+q("[data-ta-new-until]").value = "8pm";
+q("[data-ta-new-mins]").value = "60";
+q("[data-ta-new-text]").value = "Windowed";
+click(q("[data-ta-add]"));
+click(q("[data-ta-more]"));            // fold it back down
+ok("folded before editing", q("[data-ta-advanced]").hidden === true);
+click(q("[data-ta-edit]"));
+ok("editing a windowed announcement opens the advanced block",
+   q("[data-ta-advanced]").hidden === false);
+click(q("[data-ta-cancel]"));
+while (doc.querySelector("[data-ta-del]")) click(doc.querySelector("[data-ta-del]"));
+click(q("[data-ta-close]"));
+
 // ── the AM/PM chooser ────────────────────────────────────────────────
 click(q(".ta-btn"));
 ok("AM/PM buttons exist", doc.querySelectorAll('[data-ta-mer="at"]').length === 2);

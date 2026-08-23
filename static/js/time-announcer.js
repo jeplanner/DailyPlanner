@@ -823,6 +823,25 @@
       "line-height:1.45;font-weight:700}",
       ".ta-health.good{color:#047857}",
       ".ta-health.bad{color:#b91c1c}",
+      ".ta-tabs{display:flex;gap:2px;margin:12px 0 0;",
+      "border-bottom:1px solid var(--color-border,#e5e7eb)}",
+      ".ta-tabs button{flex:1;font:inherit;font-size:11.5px;font-weight:700;",
+      "padding:7px 4px;border:0;border-bottom:2px solid transparent;",
+      "background:none;cursor:pointer;color:var(--color-text-secondary,#6b7280);",
+      "margin-bottom:-1px;white-space:nowrap}",
+      ".ta-tabs button.on{color:#4338ca;border-bottom-color:#4338ca}",
+      ".ta-tabs button:hover{color:#4338ca}",
+      ".ta-pane{padding-top:11px}",
+      ".ta-pane[hidden]{display:none}",
+      ".ta-pane > p{margin:0 0 10px;font-size:11.5px;line-height:1.5;",
+      "color:var(--color-text-secondary,#6b7280)}",
+      ".ta-more{display:block;width:100%;margin-top:8px;font:inherit;",
+      "font-size:11px;font-weight:700;padding:6px;border-radius:8px;cursor:pointer;",
+      "border:1px dashed var(--color-border,#d1d5db);background:none;",
+      "color:var(--color-text-secondary,#6b7280);text-align:left}",
+      ".ta-more:hover{border-color:#4338ca;color:#4338ca}",
+      ".ta-more::before{content:'+ ';font-weight:800}",
+      "[data-ta-advanced][hidden]{display:none}",
       ".ta-sec{margin:12px 0 5px;font-size:11px;font-weight:800;",
       "letter-spacing:.05em;text-transform:uppercase;",
       "color:var(--color-text-secondary,#6b7280)}",
@@ -928,8 +947,9 @@
       ".ta-saved.show{opacity:1;transform:none}",
       ".ta-auto{margin:10px 0 0 !important;font-size:10.5px !important;",
       "line-height:1.45;font-style:italic}",
-      ".ta-now{margin:6px 0 0 !important;font-size:11px !important;",
-      "line-height:1.45;font-weight:700;",
+      ".ta-now{margin:8px 0 0 !important;font-size:11.5px !important;",
+      "line-height:1.45;font-weight:700;padding:7px 9px;border-radius:8px;",
+      "background:var(--color-bg,#f3f4f6);",
       "color:var(--color-text,#111827) !important}",
     ].join("");
     var el = document.createElement("style");
@@ -1442,6 +1462,18 @@
     pop.querySelector("[data-ta-new-start]").value = it.start || todayYMD();
     pop.querySelector("[data-ta-new-end]").value = it.end || "";
     pop.querySelector("[data-ta-new-text]").value = it.text || "";
+    // OPEN THE ADVANCED BLOCK if this announcement uses any of it —
+    // otherwise editing shows a form whose visible fields do not account
+    // for what the row displays, which reads as a bug.
+    var usesAdvanced = !!(it.until || it.mins || it.end ||
+                          (it.repeat !== "daily" && it.repeat !== "once"));
+    var adv = pop.querySelector("[data-ta-advanced]");
+    var mb = pop.querySelector("[data-ta-more]");
+    if (adv && usesAdvanced) {
+      adv.hidden = false;
+      if (mb) mb.setAttribute("aria-expanded", "true");
+    }
+    showTab("items");
     paint();
     var f = pop.querySelector("[data-ta-new-at]");
     if (f) { f.focus(); f.select(); }
@@ -1593,128 +1625,174 @@
     pop.setAttribute("role", "dialog");
     pop.setAttribute("aria-modal", "true");
     pop.setAttribute("aria-label", "Announce the time");
+    /* ── LAYOUT ────────────────────────────────────────────────────
+       This panel grew one control at a time until it was a single
+       scroll of eleven unrelated things, which is what "the UX is not
+       friendly" meant. It is now four TABS, because the four groups are
+       used at completely different frequencies:
+
+         Announcements — the thing you actually came here to do
+         Clock         — set once, changed rarely
+         Reminders     — the push notifications, occasionally muted
+         Device        — keep-alive and diagnostics, touched almost never
+
+       What stays OUTSIDE the tabs is what must always be reachable and
+       always visible: the master Start/Pause/Stop, and one line stating
+       what is currently saved and running. Those are the two things you
+       open this panel to check. */
     pop.innerHTML =
       '<button type="button" class="ta-x" data-ta-close ' +
         'aria-label="Close">&times;</button>' +
       '<h4>Announce the time <span class="ta-saved" data-ta-saved></span></h4>' +
-      '<p>Spoken on the clock, not from when you pressed start. A missed one ' +
-      'is skipped rather than read out late.</p>' +
+
       '<div class="ta-row">' +
         '<button type="button" data-ta-mode="on">Start</button>' +
         '<button type="button" data-ta-mode="paused">Pause</button>' +
         '<button type="button" data-ta-mode="off">Stop</button>' +
       '</div>' +
-      '<div class="ta-int"><span>Every</span>' +
-        INTERVALS.map(function (n) {
-          return '<button type="button" data-ta-every="' + n + '">' + n + 'm</button>';
-        }).join("") +
-        '<button type="button" data-ta-custom>Custom</button>' +
-      '</div>' +
-      '<div class="ta-fld" data-ta-customrow hidden>' +
-        '<label>Minutes between announcements' +
-        '<input type="number" min="0" max="' + MAX_EVERY + '" step="1" ' +
-        'data-ta-every-in placeholder="e.g. 20"></label>' +
-        '<small>0 = only the exact times below.</small>' +
-      '</div>' +
-      '<div class="ta-fld">' +
-        '<label>Say this first (with every interval announcement)' +
-        '<input type="text" maxlength="60" data-ta-label ' +
-        'placeholder="e.g. Stand up and stretch"></label>' +
-      '</div>' +
-      '<div class="ta-sec">Your announcements</div>' +
-      '<ul class="ta-list" data-ta-list></ul>' +
-      '<div class="ta-add">' +
-        '<div class="ta-add-row">' +
-          '<span class="ta-timefld">' +
-            '<input type="text" data-ta-new-at placeholder="5.00" ' +
-              'aria-label="Start time">' +
-            '<span class="ta-ampm" role="group" aria-label="Morning or afternoon">' +
-              '<button type="button" data-ta-mer="at" data-v="am">AM</button>' +
-              '<button type="button" data-ta-mer="at" data-v="pm">PM</button>' +
-            '</span>' +
-          '</span>' +
-          '<select data-ta-new-repeat aria-label="How often">' +
-            '<option value="daily">Every day</option>' +
-            '<option value="once">Once</option>' +
-            '<option value="weekly">Every week</option>' +
-            '<option value="monthly">Every month</option>' +
-            '<option value="yearly">Every year</option>' +
-            '<option value="custom">Chosen days</option>' +
-          '</select>' +
-        '</div>' +
-        '<small class="ta-preview" data-ta-preview></small>' +
-        '<div class="ta-days" data-ta-days hidden>' +
-          [0, 1, 2, 3, 4, 5, 6].map(function (d) {
-            return '<button type="button" data-ta-day="' + d + '">' +
-                   DAY_NAMES[d] + '</button>';
-          }).join("") +
-        '</div>' +
-        '<div class="ta-add-row">' +
-          '<label class="ta-dt">Until <i>optional</i>' +
-            '<span class="ta-timefld">' +
-              '<input type="text" data-ta-new-until placeholder="8.00">' +
-              '<span class="ta-ampm" role="group" aria-label="Morning or afternoon">' +
-                '<button type="button" data-ta-mer="until" data-v="am">AM</button>' +
-                '<button type="button" data-ta-mer="until" data-v="pm">PM</button>' +
-              '</span>' +
-            '</span></label>' +
-          '<label class="ta-dt">Repeat every <i>optional</i>' +
-            '<input type="number" min="0" max="720" step="5" ' +
-            'data-ta-new-mins placeholder="60 min"></label>' +
-        '</div>' +
-        '<div class="ta-add-row">' +
-          '<label class="ta-dt">Starts' +
-            '<input type="date" data-ta-new-start></label>' +
-          '<label class="ta-dt">Ends <i>optional</i>' +
-            '<input type="date" data-ta-new-end></label>' +
-        '</div>' +
-        '<div class="ta-add-row">' +
-          '<input type="text" data-ta-new-text maxlength="120" ' +
-            'placeholder="What to say" aria-label="What to say">' +
-          '<button type="button" data-ta-add>Add</button>' +
-          '<button type="button" data-ta-cancel hidden>Cancel</button>' +
-        '</div>' +
-      '</div>' +
-      '<small class="ta-hint">Type the time and pick <b>AM</b> or <b>PM</b>. ' +
-      'If you write it in full &mdash; <code>5pm</code> or <code>17:00</code> ' +
-      '&mdash; what you typed wins and the buttons grey out. ' +
-      '<b>Until</b> and <b>repeat every</b> make one ' +
-      'announcement speak through the day &mdash; 8am to 8pm every 60 minutes ' +
-      'is one row, not thirteen. Leave them blank and it speaks once. ' +
-      '<b>Starts</b> defaults to today; leave <b>Ends</b> blank and it runs ' +
-      'for good. A monthly reminder on the 31st still fires on the last day ' +
-      'of a short month rather than skipping it.</small>' +
-      '<div class="ta-sec">Reminder notifications</div>' +
-      '<ul class="ta-list" data-ta-mutes></ul>' +
-      '<small class="ta-hint">These are your checklist reminders, which ' +
-      'arrive even when the app is closed. Muting one keeps its times &mdash; ' +
-      'switch it back on and the schedule returns exactly as it was. The ' +
-      'master switch for all notifications is in Settings.</small>' +
-      '<p class="ta-auto">Everything here saves as you type &mdash; there is no ' +
-      'Save button, and closing this panel keeps your settings.</p>' +
       '<p class="ta-now" data-ta-now></p>' +
-      '<div class="ta-row"><button type="button" data-ta-test>Test the voice now</button></div>' +
-      '<p class="ta-health" data-ta-health></p>' +
-      '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
-        'Keep going when minimised or locked</label>' +
-      '<p class="ta-tip" hidden>You are running the installed app &mdash; turn this ' +
-      'on, or the system will freeze it once the window is minimised and the ' +
-      'announcements stop.</p>' +
-      '<p class="ta-note">This holds an inaudible sound playing, which is what stops ' +
-      'the system suspending the app. A media entry appears on the lock screen while ' +
-      'it runs &mdash; its pause button really does stop the announcements. ' +
-      '<b>Battery:</b> the announcements themselves cost nothing measurable ' +
-      '(one date comparison every 15s, and a second of speech an hour). This ' +
-      'checkbox is the part that costs &mdash; holding audio open keeps the ' +
-      'screen-off CPU awake, roughly like leaving a podcast paused-but-loaded: ' +
-      'expect a few percent over a night, not a flat battery. Leave it OFF if ' +
-      'you only want announcements while you are looking at the app. ' +
-      '<b>On a locked phone this is best-effort:</b> it is the only ' +
-      'mechanism that can work, and whether it does depends on your device. Nothing ' +
-      'works once the app is fully closed &mdash; the web cannot speak from a closed ' +
-      'app.</p>' +
-      '<p class="ta-warn" hidden>Your browser needs a tap on this page before it ' +
-      'will speak. Interact anywhere and the next announcement will play.</p>';
+      '<p class="ta-warn" hidden>Your browser needs a tap on this page before ' +
+        'it will speak. Interact anywhere and the next announcement will play.</p>' +
+
+      '<div class="ta-tabs" role="tablist">' +
+        '<button type="button" role="tab" data-ta-tab="items">Announcements</button>' +
+        '<button type="button" role="tab" data-ta-tab="clock">Clock</button>' +
+        '<button type="button" role="tab" data-ta-tab="notify">Reminders</button>' +
+        '<button type="button" role="tab" data-ta-tab="device">Device</button>' +
+      '</div>' +
+
+      /* ── ANNOUNCEMENTS ──────────────────────────────────────────── */
+      '<div class="ta-pane" data-ta-pane="items">' +
+        '<ul class="ta-list" data-ta-list></ul>' +
+        '<div class="ta-add">' +
+          '<div class="ta-add-row">' +
+            '<span class="ta-timefld">' +
+              '<input type="text" data-ta-new-at placeholder="5.00" ' +
+                'aria-label="Time">' +
+              '<span class="ta-ampm" role="group" aria-label="Morning or afternoon">' +
+                '<button type="button" data-ta-mer="at" data-v="am">AM</button>' +
+                '<button type="button" data-ta-mer="at" data-v="pm">PM</button>' +
+              '</span>' +
+            '</span>' +
+            '<select data-ta-new-repeat aria-label="How often">' +
+              '<option value="daily">Every day</option>' +
+              '<option value="once">Once</option>' +
+              '<option value="weekly">Every week</option>' +
+              '<option value="monthly">Every month</option>' +
+              '<option value="yearly">Every year</option>' +
+              '<option value="custom">Chosen days</option>' +
+            '</select>' +
+          '</div>' +
+          '<div class="ta-days" data-ta-days hidden>' +
+            [0, 1, 2, 3, 4, 5, 6].map(function (d) {
+              return '<button type="button" data-ta-day="' + d + '">' +
+                     DAY_NAMES[d] + '</button>';
+            }).join("") +
+          '</div>' +
+          '<div class="ta-add-row">' +
+            '<input type="text" data-ta-new-text maxlength="120" ' +
+              'placeholder="What to say" aria-label="What to say">' +
+            '<button type="button" data-ta-add>Add</button>' +
+            '<button type="button" data-ta-cancel hidden>Cancel</button>' +
+          '</div>' +
+          '<small class="ta-preview" data-ta-preview></small>' +
+          /* THE ADVANCED FIELDS ARE FOLDED AWAY. Four of the seven inputs
+             are used by a minority of announcements, and showing all
+             seven at once is most of why this looked forbidding. */
+          '<button type="button" class="ta-more" data-ta-more ' +
+            'aria-expanded="false">Repeat through the day, or set dates</button>' +
+          '<div data-ta-advanced hidden>' +
+            '<div class="ta-add-row">' +
+              '<label class="ta-dt">Until' +
+                '<span class="ta-timefld">' +
+                  '<input type="text" data-ta-new-until placeholder="8.00">' +
+                  '<span class="ta-ampm" role="group" aria-label="Morning or afternoon">' +
+                    '<button type="button" data-ta-mer="until" data-v="am">AM</button>' +
+                    '<button type="button" data-ta-mer="until" data-v="pm">PM</button>' +
+                  '</span>' +
+                '</span></label>' +
+              '<label class="ta-dt">Repeat every' +
+                '<input type="number" min="0" max="720" step="5" ' +
+                'data-ta-new-mins placeholder="60 min"></label>' +
+            '</div>' +
+            '<div class="ta-add-row">' +
+              '<label class="ta-dt">Starts' +
+                '<input type="date" data-ta-new-start></label>' +
+              '<label class="ta-dt">Ends <i>optional</i>' +
+                '<input type="date" data-ta-new-end></label>' +
+            '</div>' +
+            '<small class="ta-hint"><b>Until</b> and <b>repeat every</b> make ' +
+            'one announcement speak through the day &mdash; 8am to 8pm every ' +
+            '60 minutes is one row, not thirteen. A monthly reminder on the ' +
+            '31st still fires on the last day of a short month.</small>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      /* ── THE REPEATING CLOCK ────────────────────────────────────── */
+      '<div class="ta-pane" data-ta-pane="clock" hidden>' +
+        '<p>Says the time on the clock &mdash; :00, :15, :30, :45 &mdash; ' +
+        'not from when you pressed Start. A missed one is skipped rather ' +
+        'than read out late.</p>' +
+        '<div class="ta-int"><span>Every</span>' +
+          INTERVALS.map(function (n) {
+            return '<button type="button" data-ta-every="' + n + '">' + n + 'm</button>';
+          }).join("") +
+          '<button type="button" data-ta-custom>Custom</button>' +
+        '</div>' +
+        '<div class="ta-fld" data-ta-customrow hidden>' +
+          '<label>Minutes between announcements' +
+          '<input type="number" min="0" max="' + MAX_EVERY + '" step="1" ' +
+          'data-ta-every-in placeholder="e.g. 20"></label>' +
+          '<small>0 turns the repeating clock off.</small>' +
+        '</div>' +
+        '<div class="ta-fld">' +
+          '<label>Say this first' +
+          '<input type="text" maxlength="60" data-ta-label ' +
+          'placeholder="e.g. Stand up and stretch"></label>' +
+          '<small>Read out before the time on every one of these. Leave it ' +
+          'blank for just the time.</small>' +
+        '</div>' +
+      '</div>' +
+
+      /* ── REMINDER NOTIFICATIONS ─────────────────────────────────── */
+      '<div class="ta-pane" data-ta-pane="notify" hidden>' +
+        '<p>Your checklist reminders, which arrive even when the app is ' +
+        'closed. Muting one keeps its times &mdash; switch it back on and ' +
+        'the schedule returns exactly as it was.</p>' +
+        '<ul class="ta-list" data-ta-mutes></ul>' +
+        '<small class="ta-hint">The master switch for all notifications is ' +
+        'in Settings.</small>' +
+      '</div>' +
+
+      /* ── DEVICE ─────────────────────────────────────────────────── */
+      '<div class="ta-pane" data-ta-pane="device" hidden>' +
+        '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
+          'Keep going when minimised or locked</label>' +
+        '<p class="ta-note">This holds an inaudible sound playing, which is ' +
+        'what stops the system suspending the app. A media entry appears on ' +
+        'the lock screen while it runs &mdash; its pause button really does ' +
+        'stop the announcements. <b>Battery:</b> the announcements themselves ' +
+        'cost nothing measurable. This checkbox is the part that costs, ' +
+        'roughly like leaving a podcast paused-but-loaded.</p>' +
+        '<p class="ta-tip" hidden>You are running the installed app &mdash; ' +
+        'turn this on, or the system will freeze it once the window is ' +
+        'minimised and the announcements stop.</p>' +
+        '<p class="ta-note"><b>On a locked phone the VOICE is best-effort.</b> ' +
+        'Browsers suspend speech when the screen is off, and nothing is ' +
+        'spoken at all once the app is fully closed. No application can ' +
+        'change either &mdash; it is not a setting.</p>' +
+        '<p class="ta-note"><b>That is why each announcement is also sent as ' +
+        'a notification.</b> A notification reaches a locked phone AND a ' +
+        'closed app, which speech never can. Turn notifications on in ' +
+        'Settings and every announcement arrives whether or not the voice ' +
+        'does.</p>' +
+        '<div class="ta-row"><button type="button" data-ta-test>Test the voice now</button></div>' +
+        '<p class="ta-health" data-ta-health></p>' +
+        '<p class="ta-auto">Everything here saves as you type &mdash; there ' +
+        'is no Save button.</p>' +
+      '</div>';
+
     document.body.appendChild(pop);
 
     pop.addEventListener("click", function (ev) {
@@ -1808,6 +1886,15 @@
         if (msr && fld) saveMuteTimes(msr.getAttribute("data-mute-id"), fld.value);
         return;
       }
+      var tab = ev.target.closest("[data-ta-tab]");
+      if (tab) { showTab(tab.getAttribute("data-ta-tab")); return; }
+      if (ev.target.closest("[data-ta-more]")) {
+        var adv = pop.querySelector("[data-ta-advanced]");
+        var mb = pop.querySelector("[data-ta-more]");
+        adv.hidden = !adv.hidden;
+        mb.setAttribute("aria-expanded", adv.hidden ? "false" : "true");
+        return;
+      }
       var mu = ev.target.closest("[data-ta-mute]");
       if (mu) {
         var mrow = mu.closest("[data-mute-id]");
@@ -1888,10 +1975,32 @@
 
   /* A modal is CENTRED, so there is no anchoring arithmetic left — the old
      place() positioned it under the button, which is a popover's job. */
+  //: Which tab is showing. Not persisted: opening this panel is nearly
+  //: always about the announcements, so that is where it should start
+  //: however you left it last time.
+  var tab = "items";
+
+  function showTab(name) {
+    tab = name;
+    if (!pop) return;
+    pop.querySelectorAll("[data-ta-pane]").forEach(function (p) {
+      p.hidden = p.getAttribute("data-ta-pane") !== name;
+    });
+    pop.querySelectorAll("[data-ta-tab]").forEach(function (b) {
+      var on = b.getAttribute("data-ta-tab") === name;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    // The panel scrolls; switching tab must not leave you halfway down the
+    // previous one.
+    try { pop.scrollTop = 0; } catch (e) {}
+  }
+
   function openPanel() {
     backdrop.hidden = false;
     pop.hidden = false;
     document.documentElement.classList.add("ta-locked");
+    showTab("items");
     paint();
     loadMutes();
     // Focus goes into the dialog, not left on the button behind it.

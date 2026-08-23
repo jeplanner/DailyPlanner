@@ -2209,6 +2209,12 @@ def test_announcer_keepalive_is_opt_in_and_not_actually_silent():
     # The limits are stated to the USER, not buried in a source comment:
     # what it costs, and that a fully closed app cannot be rescued.
     assert "battery" in js and "fully closed" in js
+    # ...and the panel must now also say what DOES survive that, because
+    # "nothing works once closed" stopped being true when announcements
+    # started firing as push notifications. Copy that is out of date with
+    # the feature is worse than no copy.
+    assert "also sent as" in js and "notification" in js, \
+        "the panel still implies a closed app hears nothing at all"
     assert "best-effort" in js.lower(), (
         "the locked-phone case is presented as certain when it is not")
 
@@ -4081,3 +4087,119 @@ def test_user_guide_is_reachable_from_inside_the_app(auth_client):
     html = auth_client.get("/settings").get_data(as_text=True)
     assert url in html, "not linked from Settings"
     assert "Open the user guide" in html
+
+
+# ── ANNOUNCEMENTS REACH A LOCKED PHONE ─────────────────────────────────
+def _ann(**kw):
+    base = {"client_id": "i1", "at_time": "08:00", "until_time": None,
+            "every_mins": 0, "repeat_rule": "daily", "days": [],
+            "start_date": "2026-08-01", "end_date": None, "say_text": "",
+            "is_on": True, "is_deleted": False, "notify": True}
+    base.update(kw)
+    return base
+
+
+def test_announcement_push_rules_match_the_javascript():
+    """Reported 2026-08-23: announcements do not work on a locked screen.
+
+    They cannot — browsers suspend speech when the screen is off, which no
+    application can change. So each announcement also fires as a PUSH,
+    which does reach a locked phone.
+
+    That means the recurrence rules now exist twice, in JavaScript and in
+    Python. If they ever disagree the user hears one thing and reads
+    another, so these are the same cases tests/js/time_announcer.test.js
+    runs, asserted against the Python side.
+    """
+    import datetime as dtm
+    from services import announcer_push as ap
+
+    sunday = dtm.date(2026, 8, 23)
+    assert ap.matches_on(_ann(), sunday)
+    assert ap.matches_on(_ann(repeat_rule="once", start_date="2026-08-23"), sunday)
+    assert not ap.matches_on(_ann(repeat_rule="once", start_date="2026-08-22"), sunday)
+    assert ap.matches_on(_ann(repeat_rule="weekly", start_date="2026-08-16"), sunday)
+    assert not ap.matches_on(_ann(repeat_rule="weekly", start_date="2026-08-17"), sunday)
+    # The client uses Sun=0; Python's weekday() is Mon=0. That conversion is
+    # exactly the kind of thing that silently fires on the wrong day.
+    assert ap.matches_on(_ann(repeat_rule="custom", days=[0]), sunday)
+    assert not ap.matches_on(_ann(repeat_rule="custom", days=[1]), sunday)
+    # Both clamps, which decide whether a reminder happens at all in a
+    # short month or a common year.
+    assert ap.matches_on(_ann(repeat_rule="monthly", start_date="2026-01-31"),
+                         dtm.date(2026, 2, 28))
+    assert ap.matches_on(_ann(repeat_rule="yearly", start_date="2024-02-29"),
+                         dtm.date(2027, 2, 28))
+    assert not ap.matches_on(_ann(end_date="2026-08-22"), sunday)
+
+
+def test_announcement_push_slots_match_the_javascript():
+    from services import announcer_push as ap
+    assert ap.slots_for(_ann()) == [480]
+    assert ap.slots_for(_ann(until_time="12:00", every_mins=60)) == [
+        480, 540, 600, 660, 720]
+    # A reversed window must not loop; it degrades to a single slot.
+    assert ap.slots_for(_ann(until_time="06:00", every_mins=30)) == [480]
+    # And the list is bounded, exactly as the client bounds it.
+    assert len(ap.slots_for(_ann(at_time="00:00", until_time="23:59",
+                                 every_mins=1))) <= 1441
+
+
+def test_announcement_push_respects_the_switches(monkeypatch):
+    import datetime as dtm
+    from zoneinfo import ZoneInfo
+    from services import announcer_push as ap
+
+    now = dtm.datetime(2026, 8, 23, 8, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    assert ap.due_now([_ann()], now)
+    assert not ap.due_now([_ann(is_on=False)], now), "a stopped one still pushed"
+    assert not ap.due_now([_ann(notify=False)], now), "opt-out ignored"
+    assert not ap.due_now([_ann(is_deleted=True)], now)
+    # An ABSENT notify column must read as True, so this keeps working
+    # before MIGRATION_ANNOUNCER_PUSH.sql is run.
+    no_col = {k: v for k, v in _ann().items() if k != "notify"}
+    assert ap.due_now([no_col], now)
+    # The grace window: a minute late still fires, five minutes does not,
+    # so a restart cannot replay the morning.
+    assert ap.due_now([_ann()], now.replace(minute=2))
+    assert not ap.due_now([_ann()], now.replace(minute=5))
+
+
+def test_announcement_push_failure_cannot_stop_checklist_reminders():
+    """The announcement block sits in its own try inside the scheduler.
+
+    Checklist reminders are the notifications with an actual deadline; a
+    missing table or a bad row in the newer feature must not take them
+    down with it.
+    """
+    src = open("services/push_scheduler.py", encoding="utf-8").read()
+    block = src.split("announcer_push.fires_for_user")[0]
+    assert block.rstrip().endswith("try:") or "try:" in block[-400:], \
+        "the announcement push is not wrapped in its own try"
+    assert "announcement push skipped" in src
+
+
+def test_announcement_push_claim_is_unique_per_slot():
+    """Several gunicorn workers tick at the same second. Without a unique
+    index they all insert and the phone buzzes four times."""
+    sql = open("MIGRATION_ANNOUNCER_PUSH.sql", encoding="utf-8").read().lower()
+    assert "create unique index" in sql
+    assert "(user_id, client_id, fire_date, fire_time)" in sql, \
+        "the claim is not keyed per SLOT; a windowed announcement fires once a day"
+    assert "add column if not exists notify" in sql
+
+
+def test_announcer_panel_is_tabbed_not_one_long_scroll():
+    """Reported: "UX is not friendly". The panel had grown into a single
+    scroll of eleven unrelated controls."""
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    for pane in ("items", "clock", "notify", "device"):
+        assert 'data-ta-pane="' + pane + '"' in js
+    assert "function showTab" in js
+    # The master controls and the status line must stay OUTSIDE the tabs —
+    # they are what the panel is opened to check.
+    head = js.split('data-ta-tab="items"')[0]
+    assert 'data-ta-mode="on"' in head, "Start/Pause/Stop got buried in a tab"
+    assert "data-ta-now" in head, "the status line got buried in a tab"
+    # The four advanced inputs fold away by default.
+    assert "data-ta-advanced" in js and "data-ta-more" in js
