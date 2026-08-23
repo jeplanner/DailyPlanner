@@ -130,6 +130,21 @@ ok("Escape closes it", q(".ta-pop").hidden === true);
 // ── the AM/PM chooser ────────────────────────────────────────────────
 click(q(".ta-btn"));
 ok("AM/PM buttons exist", doc.querySelectorAll('[data-ta-mer="at"]').length === 2);
+
+// SELECTED MUST LOOK DIFFERENT FROM UNSELECTED — asserted on the COMPUTED
+// background, not on the class. The classes were correct the whole time a
+// stray `.ta-add button` rule was painting every button in the add form
+// indigo: same specificity, later in the sheet, so it won and both AM and
+// PM rendered as selected. A class-only assertion cannot see that.
+{
+  const bg = (el) => window.getComputedStyle(el).backgroundColor;
+  const am = doc.querySelector('[data-ta-mer="at"][data-v="am"]');
+  const pm = doc.querySelector('[data-ta-mer="at"][data-v="pm"]');
+  ok("selected and unselected AM/PM differ visually", bg(am) !== bg(pm));
+  const chip = doc.querySelector('[data-ta-day="1"]');
+  const addb = q("[data-ta-add]");
+  ok("a weekday chip is not painted like the Add button", bg(chip) !== bg(addb));
+}
 ok("AM selected by default",
    doc.querySelector('[data-ta-mer="at"][data-v="am"]').classList.contains("on"));
 

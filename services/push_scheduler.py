@@ -130,6 +130,19 @@ def _due_fires_for_user(user_id, local_hhmm, local_weekday, today_iso):
     ) or []
     if not items:
         return []
+
+    # PER-ITEM MUTE. Filtered in Python rather than added to the query above,
+    # deliberately: this column arrives with MIGRATION_ANNOUNCER_MUTES.sql,
+    # and get() has no PGRST204 retry — a query naming a column the live
+    # database has not got yet would 400 and silence EVERY reminder for
+    # everyone. Absent column reads as None, which is not muted.
+    muted = [it for it in items if it.get("notify_muted")]
+    if muted:
+        logger.info("push: %d muted item(s) skipped for user %s",
+                    len(muted), user_id)
+    items = [it for it in items if not it.get("notify_muted")]
+    if not items:
+        return []
     items_by_id = {it["id"]: it for it in items}
 
     times = get(

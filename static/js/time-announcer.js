@@ -870,7 +870,7 @@
       ".ta-days button{font:inherit;font-size:11px;font-weight:700;",
       "padding:4px 8px;border-radius:999px;cursor:pointer;",
       "border:1px solid var(--color-border,#e5e7eb);",
-      "background:var(--color-bg,#f9fafb);color:var(--color-text,#111827)}",
+      "background:#fff;color:#374151}",
       ".ta-days button.on{background:#4338ca;border-color:#4338ca;color:#fff}",
       "[data-ta-new-end][aria-invalid],[data-ta-new-until][aria-invalid]",
       "{border-color:#b91c1c}",
@@ -883,7 +883,8 @@
       "border-radius:8px;overflow:hidden;flex:0 0 auto}",
       ".ta-ampm button{font:inherit;font-size:10.5px;font-weight:800;",
       "letter-spacing:.03em;padding:0 8px;border:0;cursor:pointer;",
-      "background:var(--color-bg,#f9fafb);color:var(--color-text-secondary,#6b7280)}",
+      "background:#fff;color:#6b7280}",
+      ".ta-ampm button:hover{background:#eef2ff;color:#4338ca}",
       ".ta-ampm button + button{border-left:1px solid var(--color-border,#e5e7eb)}",
       ".ta-ampm button.on{background:#4338ca;color:#fff}",
       /* Dimmed when the typed text already settles it — clicking would do
@@ -894,7 +895,12 @@
       "[data-ta-new-at]{flex:0 0 78px}",
       "[data-ta-new-text]{flex:1 1 140px}",
       "[data-ta-new-at][aria-invalid]{border-color:#b91c1c}",
-      ".ta-add button{flex:0 0 auto;font:inherit;font-size:12px;",
+      /* SCOPED TO THE ADD BUTTON ITSELF, not every button inside the add
+         form. Written as `.ta-add button` it sat LATER in this sheet than
+         `.ta-ampm button` and `.ta-days button` at the SAME specificity, so
+         it won — and painted the AM/PM pair and the weekday chips solid
+         indigo. Every one of them looked selected, permanently. */
+      "[data-ta-add]{flex:0 0 auto;font:inherit;font-size:12px;",
       "font-weight:700;padding:5px 12px;border-radius:8px;border:0;",
       "background:#4338ca;color:#fff;cursor:pointer}",
       ".ta-hint{display:block;margin-top:5px;font-size:10.5px;line-height:1.45;",
@@ -967,6 +973,7 @@
     paintDayChips();
     paintMer();
     paintAtEcho();
+    paintMutes();
 
     /* WHAT IS CURRENTLY SAVED, in words. Read back from the same state the
        announcer schedules from, so if this line is wrong the feature is
@@ -1134,6 +1141,104 @@
       b.classList.toggle("on", newDays.indexOf(d) !== -1);
       b.setAttribute("aria-pressed", newDays.indexOf(d) !== -1 ? "true" : "false");
     });
+  }
+
+  /* ── REMINDER NOTIFICATIONS ─────────────────────────────────────────
+     Separate from the spoken announcements above: these are push
+     notifications that arrive with the app closed, and until now they had
+     one switch for all of them, in Settings. Silencing a single item meant
+     deleting its reminder times — a delete dressed up as a mute, because
+     the times themselves were gone.
+
+     Loaded only when the dialog opens. This file runs on every page and
+     must not add a request to every page load. */
+  var mutes = null, mutesState = "idle";
+
+  function loadMutes() {
+    if (mutesState === "loading" || mutesState === "done") return;
+    mutesState = "loading";
+    paintMutes();
+    fetch("/api/checklist/mutes", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        mutes = (j && j.items) || [];
+        mutesState = "done";
+        paintMutes();
+      })
+      .catch(function () {
+        mutesState = "failed";
+        paintMutes();
+      });
+  }
+
+  function paintMutes() {
+    var ul = pop && pop.querySelector("[data-ta-mutes]");
+    if (!ul) return;
+    if (mutesState === "loading") {
+      ul.innerHTML = '<li class="ta-empty">Loading your reminders\u2026</li>';
+      return;
+    }
+    if (mutesState === "failed") {
+      ul.innerHTML = '<li class="ta-empty">Could not load your reminders.</li>';
+      return;
+    }
+    if (!mutes || !mutes.length) {
+      ul.innerHTML = '<li class="ta-empty">No checklist items have reminder ' +
+                     'times yet. Add one on the Checklist page and it will ' +
+                     'appear here.</li>';
+      return;
+    }
+    ul.innerHTML = mutes.map(function (m) {
+      return '<li class="ta-item' + (m.muted ? " off" : "") +
+             '" data-mute-id="' + esc(m.id) + '">' +
+             '<button type="button" class="ta-tog" data-ta-mute ' +
+               'aria-pressed="' + (m.muted ? "false" : "true") + '" ' +
+               'title="' + (m.muted ? "Unmute this reminder"
+                                    : "Mute this reminder") + '">' +
+               (m.muted ? "\u25CB" : "\u25CF") + '</button>' +
+             '<span class="ta-when"><b>' +
+               esc(m.times.map(friendly).join(", ")) + '</b>' +
+               '<i>' + (m.muted ? "muted" : "notifying") + '</i></span>' +
+             '<span class="ta-what">' + esc(m.name) + '</span>' +
+             '</li>';
+    }).join("");
+  }
+
+  function toggleMute(id) {
+    var row = null;
+    for (var i = 0; i < (mutes || []).length; i++) {
+      if (mutes[i].id === id) { row = mutes[i]; break; }
+    }
+    if (!row) return;
+    var want = !row.muted;
+    row.muted = want;              // optimistic, so the switch feels instant
+    paintMutes();
+    savedFlash();
+    fetch("/api/checklist/mutes/" + encodeURIComponent(id), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+      body: JSON.stringify({ muted: want }),
+    }).then(function (r) {
+      if (r.ok) return null;
+      return r.json().catch(function () { return {}; });
+    }).then(function (err) {
+      if (!err) return;
+      // PUT IT BACK. A switch that looks saved and is not is worse than one
+      // that visibly fails.
+      row.muted = !want;
+      paintMutes();
+      note(false, err.error || "could not save that mute");
+    }).catch(function () {
+      row.muted = !want;
+      paintMutes();
+      note(false, "could not reach the server to save that mute");
+    });
+  }
+
+  function csrfToken() {
+    var m = document.querySelector('meta[name=csrf-token]');
+    return m ? m.getAttribute("content") : "";
   }
 
   function byId(id) {
@@ -1335,6 +1440,12 @@
       '<b>Starts</b> defaults to today; leave <b>Ends</b> blank and it runs ' +
       'for good. A monthly reminder on the 31st still fires on the last day ' +
       'of a short month rather than skipping it.</small>' +
+      '<div class="ta-sec">Reminder notifications</div>' +
+      '<ul class="ta-list" data-ta-mutes></ul>' +
+      '<small class="ta-hint">These are your checklist reminders, which ' +
+      'arrive even when the app is closed. Muting one keeps its times &mdash; ' +
+      'switch it back on and the schedule returns exactly as it was. The ' +
+      'master switch for all notifications is in Settings.</small>' +
       '<p class="ta-auto">Everything here saves as you type &mdash; there is no ' +
       'Save button, and closing this panel keeps your settings.</p>' +
       '<p class="ta-now" data-ta-now></p>' +
@@ -1419,6 +1530,12 @@
         save(); paint(); savedFlash();
         return;
       }
+      var mu = ev.target.closest("[data-ta-mute]");
+      if (mu) {
+        var mrow = mu.closest("[data-mute-id]");
+        if (mrow) toggleMute(mrow.getAttribute("data-mute-id"));
+        return;
+      }
       var mer = ev.target.closest("[data-ta-mer]");
       if (mer) {
         newMer[mer.getAttribute("data-ta-mer")] = mer.getAttribute("data-v");
@@ -1489,6 +1606,7 @@
     pop.hidden = false;
     document.documentElement.classList.add("ta-locked");
     paint();
+    loadMutes();
     // Focus goes into the dialog, not left on the button behind it.
     var first = pop.querySelector("[data-ta-new-at]");
     if (first) { try { first.focus(); } catch (e) {} }

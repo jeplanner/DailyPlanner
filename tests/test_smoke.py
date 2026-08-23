@@ -3841,3 +3841,48 @@ def test_announcer_has_an_am_pm_chooser():
     assert '"moot"' in js
     # And the resolved time is shown as it is typed, so nothing is guessed.
     assert "data-ta-preview" in js
+
+
+def test_push_scheduler_skips_muted_items():
+    """Asked 2026-08-23: "per item notification mutes ... is needed."
+
+    A muted item KEEPS its reminder times and simply does not push, so
+    unmuting restores the exact schedule. That is the whole difference from
+    the old advice, which was to delete the times.
+    """
+    src = open("services/push_scheduler.py", encoding="utf-8").read()
+    assert 'it.get("notify_muted")' in src, "the scheduler ignores mutes"
+    # Filtered in PYTHON, not in the PostgREST query. get() has no PGRST204
+    # retry, so naming a column the live database has not got yet would 400
+    # and silence every reminder for everyone until the migration is run.
+    assert "notify_muted" not in src.split("items = get(")[1].split(") or []")[0], \
+        "the mute filter is in the query and will 400 before the migration"
+
+
+def test_checklist_mute_api_exists_and_never_deletes_times():
+    routes = open("routes/checklist.py", encoding="utf-8").read()
+    assert '"/api/checklist/mutes"' in routes
+    assert '"/api/checklist/mutes/<item_id>"' in routes
+    # It sets a flag. If this ever becomes a delete of reminder_times, the
+    # mute stops being reversible and becomes destructive.
+    assert '{"notify_muted": muted}' in routes
+    assert "checklist_reminder_times" not in routes.split(
+        "def set_checklist_mute")[1].split("def ")[0], \
+        "muting is touching the reminder times themselves"
+
+
+def test_announcer_mute_switch_is_reversible_in_the_ui():
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "data-ta-mute" in js and "function toggleMute" in js
+    # Loaded only when the dialog opens: this file runs on every page and
+    # must not add a request to every page load.
+    assert "loadMutes()" in js and "mutesState" in js
+    # An optimistic switch that fails must go back, or it lies about saving.
+    assert "row.muted = !want;" in js
+
+
+def test_announcer_mutes_migration_is_additive_and_rerunnable():
+    sql = open("MIGRATION_ANNOUNCER_MUTES.sql", encoding="utf-8").read().upper()
+    assert "ADD COLUMN IF NOT EXISTS NOTIFY_MUTED" in sql
+    assert "DEFAULT FALSE" in sql, "existing items would default to muted"
+    assert "DROP" not in sql, "a migration for a new flag should drop nothing"

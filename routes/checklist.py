@@ -329,6 +329,79 @@ def checklist_history_page():
 # ─────────────────────────────────────────────
 #  LIST
 # ─────────────────────────────────────────────
+@checklist_bp.route("/api/checklist/mutes", methods=["GET"])
+@login_required
+def checklist_mutes():
+    """Every checklist item with its reminder times and whether it is muted.
+
+    Powers the notification list inside the announcements dialog. Muting is
+    per ITEM rather than per reminder time: someone silencing "take
+    vitamins" means all of it, and a half-muted item is a state nobody would
+    be able to reason about later.
+    """
+    user_id = session["user_id"]
+    items = get("checklist_items", {
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "eq.false",
+        "order": "position.asc,created_at.asc",
+    }) or []
+    times = get("checklist_reminder_times", {
+        "user_id": f"eq.{user_id}",
+        "select": "item_id,reminder_time",
+        "order": "reminder_time.asc",
+    }) or []
+
+    by_item = {}
+    for t in times:
+        by_item.setdefault(t["item_id"], []).append(
+            str(t.get("reminder_time") or "")[:5])
+
+    out = []
+    for it in items:
+        # Fall back to the legacy single-column time, which the scheduler
+        # still honours for items that never gained child rows.
+        stamps = by_item.get(it["id"]) or (
+            [str(it["reminder_time"])[:5]] if it.get("reminder_time") else [])
+        if not stamps:
+            continue          # nothing to notify about, so nothing to mute
+        out.append({
+            "id": it["id"],
+            "name": it.get("name") or it.get("title") or "",
+            "times": stamps,
+            # Absent column (migration not yet run) reads as not muted.
+            "muted": bool(it.get("notify_muted")),
+        })
+    return jsonify({"items": out})
+
+
+@checklist_bp.route("/api/checklist/mutes/<item_id>", methods=["POST"])
+@login_required
+def set_checklist_mute(item_id):
+    """Mute or unmute one item's push reminders.
+
+    A mute is a FLAG, never a deletion of the reminder times — unmuting has
+    to restore the exact schedule, which is the entire difference between
+    this and the old advice to 'remove its reminder times'.
+    """
+    user_id = session["user_id"]
+    muted = bool((request.get_json(silent=True) or {}).get("muted"))
+    try:
+        update("checklist_items", {"notify_muted": muted}, {
+            "id": f"eq.{item_id}",
+            "user_id": f"eq.{user_id}",
+        })
+    except Exception:
+        # The commonest cause is the migration not having been run. Say so
+        # rather than returning a bare 500 that looks like a bug.
+        logger.warning("checklist mute failed for %s", item_id, exc_info=True)
+        return jsonify({
+            "ok": False,
+            "error": "Could not save. If this is new, "
+                     "MIGRATION_ANNOUNCER_MUTES.sql may not have been run yet.",
+        }), 500
+    return jsonify({"ok": True, "id": item_id, "muted": muted})
+
+
 @checklist_bp.route("/api/checklist/items", methods=["GET"])
 @login_required
 def list_items():
