@@ -2220,12 +2220,13 @@ def test_announcer_keepalive_is_opt_in_and_not_actually_silent():
     # "nothing works once closed" stopped being true when announcements
     # started firing as push notifications. Copy that is out of date with
     # the feature is worse than no copy.
-    assert "also sent as" in js and "notification" in js, \
-        "the panel still implies a closed app hears nothing at all"
-    # ...and it must not claim speech is IMPOSSIBLE when locked, which it
-    # is not — that is what used to work, and saying otherwise sent the
-    # reader looking for a workaround instead of a broken voice.
-    assert "but it does work" in js
+    # The panel must not imply a closed app hears nothing at all — the
+    # notifications still arrive, and saying otherwise sends the reader
+    # hunting for a workaround to a problem they do not have. The wording
+    # is now one line rather than three paragraphs (asked for: the panel
+    # was "cluttered"), so this asserts the CLAIM rather than a sentence.
+    assert "notifications still arrive" in js, \
+        "the panel implies a closed app hears nothing at all"
     assert "best-effort" in js.lower(), (
         "the locked-phone case is presented as certain when it is not")
 
