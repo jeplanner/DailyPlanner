@@ -4394,3 +4394,17 @@ def test_announcer_never_picks_a_network_voice():
     assert "noVoice = true" in body and "speak(text, true)" in body
     # The utterance is held, or Chrome can collect it mid-sentence.
     assert "speaking = u;" in body
+
+
+def test_panel_warns_when_this_device_is_not_announcing():
+    """Start/Pause/Stop is per-device by design — pausing on the phone must
+    not silence the laptop. The cost is a trap: an announcement created on
+    the phone SYNCS everywhere and then says nothing there, because Start
+    was never pressed on the phone. The schedule looks right and the device
+    is silent, so it reads as a broken feature rather than a switch.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "data-ta-idle" in js
+    assert "this device is " in js
+    # It must only appear when there is something that WOULD have spoken.
+    assert "live > 0 && !willSpeak" in js

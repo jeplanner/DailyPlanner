@@ -910,6 +910,11 @@
       "line-height:1.45;font-weight:700}",
       ".ta-health.good{color:#047857}",
       ".ta-health.bad{color:#b91c1c}",
+      ".ta-idle{margin:8px 0 0 !important;font-size:11px !important;",
+      "line-height:1.45;font-weight:700;padding:8px 10px;border-radius:8px;",
+      "background:#fdf1e3;color:#8a4b09 !important;",
+      "border:1px solid #f0c98a}",
+      ".ta-idle[hidden]{display:none}",
       ".ta-tabs{display:flex;gap:2px;margin:12px 0 0;",
       "border-bottom:1px solid var(--color-border,#e5e7eb)}",
       ".ta-tabs button{flex:1;font:inherit;font-size:11.5px;font-weight:700;",
@@ -1114,6 +1119,31 @@
       nowEl.textContent = (state.mode === "on" ? "Saved & running: "
                            : state.mode === "paused" ? "Saved, paused: "
                            : "Saved, stopped: ") + what;
+    }
+
+    /* NOT ANNOUNCING ON THIS DEVICE.
+       Start/Pause/Stop is deliberately per-device — pausing on your phone
+       must not silence the laptop you are sitting at. The cost of that
+       choice is this trap: an announcement created on the phone SYNCS
+       everywhere and then says nothing there, because Start was never
+       pressed on the phone. The schedule looks right and the device is
+       silent, so it reads as a broken feature rather than a switch. */
+    var idle = pop.querySelector("[data-ta-idle]");
+    if (idle) {
+      var live = state.items.filter(function (it) {
+        return it.on && !isExpired(it, todayYMD());
+      }).length;
+      var willSpeak = state.mode === "on";
+      idle.hidden = !(live > 0 && !willSpeak);
+      if (!idle.hidden) {
+        idle.textContent = live + (live === 1 ? " announcement is" :
+                                                " announcements are") +
+          " scheduled, but this device is " +
+          (state.mode === "paused" ? "PAUSED" : "STOPPED") +
+          " — press Start above, on this device. Start/Pause/Stop is per " +
+          "device on purpose, so pausing on your phone does not silence " +
+          "your laptop.";
+      }
     }
 
     /* THE HEALTH LINE. The whole reason this feature could fail unnoticed
@@ -1740,6 +1770,7 @@
         '<button type="button" data-ta-mode="off">Stop</button>' +
       '</div>' +
       '<p class="ta-now" data-ta-now></p>' +
+      '<p class="ta-idle" data-ta-idle hidden></p>' +
       '<p class="ta-warn" hidden>Your browser needs a tap on this page before ' +
         'it will speak. Interact anywhere and the next announcement will play.</p>' +
 
