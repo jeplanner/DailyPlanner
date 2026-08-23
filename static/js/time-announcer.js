@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v271";
+  var BUILD = "v272";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -2620,6 +2620,12 @@
 
     var repeat = REPEATS.indexOf(rEl.value) === -1 ? "daily" : rEl.value;
     var start = isYMD(sEl.value) ? sEl.value : todayYMD();
+    /* A ONE-OFF IN THE PAST CAN NEVER FIRE. Belt and braces for the field
+       above: a stale value, a page open across midnight, or a date typed by
+       hand all produce a row that looks armed and is not — the same trap
+       the end-date check below exists to prevent. A repeating rule is left
+       alone: "every week since March" is a legitimate thing to say. */
+    if (repeat === "once" && start < todayYMD()) start = todayYMD();
     var end = isYMD(eEl.value) ? eEl.value : null;
     // AN END BEFORE THE START would never fire, so refuse it rather than
     // creating a row that looks armed and is not.
@@ -3184,8 +3190,18 @@
     var nb = pop.querySelector("[data-ta-new]");
     if (f) f.hidden = false;
     if (nb) nb.hidden = true;
+    /* ── THE DATE MUST BE TODAY'S TODAY, NOT THE PAGE'S ────────────────
+       This filled the field only when it was EMPTY, so it was stamped once
+       per page load and kept forever. Leave the app open across midnight —
+       which is exactly what an announcements page left open on a bedside
+       phone does — and every new one-off is dated YESTERDAY.
+
+       A "once" announcement matches only its start date, so those never
+       fire, on any device, for any reason the user can see. Measured
+       2026-08-24: two one-offs set at 00:48 and 00:52 both carried
+       start=2026-08-23 and were skipped in silence. */
     var st = pop.querySelector("[data-ta-new-start]");
-    if (st && !st.value) st.value = todayYMD();
+    if (st && (!st.value || st.value < todayYMD())) st.value = todayYMD();
     paint();
     var first = pop.querySelector("[data-ta-new-at]");
     if (first) { try { first.focus(); } catch (e) {} }

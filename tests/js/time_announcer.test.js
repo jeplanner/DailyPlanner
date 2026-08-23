@@ -469,5 +469,36 @@ ok("on time, it speaks the time as usual",
 // friendly() is what the late line reads the slot back through.
 ok("the slot reads back in 12-hour form", TA._friendly("19:45") === "7:45 PM");
 
+// ── A ONE-OFF IS NEVER DATED IN THE PAST (2026-08-24) ───────────────
+// Measured: two one-offs set just after midnight, at 00:48 and 00:52, both
+// carried start=2026-08-23 while the server's today was 2026-08-24. A
+// "once" rule matches only its start date, so both were skipped in
+// silence — no chime, no notification, nothing to see anywhere.
+//
+// The form stamped the date field once per page load and only when empty,
+// so an announcements page left open across midnight — a bedside phone —
+// dated every new one-off yesterday.
+{
+  const TODAY = TA._todayYMD(new Date());
+  const yesterday = TA._todayYMD(new Date(Date.now() - 36 * 3600 * 1000));
+
+  ok("a one-off dated yesterday matches nothing today",
+     TA._matchesOn({repeat: "once", start: yesterday, days: []}, TODAY) === false);
+  ok("...which is exactly why it must not be storable",
+     TA._matchesOn({repeat: "once", start: TODAY, days: []}, TODAY) === true);
+
+  // A REPEATING rule started in the past is legitimate and must be left
+  // alone — "every week since March" is a real thing to say.
+  ok("a daily rule started long ago still fires",
+     TA._matchesOn({repeat: "daily", start: yesterday, days: []}, TODAY) === true);
+
+  const js = require("fs").readFileSync(
+    __dirname + "/../../static/js/time-announcer.js", "utf8");
+  ok("the form refreshes a stale date rather than only filling an empty one",
+     /st\.value < todayYMD\(\)/.test(js));
+  ok("...and adding clamps a past one-off to today",
+     /repeat === "once" && start < todayYMD\(\)/.test(js));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);
