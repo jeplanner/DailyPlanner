@@ -753,57 +753,88 @@
     }
   }
 
-  function keepaliveOn() {
-    if (keepCtx) return true;
-    try {
-      var el = document.getElementById("ta-keepalive");
-      if (!el) {
-        el = document.createElement("audio");
-        el.id = "ta-keepalive";
-        el.src = "/static/audio-keepalive.wav";
-        el.loop = true;
-        el.preload = "auto";
-        // NOT muted: a muted element does not hold audio focus, and without
-        // audio focus the OS will not keep the page alive for it.
-        el.volume = 0.02;
-        el.setAttribute("playsinline", "");
-        document.body.appendChild(el);
-      }
-      // METADATA MUST BE SET ONCE PLAYBACK HAS ACTUALLY STARTED, not before.
-      // play() is asynchronous; a session described while the element is
-      // still loading is routinely discarded, and then there is no lock
-      // screen entry even though the audio is running.
-      el.addEventListener("playing", setMediaSession);
+  /* ── HOLDING THE PAGE ALIVE ─────────────────────────────────────────
+     This is what decides whether you hear a VOICE with the screen off.
+     A page playing audio is not frozen by the OS; a page that is not,
+     is — and a frozen page runs no timers and speaks nothing.
 
-      var p = el.play();
-      if (p && p.catch) {
-        // Blocked until a gesture. Start IS a gesture so the normal path
-        // works; a page restored without one picks it up on first touch.
-        // SAID OUT LOUD, though: silently swallowing this is how "keep going
-        // when minimised" ends up ticked and doing nothing.
-        p.catch(function (err) {
-          note(false, "keep-alive audio was blocked (" +
-                      ((err && err.name) || "autoplay policy") +
-                      ") — tap the page once");
-        });
-      }
-      setMediaSession();
-      keepCtx = { el: el };
-      return true;
-    } catch (_) {
-      return false;
+     THE BUG THIS REPLACES: keepCtx was set whether or not play()
+     succeeded, and keepaliveOn() returns early when keepCtx is set. So on
+     a fresh page load — where autoplay is ALWAYS blocked until the user
+     touches something — the first attempt failed, the flag said "held",
+     and it never tried again. The checkbox was ticked, the panel said it
+     was on, and the page had no audio focus whatsoever.
+
+     Now the flag is only set when the element reports PLAYING, the first
+     user gesture retries, and a watchdog restarts it if the OS or another
+     app pauses it later. */
+  var keepWant = false;
+
+  function keepEl() {
+    var el = document.getElementById("ta-keepalive");
+    if (!el) {
+      el = document.createElement("audio");
+      el.id = "ta-keepalive";
+      el.src = "/static/audio-keepalive.wav";
+      el.loop = true;
+      el.preload = "auto";
+      // NOT muted: a muted element does not hold audio focus, and without
+      // audio focus the OS will not keep the page alive for it.
+      el.volume = 0.02;
+      el.setAttribute("playsinline", "");
+      // The flag follows REALITY, not intent.
+      el.addEventListener("playing", function () {
+        keepCtx = { el: el };
+        setMediaSession();
+        paint();
+      });
+      el.addEventListener("pause", function () {
+        keepCtx = null;
+        paint();
+      });
+      document.body.appendChild(el);
     }
+    return el;
   }
+
+  function keepaliveOn() {
+    keepWant = true;
+    var el = keepEl();
+    if (!el.paused) return true;
+    var p = el.play();
+    if (p && p.catch) {
+      p.catch(function (err) {
+        // Blocked until a gesture, which on a fresh page load is normal
+        // rather than exceptional. The gesture listener below retries.
+        keepCtx = null;
+        note(false, "keep-alive audio is blocked until you tap the page " +
+                    "once (" + ((err && err.name) || "autoplay policy") + ")");
+        paint();
+      });
+    }
+    return true;
+  }
+
+  /* Retried on the first real interaction, and then watched. Android will
+     pause this element for its own reasons — another app taking audio
+     focus, a call, the media notification's pause button — and a paused
+     element means the page is freezable again. Checking every 20 seconds
+     costs nothing and is the difference between working all day and
+     working until something else played a sound. */
+  function keepaliveWatch() {
+    if (!keepWant || state.mode !== "on" || !state.keepalive) return;
+    var el = document.getElementById("ta-keepalive");
+    if (el && el.paused) keepaliveOn();
+  }
+  setInterval(keepaliveWatch, 20000);
 
   /* Naming the session is what makes the lock-screen entry legible, and
      wiring its buttons is what makes it honest.
 
-     WHY THE LOCK SCREEN SHOWED NOTHING. The keep-alive track was ONE SECOND
-     long. Chrome does not create a media notification for media shorter than
-     about five seconds — it classifies short clips as sound effects, not
-     playback. Audio focus was held either way, so the page stayed awake and
-     the announcements worked, but there were no controls anywhere. The track
-     is now 40 seconds, still one least-significant-bit of amplitude. */
+     WHY THE LOCK SCREEN SHOWED NOTHING once: the keep-alive track was ONE
+     SECOND long, and Chrome does not create a media notification for media
+     shorter than about five seconds — it classifies short clips as sound
+     effects rather than playback. */
   function setMediaSession() {
     if (!("mediaSession" in navigator)) return;
     try {
@@ -832,8 +863,10 @@
   }
 
   function keepaliveOff() {
+    keepWant = false;
+    var el = document.getElementById("ta-keepalive");
+    if (el) { try { el.pause(); } catch (_) {} }
     if (!keepCtx) return;
-    try { keepCtx.el.pause(); } catch (_) {}
     try {
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
     } catch (_) {}
@@ -1149,6 +1182,30 @@
       nowEl.textContent = (state.mode === "on" ? "Saved & running: "
                            : state.mode === "paused" ? "Saved, paused: "
                            : "Saved, stopped: ") + what;
+    }
+
+    /* IS THE PAGE ACTUALLY BEING HELD ALIVE?
+       The checkbox says what you asked for. This says what is TRUE, which
+       are different things whenever autoplay has blocked the audio — and
+       on a fresh page load autoplay always has. Without this line there
+       was no way to tell a working keep-alive from a ticked box. */
+    var hold = pop.querySelector("[data-ta-hold]");
+    if (hold) {
+      var kel = document.getElementById("ta-keepalive");
+      if (!state.keepalive) {
+        hold.className = "ta-health";
+        hold.textContent = "Keep-alive off — this device will be frozen "
+          + "shortly after the screen locks.";
+      } else if (kel && !kel.paused) {
+        hold.className = "ta-health good";
+        hold.textContent = "\u2713 Holding audio — the page keeps running "
+          + "with the screen off.";
+      } else {
+        hold.className = "ta-health bad";
+        hold.textContent = "\u26a0 Not holding yet — tap anywhere on this "
+          + "page once. Browsers refuse to start audio until you do, and "
+          + "until it starts the phone will freeze this page when it locks.";
+      }
     }
 
     /* NOTIFICATION PERMISSION, STATED PLAINLY.
@@ -1980,6 +2037,7 @@
         'does.</p>' +
         '<div class="ta-row"><button type="button" data-ta-test>Test the voice now</button></div>' +
         '<p class="ta-health" data-ta-health></p>' +
+        '<p class="ta-health" data-ta-hold></p>' +
         '<p class="ta-auto">Everything here saves as you type &mdash; there ' +
         'is no Save button.</p>' +
       '</div>';
@@ -2307,6 +2365,10 @@
     document.addEventListener(evt, function () {
       if (armed) return;
       armed = true;
+      // The page now has a gesture, so audio that was blocked can start.
+      // Without this the keep-alive stays dead for the whole page load and
+      // the phone hears nothing once it locks.
+      try { applyKeepalive(); } catch (e) {}
       paint();
     }, { once: true, capture: true });
   });

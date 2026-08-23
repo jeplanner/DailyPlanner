@@ -3703,10 +3703,17 @@ def test_keepalive_track_is_long_enough_for_a_lock_screen_notification():
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
     # Metadata set once playback has really started: play() is async, and a
     # session described while the element is still loading gets discarded.
-    assert 'addEventListener("playing", setMediaSession)' in js
+    # The media session is described once playback has really started —
+    # play() is async and a session described mid-load is discarded. The
+    # call now sits inside the "playing" handler alongside the flag that
+    # tracks real playback, so this asserts the pairing rather than one
+    # exact call form.
+    assert 'addEventListener("playing"' in js and "setMediaSession()" in js
     # A blocked play() must not be swallowed — that is how "keep going when
-    # minimised" ends up ticked and doing nothing.
-    assert "keep-alive audio was blocked" in js
+    # minimised" ends up ticked and doing nothing. The wording changed when
+    # the message started saying what to DO about it, so this asserts the
+    # message exists and names the remedy rather than one exact sentence.
+    assert "keep-alive audio is blocked until you tap" in js
 
 
 def test_announcer_supports_multiple_named_announcements_with_dates():
@@ -4479,3 +4486,29 @@ def test_keepalive_defaults_on_and_survives_storage_eviction():
     # or an on-by-default flag would cost battery on an idle device.
     body = js.split("function applyKeepalive()")[1].split("}")[0]
     assert 'state.mode === "on"' in body
+
+
+def test_keepalive_flag_follows_reality_not_intent():
+    """Reported 2026-08-23: voice works on iPhone, not on Android.
+
+    One cause found in the process: keepCtx was set whether or not play()
+    succeeded, and keepaliveOn() returns early when it is set. On a fresh
+    page load autoplay is ALWAYS blocked until the user touches something,
+    so the first attempt failed, the flag said "held", and it never tried
+    again. The checkbox was ticked, the panel said on, and the page had no
+    audio focus at all — which means the OS freezes it the moment the
+    screen locks, and a frozen page speaks nothing.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    # The flag is set by the element REPORTING playback, not by asking.
+    assert 'addEventListener("playing", function () {' in js
+    assert 'addEventListener("pause", function () {' in js
+    # The first gesture retries what autoplay refused.
+    assert "try { applyKeepalive(); } catch (e) {}" in js
+    # And a watchdog restarts it: Android pauses this element for its own
+    # reasons — a call, another app taking audio focus, the media
+    # notification's pause button — and a paused element is a freezable page.
+    assert "function keepaliveWatch" in js
+    assert "setInterval(keepaliveWatch" in js
+    # The panel must show what is TRUE, not what was asked for.
+    assert "data-ta-hold" in js and "Holding audio" in js
