@@ -370063,6 +370063,623 @@ milliseconds, millions of times a second.
   A model that wins more impressions at a worse cost per acquisition is
   losing, and win rate alone will not show it."""
 
+_ANSWER_V2["Design HashMap"] = """An array of buckets plus a hash function, chaining for collisions, and a resize
+when it gets full - the resize is what makes the O(1) claim honest.
+
+· THE STRUCTURE — an array of size m, and hash(key) % m gives the bucket. Each
+  bucket holds a small list (or a linked chain) of key-value pairs, because
+  different keys can land in the same slot.
+· PUT — hash to the bucket, scan its list for an existing entry with the same
+  KEY (not the same hash), and either update it or append. Forgetting the
+  update case turns a map into a multimap.
+· GET AND REMOVE — same walk, compare keys, return or unlink.
+· WHY YOU MUST COMPARE KEYS AND NOT HASHES — two different keys can share a
+  hash. A map that trusts the hash alone returns the wrong value, rarely and
+  unreproducibly, which is the worst possible failure profile.
+· THE LOAD FACTOR IS THE INTERESTING PART — entries divided by buckets. Past
+  about 0.75 the chains grow and lookups degrade toward O(n). So the map
+  DOUBLES its array and rehashes everything.
+· THAT RESIZE IS O(n), which is why the guarantee is AMORTISED O(1). Doubling
+  makes the total resize cost across n insertions less than 2n, so the average
+  per insertion is constant. Growing by a fixed amount instead would make it
+  O(n) per insertion.
+· KEEP THE ARRAY A POWER OF TWO and use hash & (m-1) instead of %, which is
+  substantially faster. Then mix the hash's high bits down, or poor hash
+  functions cluster badly.
+· THE OPEN-ADDRESSING ALTERNATIVE — on collision, probe for the next free
+  slot. Better cache locality since there are no pointers to chase, and
+  deletion needs TOMBSTONES because removing an entry would break the probe
+  chain for anything that hashed past it.
+· WHAT REAL IMPLEMENTATIONS ADD — Java converts a chain longer than eight into
+  a balanced TREE, bounding the worst case at O(log n) and defending against
+  deliberate hash-collision attacks. Mentioning that shows you have looked
+  past the textbook version."""
+
+_ANSWER_V2["Implement Stack using Queues"] = """Make one operation do all the work - either push rotates the queue so the
+newest element is at the front, or pop drains and refills.
+
+· THE MISMATCH — a queue is first-in-first-out and a stack is
+  last-in-first-out, so the newest element is at the wrong end and something
+  has to reverse it.
+· THE COSTLY-PUSH VERSION, which is the cleaner answer. Push the new element,
+  then rotate the queue by moving every OTHER element from the front to the
+  back. The newest element is now at the front, so pop and top are plain queue
+  operations.
+· ITS COST — push is O(n), pop and top are O(1). One queue is enough.
+· THE COSTLY-POP VERSION — push straight onto queue one. To pop, move all but
+  the last element to queue two, take the last, then swap the roles of the two
+  queues. Push is O(1), pop is O(n).
+· WHICH TO PRESENT — ask which operation matters more, then choose. If the
+  interviewer does not say, give costly-push, because a single queue and O(1)
+  pops usually reads better and there is less state to get wrong.
+· THE CONTRAST WITH QUEUE-FROM-TWO-STACKS is worth drawing, because it is the
+  more interesting comparison: that one is AMORTISED O(1) for everything,
+  since each element moves between the stacks at most once in its lifetime.
+· THERE IS NO SUCH AMORTISATION HERE. Every push (or every pop) does the full
+  rotation regardless of history, so it is genuinely O(n) per operation, not
+  amortised. Claiming amortised O(1) is the mistake to avoid.
+· THE HAND TRACE with costly push — push 1: queue [1]. Push 2: enqueue 2 →
+  [1,2], rotate one element → [2,1]. Push 3: → [2,1,3], rotate two → [3,2,1].
+  Pop gives 3.
+· WHY IT IS ASKED — to see whether you notice that one side has to absorb the
+  cost, and whether you can state which. The code is short; the reasoning is
+  the answer."""
+
+_ANSWER_V2["Spiral Matrix II (generate)"] = """The same four walls as reading a spiral, but writing 1..n² into them - the
+skeleton is identical and only the body of the loop changes.
+
+· THE PROBLEM — fill an n×n matrix with 1 to n² in spiral order, starting at
+  the top-left and going clockwise.
+· THE STRUCTURE — four boundaries: top, bottom, left, right. Walk the top row
+  left to right filling as you go, then top++; the right column down, then
+  right--; the bottom row right to left, then bottom--; the left column up,
+  then left++.
+· THE COUNTER — one variable starting at 1, incremented on every write. When
+  it exceeds n² you are done, and so is the loop.
+· WHY THIS IS EASIER THAN SPIRAL MATRIX I — a square matrix being filled
+  exactly once needs no guard against re-reading a single remaining row or
+  column, because the counter and the boundaries agree by construction. In the
+  reading version the matrix can be non-square and the last two loops need
+  `if top <= bottom` and `if left <= right`.
+· KEEP THE GUARDS ANYWAY if you want one skeleton for both problems. They cost
+  two lines and make the code transferable, which is worth more than two lines
+  saved.
+· THE LOOP CONDITION — while top <= bottom and left <= right, or equivalently
+  while the counter has not passed n².
+· THE HAND TRACE for n = 3 — top row 1,2,3; right column 4,5; bottom row 6,7;
+  left column 8; then the single remaining centre cell 9. The result is
+  [[1,2,3],[8,9,4],[7,6,5]].
+· THE ODD-n CENTRE is the case worth checking by hand: after three rings of a
+  5×5 you are left with one cell, and the boundaries collapse to top == bottom
+  and left == right.
+· COST — O(n²) time, which is unavoidable since every cell is written, and
+  O(1) extra space beyond the output."""
+
+_ANSWER_V2["Happy Number"] = """Repeatedly sum the squares of the digits; you either reach 1 or fall into a
+cycle - so this is cycle detection in disguise.
+
+· THE PROBLEM — replace the number by the sum of the squares of its digits and
+  repeat. If you reach 1 it is happy; otherwise you loop forever.
+· THE INSIGHT THAT MAKES IT TRACTABLE — the process either reaches 1 or
+  CYCLES. It cannot grow without bound, because for any number above 999 the
+  digit-square sum is smaller than the number itself. So the sequence is
+  eventually confined to a small range and must repeat.
+· THE SET METHOD — remember every value seen; if one repeats before you reach
+  1, it is not happy. O(1) space in practice since the reachable set is small,
+  and simple to write.
+· THE FLOYD METHOD — a slow pointer taking one step and a fast pointer taking
+  two. If they meet at 1 it is happy; if they meet anywhere else there is a
+  cycle. Genuinely O(1) space with no set at all, and it is the answer worth
+  offering.
+· WHY FLOYD APPLIES — the sequence is a function iterated on itself, which is
+  exactly a linked list where next(n) is the digit-square sum. Recognising
+  that this is Linked List Cycle wearing different clothes is the point of the
+  question.
+· THE DIGIT-SQUARE HELPER — while n: d = n % 10; total += d*d; n //= 10. Four
+  lines, and worth writing as its own function so the main loop reads clearly.
+· THE KNOWN CYCLE, if it comes up: every unhappy number falls into
+  4 → 16 → 37 → 58 → 89 → 145 → 42 → 20 → 4. Checking for 4 alone is a valid
+  shortcut and is memorising rather than reasoning, so mention it as trivia
+  rather than as the solution.
+· THE EDGE CASES — 1 is happy immediately, and 7 is the smallest interesting
+  happy number (7 → 49 → 97 → 130 → 10 → 1).
+· COST — O(log n) per step for the digits, and a bounded number of steps."""
+
+_ANSWER_V2["Reverse Bits"] = """Pull the lowest bit off the input and push it onto the result, 32 times - the
+result is built in the opposite order from how the input is consumed.
+
+· THE PROBLEM — reverse the bit order of a 32-bit unsigned integer, so bit 0
+  becomes bit 31.
+· THE LOOP — repeat 32 times: shift the result LEFT by one, OR in the input's
+  lowest bit (n & 1), then shift the input RIGHT by one.
+· WHY THAT WORKS — each iteration takes the least significant remaining bit of
+  the input and places it as the least significant bit of a result that is
+  simultaneously being pushed leftward. The first bit taken ends up shifted 31
+  places, which is exactly where it belongs.
+· ALWAYS RUN THE FULL 32 ITERATIONS. Stopping when n becomes zero is a natural
+  optimisation and it is wrong: the remaining leading zeros of the input are
+  significant trailing positions in the result, and skipping them leaves the
+  answer shifted.
+· THE LANGUAGE TRAP — in Java use >>> (unsigned right shift), because >>
+  sign-extends and a negative input loops forever. In Python integers are
+  unbounded, so mask with & 0xFFFFFFFF at the end.
+· THE DIVIDE-AND-CONQUER VERSION, for the follow-up: swap adjacent bits, then
+  adjacent pairs, then nibbles, then bytes, then halves. Five masked
+  shift-and-or operations instead of thirty-two, and it is what a library
+  implementation does.
+· THE FOLLOW-UP THEY USUALLY ASK — "what if this is called millions of times?"
+  Cache the reversal of each byte in a 256-entry table, then reverse a 32-bit
+  value with four lookups and three shifts.
+· THE HAND TRACE on a small width — reversing the 8-bit value 00000011 gives
+  11000000. Working one byte by hand is enough to convince yourself of the
+  shift directions.
+· COST — O(1), since the width is fixed. Saying "O(32)" and then "which is
+  O(1)" is the precise version."""
+
+_ANSWER_V2["Roman to Integer"] = """Add each numeral's value, but SUBTRACT it when a smaller symbol sits before a
+larger one - that single rule handles every subtractive case.
+
+· THE VALUES — I=1, V=5, X=10, L=50, C=100, D=500, M=1000.
+· THE SUBTRACTIVE RULE — IV is 4 and VI is 6. Rather than special-casing the
+  six legal pairs (IV, IX, XL, XC, CD, CM), notice that in every one of them a
+  smaller value precedes a larger.
+· THE ALGORITHM — walk left to right. If the current value is less than the
+  NEXT one, subtract it; otherwise add it. One pass, one comparison.
+· WHY IT COVERS ALL SIX CASES without listing them — that is the whole point
+  of the question. Listing the pairs works and misses the observation being
+  tested.
+· THE LAST CHARACTER is always added, since there is no next value. Handle it
+  by iterating to len-1 and adding the final value afterwards, or by treating a
+  missing next as zero.
+· THE RIGHT-TO-LEFT ALTERNATIVE reads slightly cleaner to some: walk backwards
+  keeping the largest value seen; add if the current is at least that, else
+  subtract. Same idea, no lookahead.
+· THE HAND TRACE on "MCMXCIV": M=1000 add; C before M so subtract 100; M add
+  1000; X before C so subtract 10; C add 100; I before V so subtract 1; V add
+  5. Total 1994.
+· VALIDATION IS USUALLY NOT REQUIRED — the problem guarantees a well-formed
+  numeral in the range 1 to 3999. Ask, because a version that must reject
+  "IIII" or "IC" is a noticeably harder problem.
+· COST — O(n) time and O(1) space, with a fixed seven-entry lookup.
+· THE REVERSE PROBLEM, Integer to Roman, is greedy: walk a value-symbol table
+  from largest to smallest (including the six subtractive pairs as entries)
+  and take each as many times as it fits. Including those pairs in the table
+  is what makes the greedy version correct."""
+
+_ANSWER_V2["Hamming Distance"] = """XOR the two numbers to find where they differ, then count the set bits.
+
+· THE DEFINITION — the number of positions at which two values have different
+  bits.
+· THE TWO STEPS — x ^ y produces a number with a 1 exactly where the inputs
+  differ, because XOR is bitwise "not equal". Then count the 1s.
+· COUNTING THE BITS — n & (n-1) clears the lowest set bit, so loop while n is
+  non-zero, clearing one bit and incrementing a counter each time. It runs
+  once per SET bit rather than once per bit position.
+· WHY n & (n-1) CLEARS THE LOWEST BIT — subtracting 1 flips that bit to 0 and
+  turns every 0 below it into 1. ANDing with the original keeps everything
+  above and wipes that bit and everything under it.
+· THE BUILT-INS — bin(x ^ y).count('1') in Python, or (x ^ y).bit_count() on
+  3.10+, Integer.bitCount in Java, __builtin_popcount in C++. Say you would
+  use them and then write the manual version, which is what is being asked.
+· THE SHIFT-AND-TEST ALTERNATIVE always runs 32 times regardless of the
+  answer, which is why the n & (n-1) version is preferred.
+· COST — O(1) for fixed-width integers, or O(number of differing bits) for the
+  clearing loop, which is a tighter statement.
+· THE STRING VERSION of this problem compares two equal-length strings
+  character by character, and is the same idea without the bit manipulation.
+· TOTAL HAMMING DISTANCE is the good follow-up — the sum over all PAIRS in an
+  array. Doing it pairwise is O(n²); the linear answer works COLUMN by column:
+  for each bit position, if k of the n numbers have that bit set, that position
+  contributes k × (n - k) to the total. That reframe is the actual insight."""
+
+_ANSWER_V2["Power of Two"] = """A power of two has exactly one bit set, so n & (n-1) wipes it and leaves zero.
+
+· THE PROPERTY — 1, 2, 4, 8, 16 are 1, 10, 100, 1000, 10000 in binary. Exactly
+  one bit, always.
+· THE ONE-LINER — return n > 0 and (n & (n - 1)) == 0.
+· WHY IT WORKS — subtracting 1 from a number with a single set bit turns that
+  bit off and every bit below it on: 1000 becomes 0111. Those two share no
+  bits, so the AND is zero. Any number with two or more set bits keeps the
+  higher ones and the AND is non-zero.
+· THE n > 0 GUARD IS NOT OPTIONAL. Zero passes the bit test (0 & -1 == 0) and
+  is not a power of two. Negative numbers in two's complement can also slip
+  through. This is the entire trap of the question.
+· THE ALTERNATIVE ISOLATION — n & -n gives the lowest set bit, so
+  n & -n == n is another one-line test with the same guard requirement.
+· THE LOOP VERSION — divide by 2 while even and check you end at 1. O(log n),
+  correct, and it is the answer being improved on.
+· THE CONSTANT-TIME DIVISIBILITY TRICK, for 32-bit signed integers: the
+  largest power of two is 2³⁰, and every power of two divides it. So
+  (1 << 30) % n == 0 works with no loop and no bit tricks. Cute, and worth
+  mentioning as a curiosity rather than as the answer.
+· THE SIBLINGS — power of four additionally requires the set bit to be in an
+  even position, testable with a mask of 0x55555555. Power of three has no bit
+  trick, and the analogous constant-time answer is 3^19 % n == 0.
+· WHERE THE PROPERTY IS USED IN REAL CODE — hash table sizes are powers of two
+  so that hash & (m-1) replaces the much slower hash % m. That is why this is
+  worth knowing rather than a puzzle."""
+
+_ANSWER_V2["Plus One"] = """Walk from the last digit backwards adding the carry - and the only interesting
+case is when every digit is a nine.
+
+· THE PROBLEM — a number is given as an array of digits, most significant
+  first. Add one and return the resulting digits.
+· THE ALGORITHM — from the last index backwards: if the digit is less than 9,
+  increment it and return immediately, because there is no carry to propagate.
+  Otherwise set it to 0 and continue left.
+· THE EARLY RETURN IS THE WHOLE SIMPLIFICATION. Once a digit absorbs the
+  carry, nothing to its left changes, so there is no need to walk the rest of
+  the array or track a carry variable at all.
+· THE ALL-NINES CASE — if the loop finishes without returning, every digit was
+  9 and is now 0. The answer is one digit LONGER: prepend a 1, giving
+  [1, 0, 0, ..., 0]. 999 + 1 = 1000.
+· THAT LENGTH CHANGE is the reason this question exists. Any solution that
+  assumes the output is the same length as the input fails on it.
+· WHY NOT CONVERT TO AN INTEGER — the array can be longer than any fixed-width
+  integer type. It works in Python and is the wrong habit, and in Java or C++
+  it overflows outright. Say why you are not doing it.
+· THE HAND TRACE on [1,2,3]: 3 < 9, increment, return [1,2,4]. On [1,2,9]:
+  9 becomes 0, then 2 < 9 so increment, giving [1,3,0]. On [9,9]: both become
+  0, loop ends, prepend 1 → [1,0,0].
+· COST — O(n) worst case, O(1) typical, since most numbers do not end in a run
+  of nines. Space is O(1) unless the array grows, which is O(n) for the one
+  case that does.
+· THE VARIANTS — Add Binary and Add Strings are the same right-to-left carry
+  walk with a different base and two operands, so learning the shape once
+  covers all three."""
+
+_ANSWER_V2["Add Binary"] = """Walk both strings from the right, add the digits and the carry, and build the
+answer backwards.
+
+· THE PROBLEM — add two binary strings and return the binary sum, without
+  converting to integers.
+· WHY NOT CONVERT — int(a, 2) + int(b, 2) works in Python and fails on long
+  inputs in fixed-width languages. The point of the question is the manual
+  carry, so say that and do it manually.
+· THE LOOP — two pointers starting at the last character of each string, plus
+  a carry. While either pointer is valid or the carry is non-zero: take each
+  digit or 0 if that string is exhausted, sum them with the carry, append
+  sum % 2, and set carry = sum // 2.
+· THE `OR CARRY` IN THE CONDITION is what handles a final overflow. "1" + "1"
+  gives "10", and the loop must run once more after both strings are consumed.
+  Omitting it is the standard bug.
+· THE DIFFERENT LENGTHS are handled by treating a missing digit as 0 rather
+  than by padding the shorter string first. Padding also works and allocates.
+· BUILD INTO A LIST AND REVERSE at the end, or prepend to a deque. String
+  concatenation in a loop is O(n²) in most languages, which matters on long
+  inputs and is a detail interviewers notice.
+· THE HAND TRACE on "11" + "1": 1+1 = 2 → write 0, carry 1. 1+0+1 = 2 → write
+  0, carry 1. Both exhausted but carry is 1 → write 1. Reversed: "100".
+· COST — O(max(m, n)) time and space for the result.
+· THE FAMILY — Add Strings (base 10), Add Two Numbers (the same walk over
+  linked lists, already stored in reverse, which is why that problem is
+  easier), and Plus One. All are the same carry loop, and learning it once is
+  the return on this question.
+· THE BIT-MANIPULATION VERSION, if asked for integers rather than strings:
+  sum without carry is a ^ b, the carry is (a & b) << 1, repeat until the
+  carry is zero. That is addition implemented without the + operator."""
+
+_ANSWER_V2["Excel Sheet Column Number"] = """It is base 26 with digits 1 to 26 instead of 0 to 25 - so A is 1, not 0, and
+that offset is the entire problem.
+
+· THE MAPPING — A=1, B=2, ... Z=26, AA=27, AB=28. Each position is a power of
+  26, exactly like decimal with a different base.
+· THE ALGORITHM — result = result * 26 + (ord(c) - ord('A') + 1) for each
+  character left to right. Two lines.
+· WHY THE +1 MATTERS — in ordinary base 26 the digits would be 0 to 25, so Z
+  would be 25 and there would be a digit for zero. Here there is no zero
+  digit; the smallest is 1. This is called BIJECTIVE base 26 and naming it is
+  a good sign.
+· THE CONSEQUENCE OF NO ZERO — the sequence goes Z (26) then AA (27), with no
+  "A0" in between. That is why the mapping is not simply positional base 26,
+  and it is what the reverse problem trips over.
+· THE HAND TRACE on "AB": start 0. A → 0*26 + 1 = 1. B → 1*26 + 2 = 28.
+· ON "ZY": Z → 26. Y → 26*26 + 25 = 701.
+· COST — O(n) in the number of characters, O(1) space.
+· THE REVERSE PROBLEM, Excel Sheet Column Title, is where the offset really
+  bites: you must SUBTRACT 1 before each divmod, because there is no zero
+  digit. n -= 1; digit = n % 26; n //= 26. Forgetting that single line maps 26
+  to "A@" instead of "Z", and it is the most common wrong answer to that
+  question.
+· WHY IT IS ASKED — it is five lines, so the interviewer is checking whether
+  you recognise a base conversion and whether you spot that the digit range is
+  shifted. Say "this is base 26 but one-indexed" before writing anything."""
+
+_ANSWER_V2["Ugly Number"] = """Divide out every 2, 3 and 5, and see whether 1 is what remains.
+
+· THE DEFINITION — a positive number whose only prime factors are 2, 3 and 5.
+  1 counts, by the convention that an empty product is 1.
+· THE ALGORITHM — for each of 2, 3, 5, divide n by it while it divides
+  evenly. Then return n == 1.
+· WHY DIVIDING WHILE IT DIVIDES IS ENOUGH — you are stripping the allowed
+  factors completely. Anything left over is a factor that is not 2, 3 or 5, so
+  the number is not ugly.
+· THE GUARD — n must be positive. Zero divides forever by 2 and loops
+  infinitely; negatives are not ugly by definition. Return False for n <= 0
+  before starting, and this is the case the question is really checking.
+· THE HAND TRACE — 6 divides by 2 to 3, then by 3 to 1 → ugly. 14 divides by 2
+  to 7, and 7 is divisible by neither 3 nor 5, so 7 remains → not ugly.
+· COST — O(log n), since each division at least halves the number.
+· UGLY NUMBER II is the genuinely interesting follow-up — find the nth ugly
+  number. Testing every integer is far too slow; instead GENERATE them. Keep
+  three pointers into the sequence you are building, one per factor, and the
+  next ugly number is min(2·a[i2], 3·a[i3], 5·a[i5]). Advance every pointer
+  whose product equals that minimum.
+· ADVANCING ALL TIES IS THE BUG PEOPLE HIT — 6 is reachable as 2×3 and 3×2, so
+  advancing only one pointer produces a duplicate. Comparing against the
+  minimum rather than using elif is what prevents it.
+· THAT MAKES II AN O(n) DYNAMIC-PROGRAMMING PROBLEM, and it is the reason this
+  easy question appears at all: it is the setup for the harder one.
+· THE THIRD IN THE FAMILY, Super Ugly Number, generalises to an arbitrary list
+  of primes with one pointer each, which is a heap problem once the list is
+  long."""
+
+_ANSWER_V2["Add Strings"] = """Two pointers from the right, a carry, and build the answer backwards - decimal
+addition exactly as taught on paper.
+
+· THE PROBLEM — add two non-negative numbers given as strings, without
+  converting them to integers.
+· WHY NOT CONVERT — int(a) + int(b) works in Python and is the answer being
+  ruled out; in Java or C++ the inputs can exceed any fixed-width type. The
+  question is about implementing the carry.
+· THE LOOP — pointers at the last character of each string plus a carry.
+  While either pointer is valid or the carry is non-zero: take each digit or 0
+  when exhausted, sum with the carry, append sum % 10, and set carry =
+  sum // 10.
+· `OR CARRY` IN THE CONDITION handles the final overflow: "5" + "5" is "10",
+  and the loop must run once more after both strings are consumed. This is the
+  standard bug.
+· DIGIT CONVERSION — ord(c) - ord('0'), not int(c) if you are asked to avoid
+  built-in conversion. Some interviewers care; ask.
+· DIFFERENT LENGTHS need no padding — treat a missing digit as 0. Padding also
+  works and allocates for nothing.
+· BUILD INTO A LIST AND REVERSE, or use a deque and appendleft. Repeated
+  string concatenation is O(n²) in most languages, and on long inputs that is
+  the difference between passing and timing out.
+· THE HAND TRACE on "99" + "1": 9+1 = 10 → write 0, carry 1. 9+0+1 = 10 →
+  write 0, carry 1. Both exhausted, carry 1 → write 1. Reversed: "100".
+· COST — O(max(m, n)) time and space.
+· THE FAMILY — Add Binary is the same loop in base 2, Multiply Strings is the
+  same idea with a grid of partial products, and Add Two Numbers does it over
+  linked lists that are conveniently already reversed. One carry loop, four
+  problems."""
+
+_ANSWER_V2["Count and Say"] = """Read the previous term aloud and write down what you said - each term describes
+the one before it.
+
+· THE SEQUENCE — 1, 11, 21, 1211, 111221. Term 2 is "one 1" = 11. Term 3 is
+  "two 1s" = 21. Term 4 is "one 2, one 1" = 1211.
+· THE ALGORITHM — starting from "1", repeat n-1 times: walk the current string
+  counting RUNS of identical characters, and append the count followed by the
+  character.
+· THE RUN-LENGTH LOOP — keep a count, and while the next character equals the
+  current one, increment. When it differs, emit count and character, then
+  start a new run.
+· THE FINAL RUN must be emitted after the loop ends, because there is no
+  differing character to trigger it. This is the standard bug and it silently
+  truncates every term.
+· BUILD WITH A LIST AND JOIN, not by concatenating strings in a loop. The
+  terms grow quickly and repeated concatenation is O(n²) in most languages.
+· THE HAND TRACE from "1211": one 1 → "11", one 2 → "12", two 1s → "21".
+  Concatenated: "111221".
+· THE GROWTH — each term is roughly 1.3 times the length of the last (that
+  ratio is Conway's constant), so term 30 is about 5,800 characters. There is
+  no closed form worth using; iterating is the answer.
+· THE 4 NEVER APPEARS in this sequence starting from 1, which is a nice piece
+  of trivia and not something to build the solution on.
+· COST — O(n × length of the final term), and the length grows exponentially,
+  which is why n is capped small in the problem statement.
+· WHY IT IS ASKED — it is a careful string-building exercise with one obvious
+  trap. Say "I need to flush the last run after the loop" before writing, and
+  the rest is mechanical."""
+
+_ANSWER_V2["Transpose Matrix"] = """Swap rows and columns - result[j][i] = matrix[i][j], and for a non-square
+matrix the output has different dimensions.
+
+· THE DEFINITION — the transpose reflects the matrix over its main diagonal.
+  An m×n matrix becomes n×m.
+· THE STRAIGHTFORWARD ANSWER — allocate an n×m result and copy
+  result[j][i] = matrix[i][j]. Two nested loops, O(m×n) time and space.
+· FOR A NON-SQUARE MATRIX THAT IS THE ONLY OPTION. You cannot transpose 2×3
+  into 3×2 in place, because the shape itself changes and there is nowhere to
+  put the extra rows. This is the distinction the question is checking.
+· THE IN-PLACE VERSION, for a SQUARE matrix only — swap matrix[i][j] with
+  matrix[j][i], iterating j from i+1 onward.
+· THAT j > i BOUND IS ESSENTIAL. Iterating over the whole grid swaps every
+  pair TWICE and returns the matrix exactly as it started. It is the classic
+  wasted ten minutes on this problem, and it is silent because the code looks
+  right.
+· THE HAND TRACE on [[1,2,3],[4,5,6]] — the result is [[1,4],[2,5],[3,6]],
+  three rows of two.
+· THE PYTHON ONE-LINER — list(zip(*matrix)) transposes directly, returning
+  tuples; [list(r) for r in zip(*matrix)] gives lists. Say you would use it and
+  then write the loops, which is what is being asked for.
+· WHERE IT APPEARS AS A STEP — Rotate Image is transpose followed by reversing
+  each row, which is why this problem is usually asked just before that one.
+· COST — O(m×n), unavoidable since every element moves, and O(1) extra space
+  for the square in-place case, O(m×n) otherwise."""
+
+_ANSWER_V2["Matrix Diagonal Sum"] = """Add both diagonals in one pass, then subtract the centre once if the matrix has
+an odd size - because you counted it twice.
+
+· THE PROBLEM — sum the primary diagonal (top-left to bottom-right) and the
+  secondary diagonal (top-right to bottom-left) of a square matrix.
+· THE INDICES — the primary diagonal is matrix[i][i]. The secondary is
+  matrix[i][n-1-i]. One loop over i covers both.
+· THE DOUBLE-COUNT — when n is ODD, the two diagonals cross at the exact
+  centre, where i == n-1-i. That element is added twice and must be subtracted
+  once.
+· THE CENTRE IS AT [n//2][n//2] for odd n. Subtract it after the loop, guarded
+  by `if n % 2 == 1`.
+· WHY EVEN MATRICES ARE FINE — with n even there is no integer i where
+  i == n-1-i, so the diagonals never share a cell and nothing is double
+  counted.
+· THE HAND TRACE on a 3×3 of 1s — the loop adds 6, and the centre is
+  subtracted once, giving 5. Which is right: five distinct cells lie on the
+  two diagonals.
+· ON A 2×2 of 1s — the loop adds 4, no subtraction, and all four cells are on
+  a diagonal. Correct.
+· THE ALTERNATIVE that avoids the special case — add matrix[i][i] always, and
+  add matrix[i][n-1-i] only when i != n-1-i. Same result, and it puts the
+  condition inside the loop rather than after it. Either is fine; say which
+  you chose and why.
+· COST — O(n) time, since you touch 2n cells rather than the whole n² matrix,
+  and O(1) space. Pointing out that this is LINEAR in n rather than in the
+  matrix size is worth doing, because the naive answer scans everything.
+· WHY IT IS ASKED — as a five-line problem where the only content is noticing
+  the odd-size overlap. Say it before writing and the code is trivial."""
+
+_ANSWER_V2["Third Maximum Number"] = """Track three distinct maxima in one pass - and the trap is that the answer must
+be DISTINCT values, not the third largest element.
+
+· THE PROBLEM — return the third distinct maximum. If fewer than three
+  distinct values exist, return the maximum instead. That fallback is
+  deliberate and is the first thing to note.
+· DISTINCT IS THE WHOLE QUESTION. In [2,2,3,1] the answer is 1, not 2 —
+  duplicates do not count as separate maxima. Any solution that sorts and
+  indexes at [-3] gets this wrong.
+· THE ONE-PASS METHOD — keep first, second and third, all initialised to
+  negative infinity. For each number: skip it if it already equals one of the
+  three; otherwise cascade it into place.
+· THE CASCADE ORDER — if it beats first, push first down to second and second
+  to third before taking its place. Then elif for second, elif for third.
+  Updating any of them without demoting the ones below loses values, and this
+  is the standard bug.
+· THE SKIP-IF-EQUAL CHECK is what enforces distinctness, and it must come
+  before the comparisons rather than being folded into them.
+· THE INITIALISATION TRAP — using negative infinity means you cannot simply
+  test "is third still negative infinity", because the array may legitimately
+  contain very negative numbers. Use None as the sentinel, or track a count of
+  how many have been filled.
+· THE HAND TRACE on [2,2,3,1]: 2 → first=2. 2 → skipped as equal. 3 → beats
+  first, so first=3, second=2. 1 → third=1. Answer 1.
+· ON [1,2]: only two distinct, so return the maximum 2 rather than anything
+  from third.
+· THE SORTED-SET ALTERNATIVE — put everything in a set, sort descending, and
+  index. O(n log n) and three lines, and perfectly acceptable if you state the
+  trade. The one-pass version is O(n) and O(1).
+· WHY IT IS ASKED — the distinctness rule and the fallback are both easy to
+  read past. Restate the problem in your own words before coding; that is
+  where this one is won or lost."""
+
+_ANSWER_V2["Minimum Absolute Difference in BST"] = """In-order traversal gives sorted values, and in a sorted sequence the closest
+pair must be ADJACENT - so track the previous value and the running minimum.
+
+· THE PROBLEM — the smallest absolute difference between any two nodes in a
+  binary search tree.
+· THE KEY PROPERTY — an in-order traversal of a BST (left, node, right)
+  produces the values in ascending order. Everything else follows from that.
+· WHY ADJACENT PAIRS SUFFICE — in a sorted sequence, any two non-adjacent
+  values have something between them, so their difference is at least as large
+  as one of the adjacent gaps. The minimum therefore lives among neighbours,
+  and there is no need to compare all pairs.
+· THE ALGORITHM — traverse in order carrying a `prev` value. At each node,
+  update the answer with node.val - prev, then set prev to node.val.
+· prev MUST PERSIST ACROSS THE RECURSION, not be a local variable. Use an
+  instance attribute, a nonlocal, or a single-element list. A fresh local per
+  call silently compares nothing and returns infinity.
+· THE FIRST NODE has no predecessor, so guard with `if prev is not None`.
+  Initialising prev to zero is wrong the moment the tree contains negative
+  values.
+· NO ABSOLUTE VALUE IS NEEDED if you traverse in order, because node.val is
+  always at least prev. Using abs() anyway is harmless and slightly obscures
+  that you understood the ordering.
+· THE ITERATIVE VERSION with an explicit stack is worth knowing for the "what
+  if the tree is very deep" follow-up, and it makes prev a natural loop
+  variable rather than shared state.
+· COST — O(n) time since every node is visited once, and O(h) space for the
+  stack or recursion, which is O(log n) on a balanced tree.
+· THE SIBLING PROBLEMS — Kth Smallest in a BST and Validate BST both rest on
+  the same in-order-is-sorted fact. Recognising that one property answers
+  three questions is the transferable part."""
+
+_ANSWER_V2["Reverse Integer"] = """Pop digits off the end with %10 and push them onto a growing result - and the
+whole question is detecting overflow before it happens.
+
+· THE ALGORITHM — while n is non-zero: digit = n % 10; result = result * 10 +
+  digit; n //= 10.
+· THE OVERFLOW REQUIREMENT — the answer must fit in a signed 32-bit integer
+  (-2147483648 to 2147483647) and return 0 if it does not. The input is
+  guaranteed to fit; the reversal may not. 1534236469 reversed is
+  9646324351, which does not.
+· CHECK BEFORE MULTIPLYING, not after. In a fixed-width language the overflow
+  has already happened by the time you could look at the result, and the
+  behaviour is undefined. Test whether result > (INT_MAX - digit) / 10 first.
+· PYTHON HAS NO OVERFLOW, so you build the value and then compare against the
+  bounds, returning 0 if it is outside. Say which language you are assuming,
+  because the two answers genuinely differ and that is what is being probed.
+· NEGATIVE NUMBERS — take the absolute value, reverse, then reapply the sign.
+  In Python beware that -7 % 10 is 3, not -7, so the naive loop on a negative
+  produces nonsense. Handling the sign separately avoids it entirely.
+· THE INT_MIN TRAP — abs(-2147483648) overflows in fixed-width languages,
+  because its magnitude exceeds INT_MAX by one. Work with the negative side,
+  or widen the type first.
+· TRAILING ZEROS DISAPPEAR, which is correct: 120 reverses to 21, not 021.
+  The leading zeros of the result are simply not represented.
+· THE HAND TRACE on 123: result goes 3, 32, 321 while n goes 12, 1, 0.
+· COST — O(log n), one iteration per digit, and O(1) space.
+· WHY IT IS ASKED — the reversal is four lines and the overflow handling is
+  the actual content. Raise it before being asked; a solution that ignores it
+  is considered incomplete."""
+
+_ANSWER_V2["Palindrome Number"] = """Reverse only HALF the number and compare the two halves - no string
+conversion, no overflow risk.
+
+· THE NAIVE ANSWERS — convert to a string and compare with its reverse (O(n)
+  space, and usually explicitly disallowed), or reverse the whole number and
+  compare (which can overflow for a value near the integer limit).
+· THE HALF-REVERSAL — pop digits off the END of the number and push them onto
+  a growing `reverted`, stopping when `reverted` becomes at least as large as
+  what remains of the original. At that point you have processed exactly half.
+· THE COMPARISON — for an even digit count, x == reverted. For an odd count,
+  the middle digit sits alone in `reverted`, so compare x == reverted // 10 as
+  well. Accepting either is the answer.
+· WHY THE LOOP CONDITION IS `while x > reverted` — it terminates precisely at
+  the midpoint without needing to know the digit count in advance, which is
+  the elegant part of this solution.
+· NEGATIVE NUMBERS ARE NEVER PALINDROMES, because of the leading minus sign.
+  -121 reversed reads 121-. Return False immediately.
+· ANY NUMBER ENDING IN 0 (except 0 itself) is not a palindrome, since the
+  reversed value would need a leading zero. Return False early, and it is also
+  what stops the loop misbehaving.
+· THE HAND TRACE on 1221: x=1221 reverted=0 → x=122 reverted=1 → x=12
+  reverted=12. Loop stops, x == reverted, True.
+· ON 12321: x goes 1232, 123, 12 while reverted goes 1, 12, 123. Loop stops
+  with x=12 and reverted=123, and 12 == 123//10 → True.
+· COST — O(log n) time, O(1) space, and half the iterations of a full
+  reversal.
+· WHY IT IS ASKED — the string version is one line, so the interviewer is
+  checking whether you can do it numerically and whether you spot the two early
+  returns unprompted."""
+
+_ANSWER_V2["Fizz Buzz"] = """Check divisibility by 15 first, or check 3 and 5 separately and build the
+string - the second version is the one that scales.
+
+· THE PROBLEM — for 1 to n, output "Fizz" for multiples of 3, "Buzz" for
+  multiples of 5, "FizzBuzz" for both, and the number otherwise.
+· THE ORDER MATTERS in the if-chain: test 15 (or 3 and 5 together) FIRST. Test
+  3 first and every multiple of 15 prints "Fizz" and stops, which is the
+  classic wrong answer and the entire point of the exercise.
+· THE BUILD-THE-STRING VERSION is better and is what to write: start with an
+  empty string, append "Fizz" if divisible by 3, append "Buzz" if divisible by
+  5, and use the number if the string is still empty.
+· WHY THAT VERSION IS BETTER — adding a seventh rule ("Bazz") means one more
+  line rather than restructuring a chain of four conditions into eight. The
+  interviewer usually asks exactly that as the follow-up.
+· THE FURTHER GENERALISATION — a list of (divisor, word) pairs, looped over.
+  Now adding a rule is adding data rather than code, which is the answer to
+  "what if there were twenty rules".
+· AVOID THE MODULO ENTIRELY, if asked: keep two counters that reset at 3 and
+  5. Faster in principle, and rarely worth the loss of clarity.
+· THE STRING TYPE — the output is strings throughout, including for the
+  numbers. Returning mixed types is a subtle mismatch that fails the test
+  harness rather than the logic.
+· COST — O(n) time and O(n) output.
+· WHY IT IS STILL ASKED — not to see whether you can do it, but to see how you
+  structure something trivial and whether you anticipate the extension. Write
+  the extensible version and say why in one sentence; that is the whole
+  signal."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
