@@ -82,10 +82,23 @@
           d.items = raw.items.filter(function (it) {
             return it && isHHMM(it.at);
           }).map(function (it) {
+            var rep = REPEATS.indexOf(it.repeat) === -1 ? null : it.repeat;
+            var start = isYMD(it.start) ? it.start : null;
+            // MIGRATION from the date-only shape: a fixed date became a
+            // one-off, and no date became a daily repeat.
+            if (!rep) {
+              rep = isYMD(it.date) ? "once" : "daily";
+              start = isYMD(it.date) ? it.date : todayYMD();
+            }
             return {
               id: String(it.id || ""),
               at: it.at,
-              date: isYMD(it.date) ? it.date : null,
+              repeat: rep,
+              days: Array.isArray(it.days)
+                ? it.days.filter(function (d) { return d >= 0 && d <= 6; })
+                : [],
+              start: start || todayYMD(),
+              end: isYMD(it.end) ? it.end : null,
               text: String(it.text || "").slice(0, 120),
               on: it.on !== false,
             };
@@ -100,7 +113,8 @@
     // nobody loses a setting by upgrading.
     if (!d.items.length && d.at.length) {
       d.items = d.at.map(function (t, i) {
-        return { id: "m" + i + t, at: t, date: null, text: d.label, on: true };
+        return { id: "m" + i + t, at: t, repeat: "daily", days: [],
+                 start: todayYMD(), end: null, text: d.label, on: true };
       });
       d.at = [];
     }
@@ -125,6 +139,102 @@
     return "i" + idSeq + "-" + (new Date()).getTime();
   }
   var idSeq = 0;
+
+  /* ── RECURRENCE ─────────────────────────────────────────────────────
+     Each announcement repeats on a rule, inside an optional window.
+
+     `start` is the first day it may fire (defaults to the day it was
+     created) and `end` is the last (null means forever). The rule then
+     decides which days inside that window count.
+
+     THE TWO AWKWARD CASES, both decided in favour of firing rather than
+     silently skipping. A monthly reminder on the 31st CLAMPS to the last day
+     of a short month, so February gets it on the 28th rather than not at
+     all; a yearly one on 29 February clamps to the 28th in common years.
+     Skipping would be defensible and it is not what a person setting a
+     reminder wants. */
+  var REPEATS = ["once", "daily", "weekly", "monthly", "yearly", "custom"];
+  var DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  function ymdToParts(v) {
+    var p = String(v).split("-");
+    return { y: +p[0], m: +p[1], d: +p[2] };
+  }
+
+  function daysInMonth(y, m) {           // m is 1-based
+    return new Date(y, m, 0).getDate();
+  }
+
+  function weekdayOf(ymd) {
+    var p = ymdToParts(ymd);
+    return new Date(p.y, p.m - 1, p.d).getDay();
+  }
+
+  function matchesOn(it, ymd) {
+    var start = isYMD(it.start) ? it.start : null;
+    if (start && ymd < start) return false;
+    if (isYMD(it.end) && ymd > it.end) return false;
+
+    var rep = REPEATS.indexOf(it.repeat) === -1 ? "daily" : it.repeat;
+    if (rep === "daily") return true;
+    if (rep === "once") return !!start && ymd === start;
+    if (rep === "custom") {
+      var days = Array.isArray(it.days) ? it.days : [];
+      return days.indexOf(weekdayOf(ymd)) !== -1;
+    }
+    if (!start) return true;             // no anchor to repeat from
+    var s = ymdToParts(start), t = ymdToParts(ymd);
+    if (rep === "weekly") return weekdayOf(ymd) === weekdayOf(start);
+    if (rep === "monthly") {
+      var dm = Math.min(s.d, daysInMonth(t.y, t.m));   // clamp, see above
+      return t.d === dm;
+    }
+    if (rep === "yearly") {
+      var dy = Math.min(s.d, daysInMonth(t.y, s.m));
+      return t.m === s.m && t.d === dy;
+    }
+    return false;
+  }
+
+  /* The rule in words, for the row and for the read-back. */
+  function repeatWords(it) {
+    var rep = REPEATS.indexOf(it.repeat) === -1 ? "daily" : it.repeat;
+    var base;
+    if (rep === "once") base = it.start || "once";
+    else if (rep === "daily") base = "every day";
+    else if (rep === "weekly") base = "every " +
+      (it.start ? DAY_NAMES[weekdayOf(it.start)] : "week");
+    else if (rep === "monthly") base = "monthly on the " +
+      (it.start ? ordinal(ymdToParts(it.start).d) : "same day");
+    else if (rep === "yearly") base = "yearly on " +
+      (it.start ? shortDate(it.start) : "the same date");
+    else base = (it.days || []).length
+      ? (it.days.slice().sort().map(function (d) { return DAY_NAMES[d]; }).join(" "))
+      : "no days chosen";
+    if (rep !== "once" && isYMD(it.end)) base += ", until " + shortDate(it.end);
+    return base;
+  }
+
+  function ordinal(n) {
+    var s = ["th", "st", "nd", "rd"], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+
+  function shortDate(ymd) {
+    var p = ymdToParts(ymd);
+    return p.d + " " + ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
+                        "Aug", "Sep", "Oct", "Nov", "Dec"][p.m - 1] +
+           " " + p.y;
+  }
+
+  /* Has this announcement finished for good? A `once` in the past, or any
+     rule whose end date has gone. Shown as expired rather than kept looking
+     armed. */
+  function isExpired(it, today) {
+    if (isYMD(it.end) && it.end < today) return true;
+    if (it.repeat === "once" && isYMD(it.start) && it.start < today) return true;
+    return false;
+  }
 
   function isHHMM(v) {
     return typeof v === "string" && /^([01]?\d|2[0-3]):[0-5]\d$/.test(v);
@@ -183,7 +293,7 @@
     var bits = [];
     if (state.every > 0) bits.push("every " + state.every + " min");
     var live = state.items.filter(function (it) {
-      return it.on && !(it.date && it.date < todayYMD());
+      return it.on && !isExpired(it, todayYMD());
     });
     if (live.length) {
       bits.push(live.length + (live.length === 1 ? " announcement"
@@ -233,7 +343,7 @@
     for (var i = 0; i < state.items.length; i++) {
       var it = state.items[i];
       if (!it.on) continue;                       // stopped individually
-      if (it.date && it.date !== today) continue; // wrong day
+      if (!matchesOn(it, today)) continue;        // not a day this rule fires
       var p = it.at.split(":");
       var b = parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
       var late = (mins - b) * 60000 + now.getSeconds() * 1000;
@@ -663,14 +773,32 @@
       "font-size:15px;line-height:1;padding:2px 4px;",
       "color:var(--color-text-secondary,#9ca3af)}",
       ".ta-del:hover{color:#b91c1c}",
-      ".ta-add{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}",
+      ".ta-add{display:flex;flex-direction:column;gap:5px;margin-top:7px}",
+      ".ta-add-row{display:flex;flex-wrap:wrap;gap:5px;align-items:flex-end}",
+      ".ta-add select{font:inherit;font-size:12px;padding:5px 7px;",
+      "border-radius:8px;border:1px solid var(--color-border,#e5e7eb);",
+      "background:var(--color-bg,#f9fafb);color:var(--color-text,#111827);",
+      "flex:1 1 120px;min-width:0}",
+      ".ta-dt{flex:1 1 120px;display:flex;flex-direction:column;gap:2px;",
+      "font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;",
+      "color:var(--color-text-secondary,#6b7280);min-width:0}",
+      ".ta-dt i{font-style:normal;font-weight:500;text-transform:none;",
+      "letter-spacing:0}",
+      ".ta-dt input{width:100%}",
+      ".ta-days{display:flex;flex-wrap:wrap;gap:4px}",
+      ".ta-days[hidden]{display:none}",
+      ".ta-days button{font:inherit;font-size:11px;font-weight:700;",
+      "padding:4px 8px;border-radius:999px;cursor:pointer;",
+      "border:1px solid var(--color-border,#e5e7eb);",
+      "background:var(--color-bg,#f9fafb);color:var(--color-text,#111827)}",
+      ".ta-days button.on{background:#4338ca;border-color:#4338ca;color:#fff}",
+      "[data-ta-new-end][aria-invalid]{border-color:#b91c1c}",
       ".ta-add input{font:inherit;font-size:12px;padding:5px 7px;",
       "border-radius:8px;border:1px solid var(--color-border,#e5e7eb);",
       "background:var(--color-bg,#f9fafb);color:var(--color-text,#111827);",
       "min-width:0}",
-      "[data-ta-new-at]{flex:0 0 88px}",
-      "[data-ta-new-date]{flex:0 0 128px}",
-      "[data-ta-new-text]{flex:1 1 130px}",
+      "[data-ta-new-at]{flex:0 0 108px}",
+      "[data-ta-new-text]{flex:1 1 140px}",
       "[data-ta-new-at][aria-invalid]{border-color:#b91c1c}",
       ".ta-add button{flex:0 0 auto;font:inherit;font-size:12px;",
       "font-weight:700;padding:5px 12px;border-radius:8px;border:0;",
@@ -738,6 +866,9 @@
     if (cin && document.activeElement !== cin) cin.value = state.every;
     var lbl = pop.querySelector("[data-ta-label]");
     if (lbl && document.activeElement !== lbl) lbl.value = state.label;
+    var sEl = pop.querySelector("[data-ta-new-start]");
+    if (sEl && !sEl.value) sEl.value = todayYMD();
+    paintDayChips();
     paintAtEcho();
 
     /* WHAT IS CURRENTLY SAVED, in words. Read back from the same state the
@@ -810,10 +941,9 @@
       // EXPIRED IS SHOWN, NOT HIDDEN. A one-off whose day has passed will
       // never speak again, and silently keeping it in the list looks like a
       // setting that is still armed.
-      var expired = it.date && it.date < today;
-      var when = it.date
-        ? (expired ? "expired " + it.date : it.date)
-        : "every day";
+      var expired = isExpired(it, today);
+      var when = expired ? "finished \u00b7 " + repeatWords(it)
+                         : repeatWords(it);
       return '<li class="ta-item' + (it.on ? "" : " off") +
              (expired ? " expired" : "") + '" data-id="' + esc(it.id) + '">' +
              '<button type="button" class="ta-tog" data-ta-toggle ' +
@@ -830,6 +960,22 @@
     }).join("");
   }
 
+  //: Days selected in the ADD form, before the announcement exists.
+  var newDays = [];
+
+  function paintDayChips() {
+    if (!pop) return;
+    var wrap = pop.querySelector("[data-ta-days]");
+    var sel = pop.querySelector("[data-ta-new-repeat]");
+    if (!wrap || !sel) return;
+    wrap.hidden = sel.value !== "custom";
+    wrap.querySelectorAll("[data-ta-day]").forEach(function (b) {
+      var d = parseInt(b.getAttribute("data-ta-day"), 10);
+      b.classList.toggle("on", newDays.indexOf(d) !== -1);
+      b.setAttribute("aria-pressed", newDays.indexOf(d) !== -1 ? "true" : "false");
+    });
+  }
+
   function byId(id) {
     for (var i = 0; i < state.items.length; i++) {
       if (state.items[i].id === id) return state.items[i];
@@ -839,7 +985,9 @@
 
   function addItem() {
     var atEl = pop.querySelector("[data-ta-new-at]");
-    var dEl = pop.querySelector("[data-ta-new-date]");
+    var rEl = pop.querySelector("[data-ta-new-repeat]");
+    var sEl = pop.querySelector("[data-ta-new-start]");
+    var eEl = pop.querySelector("[data-ta-new-end]");
     var tEl = pop.querySelector("[data-ta-new-text]");
     // Reuse the forgiving parser, so "5.00" and "6.45pm" work here too.
     var times = parseTimes(atEl.value);
@@ -850,14 +998,32 @@
       return;
     }
     atEl.removeAttribute("aria-invalid");
-    var date = isYMD(dEl.value) ? dEl.value : null;
+    var repeat = REPEATS.indexOf(rEl.value) === -1 ? "daily" : rEl.value;
+    var start = isYMD(sEl.value) ? sEl.value : todayYMD();
+    var end = isYMD(eEl.value) ? eEl.value : null;
+    // AN END BEFORE THE START would never fire, so refuse it rather than
+    // creating a row that looks armed and is not.
+    if (end && end < start) {
+      eEl.setAttribute("aria-invalid", "true");
+      note(false, "the end date is before the start date");
+      return;
+    }
+    eEl.removeAttribute("aria-invalid");
+    // "Chosen days" with nothing chosen is the same trap.
+    if (repeat === "custom" && !newDays.length) {
+      note(false, "pick at least one day");
+      return;
+    }
     var text = (tEl.value || "").slice(0, 120);
     // A field accepting several times adds several announcements rather than
     // quietly keeping the first — the parser already returns a list.
     times.forEach(function (t) {
-      state.items.push({ id: newId(), at: t, date: date, text: text, on: true });
+      state.items.push({
+        id: newId(), at: t, repeat: repeat, days: newDays.slice(),
+        start: start, end: end, text: text, on: true,
+      });
     });
-    atEl.value = ""; dEl.value = ""; tEl.value = "";
+    atEl.value = ""; tEl.value = "";
     state.lastSlot = null;
     save(); paint(); savedFlash();
     atEl.focus();
@@ -905,15 +1071,39 @@
       '<div class="ta-sec">Your announcements</div>' +
       '<ul class="ta-list" data-ta-list></ul>' +
       '<div class="ta-add">' +
-        '<input type="text" data-ta-new-at placeholder="5.00 / 9am / 13:30" ' +
-          'aria-label="Time">' +
-        '<input type="date" data-ta-new-date aria-label="Date (optional)">' +
-        '<input type="text" data-ta-new-text maxlength="120" ' +
-          'placeholder="What to say" aria-label="What to say">' +
-        '<button type="button" data-ta-add>Add</button>' +
+        '<div class="ta-add-row">' +
+          '<input type="text" data-ta-new-at placeholder="5.00 / 9am / 13:30" ' +
+            'aria-label="Time">' +
+          '<select data-ta-new-repeat aria-label="How often">' +
+            '<option value="daily">Every day</option>' +
+            '<option value="once">Once</option>' +
+            '<option value="weekly">Every week</option>' +
+            '<option value="monthly">Every month</option>' +
+            '<option value="yearly">Every year</option>' +
+            '<option value="custom">Chosen days</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="ta-days" data-ta-days hidden>' +
+          [0, 1, 2, 3, 4, 5, 6].map(function (d) {
+            return '<button type="button" data-ta-day="' + d + '">' +
+                   DAY_NAMES[d] + '</button>';
+          }).join("") +
+        '</div>' +
+        '<div class="ta-add-row">' +
+          '<label class="ta-dt">Starts' +
+            '<input type="date" data-ta-new-start></label>' +
+          '<label class="ta-dt">Ends <i>optional</i>' +
+            '<input type="date" data-ta-new-end></label>' +
+        '</div>' +
+        '<div class="ta-add-row">' +
+          '<input type="text" data-ta-new-text maxlength="120" ' +
+            'placeholder="What to say" aria-label="What to say">' +
+          '<button type="button" data-ta-add>Add</button>' +
+        '</div>' +
       '</div>' +
-      '<small class="ta-hint">Leave the date blank to repeat every day from ' +
-      'today onwards. Each announcement has its own on/off switch.</small>' +
+      '<small class="ta-hint">Starts defaults to today. Leave Ends blank and ' +
+      'it repeats for good. A monthly reminder on the 31st still fires on the ' +
+      'last day of a short month rather than skipping it.</small>' +
       '<p class="ta-auto">Everything here saves as you type &mdash; there is no ' +
       'Save button, and closing this panel keeps your settings.</p>' +
       '<p class="ta-now" data-ta-now></p>' +
@@ -1002,6 +1192,14 @@
         save(); paint(); savedFlash();
         return;
       }
+      var day = ev.target.closest("[data-ta-day]");
+      if (day) {
+        var d = parseInt(day.getAttribute("data-ta-day"), 10);
+        var at = newDays.indexOf(d);
+        if (at === -1) newDays.push(d); else newDays.splice(at, 1);
+        paintDayChips();
+        return;
+      }
       if (ev.target.closest("[data-ta-add]")) { addItem(); return; }
       if (ev.target.closest("[data-ta-test]")) {
         // Pressing it IS the gesture, so this is also the way to re-arm a
@@ -1022,6 +1220,10 @@
         ev.preventDefault();
         addItem();
       }
+    });
+
+    pop.addEventListener("change", function (ev) {
+      if (ev.target.matches("[data-ta-new-repeat]")) paintDayChips();
     });
 
     pop.addEventListener("input", function (ev) {
@@ -1128,8 +1330,12 @@
     _slotFor: slotFor,
     _dueSlot: dueSlot,
     _dueItems: dueItems,
+    _matchesOn: matchesOn,
+    _repeatWords: repeatWords,
+    _isExpired: isExpired,
     _todayYMD: todayYMD,
     _parseTimes: parseTimes,
+    _load: load,
     _friendly: friendly,
     _scheduleWords: scheduleWords,
     _health: function () { return health; },

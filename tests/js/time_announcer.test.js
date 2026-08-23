@@ -81,8 +81,11 @@ ok("mid-interval is silent", TA._dueSlot(at(14,7,0))===null);
 const TODAY = TA._todayYMD(at(12,0,0));
 // The harness clock is 2026-08-22, so these must straddle THAT date.
 const YESTERDAY = "2026-08-21", TOMORROW = "2026-08-23";
+// The stored shape. `_set` writes straight to state, bypassing load()'s
+// migration, so these must already be in the CURRENT shape.
 const item = (o) => Object.assign(
-  {id:"x", at:"09:00", date:null, text:"", on:true}, o);
+  {id:"x", at:"09:00", repeat:"daily", days:[], start:"2026-08-01",
+   end:null, text:"", on:true}, o);
 
 TA._set({mode:"on", every:0, at:[], items:[], said:{}});
 ok("every=0 => interval silent", TA._dueSlot(at(14,0,0))===null);
@@ -92,12 +95,12 @@ ok("undated item fires today",   TA._dueItems(at(13,30,0)).length===1);
 ok("...and says its own text",   TA._dueItems(at(13,30,0))[0].text==="Lunch");
 ok("not at another time",        TA._dueItems(at(11,0,0)).length===0);
 
-TA._set({items:[item({id:"b", at:"09:00", date:TODAY})], said:{}});
-ok("dated item fires on its day", TA._dueItems(at(9,0,0)).length===1);
-TA._set({items:[item({id:"c", at:"09:00", date:TOMORROW})], said:{}});
-ok("not before its day",          TA._dueItems(at(9,0,0)).length===0);
-TA._set({items:[item({id:"d", at:"09:00", date:YESTERDAY})], said:{}});
-ok("never after its day",         TA._dueItems(at(9,0,0)).length===0);
+TA._set({items:[item({id:"b", repeat:"once", start:TODAY})], said:{}});
+ok("one-off fires on its day",   TA._dueItems(at(9,0,0)).length===1);
+TA._set({items:[item({id:"c", repeat:"once", start:TOMORROW})], said:{}});
+ok("not before its day",         TA._dueItems(at(9,0,0)).length===0);
+TA._set({items:[item({id:"d", repeat:"once", start:YESTERDAY})], said:{}});
+ok("never after its day",        TA._dueItems(at(9,0,0)).length===0);
 
 TA._set({items:[item({id:"e", at:"09:00", on:false})], said:{}});
 ok("stopped item stays silent",   TA._dueItems(at(9,0,0)).length===0);
@@ -127,5 +130,95 @@ TA._set({label:"Stand up and stretch."});
 ok("heading read first", TA._phrase(at(15,0))==="Stand up and stretch. It's 3 o'clock P M");
 TA._set({label:""});
 ok("15:30 phrasing", TA._phrase(at(15,30))==="It's 3:30 P M");
+// ── RECURRENCE (2026-08-23) ─────────────────────────────────────────
+// Each announcement repeats on a rule inside an optional start/end window.
+const R = (o) => Object.assign(
+  {id:"r", at:"09:00", repeat:"daily", days:[], start:"2026-08-23",
+   end:null, text:"", on:true}, o);
+const M = (o, d) => TA._matchesOn(R(o), d);
+
+// once
+ok("once fires on its day",      M({repeat:"once", start:"2026-08-25"}, "2026-08-25"));
+ok("once not the day before",    !M({repeat:"once", start:"2026-08-25"}, "2026-08-24"));
+ok("once not the day after",     !M({repeat:"once", start:"2026-08-25"}, "2026-08-26"));
+
+// daily
+ok("daily fires every day",      M({repeat:"daily"}, "2026-09-14"));
+ok("daily respects start",       !M({repeat:"daily", start:"2026-09-01"}, "2026-08-31"));
+ok("daily respects end",         !M({repeat:"daily", end:"2026-08-31"}, "2026-09-01"));
+ok("daily fires on the end day", M({repeat:"daily", end:"2026-08-31"}, "2026-08-31"));
+
+// weekly — 2026-08-23 is a Sunday
+ok("weekly same weekday",        M({repeat:"weekly", start:"2026-08-23"}, "2026-08-30"));
+ok("weekly not other weekdays",  !M({repeat:"weekly", start:"2026-08-23"}, "2026-08-31"));
+
+// monthly, including the short-month clamp
+ok("monthly same day of month",  M({repeat:"monthly", start:"2026-01-15"}, "2026-06-15"));
+ok("monthly not other days",     !M({repeat:"monthly", start:"2026-01-15"}, "2026-06-16"));
+ok("31st CLAMPS to 28 Feb",      M({repeat:"monthly", start:"2026-01-31"}, "2026-02-28"));
+ok("...and not 27 Feb",          !M({repeat:"monthly", start:"2026-01-31"}, "2026-02-27"));
+ok("31st still fires on 31 Mar", M({repeat:"monthly", start:"2026-01-31"}, "2026-03-31"));
+ok("30th clamps in Feb too",     M({repeat:"monthly", start:"2026-01-30"}, "2026-02-28"));
+
+// yearly, including the leap-day clamp
+ok("yearly same date",           M({repeat:"yearly", start:"2026-03-05"}, "2027-03-05"));
+ok("yearly not other dates",     !M({repeat:"yearly", start:"2026-03-05"}, "2027-03-06"));
+ok("29 Feb clamps in 2027",      M({repeat:"yearly", start:"2024-02-29"}, "2027-02-28"));
+ok("29 Feb exact in 2028",       M({repeat:"yearly", start:"2024-02-29"}, "2028-02-29"));
+
+// custom days — 2026-08-24 is a Monday, 26th a Wednesday
+ok("custom fires on a chosen day",  M({repeat:"custom", days:[1,3]}, "2026-08-24"));
+ok("custom fires on the other one", M({repeat:"custom", days:[1,3]}, "2026-08-26"));
+ok("custom silent otherwise",       !M({repeat:"custom", days:[1,3]}, "2026-08-25"));
+ok("custom with no days never fires", !M({repeat:"custom", days:[]}, "2026-08-24"));
+
+// the window bounds every rule, not just daily
+ok("weekly stops at its end",    !M({repeat:"weekly", start:"2026-08-23", end:"2026-08-29"}, "2026-08-30"));
+ok("monthly waits for its start", !M({repeat:"monthly", start:"2026-09-15"}, "2026-08-15"));
+
+// expiry
+ok("past one-off is expired",    TA._isExpired(R({repeat:"once", start:"2026-08-01"}), "2026-08-23"));
+ok("today's one-off is not",     !TA._isExpired(R({repeat:"once", start:"2026-08-23"}), "2026-08-23"));
+ok("ended repeat is expired",    TA._isExpired(R({repeat:"daily", end:"2026-08-22"}), "2026-08-23"));
+ok("open-ended never expires",   !TA._isExpired(R({repeat:"daily"}), "2030-01-01"));
+
+// words
+ok("words: daily",   TA._repeatWords(R({repeat:"daily"}))==="every day");
+ok("words: weekly",  TA._repeatWords(R({repeat:"weekly", start:"2026-08-23"}))==="every Sun");
+ok("words: monthly", TA._repeatWords(R({repeat:"monthly", start:"2026-01-31"}))==="monthly on the 31st");
+ok("words: custom",  TA._repeatWords(R({repeat:"custom", days:[1,3]}))==="Mon Wed");
+ok("words: until",   /until 31 Aug 2026/.test(TA._repeatWords(R({repeat:"daily", end:"2026-08-31"}))));
+
+// dueItems must obey the rule, not just the clock
+TA._set({mode:"on", every:0, items:[R({id:"z", at:"09:00", repeat:"custom", days:[1]})], said:{}});
+ok("dueItems skips a non-matching day", TA._dueItems(at(9,0,0)).length===0);  // 22nd is a Saturday
+TA._set({items:[R({id:"z2", at:"09:00", repeat:"weekly", start:"2026-08-22"})], said:{}});
+ok("dueItems fires on the anchor day",  TA._dueItems(at(9,0,0)).length===1);
+
+// ── MIGRATION from the shapes already in people's browsers ──────────
+// _set bypasses load(), so the migration needs its own exercise. Anyone
+// upgrading has data in one of the two older shapes and must lose nothing.
+const KEY = "dp-time-announcer";
+store[KEY] = JSON.stringify({
+  mode:"on", every:30, at:["05:00","18:45"], label:"Stand up", keepalive:true});
+let mig = TA._load();
+ok("v1: each time becomes an announcement", mig.items.length===2);
+ok("v1: they repeat daily",  mig.items.every(i => i.repeat==="daily"));
+ok("v1: the shared label is kept", mig.items.every(i => i.text==="Stand up"));
+ok("v1: interval survives", mig.every===30);
+ok("v1: keepalive survives", mig.keepalive===true);
+ok("v1: the old list is cleared", mig.at.length===0);
+
+store[KEY] = JSON.stringify({mode:"on", items:[
+  {id:"a", at:"09:00", date:null, text:"Daily one", on:true},
+  {id:"b", at:"10:00", date:"2026-12-25", text:"Christmas", on:false}]});
+mig = TA._load();
+ok("v2: undated becomes daily", mig.items[0].repeat==="daily");
+ok("v2: dated becomes a one-off", mig.items[1].repeat==="once");
+ok("v2: the date becomes the start", mig.items[1].start==="2026-12-25");
+ok("v2: off stays off", mig.items[1].on===false);
+ok("v2: text preserved", mig.items[1].text==="Christmas");
+delete store[KEY];
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

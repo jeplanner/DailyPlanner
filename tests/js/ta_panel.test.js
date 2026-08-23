@@ -102,6 +102,51 @@ click(q(".ta-btn"));
 doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 ok("Escape closes it", q(".ta-pop").hidden === true);
 
+// ── the recurrence controls ──────────────────────────────────────────
+click(q(".ta-btn"));
+ok("repeat selector present", !!q("[data-ta-new-repeat]"));
+ok("start defaults to today",
+   /^\d{4}-\d{2}-\d{2}$/.test(q("[data-ta-new-start]").value));
+ok("day chips hidden unless custom", q("[data-ta-days]").hidden === true);
+
+q("[data-ta-new-repeat]").value = "custom";
+q("[data-ta-new-repeat]").dispatchEvent(new window.Event("change", {bubbles:true}));
+ok("choosing 'custom' reveals the days", q("[data-ta-days]").hidden === false);
+
+// Adding with no day chosen must be refused, not silently created dead.
+q("[data-ta-new-at]").value = "8am";
+click(q("[data-ta-add]"));
+ok("refuses custom with no days", doc.querySelectorAll(".ta-item").length === 0);
+
+click(doc.querySelector('[data-ta-day="1"]'));
+click(doc.querySelector('[data-ta-day="3"]'));
+ok("day chips toggle on", doc.querySelectorAll(".ta-days .on").length === 2);
+click(q("[data-ta-add]"));
+ok("adds once days are chosen", doc.querySelectorAll(".ta-item").length === 1);
+ok("row states the rule", /Mon Wed/.test(q(".ta-when i").textContent));
+ok("panel stays open", q(".ta-pop").hidden === false);
+
+// An end before the start would never fire, so it must be refused.
+q("[data-ta-new-repeat]").value = "daily";
+q("[data-ta-new-repeat]").dispatchEvent(new window.Event("change", {bubbles:true}));
+q("[data-ta-new-at]").value = "9am";
+q("[data-ta-new-start]").value = "2026-09-10";
+q("[data-ta-new-end]").value = "2026-09-01";
+click(q("[data-ta-add]"));
+ok("refuses an end before the start", doc.querySelectorAll(".ta-item").length === 1);
+q("[data-ta-new-end]").value = "2026-09-30";
+click(q("[data-ta-add]"));
+ok("accepts a valid window", doc.querySelectorAll(".ta-item").length === 2);
+ok("row states the window",
+   /until 30 Sep 2026/.test(doc.querySelectorAll(".ta-when i")[1].textContent) ||
+   /until 30 Sep 2026/.test(doc.querySelectorAll(".ta-when i")[0].textContent));
+
+// Leave the panel as this block found it — closed — so the next block's
+// toggle opens rather than closes. A test that depends on the previous
+// block's leftover state fails for a reason that has nothing to do with
+// the thing it is testing.
+click(q("[data-ta-close]"));
+
 // ── the interval buttons highlight ───────────────────────────────────
 click(q(".ta-btn"));
 click(doc.querySelector('[data-ta-every="45"]'));

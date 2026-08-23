@@ -3732,6 +3732,31 @@ def test_announcer_panel_close_and_inside_click_guards_are_present():
     assert "data-ta-close" in js
 
 
+def test_announcer_recurrence_rules():
+    """Asked 2026-08-23: daily / weekly / once / monthly / yearly / custom
+    days per announcement, with a start and an end.
+
+    The rules are exercised for real in tests/js/time_announcer.test.js —
+    35 assertions including the two clamping cases that decide whether a
+    reminder fires at all in a short month. These pin that the pieces exist.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    for rule in ("once", "daily", "weekly", "monthly", "yearly", "custom"):
+        assert '"' + rule + '"' in js, f"{rule} recurrence missing"
+    assert "function matchesOn" in js
+    # The window. `start` defaults to today; `end` null means forever.
+    assert "it.start" in js and "it.end" in js
+    # THE CLAMPS. A monthly reminder set on the 31st must still fire in
+    # February, and a yearly one on 29 Feb must fire in a common year —
+    # skipping is defensible and is not what someone setting a reminder
+    # wants. Both are Math.min against the month's real length.
+    assert "daysInMonth(t.y, t.m)" in js, "monthly does not clamp to short months"
+    assert "daysInMonth(t.y, s.m)" in js, "yearly does not clamp 29 February"
+    # Two states that would create a row that looks armed and never fires.
+    assert "the end date is before the start date" in js
+    assert "pick at least one day" in js
+
+
 def test_announcer_panel_survives_its_own_delete():
     """Reported 2026-08-23: "if i delete something it goes to home page."
 
