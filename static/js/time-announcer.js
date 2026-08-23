@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v250";
+  var BUILD = "v251";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -769,15 +769,52 @@
 
   //: Prefetching runs from the tick, so the audio for the NEXT slot is
   //: already downloaded before that slot arrives.
-  function prefetchNext(now) {
-    if (state.mode !== "on") return;
-    var ahead = new Date(now.getTime() + 90 * 1000);
-    var b = dueSlot(ahead);
-    if (b !== null) prefetchSpeech(phrase(ahead));
-    dueItems(ahead).forEach(function (d) {
-      var t = (d.text || "").replace(/[.!?]*$/, "") || "Reminder";
-      prefetchSpeech(t + ". " + phrase(ahead));
+  /* THE SPOKEN STRING FOR A MOMENT, BUILT IN EXACTLY ONE PLACE.
+
+     This used to be built twice — once by the prefetch and once by
+     check() — and the two disagreed. The prefetch cached the words for
+     90 seconds AHEAD while the fire looked up the words for NOW, so on
+     any minute the two differed the cache missed and the announcement
+     fell through to speechSynthesis. That is invisible while the app is
+     on screen (an earlier tick had already cached the right minute) and
+     fatal the moment Android freezes a hidden page, because then the
+     only tick that runs is the one at fire time. */
+  function wordsFor(when, items) {
+    var parts = (items || []).map(function (it) {
+      return (it.text || "").replace(/[.!?]*$/, "") || "Reminder";
     });
+    parts.push(phrase(when));
+    return parts.join(". ");
+  }
+
+  /* FETCH THE WORDS WHILE THE PAGE IS STILL ALLOWED TO.
+
+     A hidden Android page gets its timers frozen and its network starved,
+     so the fetch at fire time is the one least likely to succeed. This
+     walks the upcoming fire minutes and renders them AHEAD of time — the
+     work happens while the app is on screen, and the frozen page that
+     wakes up to announce finds the audio already in memory. */
+  function prefetchWindow(now, minutes) {
+    if (state.mode !== "on") return;
+    var base = new Date(now.getTime());
+    base.setSeconds(0, 0);
+    var budget = 12;                      // ~12 small MP3s, not a whole day
+    for (var i = 0; i <= minutes && budget > 0; i++) {
+      var t = new Date(base.getTime() + i * 60000);
+      var mins = t.getHours() * 60 + t.getMinutes();
+      // Only the EXACT fire minute — dueSlot/dueItems also accept a late
+      // arrival inside the grace window, and rendering those would spend
+      // the budget on phrases that are never asked for.
+      var boundary = dueSlot(t);
+      var due = dueItems(t).filter(function (d) { return d.slot === mins; });
+      if (!due.length && boundary !== mins) continue;
+      prefetchSpeech(wordsFor(t, due));
+      budget--;
+    }
+  }
+
+  function prefetchNext(now) {
+    prefetchWindow(now, 30);
   }
 
   function check(now) {
@@ -805,10 +842,7 @@
     // ONE UTTERANCE, not several. Two announcements landing on the same
     // minute must not talk over each other, and queueing them would let a
     // backlog build up — which is the failure people remember.
-    var parts = items.map(function (it) {
-      return (it.text || "").replace(/[.!?]*$/, "") || "Reminder";
-    });
-    parts.push(phrase(now));
+    var words = wordsFor(now, items);
 
     items.forEach(function (d) {
       state.said[d.id] = d.key;
@@ -841,8 +875,12 @@
         ? document.visibilityState !== "visible" : null,
       chime: null,
       spoke: null,
+      //: What the RENDERED-audio attempt did. speak() overwrites .spoke
+      //: with its own outcome, so without this the log said only
+      //: "refused: synthesis-failed" and hid the reason the audio path —
+      //: the only one that works on a locked Android — was skipped.
+      audio: null,
     };
-    var words = parts.join(". ");
     var spokeYet = false;
     var sayIt = function () {
       if (spokeYet) return;
@@ -858,7 +896,8 @@
       if (!hidden) { sayIt(); return; }
 
       // Cached: play it immediately.
-      if (playSpeech(words, sayIt)) return;
+      if (playSpeech(words, sayIt)) { lastFire.audio = "cached"; return; }
+      lastFire.audio = "not cached, fetching";
 
       // NOT CACHED. Fetch it NOW rather than giving up. A second late and
       // heard beats on time and silent — and on a hidden Android page
@@ -868,9 +907,16 @@
       // ago or the network was down at the time.
       fetchSpeech(words)
         .then(function () {
-          if (!playSpeech(words, sayIt)) sayIt();
+          if (!playSpeech(words, sayIt)) {
+            lastFire.audio = "fetched, nothing to play";
+            sayIt();
+          }
         })
-        .catch(function () { sayIt(); });
+        .catch(function () {
+          lastFire.audio = "fetch failed (" + sayState + ")";
+          paint();
+          sayIt();
+        });
     });
     paint();
   }
@@ -1458,10 +1504,12 @@
           lastFire.hidden ? " while HIDDEN" : " while visible";
         var ch = lastFire.chime || "no result";
         var sp = lastFire.spoke || "no result";
-        fire.className = "ta-health " +
-          (lastFire.spoke === "spoke" ? "good" : "bad");
+        var ok = lastFire.spoke === "spoke" ||
+                 lastFire.spoke === "played (audio)";
+        fire.className = "ta-health " + (ok ? "good" : "bad");
         fire.textContent = "Last fired " + when + where +
-          " \u2014 chime: " + ch + ", speech: " + sp;
+          " \u2014 chime: " + ch + ", speech: " + sp +
+          (lastFire.audio ? ", rendered audio: " + lastFire.audio : "");
       }
     }
 
@@ -2681,6 +2729,19 @@
     }, { once: true, capture: true });
   });
 
+  /* ── STOCK UP BEFORE THE PAGE IS FROZEN ────────────────────────────
+     This is the fix for "chime played, speech refused" on a locked
+     Android. Going to the background is the LAST moment this page is
+     reliably allowed to use the network — after that Chrome freezes its
+     timers and starves its fetches, so a page that waits until the
+     announcement is due to render the words will not get them. Rendering
+     the next half hour here means the wake-up only has to press play on
+     audio it already holds. */
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") return;
+    try { prefetchWindow(new Date(), 30); } catch (e) {}
+  });
+
   // Another tab changed the setting — follow it rather than disagreeing.
   window.addEventListener("storage", function (ev) {
     if (ev.key !== KEY) return;
@@ -2703,6 +2764,8 @@
     _slotsFor: slotsFor,
     _playChime: playChime,
     _prefetchSpeech: prefetchSpeech,
+    _prefetchWindow: prefetchWindow,
+    _wordsFor: wordsFor,
     _sayUrl: sayUrl,
     _timeWords: timeWords,
     _repeatWords: repeatWords,

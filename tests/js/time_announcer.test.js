@@ -375,5 +375,68 @@ ok("v2: off stays off", mig.items[1].on===false);
 ok("v2: text preserved", mig.items[1].text==="Christmas");
 delete store[KEY];
 
+
+// ── THE PREFETCH MUST CACHE THE KEY THE FIRE LOOKS UP (2026-08-23) ──
+// "Last fired 17.43 while hidden - Chime played ; speech: refused
+// :synthesis-failed" on Android whenever the app was off screen.
+//
+// The prefetch rendered the words for 90 SECONDS AHEAD (`phrase(ahead)`)
+// while the announcement looked up the words for NOW. Those are different
+// strings on any minute boundary, so the lookup missed. On screen that was
+// invisible — an earlier tick had already cached the right minute — and on
+// a hidden Android page it was fatal, because Chrome freezes the timers and
+// the ONLY tick that runs is the one at fire time. It cached 17:44 and then
+// asked for 17:43.
+//
+// So the real assertion is not "something was fetched". It is that the
+// fetched key is byte-identical to the one the fire path builds.
+{
+  const asked = [];
+  global.fetch = window.fetch = function (url) {
+    asked.push(url);
+    return Promise.resolve({ ok: false, status: 599 });   // never caches
+  };
+
+  const D = (h, m, s) => new Date(2026, 7, 23, h, m, s || 0);
+
+  TA._set({ mode: "on", every: 15, label: "", items: [], said: {},
+            lastSlot: null });
+  TA._prefetchWindow(D(17, 38), 30);
+
+  // What check() will build when 17:45 comes round.
+  const fireAt = D(17, 45);
+  const willSay = TA._wordsFor(fireAt, TA._dueItems(fireAt));
+  ok("prefetch renders the exact string the fire will ask for",
+     asked.indexOf(TA._sayUrl(willSay)) !== -1);
+  // The bug, stated directly: the +90s phrase is NOT what gets spoken.
+  ok("...and that string is the fire minute, not 90s later",
+     willSay.indexOf(TA._phrase(fireAt)) !== -1 &&
+     willSay.indexOf(TA._phrase(D(17, 46, 30))) === -1);
+
+  // A named announcement is spoken as "<text>. <time>" in ONE utterance,
+  // so it must be cached that way too. It used to be cached as its own
+  // fragment, which no fire path ever looks up when the time is appended.
+  asked.length = 0;
+  TA._set({ mode: "on", every: 0, label: "", said: {}, lastSlot: null,
+            items: [{ id: "x", at: "17:50", repeat: "daily", start: null,
+                      until: null, mins: 0, on: true, text: "Srirenga" }] });
+  TA._prefetchWindow(D(17, 38), 30);
+  const itemAt = D(17, 50);
+  const itemDue = TA._dueItems(itemAt);
+  ok("the named announcement is due at its minute", itemDue.length === 1);
+  const itemSays = TA._wordsFor(itemAt, itemDue);
+  ok("text and time are cached as ONE utterance",
+     asked.indexOf(TA._sayUrl(itemSays)) !== -1);
+  ok("...which is what the fire speaks",
+     itemSays === "Srirenga. " + TA._phrase(itemAt));
+
+  // A window this wide must not turn into a fetch storm.
+  asked.length = 0;
+  TA._set({ mode: "on", every: 1, label: "", items: [], said: {},
+            lastSlot: null });
+  TA._prefetchWindow(D(17, 38), 30);
+  ok("a 1-minute interval is capped, not 31 fetches", asked.length <= 12);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

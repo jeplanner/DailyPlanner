@@ -3330,14 +3330,86 @@ def test_backlog_shows_both_lists_without_moving_anything(auth_client, monkeypat
     # Grouped by project, and linking back to it — the grouping is the whole
     # reason these stay where they are.
     assert "Office" in html and "/projects/p1/tasks" in html
-    assert "nothing has been moved" in html.lower()
 
-    # It must not write. Ever.
+    # Both lists are routable now — the page became the capture inbox —
+    # so the old "this writes nothing at all" pin no longer describes it.
+    # What survives is the narrower rule it existed to protect: a PROJECT
+    # task is never relocated. It is dated and pointed at, never rewritten
+    # into another table and never hard-deleted.
+    assert html.count("data-bk-send") >= 2
+
     import inspect
     import routes.backlog as bk
     src = inspect.getsource(bk)
-    for verb in ("post(", "update(", "delete("):
-        assert verb not in src, f"the backlog view calls {verb}"
+    assert "delete(" not in src, "the backlog must never hard delete"
+
+
+def test_backlog_never_relocates_a_project_task(auth_client, monkeypatch):
+    """The one destructive move, refused at the door.
+
+    Filing a project task under a DIFFERENT project, or turning it into a
+    note, would strip the key result, initiative, epic, sprint and ordering
+    that only project_tasks carries, and would change the completion figure
+    on the project it left. Promotion is the single route it accepts, and
+    even that writes a POINTER rather than a copy.
+    """
+    import routes.backlog as bk
+    _backlog_stub(
+        monkeypatch,
+        tasks=[{"task_id": "t1", "task_text": "Revise the BCP/DR documentation",
+                "status": "open", "project_id": "p1", "plan_date": None,
+                "start_time": None}],
+        projects=[{"project_id": "p1", "name": "Office"}],
+    )
+    posted, updated = [], []
+    monkeypatch.setattr(bk, "post",
+                        lambda t, j, **k: posted.append((t, j)) or [{"id": "new"}])
+    monkeypatch.setattr(bk, "update",
+                        lambda t, params, j, **k: updated.append((t, params, j)))
+
+    for dest in ("project", "note", "reference", "inbox"):
+        r = auth_client.post("/api/backlog/send",
+                             json={"kind": "task", "id": "t1", "to": dest})
+        assert r.status_code == 400, f"a project task was sent to {dest}"
+    assert not posted and not updated
+
+    r = auth_client.post("/api/backlog/send",
+                         json={"kind": "task", "id": "t1", "to": "quick"})
+    assert r.status_code == 200
+
+    # A POINTER, not a copy: without this the planner counts one piece of
+    # work twice and ticking either leaves the other open.
+    assert posted and posted[0][0] == "quick_bucket"
+    assert posted[0][1]["source_task_id"] == "t1"
+
+    # Dated, not moved — the task keeps its project.
+    assert updated and updated[0][0] == "project_tasks"
+    assert set(updated[0][2]) == {"plan_date"}, updated[0][2]
+
+
+def test_backlog_capture_takes_a_pasted_list(auth_client, monkeypatch):
+    """"one source stop for capturing all the laundry list of my tasks" —
+    so a pasted block is many items, not one item with newlines in it.
+
+    Captured rows land in the FUTURE bucket, which is what makes them
+    backlog rather than work already prioritised.
+    """
+    import routes.backlog as bk
+    made = []
+    monkeypatch.setattr(bk, "post",
+                        lambda t, j, **k: made.append((t, j)) or [{"id": "x"}])
+
+    r = auth_client.post("/api/backlog/capture",
+                         json={"text": "Renew passport\n\n  Book dentist  \nFix tap"})
+    assert r.status_code == 200
+    assert [j["text"] for _, j in made] == ["Renew passport", "Book dentist", "Fix tap"]
+    assert all(j["time_bucket"] == "future" for _, j in made)
+    assert all(t == "quick_bucket" for t, _ in made)
+
+    made.clear()
+    assert auth_client.post("/api/backlog/capture",
+                            json={"text": "   \n  "}).status_code == 400
+    assert not made
 
 
 def test_backlog_excludes_finished_and_scheduled_work(auth_client, monkeypatch):

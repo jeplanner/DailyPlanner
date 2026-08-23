@@ -770,6 +770,41 @@ def _propagate_prep(user_id, item_id, done):
                        item_id, exc_info=True)
 
 
+def _propagate_source_task(user_id, item_id, done):
+    """Close (or reopen) the project task a promoted backlog row points at.
+
+    A task promoted from the Backlog is represented by a bucket row rather
+    than copied, precisely so the two cannot disagree. That only holds if
+    completion travels back — otherwise ticking it here leaves the project
+    task open forever and the project's progress figure never moves.
+
+    Silent by design: the bucket row is already saved, and a failure to
+    mirror must not turn a successful tick into an error.
+    """
+    try:
+        rows = get("quick_bucket", params={
+            "id": f"eq.{item_id}",
+            "user_id": f"eq.{user_id}",
+            "select": "source_task_id",
+            "limit": "1",
+        }) or []
+    except Exception:
+        # The column is missing until MIGRATION_BACKLOG_ROUTING.sql runs.
+        return
+    task_id = (rows[0] or {}).get("source_task_id") if rows else None
+    if not task_id:
+        return
+    try:
+        update(
+            "project_tasks",
+            params={"task_id": f"eq.{task_id}", "user_id": f"eq.{user_id}"},
+            json={"status": "done" if done else "open"},
+        )
+    except Exception:
+        logger.warning("quick_bucket: could not mirror to project task %s",
+                       task_id, exc_info=True)
+
+
 @quick_bucket_bp.route("/api/quick-bucket/<item_id>/done", methods=["POST"])
 @login_required
 def mark_done(item_id):
@@ -796,6 +831,7 @@ def mark_done(item_id):
     if old_event_id:
         cal_sync.sync_async(user_id, item_id, {}, old_event_id=old_event_id, force_delete=True)
     _propagate_prep(user_id, item_id, True)
+    _propagate_source_task(user_id, item_id, True)
     return jsonify({"ok": True})
 
 
@@ -831,6 +867,7 @@ def reopen(item_id):
     # was reported missing: un-ticking a row left the prep page and the day
     # planner still showing it done.
     _propagate_prep(user_id, item_id, False)
+    _propagate_source_task(user_id, item_id, False)
     return jsonify({"ok": True})
 
 
