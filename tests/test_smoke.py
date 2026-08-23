@@ -3868,7 +3868,16 @@ def test_checklist_mute_api_exists_and_never_deletes_times():
     assert '"/api/checklist/mutes/<item_id>"' in routes
     # It sets a flag. If this ever becomes a delete of reminder_times, the
     # mute stops being reversible and becomes destructive.
-    assert '{"notify_muted": muted}' in routes
+    #
+    # The ARGUMENT ORDER is asserted too, and not idly: update() takes
+    # (table, FILTERS, PAYLOAD), the payload was passed first, and the
+    # resulting ValueError was caught by the route's own except and
+    # returned as a plausible "migration may not have been run yet". The
+    # switch failed for days behind an error message that sounded right.
+    # The earlier version of this assertion passed throughout, because it
+    # only checked the payload dict appeared SOMEWHERE in the call.
+    assert '}, {"notify_muted": muted})' in routes, \
+        "update() is being called payload-first and will always fail"
     assert "checklist_reminder_times" not in routes.split(
         "def set_checklist_mute")[1].split("def ")[0], \
         "muting is touching the reminder times themselves"
@@ -4020,3 +4029,32 @@ def test_announcements_and_reminders_can_be_edited():
     assert "reminder_times: times" in js
     # An optimistic edit that fails must go back, not lie about saving.
     assert "row.times = before;" in js
+
+
+def test_no_supabase_update_is_called_payload_first():
+    """update(table, FILTERS, PAYLOAD). Passing the payload second raises a
+    ValueError, which routes with a try/except turn into a 500 that sounds
+    like something else entirely.
+
+    That is exactly what happened: the mute switch and the announcement
+    delete both shipped with the arguments the wrong way round, and the
+    failure surfaced as "MIGRATION_ANNOUNCER_MUTES.sql may not have been run
+    yet" — a message that was wrong and completely believable. A whole-repo
+    sweep is cheap and this class of bug is invisible in review.
+    """
+    import pathlib
+    import re
+    suspect = []
+    for f in sorted(pathlib.Path(".").glob("**/*.py")):
+        if "node_modules" in str(f) or f.name.startswith("test_"):
+            continue
+        src = f.read_text(encoding="utf-8", errors="ignore")
+        for m in re.finditer(r'\bupdate\(\s*"([a-z_]+)"\s*,\s*\{(.{0,140}?)\}',
+                             src, re.S):
+            # A filter value carries a PostgREST operator; a payload does not.
+            if not re.search(r'"(eq|gt|lt|gte|lte|neq|in|is|not)\.',
+                             m.group(2)):
+                line = src[:m.start()].count("\n") + 1
+                suspect.append(f"{f}:{line} update({m.group(1)!r}, ...)")
+    assert not suspect, "payload passed as the filter argument:\n" + \
+        "\n".join(suspect)

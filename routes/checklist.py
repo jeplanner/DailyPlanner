@@ -386,10 +386,11 @@ def set_checklist_mute(item_id):
     user_id = session["user_id"]
     muted = bool((request.get_json(silent=True) or {}).get("muted"))
     try:
-        update("checklist_items", {"notify_muted": muted}, {
+        # update(table, FILTERS, PAYLOAD) — filters first.
+        update("checklist_items", {
             "id": f"eq.{item_id}",
             "user_id": f"eq.{user_id}",
-        })
+        }, {"notify_muted": muted})
     except Exception:
         # The commonest cause is the migration not having been run. Say so
         # rather than returning a bare 500 that looks like a bug.

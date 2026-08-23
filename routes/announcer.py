@@ -175,10 +175,13 @@ def delete_item(client_id):
     recoverable."""
     user_id = session["user_id"]
     try:
-        update("announcer_items", {"is_deleted": True}, {
+        # update(table, FILTERS, PAYLOAD) — filters first. Getting this
+        # round the wrong way raises a ValueError that the except below
+        # would have turned into a plausible-sounding 500.
+        update("announcer_items", {
             "user_id": f"eq.{user_id}",
             "client_id": f"eq.{client_id}",
-        })
+        }, {"is_deleted": True})
     except Exception:
         logger.warning("announcer delete failed for %s", client_id,
                        exc_info=True)
