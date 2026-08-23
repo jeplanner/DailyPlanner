@@ -63,7 +63,7 @@
 
   function load() {
     var d = { mode: "off", every: 15, at: [], label: "",
-              lastSlot: null, keepalive: false };
+              items: [], said: {}, lastSlot: null, keepalive: false };
     try {
       var raw = JSON.parse(localStorage.getItem(KEY));
       if (raw && typeof raw === "object") {
@@ -77,11 +77,54 @@
         if (Array.isArray(raw.at)) d.at = raw.at.filter(isHHMM);
         if (typeof raw.label === "string") d.label = raw.label.slice(0, 60);
         if (typeof raw.lastSlot === "string") d.lastSlot = raw.lastSlot;
+        if (raw.said && typeof raw.said === "object") d.said = raw.said;
+        if (Array.isArray(raw.items)) {
+          d.items = raw.items.filter(function (it) {
+            return it && isHHMM(it.at);
+          }).map(function (it) {
+            return {
+              id: String(it.id || ""),
+              at: it.at,
+              date: isYMD(it.date) ? it.date : null,
+              text: String(it.text || "").slice(0, 120),
+              on: it.on !== false,
+            };
+          });
+        }
         d.keepalive = !!raw.keepalive;
       }
     } catch (_) {}
+
+    // MIGRATION. The previous shape was one shared label plus a bare list of
+    // times. Each of those becomes an announcement carrying that label, so
+    // nobody loses a setting by upgrading.
+    if (!d.items.length && d.at.length) {
+      d.items = d.at.map(function (t, i) {
+        return { id: "m" + i + t, at: t, date: null, text: d.label, on: true };
+      });
+      d.at = [];
+    }
     return d;
   }
+
+  function isYMD(v) {
+    return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  }
+
+  function todayYMD(d) {
+    d = d || new Date();
+    var m = d.getMonth() + 1, day = d.getDate();
+    return d.getFullYear() + "-" + (m < 10 ? "0" + m : m) + "-" +
+           (day < 10 ? "0" + day : day);
+  }
+
+  function newId() {
+    // No Math.random needed and no collision risk in practice: an id only has
+    // to be unique within one person's list.
+    idSeq += 1;
+    return "i" + idSeq + "-" + (new Date()).getTime();
+  }
+  var idSeq = 0;
 
   function isHHMM(v) {
     return typeof v === "string" && /^([01]?\d|2[0-3]):[0-5]\d$/.test(v);
@@ -139,8 +182,12 @@
   function scheduleWords() {
     var bits = [];
     if (state.every > 0) bits.push("every " + state.every + " min");
-    if (state.at.length) {
-      bits.push("at " + state.at.map(friendly).join(", "));
+    var live = state.items.filter(function (it) {
+      return it.on && !(it.date && it.date < todayYMD());
+    });
+    if (live.length) {
+      bits.push(live.length + (live.length === 1 ? " announcement"
+                                                 : " announcements"));
     }
     return bits.length ? bits.join(", plus ") : "nothing scheduled";
   }
@@ -172,18 +219,36 @@
      steps from midnight (00:00, 00:45, 01:30, ...) rather than resetting
      each hour, which is the only definition of "every 45 minutes" that is
      actually every 45 minutes. */
+  /* WHICH NAMED ANNOUNCEMENTS ARE DUE RIGHT NOW.
+     Returns the items, not just a flag, because several can land on the same
+     minute and all of them must be said.
+
+     THE DATE RULE, as asked for: no date means EVERY day from now on; a date
+     means that day only. A date in the past never fires again, and the panel
+     shows it as expired rather than silently ignoring it. */
+  function dueItems(now) {
+    var mins = now.getHours() * 60 + now.getMinutes();
+    var today = todayYMD(now);
+    var out = [];
+    for (var i = 0; i < state.items.length; i++) {
+      var it = state.items[i];
+      if (!it.on) continue;                       // stopped individually
+      if (it.date && it.date !== today) continue; // wrong day
+      var p = it.at.split(":");
+      var b = parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
+      var late = (mins - b) * 60000 + now.getSeconds() * 1000;
+      if (late < 0 || late > GRACE_MS) continue;  // not yet, or slept past it
+      if (state.said[it.id] === today + "|" + it.at) continue;   // already said
+      out.push(it);
+    }
+    return out;
+  }
+
   function dueSlot(now) {
     var mins = now.getHours() * 60 + now.getMinutes();
     var lateBy = function (boundary) {
       return (mins - boundary) * 60000 + now.getSeconds() * 1000;
     };
-
-    for (var i = 0; i < state.at.length; i++) {
-      var p = state.at[i].split(":");
-      var b = parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
-      var late = lateBy(b);
-      if (late >= 0 && late <= GRACE_MS) return b;
-    }
 
     if (state.every > 0) {
       var boundary = Math.floor(mins / state.every) * state.every;
@@ -201,10 +266,8 @@
     // correctly from digits.
     var body = m === 0 ? h12 + " o'clock" : h12 + ":" + (m < 10 ? "0" + m : m);
     var said = "It's " + body + " " + suffix;
-    // THE HEADING, read before the time. The point of an announcement is
-    // rarely the time itself — it is what the time is FOR. "Stand up and
-    // stretch. It's 3 o'clock PM" does a job that "It's 3 o'clock PM"
-    // does not.
+    // THE SHARED HEADING still applies to the repeating interval. Named
+    // announcements carry their own text and are prepended by check().
     if (state.label) said = state.label.replace(/[.!?]*$/, "") + ". " + said;
     return said;
   }
@@ -309,18 +372,43 @@
   function check(now) {
     if (state.mode !== "on") return;
     now = now || new Date();
+    var today = todayYMD(now);
 
-    var boundary = dueSlot(now);
-    if (boundary === null) return;   // not near one, or slept through it
-
-    var slot = slotFor(now, boundary);
     // Re-read from storage so a sibling tab that already announced wins.
     var fresh = load();
-    if (fresh.lastSlot === slot) { state.lastSlot = slot; return; }
 
-    state.lastSlot = slot;
+    // ── the named announcements ──────────────────────────────────────
+    var items = dueItems(now).filter(function (it) {
+      return fresh.said[it.id] !== today + "|" + it.at;
+    });
+
+    // ── the repeating interval ───────────────────────────────────────
+    var boundary = dueSlot(now);
+    var intervalDue = boundary !== null &&
+                      fresh.lastSlot !== slotFor(now, boundary);
+
+    if (!items.length && !intervalDue) return;
+
+    // ONE UTTERANCE, not several. Two announcements landing on the same
+    // minute must not talk over each other, and queueing them would let a
+    // backlog build up — which is the failure people remember.
+    var parts = items.map(function (it) {
+      return (it.text || "").replace(/[.!?]*$/, "") || "Reminder";
+    });
+    parts.push(phrase(now));
+
+    items.forEach(function (it) {
+      state.said[it.id] = today + "|" + it.at;
+    });
+    if (intervalDue) state.lastSlot = slotFor(now, boundary);
+
+    // Keep `said` from growing forever: yesterday's marks cannot matter.
+    Object.keys(state.said).forEach(function (k) {
+      if (String(state.said[k]).slice(0, 10) !== today) delete state.said[k];
+    });
+
     save();
-    speak(phrase(now));
+    speak(parts.join(". "));
   }
 
   function start() {
@@ -543,6 +631,48 @@
       "line-height:1.45;font-weight:700}",
       ".ta-health.good{color:#047857}",
       ".ta-health.bad{color:#b91c1c}",
+      ".ta-sec{margin:12px 0 5px;font-size:11px;font-weight:800;",
+      "letter-spacing:.05em;text-transform:uppercase;",
+      "color:var(--color-text-secondary,#6b7280)}",
+      ".ta-list{list-style:none;margin:0;padding:0;max-height:190px;",
+      "overflow:auto;border:1px solid var(--color-border,#e5e7eb);",
+      "border-radius:9px}",
+      ".ta-list:empty{display:none}",
+      ".ta-empty{padding:9px 10px;font-size:11px;line-height:1.45;",
+      "color:var(--color-text-secondary,#6b7280)}",
+      ".ta-item{display:flex;align-items:center;gap:7px;padding:6px 8px;",
+      "border-bottom:1px solid var(--color-border,#e5e7eb);font-size:12px}",
+      ".ta-item:last-child{border-bottom:0}",
+      ".ta-item.off{opacity:.5}",
+      ".ta-item.expired .ta-when i{color:#b91c1c}",
+      ".ta-tog{flex:0 0 auto;border:0;background:none;cursor:pointer;",
+      "font-size:13px;line-height:1;padding:2px;color:#4338ca}",
+      ".ta-item.off .ta-tog{color:var(--color-text-secondary,#9ca3af)}",
+      ".ta-when{flex:0 0 auto;display:flex;flex-direction:column;",
+      "min-width:70px;line-height:1.25}",
+      ".ta-when b{font-size:12px;font-variant-numeric:tabular-nums}",
+      ".ta-when i{font-style:normal;font-size:9.5px;",
+      "color:var(--color-text-secondary,#6b7280)}",
+      ".ta-what{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;",
+      "white-space:nowrap}",
+      ".ta-del{flex:0 0 auto;border:0;background:none;cursor:pointer;",
+      "font-size:15px;line-height:1;padding:2px 4px;",
+      "color:var(--color-text-secondary,#9ca3af)}",
+      ".ta-del:hover{color:#b91c1c}",
+      ".ta-add{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}",
+      ".ta-add input{font:inherit;font-size:12px;padding:5px 7px;",
+      "border-radius:8px;border:1px solid var(--color-border,#e5e7eb);",
+      "background:var(--color-bg,#f9fafb);color:var(--color-text,#111827);",
+      "min-width:0}",
+      "[data-ta-new-at]{flex:0 0 88px}",
+      "[data-ta-new-date]{flex:0 0 128px}",
+      "[data-ta-new-text]{flex:1 1 130px}",
+      "[data-ta-new-at][aria-invalid]{border-color:#b91c1c}",
+      ".ta-add button{flex:0 0 auto;font:inherit;font-size:12px;",
+      "font-weight:700;padding:5px 12px;border-radius:8px;border:0;",
+      "background:#4338ca;color:#fff;cursor:pointer}",
+      ".ta-hint{display:block;margin-top:5px;font-size:10.5px;line-height:1.45;",
+      "color:var(--color-text-secondary,#6b7280)}",
       ".ta-saved{float:right;font-size:11px;font-weight:800;color:#047857;",
       "background:color-mix(in srgb,#047857 14%,transparent);",
       "border:1px solid color-mix(in srgb,#047857 35%,transparent);",
@@ -602,8 +732,6 @@
     if (crow && custom) crow.hidden = false;
     var cin = pop.querySelector("[data-ta-every-in]");
     if (cin && document.activeElement !== cin) cin.value = state.every;
-    var atin = pop.querySelector("[data-ta-at]");
-    if (atin && document.activeElement !== atin) atin.value = state.at.join(", ");
     var lbl = pop.querySelector("[data-ta-label]");
     if (lbl && document.activeElement !== lbl) lbl.value = state.label;
     paintAtEcho();
@@ -660,15 +788,82 @@
 
   function paintAtEcho() {
     if (!pop) return;
-    var e = pop.querySelector("[data-ta-at-echo]");
-    if (!e) return;
-    e.textContent = state.at.length
-      ? "Understood: " + state.at.map(function (t) {
-          return t + " (" + friendly(t) + ")";
-        }).join(", ")
-      : "Optional, and you can list as many as you like. "
-        + "5.00 / 5:00 / 5am all mean five in the morning; use 5pm or 17:00 "
-        + "for the evening.";
+    var ul = pop.querySelector("[data-ta-list]");
+    if (!ul) return;
+    if (!state.items.length) {
+      ul.innerHTML = '<li class="ta-empty">Nothing scheduled yet. Add one ' +
+                     'below &mdash; 5.00, 5:00 and 5am all mean five in the ' +
+                     'morning; use 5pm or 17:00 for the evening.</li>';
+      return;
+    }
+    var today = todayYMD();
+    var rows = state.items.slice().sort(function (a, b) {
+      return (a.date || "") === (b.date || "")
+        ? a.at.localeCompare(b.at)
+        : (a.date || "0").localeCompare(b.date || "0");
+    });
+    ul.innerHTML = rows.map(function (it) {
+      // EXPIRED IS SHOWN, NOT HIDDEN. A one-off whose day has passed will
+      // never speak again, and silently keeping it in the list looks like a
+      // setting that is still armed.
+      var expired = it.date && it.date < today;
+      var when = it.date
+        ? (expired ? "expired " + it.date : it.date)
+        : "every day";
+      return '<li class="ta-item' + (it.on ? "" : " off") +
+             (expired ? " expired" : "") + '" data-id="' + esc(it.id) + '">' +
+             '<button type="button" class="ta-tog" data-ta-toggle ' +
+               'aria-pressed="' + (it.on ? "true" : "false") + '" ' +
+               'title="' + (it.on ? "Stop this one" : "Start this one") + '">' +
+               (it.on ? "\u25CF" : "\u25CB") + '</button>' +
+             '<span class="ta-when"><b>' + esc(friendly(it.at)) + '</b>' +
+               '<i>' + esc(when) + '</i></span>' +
+             '<span class="ta-what">' + esc(it.text || "(just the time)") +
+             '</span>' +
+             '<button type="button" class="ta-del" data-ta-del ' +
+               'title="Delete">&times;</button>' +
+             '</li>';
+    }).join("");
+  }
+
+  function byId(id) {
+    for (var i = 0; i < state.items.length; i++) {
+      if (state.items[i].id === id) return state.items[i];
+    }
+    return null;
+  }
+
+  function addItem() {
+    var atEl = pop.querySelector("[data-ta-new-at]");
+    var dEl = pop.querySelector("[data-ta-new-date]");
+    var tEl = pop.querySelector("[data-ta-new-text]");
+    // Reuse the forgiving parser, so "5.00" and "6.45pm" work here too.
+    var times = parseTimes(atEl.value);
+    if (!times.length) {
+      atEl.setAttribute("aria-invalid", "true");
+      atEl.focus();
+      note(false, "I could not read \u201c" + atEl.value + "\u201d as a time");
+      return;
+    }
+    atEl.removeAttribute("aria-invalid");
+    var date = isYMD(dEl.value) ? dEl.value : null;
+    var text = (tEl.value || "").slice(0, 120);
+    // A field accepting several times adds several announcements rather than
+    // quietly keeping the first — the parser already returns a list.
+    times.forEach(function (t) {
+      state.items.push({ id: newId(), at: t, date: date, text: text, on: true });
+    });
+    atEl.value = ""; dEl.value = ""; tEl.value = "";
+    state.lastSlot = null;
+    save(); paint(); savedFlash();
+    atEl.focus();
+  }
+
+  function esc(v) {
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;",
+               '"': "&quot;", "'": "&#39;" }[c];
+    });
   }
 
   function buildPop() {
@@ -697,16 +892,22 @@
         '<small>0 = only the exact times below.</small>' +
       '</div>' +
       '<div class="ta-fld">' +
-        '<label>Also announce at exactly' +
-        '<input type="text" data-ta-at placeholder="5.00, 9am, 13:30, 6.45pm"></label>' +
-        '<small data-ta-at-echo></small>' +
-      '</div>' +
-      '<div class="ta-fld">' +
-        '<label>Say this first' +
+        '<label>Say this first (with every interval announcement)' +
         '<input type="text" maxlength="60" data-ta-label ' +
         'placeholder="e.g. Stand up and stretch"></label>' +
-        '<small>Read out before the time, every time.</small>' +
       '</div>' +
+      '<div class="ta-sec">Your announcements</div>' +
+      '<ul class="ta-list" data-ta-list></ul>' +
+      '<div class="ta-add">' +
+        '<input type="text" data-ta-new-at placeholder="5.00 / 9am / 13:30" ' +
+          'aria-label="Time">' +
+        '<input type="date" data-ta-new-date aria-label="Date (optional)">' +
+        '<input type="text" data-ta-new-text maxlength="120" ' +
+          'placeholder="What to say" aria-label="What to say">' +
+        '<button type="button" data-ta-add>Add</button>' +
+      '</div>' +
+      '<small class="ta-hint">Leave the date blank to repeat every day from ' +
+      'today onwards. Each announcement has its own on/off switch.</small>' +
       '<p class="ta-auto">Everything here saves as you type &mdash; there is no ' +
       'Save button, and closing this panel keeps your settings.</p>' +
       '<p class="ta-now" data-ta-now></p>' +
@@ -769,6 +970,23 @@
         if (inp) { inp.value = state.every; inp.focus(); inp.select(); }
         return;
       }
+      var tog = ev.target.closest("[data-ta-toggle]");
+      if (tog) {
+        var li = tog.closest("[data-id]");
+        var it = byId(li && li.getAttribute("data-id"));
+        if (it) { it.on = !it.on; save(); paint(); savedFlash(); }
+        return;
+      }
+      var del = ev.target.closest("[data-ta-del]");
+      if (del) {
+        var li2 = del.closest("[data-id]");
+        var id = li2 && li2.getAttribute("data-id");
+        state.items = state.items.filter(function (x) { return x.id !== id; });
+        delete state.said[id];
+        save(); paint(); savedFlash();
+        return;
+      }
+      if (ev.target.closest("[data-ta-add]")) { addItem(); return; }
       if (ev.target.closest("[data-ta-test]")) {
         // Pressing it IS the gesture, so this is also the way to re-arm a
         // page that has not been touched yet.
@@ -782,9 +1000,17 @@
     /* The three text fields. Committed on input rather than on a Save
        button — there is nothing here worth a round trip to confirm, and a
        setting that needs saving is a setting people forget to save. */
+    pop.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      if (ev.target.closest("[data-ta-new-at],[data-ta-new-date],[data-ta-new-text]")) {
+        ev.preventDefault();
+        addItem();
+      }
+    });
+
     pop.addEventListener("input", function (ev) {
       var n = ev.target;
-      if (n.matches("[data-ta-every-in],[data-ta-at],[data-ta-label]")) savedFlash();
+      if (n.matches("[data-ta-every-in],[data-ta-label]")) savedFlash();
       if (n.matches("[data-ta-every-in]")) {
         var v = parseInt(n.value, 10);
         if (!(v >= 0)) return;
@@ -792,13 +1018,6 @@
         state.lastSlot = null;
         save();
         paint();
-        return;
-      }
-      if (n.matches("[data-ta-at]")) {
-        state.at = parseTimes(n.value);
-        state.lastSlot = null;
-        save();
-        paintAtEcho();
         return;
       }
       if (n.matches("[data-ta-label]")) {
@@ -874,6 +1093,8 @@
     _phrase: phrase,
     _slotFor: slotFor,
     _dueSlot: dueSlot,
+    _dueItems: dueItems,
+    _todayYMD: todayYMD,
     _parseTimes: parseTimes,
     _friendly: friendly,
     _scheduleWords: scheduleWords,

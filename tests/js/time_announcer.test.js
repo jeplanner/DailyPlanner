@@ -75,13 +75,51 @@ TA._set({mode:"on",every:15,at:[]});
 ok("60s late still counts",  TA._dueSlot(at(14,16,0))!==null);
 ok("2m late is skipped",     TA._dueSlot(at(14,17,0))===null);
 ok("mid-interval is silent", TA._dueSlot(at(14,7,0))===null);
-// Exact times
-TA._set({mode:"on",every:0,at:["09:00","13:30"],label:""});
-ok("every=0 => interval off", TA._dueSlot(at(14,0,0))===null);
-ok("exact time fires",        TA._dueSlot(at(13,30,0))===13*60+30);
-ok("exact-only ignores :00",  TA._dueSlot(at(11,0,0))===null);
-TA._set({mode:"on",every:60,at:["09:00"]});
-ok("exact wins over interval",TA._dueSlot(at(9,0,0))===540);
+// ── NAMED ANNOUNCEMENTS (2026-08-23) ────────────────────────────────
+// Exact times moved out of the interval logic into their own list, where
+// each carries its own text, an optional date, and its own on/off switch.
+const TODAY = TA._todayYMD(at(12,0,0));
+// The harness clock is 2026-08-22, so these must straddle THAT date.
+const YESTERDAY = "2026-08-21", TOMORROW = "2026-08-23";
+const item = (o) => Object.assign(
+  {id:"x", at:"09:00", date:null, text:"", on:true}, o);
+
+TA._set({mode:"on", every:0, at:[], items:[], said:{}});
+ok("every=0 => interval silent", TA._dueSlot(at(14,0,0))===null);
+
+TA._set({items:[item({id:"a", at:"13:30", text:"Lunch"})], said:{}});
+ok("undated item fires today",   TA._dueItems(at(13,30,0)).length===1);
+ok("...and says its own text",   TA._dueItems(at(13,30,0))[0].text==="Lunch");
+ok("not at another time",        TA._dueItems(at(11,0,0)).length===0);
+
+TA._set({items:[item({id:"b", at:"09:00", date:TODAY})], said:{}});
+ok("dated item fires on its day", TA._dueItems(at(9,0,0)).length===1);
+TA._set({items:[item({id:"c", at:"09:00", date:TOMORROW})], said:{}});
+ok("not before its day",          TA._dueItems(at(9,0,0)).length===0);
+TA._set({items:[item({id:"d", at:"09:00", date:YESTERDAY})], said:{}});
+ok("never after its day",         TA._dueItems(at(9,0,0)).length===0);
+
+TA._set({items:[item({id:"e", at:"09:00", on:false})], said:{}});
+ok("stopped item stays silent",   TA._dueItems(at(9,0,0)).length===0);
+
+// Several on the same minute must ALL be returned — they are combined into
+// one utterance rather than talking over each other.
+TA._set({items:[item({id:"f", at:"09:00", text:"One"}),
+                item({id:"g", at:"09:00", text:"Two"})], said:{}});
+ok("two at once both fire",       TA._dueItems(at(9,0,0)).length===2);
+
+// Already said today is not repeated, and the grace window still applies.
+TA._set({items:[item({id:"h", at:"09:00"})], said:{h: TODAY+"|09:00"}});
+ok("not repeated once said",      TA._dueItems(at(9,0,0)).length===0);
+TA._set({items:[item({id:"i", at:"09:00"})], said:{}});
+ok("60s late still fires",        TA._dueItems(at(9,1,0)).length===1);
+ok("2m late is skipped",          TA._dueItems(at(9,2,0)).length===0);
+ok("never fires early",           TA._dueItems(at(8,59,0)).length===0);
+
+// The interval is independent of the items and still works alongside them.
+TA._set({mode:"on", every:60, items:[item({id:"j", at:"09:00"})], said:{}});
+ok("interval unaffected by items", TA._dueSlot(at(9,0,0))===540);
+TA._set({mode:"on", every:15, items:[], said:{}, at:[], label:""});
 // Heading
 TA._set({label:"", every:15, at:[]});
 ok("no heading",  TA._phrase(at(15,0))==="It's 3 o'clock P M");

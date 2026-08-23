@@ -1965,8 +1965,14 @@ def test_time_announcer_never_reads_out_a_time_that_has_passed():
     # Aligned to the clock, not to when you pressed start — otherwise 3:07
     # and 3:22 would be "every fifteen minutes" and useless.
     assert "Math.floor(mins / state.every) * state.every" in js
-    # Two open tabs must not both announce.
-    assert "fresh.lastSlot === slot" in js, "sibling tabs would double-announce"
+    # Two open tabs must not both announce. There are now TWO dedupe paths —
+    # the repeating interval keyed on its slot, and each named announcement
+    # keyed on (id, date, time) — and both re-read from storage first so
+    # whichever tab gets there wins.
+    assert "fresh.lastSlot !== slotFor" in js, \
+        "sibling tabs would double-announce the interval"
+    assert 'fresh.said[it.id] !== today' in js, \
+        "sibling tabs would double-announce a scheduled item"
     # A queued backlog read out in sequence is the failure mode people
     # remember, so anything pending is cancelled first — but ONLY when
     # something really is in flight. cancel() followed by speak() in the same
@@ -3680,3 +3686,29 @@ def test_keepalive_track_is_long_enough_for_a_lock_screen_notification():
     # A blocked play() must not be swallowed — that is how "keep going when
     # minimised" ends up ticked and doing nothing.
     assert "keep-alive audio was blocked" in js
+
+
+def test_announcer_supports_multiple_named_announcements_with_dates():
+    """Asked 2026-08-23: several announcements, each with its own text, an
+    optional date, and its own stop.
+
+    The behaviour is exercised for real in tests/js/time_announcer.test.js
+    (13 assertions covering undated-repeats-daily, dated-fires-once,
+    never-before, never-after, individually-stopped, two-at-once, and the
+    already-said guard). These pin the parts that live in the UI.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    # Each announcement is its own record, not a shared label over a time list.
+    assert "state.items" in js and "function dueItems" in js
+    # An optional date, absent meaning "every day from today onwards".
+    assert "function isYMD" in js and "data-ta-new-date" in js
+    # Its own on/off switch, separate from the global stop.
+    assert "data-ta-toggle" in js and "if (!it.on) continue" in js
+    # An expired one-off is SHOWN as expired rather than silently kept —
+    # a dead row that still looks armed is worse than no row.
+    assert "expired" in js
+    # Several landing on the same minute are combined into one utterance
+    # rather than queued, or they talk over each other.
+    assert "parts.join" in js
+    # The old settings must survive the upgrade.
+    assert "MIGRATION" in js
