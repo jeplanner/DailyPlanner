@@ -6363,3 +6363,39 @@ def test_the_words_retry_on_the_element_that_just_worked():
     assert "if (!triedChimeEl" in fire
     # And it is tried BEFORE spending a network round trip re-rendering.
     assert fire.index("triedChimeEl = true") < fire.index("retried = true")
+
+
+def test_an_announcement_that_cannot_be_spoken_still_arrives():
+    """Every audio path can fail on a locked phone, and the failure is
+    silence — which is indistinguishable from the announcement never having
+    been scheduled at all.
+
+    A notification is the one thing that definitely reaches a locked
+    Android: it buzzes, it stays on screen, and it does not care whether
+    audio was permitted. The server sends one too, but only to a device
+    with a live push subscription — which is exactly what had been broken
+    for months on the phone this is for. This one needs nothing but the
+    page being alive, which is the case being rescued.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "function notifyInstead" in js
+
+    fn = js.split("function notifyInstead")[1].split("\n  }")[0]
+    # Never prompts, and never assumes: a page that asked for permission
+    # here would be asking at the worst possible moment.
+    assert 'Notification.permission !== "granted"' in fn
+    assert "showNotification" in fn
+    # It has to be noticeable on a locked screen, or it is silence with
+    # extra steps.
+    assert "vibrate" in fn and "requireInteraction: true" in fn
+    assert "silent: false" in fn
+
+    # Reached from the dead ends, not from the happy path.
+    assert js.count("notifyInstead(") >= 3
+    for marker in ('lastFire.spoke = "refused: "',
+                   'lastFire.spoke = "accepted but silent"'):
+        seg = js.split(marker)[1][:220]
+        assert "notifyInstead" in seg, f"no fallback after {marker}"
+
+    # And the log says so, or "you were told" looks like silence.
+    assert "fell back to a notification" in js

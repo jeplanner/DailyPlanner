@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v267";
+  var BUILD = "v268";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -822,9 +822,49 @@
     } catch (e) {}
   }
 
+  /* ── IF IT CANNOT BE SAID, IT MUST STILL BE DELIVERED ───────────────
+     Every path above can fail on a locked phone, and the failure is
+     silence — which is indistinguishable from the announcement never
+     having been scheduled. The page can raise its own notification
+     through the service worker, and a notification is the one thing that
+     definitely reaches a locked Android: it buzzes, it stays on screen,
+     and it does not care whether audio was permitted.
+
+     The server sends one too, but only if that device has a live push
+     subscription, and that is exactly what had been broken for months.
+     This one needs nothing but the page being alive at the time — which,
+     with the keep-alive holding, is the case being rescued. */
+  function notifyInstead(words) {
+    try {
+      if (typeof Notification === "undefined" ||
+          Notification.permission !== "granted") return;
+      if (!navigator.serviceWorker || !navigator.serviceWorker.ready) return;
+      navigator.serviceWorker.ready.then(function (reg) {
+        reg.showNotification("\uD83D\uDD14 " + friendly(hhmmNow()), {
+          body: words,
+          tag: "ta-said-" + hhmmNow(),
+          requireInteraction: true,
+          vibrate: [200, 100, 200],
+          silent: false,
+          icon: "/static/icons/icon-192.png",
+          badge: "/static/icons/icon-192.png",
+          data: { url: "/day-board" },
+        });
+        if (lastFire) { lastFire.notified = true; paint(); }
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  function hhmmNow() {
+    var d = new Date();
+    return ("0" + d.getHours()).slice(-2) + ":" +
+           ("0" + d.getMinutes()).slice(-2);
+  }
+
   function speak(text, isRetry) {
     if (!supported()) {
       note(false, "this browser has no speech synthesis");
+      notifyInstead(text);
       return false;
     }
     var synth = window.speechSynthesis;
@@ -877,6 +917,8 @@
           if (lastFire && !lastFire.spoke) {
             lastFire.spoke = "refused: " + ((ev && ev.error) || "error");
             nudgeKeepalive();
+            // Nothing was heard. Buzz instead of failing silently.
+            notifyInstead(text);
             paint();
           }
           note(false, (ev && ev.error) || "the browser refused to speak");
@@ -901,6 +943,7 @@
           if (!started && !errored) {
             if (lastFire && !lastFire.spoke) {
               lastFire.spoke = "accepted but silent";
+              notifyInstead(text);
               paint();
             }
             note(false, armed
@@ -1872,7 +1915,8 @@
           ", keep-alive: " + (lastFire.keep ? "holding" : "NOT holding") +
           ", speech audio: " +
           (lastFire.unlocked === null ? "unknown"
-           : lastFire.unlocked ? "unlocked" : "NEVER UNLOCKED");
+           : lastFire.unlocked ? "unlocked" : "NEVER UNLOCKED") +
+          (lastFire.notified ? ", fell back to a notification" : "");
       }
     }
 
