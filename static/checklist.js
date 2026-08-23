@@ -678,6 +678,28 @@
       setTimeout(() => $("#cl-name").focus(), 30);
     });
     $("#cl-form").addEventListener("submit", saveItem);
+
+    // ── TOUCHING A FIELD IN VIEW MODE STARTS EDITING ────────────────
+    // Reported as "checklist not able to edit time", on desktop and phone
+    // alike. Tapping a row opens the modal READ-ONLY, and a disabled
+    // <input type="time"> is the worst possible thing to meet there: it
+    // takes the tap, does nothing, shows no cursor and says nothing. The
+    // Edit button was right there, but the field is what you reach for.
+    //
+    // A disabled control fires no click of its own; the event still
+    // reaches this ancestor, which is what makes one listener here enough
+    // for every field in the form.
+    $("#cl-form").addEventListener("click", (e) => {
+      const modal = document.querySelector("#cl-modal .cl-modal");
+      if (!modal || modal.dataset.mode !== "view") return;
+      if (e.target.closest("button")) return;   // Close/Edit speak for themselves
+      setModalMode("edit", Boolean($("#cl-item-id").value));
+      // Hand the tap on to the field that was actually aimed at, now that
+      // it can accept it — otherwise the first tap is still swallowed and
+      // it only looks half-fixed.
+      const f = e.target.closest("input, select, textarea");
+      if (f && !f.disabled) { try { f.focus(); } catch (_) {} }
+    });
     $("#cl-schedule").addEventListener("change", toggleWeekdayPicker);
     $("#cl-time-add-btn")?.addEventListener("click", addModalTime);
     $("#cl-time-new")?.addEventListener("keydown", (e) => {

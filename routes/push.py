@@ -80,6 +80,37 @@ def subscribe():
     return jsonify({"success": True})
 
 
+@push_bp.route("/api/push/status", methods=["POST"])
+@login_required
+def status():
+    """Does the SERVER think it can reach this exact browser?
+
+    The panel used to report `Notification.permission`, which is the
+    browser's opinion and not the one that decides whether anything gets
+    delivered. A device can sit at "granted" for months while its row here
+    is `is_active = false` — the send got a 404/410 from the push service
+    once and the row was retired — and every screen still says
+    notifications are on.
+
+    That gap is the whole diagnosis for a phone that receives nothing with
+    the app closed, and it was visible nowhere. Now the panel can ask.
+    """
+    data = request.get_json(silent=True) or {}
+    endpoint = (data.get("endpoint") or "").strip()
+    if not endpoint:
+        return jsonify({"known": False, "active": False})
+
+    rows = get("push_subscriptions", {
+        "endpoint": f"eq.{endpoint}",
+        "user_id": f"eq.{session['user_id']}",
+        "select": "endpoint,is_active",
+        "limit": "1",
+    }) or []
+    if not rows:
+        return jsonify({"known": False, "active": False})
+    return jsonify({"known": True, "active": bool(rows[0].get("is_active"))})
+
+
 @push_bp.route("/api/push/unsubscribe", methods=["POST"])
 @login_required
 def unsubscribe():

@@ -5208,3 +5208,91 @@ def test_backlog_page_router_runs_in_a_real_dom(auth_client, monkeypatch):
                        capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "0 failed" in r.stdout, r.stdout
+
+
+def test_app_code_is_served_network_first():
+    """Reported as "check in desktop addition. Mobile seems to be working."
+
+    Three unrelated controls appeared broken on one device and fine on
+    another, running identical code. They were not broken: /static/ was
+    served stale-while-revalidate, which hands back the PREVIOUS copy and
+    fetches the new one for next time — so every deploy was one reload
+    behind. A phone hides that (the PWA is killed and reopened constantly);
+    a desktop tab left open for days does not.
+
+    JS and CSS are small and have a cache fallback, so there is nothing to
+    buy by serving them stale. Images, fonts and the keep-alive audio keep
+    stale-while-revalidate: big, unchanging, and harmless a version behind.
+    """
+    sw = open("static/service-worker.js", encoding="utf-8").read()
+    assert "networkFirst(req, STATIC_CACHE)" in sw, \
+        "app code is still served from cache first"
+    assert "staleWhileRevalidate(req, STATIC_CACHE)" in sw, \
+        "images and audio should stay stale-while-revalidate"
+    branch = sw.split("const isCode")[1].split(";")[0]
+    assert "js" in branch and "css" in branch
+
+    # Offline, an uncached script must NOT be answered with the offline
+    # HTML page — that throws a syntax error at line 1 and takes the whole
+    # file with it.
+    nf = sw.split("async function networkFirst")[1].split("\n}")[0]
+    assert 'req.destination === "script"' in nf
+
+
+def test_push_status_reports_what_the_server_can_reach(auth_client, monkeypatch):
+    """A device can sit at Notification.permission === "granted" for months
+    while its row here is is_active=false — one 404/410 from the push
+    service retires it — and every screen still says notifications are on.
+
+    That gap is the whole diagnosis for a phone that receives nothing with
+    the app closed, and it was visible nowhere.
+    """
+    import routes.push as pu
+
+    monkeypatch.setattr(pu, "get", lambda *a, **k: [
+        {"endpoint": "https://fcm.example/abc", "is_active": False}])
+    r = auth_client.post("/api/push/status", json={"endpoint": "https://fcm.example/abc"})
+    assert r.status_code == 200
+    assert r.get_json() == {"known": True, "active": False}
+
+    monkeypatch.setattr(pu, "get", lambda *a, **k: [
+        {"endpoint": "https://fcm.example/abc", "is_active": True}])
+    assert auth_client.post("/api/push/status",
+                            json={"endpoint": "https://fcm.example/abc"}
+                            ).get_json() == {"known": True, "active": True}
+
+    # Never registered at all is a different problem with a different fix.
+    monkeypatch.setattr(pu, "get", lambda *a, **k: [])
+    assert auth_client.post("/api/push/status",
+                            json={"endpoint": "https://fcm.example/zzz"}
+                            ).get_json() == {"known": False, "active": False}
+
+    # No endpoint is not an error — the browser may have no subscription.
+    assert auth_client.post("/api/push/status", json={}).status_code == 200
+
+    # And the panel must actually USE it, or the gap stays invisible.
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "/api/push/status" in js
+    assert "pushReach" in js
+    assert "cannot reach this device" in js
+
+
+def test_checklist_view_mode_does_not_swallow_a_tap_on_a_field():
+    """Reported as "checklist not able to edit time", on desktop AND phone.
+
+    Tapping a row opens the modal read-only, and a disabled
+    <input type="time"> is the worst thing to meet there: it takes the tap,
+    does nothing, shows no cursor and says nothing. The Edit button was
+    right there, but the field is what you reach for.
+
+    A disabled control fires no click of its own — the event still reaches
+    the form — which is why one listener on #cl-form covers every field.
+    """
+    js = open("static/checklist.js", encoding="utf-8").read()
+    handler = js.split('$("#cl-form").addEventListener("click"')[1].split("});")[0]
+    assert 'dataset.mode !== "view"' in handler, "it must only act in view mode"
+    assert 'setModalMode("edit"' in handler
+    # Buttons already say what they do; hijacking them would break Close.
+    assert 'e.target.closest("button")' in handler
+    # The tap has to reach the field it was aimed at, or it looks half fixed.
+    assert ".focus()" in handler

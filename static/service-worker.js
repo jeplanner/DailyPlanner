@@ -16,7 +16,7 @@
    route at /service-worker.js is served with no-cache (app.py), so a
    new version is picked up on the next page load. */
 
-const CACHE_VERSION = "v253-2026-08-23-send-dialog-close-x"
+const CACHE_VERSION = "v254-2026-08-23-network-first-code"
 const STATIC_CACHE = `dp-static-${CACHE_VERSION}`;
 const PAGES_CACHE  = `dp-pages-${CACHE_VERSION}`;
 const OFFLINE_URL  = "/offline";
@@ -267,9 +267,24 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets — stale-while-revalidate.
+  // ── THE APP'S OWN CODE — NETWORK FIRST ────────────────────────────
+  // Stale-while-revalidate serves the PREVIOUS copy and fetches the new
+  // one for next time, which means every deploy is one reload behind. On
+  // a phone that is invisible: the PWA is opened and killed constantly,
+  // so it catches up within minutes. On a desktop tab left open for days
+  // it is not — reported as "check in desktop addition, mobile seems to
+  // be working", with three unrelated controls appearing broken on one
+  // device because that device was simply running last week's script.
+  //
+  // JS and CSS are small and there is a cache fallback two lines down, so
+  // there is nothing to buy by serving them stale. Images, fonts and the
+  // keep-alive audio keep stale-while-revalidate: they are big, they do
+  // not change, and being a version behind on an icon costs nothing.
   if (url.pathname.startsWith("/static/") || url.pathname === "/manifest.json") {
-    event.respondWith(staleWhileRevalidate(req, STATIC_CACHE));
+    const isCode = /\.(?:js|css)$/i.test(url.pathname) ||
+                   url.pathname === "/manifest.json";
+    event.respondWith(isCode ? networkFirst(req, STATIC_CACHE)
+                             : staleWhileRevalidate(req, STATIC_CACHE));
     return;
   }
 
@@ -310,6 +325,13 @@ async function networkFirst(req, cacheName) {
   } catch (_) {
     const cached = await cache.match(req);
     if (cached) return cached;
+    // THE OFFLINE PAGE IS HTML, and handing HTML back for a .js or .css
+    // request does not degrade gracefully — it throws a syntax error at
+    // the top of the file and takes the whole script with it. Only a
+    // navigation can be answered with a page.
+    if (req.destination === "script" || req.destination === "style") {
+      return new Response("", { status: 503, statusText: "Offline" });
+    }
     const offline = await caches.match(OFFLINE_URL);
     if (offline) return offline;
     return new Response("Offline", { status: 503, statusText: "Offline" });

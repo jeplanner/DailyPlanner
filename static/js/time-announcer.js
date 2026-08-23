@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v253";
+  var BUILD = "v254";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -1580,8 +1580,30 @@
         ? "unsupported" : Notification.permission;
       perm.className = "ta-perm " + st;
       if (st === "granted") {
-        perm.innerHTML = "\u2713 Notifications are on for this device, so " +
-          "announcements reach you with the screen off.";
+        // THE BROWSER SAYING YES IS NOT THE SERVER SAYING IT CAN REACH YOU.
+        // A device sits at "granted" while its row on the server is
+        // is_active=false — one 404/410 from the push service retires it —
+        // and every screen still reads "notifications are on". That gap is
+        // the entire explanation for a phone that gets nothing with the app
+        // closed, and it was visible nowhere.
+        if (pushReach === "dead") {
+          perm.className = "ta-perm denied";
+          perm.innerHTML = "\u26a0 This browser allows notifications, but " +
+            "the <b>server cannot reach this device</b> \u2014 its " +
+            "registration was rejected and retired. Nothing arrives while " +
+            "the app is closed until it is registered again. " +
+            "<button type=\"button\" data-ta-perm-on>Re-register</button>";
+        } else if (pushReach === "missing") {
+          perm.className = "ta-perm denied";
+          perm.innerHTML = "\u26a0 This browser allows notifications but " +
+            "this device is <b>not registered</b> with the server, so " +
+            "nothing can arrive while the app is closed. " +
+            "<button type=\"button\" data-ta-perm-on>Register</button>";
+        } else {
+          perm.innerHTML = "\u2713 Notifications are on for this device, so " +
+            "announcements reach you with the screen off." +
+            (pushReach === "ok" ? " The server has it registered." : "");
+        }
       } else if (st === "denied") {
         perm.innerHTML = "\u26a0 Notifications are <b>blocked</b> for this " +
           "site in your browser. Nothing can reach a locked screen until " +
@@ -1877,6 +1899,30 @@
     }).catch(function () {
       note(false, "deleted here, but could not reach the server");
     });
+  }
+
+  /* Whether the SERVER can reach this browser: "unknown" until asked,
+     then "ok" | "dead" (registered and retired) | "missing" (never
+     registered). Asked once per panel open — it is a cheap lookup and the
+     answer changes only when a send fails. */
+  var pushReach = "unknown";
+
+  function checkPushReach() {
+    try {
+      if (!navigator.serviceWorker || !navigator.serviceWorker.ready) return;
+      navigator.serviceWorker.ready.then(function (reg) {
+        return reg.pushManager.getSubscription();
+      }).then(function (sub) {
+        if (!sub) { pushReach = "missing"; paint(); return; }
+        return apiPost("/api/push/status", { endpoint: sub.endpoint })
+          .then(function (r) {
+            pushReach = !r ? "unknown"
+                      : r.active ? "ok"
+                      : r.known ? "dead" : "missing";
+            paint();
+          });
+      }).catch(function () { /* leave it unknown rather than guess */ });
+    } catch (e) { /* no service worker here */ }
   }
 
   /* ── REMINDER NOTIFICATIONS ─────────────────────────────────────────
@@ -2432,7 +2478,11 @@
         try {
           if (window.ClPush && window.ClPush.subscribe) {
             window.ClPush.subscribe()
-              .then(function () { paint(); savedFlash(); })
+              .then(function () {
+                pushReach = "unknown";
+                checkPushReach();
+                paint(); savedFlash();
+              })
               .catch(function (e) {
                 note(false, (e && e.message) || "could not turn on notifications");
                 paint();
@@ -2657,6 +2707,7 @@
     pop.hidden = false;
     document.documentElement.classList.add("ta-locked");
     try { prefetchNext(new Date()); } catch (e) {}
+    try { checkPushReach(); } catch (e) {}
     showTab("items");
     paint();
     loadMutes();
