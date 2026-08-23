@@ -368342,6 +368342,913 @@ weight if the data really pays for it.
   with the learning rate — and it interacts with the schedule, so tune them
   together rather than one at a time."""
 
+_ANSWER_V2["Precision, Recall & F1 (from scratch)"] = """Four counters and three divisions - and the only real work is guarding the
+divisions and knowing which denominator is which.
+
+· THE COUNTERS — tp, fp, fn, tn. One pass over the paired (actual, predicted)
+  values, four cases.
+· PRECISION = tp / (tp + fp). The denominator is everything you PREDICTED
+  positive. It answers "can I trust an alert?"
+· RECALL = tp / (tp + fn). The denominator is everything that ACTUALLY was
+  positive. It answers "what am I missing?"
+· F1 = 2·p·r / (p + r), the harmonic mean. Harmonic rather than arithmetic
+  because it is dragged down by the smaller of the two, so you cannot score
+  well by pushing one to an extreme.
+· GUARD EVERY DIVISION. Precision is undefined when the model predicts no
+  positives at all — routine on imbalanced data or a badly chosen threshold —
+  and recall is undefined when there are no positives in the sample. Return
+  0.0 and say that you chose to, rather than raising in the middle of an
+  evaluation run.
+· F1 NEEDS ITS OWN GUARD — if precision and recall are both 0, the formula
+  divides by zero even though both inputs were defined.
+· THE VECTORISED VERSION — tp = ((y == 1) & (p == 1)).sum() and so on. Four
+  lines with numpy, and it is what you would actually write.
+· MULTI-CLASS needs an averaging choice, and it changes the number
+  substantially. MACRO averages the per-class scores equally, so a rare class
+  counts as much as a common one. MICRO pools the counts first and is
+  dominated by frequent classes. WEIGHTED averages by class size. State which
+  you used; a bare "F1 = 0.82" for multi-class is ambiguous.
+· WHY IT IS ASKED — it is ten lines, so the interviewer is checking that you
+  can derive the metrics from the confusion matrix rather than recall
+  formulas, and that you thought about the empty denominators unprompted."""
+
+_ANSWER_V2["Precision, recall, F1 from a confusion matrix (numpy)"] = \
+    _ANSWER_V2["Precision, Recall & F1 (from scratch)"]
+
+_ANSWER_V2["ROC AUC (rank-based, from scratch)"] = """AUC is the probability that a random positive scores above a random negative -
+so you can compute it by RANKING, without ever building the curve.
+
+· THE DEFINITION THAT MAKES IT EASY — the area under the ROC curve equals
+  P(score of a random positive > score of a random negative). Once you accept
+  that, the implementation is a sort.
+· THE NAIVE VERSION — compare every positive against every negative and count
+  wins, halving ties. O(P·N), correct, and too slow past a few thousand
+  points.
+· THE RANK VERSION — sort all scores ascending and assign ranks starting at 1.
+  Then AUC = (sum of the positives' ranks - P(P+1)/2) / (P·N).
+· WHY THAT WORKS — the sum of positive ranks counts, for each positive, how
+  many items sit below it, including other positives. Subtracting P(P+1)/2
+  removes the positive-versus-positive comparisons, leaving exactly the
+  positive-beats-negative count. Dividing by P·N turns it into a probability.
+· TIES MUST GET AVERAGE RANKS. Three items sharing a score get rank 4 each
+  rather than 3, 4, 5. Skipping this silently inflates AUC whenever a model
+  outputs repeated values, which tree models do constantly.
+· COST — O(n log n), dominated by the sort, and O(n) space.
+· THE EDGE CASES — if there are no positives or no negatives, AUC is
+  undefined. Return None or nan rather than a number, because 0.5 would look
+  like a real measurement.
+· AUC IS THRESHOLD-FREE — it evaluates the RANKING, not any operating point.
+  That is its strength and its limitation: a model can rank well and still be
+  badly calibrated.
+· WHY IT IS ASKED — the rank identity is a genuinely elegant piece of
+  reasoning, and knowing it separates people who have used AUC from people who
+  have understood it. Mention the tie handling before being asked."""
+
+_ANSWER_V2["Retrieval-Augmented Generation (RAG)"] = """Fetch relevant text at query time and put it in the prompt, so the model
+answers from documents rather than from memory.
+
+· THE THREE PROBLEMS IT SOLVES — the model's knowledge is frozen at training
+  time, it cannot see your private data, and it invents plausible answers when
+  it does not know. Retrieval addresses all three.
+· THE OFFLINE HALF — ingest documents, split into chunks, embed each chunk,
+  store in a vector index with its metadata and source.
+· THE ONLINE HALF — embed the question, retrieve the nearest chunks, put them
+  in the prompt with an instruction to answer only from them, generate, return
+  the answer WITH citations.
+· THE HARD PART IS RETRIEVAL, not generation, and this is the thing to say
+  first. Chunking strategy, hybrid keyword-plus-vector search, and reranking
+  move quality far more than any prompt tweak or model upgrade.
+· CHUNKING — split on structure (headings, functions, sections) rather than a
+  character count, add overlap, and PREPEND the document title and section to
+  each chunk. A chunk saying "it must be filed within 30 days" is useless
+  without knowing what "it" is.
+· HYBRID SEARCH IS NOT OPTIONAL for real corpora — embeddings garble product
+  codes, error numbers and rare names, which is exactly what people search
+  for. BM25 handles those; vectors handle paraphrase; reciprocal rank fusion
+  combines them without needing comparable scores.
+· CONVERSATION BREAKS RETRIEVAL — "what about the second one?" is meaningless
+  to a retriever. Rewrite the question against the history into a standalone
+  query BEFORE embedding it.
+· GROUNDING AND REFUSAL — instruct the model to say it does not know when the
+  context does not cover the question, and check the answer's claims appear in
+  the retrieved text. Ungrounded confidence is the failure users punish.
+· EVALUATE THE HALVES SEPARATELY — retrieval with recall@k, generation with
+  faithfulness. A bad answer from good chunks and a good answer from lucky
+  chunks are different bugs with different fixes."""
+
+_ANSWER_V2["Hallucination (LLMs)"] = """The model produces fluent, confident text that is not true - because it was
+trained to produce likely text, not true text.
+
+· THE ROOT CAUSE, stated plainly: next-token prediction optimises for
+  plausibility. Nothing in the objective distinguishes a true continuation
+  from a convincing one, and there is no internal flag for "I do not know".
+· WHY IT SOUNDS SO CONVINCING — the same machinery that produces correct
+  fluent text produces incorrect fluent text. Confidence in the prose carries
+  no information about correctness, which is precisely why people are fooled.
+· THE COMMON TRIGGERS — facts absent or rare in training, anything after the
+  cutoff, specific numbers, citations and URLs, and questions with a false
+  premise that the model helpfully answers instead of challenging.
+· THE TWO KINDS worth separating. INTRINSIC: contradicts the source you gave
+  it. EXTRINSIC: cannot be verified from the source at all. RAG makes the
+  first detectable and does not eliminate the second.
+· WHAT ACTUALLY REDUCES IT — retrieval with citations, an explicit instruction
+  that not knowing is an acceptable answer, lower temperature for factual
+  tasks, and constraining the output to a schema or an enum where possible.
+· VERIFICATION AFTER GENERATION — check that each claim appears in the
+  retrieved context, either with a model or by string overlap. This is
+  measurable and it is what "faithfulness" scores.
+· SELF-CONSISTENCY as a signal — sample the answer several times; agreement
+  across samples correlates with correctness, and disagreement is a useful
+  flag for human review.
+· WHAT DOES NOT WORK — asking the model whether it is sure. It will agree with
+  whatever you imply, which is sycophancy rather than calibration.
+· THE HONEST FRAMING for an interview — this is mitigated, not solved. Design
+  the product so a wrong answer is survivable: cite sources so the user can
+  check, keep a human in the loop for consequential actions, and never let the
+  model's output authorise its own next step."""
+
+_ANSWER_V2["Temperature (sampling)"] = """Divide the scores by T before softmax - below 1 sharpens toward the likeliest
+token, above 1 flattens toward variety.
+
+· THE MECHANISM — softmax(logits / T). Small T magnifies the differences
+  between scores, so the top token dominates. Large T compresses them toward
+  uniform.
+· T = 0 is greedy decoding: always take the most likely token. Deterministic
+  in principle, and see the caveat below.
+· WHY 'TEMPERATURE' — the name comes from the Boltzmann distribution, where a
+  higher temperature means particles occupy more states. The analogy is exact,
+  which is why the term stuck rather than being renamed.
+· IT DOES NOT CHANGE THE RANKING, only the gaps. The most likely token stays
+  the most likely at any temperature; what changes is how often the others get
+  chosen.
+· PRACTICAL SETTINGS — 0 to 0.3 for extraction, classification, code and
+  factual answers. Around 0.7 for conversation. 0.9 to 1.2 for brainstorming
+  and creative writing. Above about 1.5 output degrades quickly.
+· T = 0 IS NOT PERFECTLY REPRODUCIBLE IN PRODUCTION — batching and
+  floating-point non-associativity on GPUs can break ties differently between
+  runs. Expect near-determinism and say so if reproducibility is a
+  requirement.
+· IT COMBINES WITH TOP-K AND TOP-P, applied first, before the truncation and
+  the sample. Changing all three at once makes the effect of any one
+  impossible to attribute, so tune one at a time.
+· HIGH TEMPERATURE IS NOT CREATIVITY — it is noise. It produces surprising
+  tokens, some of which read as inventive and more of which read as confused.
+  For genuinely varied output, sampling several times at a moderate
+  temperature beats one sample at a high one.
+· THE OTHER USE OF THE WORD — temperature SCALING for calibration, where a
+  single T is fitted on a validation set so a classifier's probabilities match
+  its accuracy. Same operation, entirely different purpose."""
+
+_ANSWER_V2["Why does dropout act as a regularizer?"] = """Because a neuron cannot rely on any specific other neuron being present, so
+the network has to learn redundant representations instead of brittle
+partnerships.
+
+· THE MECHANISM — during training, each neuron's output is set to zero with
+  probability p, independently, on every batch. A different random subnetwork
+  every step.
+· THE CO-ADAPTATION ARGUMENT, which is the original one: without dropout,
+  neurons specialise into fragile committees where each corrects another's
+  errors. That arrangement fits the training set and generalises badly.
+  Randomly removing members makes it unlearnable.
+· THE ENSEMBLE ARGUMENT — each step trains a different thinned network, and
+  using all neurons at test time approximates averaging over that exponentially
+  large ensemble. Averaging uncorrelated errors is the same mechanism that
+  makes random forests work.
+· THE NOISE ARGUMENT — injecting noise into activations is a general
+  regulariser, and dropout is a particularly cheap form of it.
+· WHY REDUNDANCY GENERALISES — a feature represented by several units survives
+  a slightly different input; a feature represented by one unit does not.
+  Dropout forces the first arrangement.
+· THE SCALING DETAIL that makes it work at all — dropout is ON in training and
+  OFF at inference, so activations would be systematically larger at test time.
+  Inverted dropout divides surviving activations by (1-p) during training, so
+  the expected value matches and nothing changes at test time.
+· THE FRAMEWORK TRAP — forgetting model.eval() in PyTorch leaves dropout
+  active during inference, producing a different answer on every call. A real
+  and common production bug.
+· TYPICAL RATES — 0.5 on large fully connected layers, 0.1 to 0.3 in
+  convolutional and transformer layers. Higher where there are more parameters
+  to overfit with.
+· WHERE IT FADED — convolutional networks largely replaced it with batch
+  normalisation, whose own noise regularises similarly. Transformers still use
+  it at low rates, and Monte Carlo dropout (keeping it ON at inference and
+  sampling) gives a cheap uncertainty estimate."""
+
+_ANSWER_V2["Design a Query Autocomplete (typeahead) system"] = """A prefix tree of popular completions served from memory, updated in the
+background - the entire design is about the latency budget.
+
+· THE CONSTRAINT SETS EVERYTHING — a suggestion must arrive in tens of
+  milliseconds, faster than the next keystroke, or the feature is worse than
+  nothing. No database round trip per character.
+· THE STRUCTURE — a TRIE where each node stores the top k completions for the
+  prefix ending there. Lookup is then walking the prefix and reading a
+  precomputed list, with no ranking at request time.
+· WHY PRECOMPUTE THE TOP K AT EACH NODE — computing them by traversing the
+  subtree on every keystroke is far too slow. Storing them costs memory and
+  buys the latency, which is the trade this design exists to make.
+· RANKING THE COMPLETIONS — historical query frequency with a time decay, so
+  yesterday's news outranks last year's, plus personalisation and location
+  where available.
+· UPDATING — offline, in batch, from the query logs, and swapped in atomically.
+  Real-time updates to a shared trie are contention you do not need; hourly
+  or daily is fine for most of the corpus.
+· THE TRENDING EXCEPTION — a breaking event needs to appear in minutes, not
+  tomorrow. A small, separate, fast-moving layer merged at read time handles
+  that without destabilising the main index.
+· SHARDING BY PREFIX — the trie for a large corpus does not fit on one
+  machine. Shard on the first one or two characters, with a router in front.
+· TYPO TOLERANCE is the expensive extra — edit-distance search over a trie, or
+  a separate fuzzy index consulted when the exact prefix returns too little.
+  Do it as a fallback rather than always, for the latency.
+· THE SAFETY LAYER IS NOT OPTIONAL — autocomplete puts words in a user's
+  mouth, and suggesting something offensive or defamatory is a serious
+  incident. Maintain a blocklist and filter suggestions for sensitive prefixes.
+· MEASURE — suggestion click-through, how many characters were saved, and the
+  rate at which people ignore suggestions entirely."""
+
+_ANSWER_V2["Design for Recommendation Cold-Start"] = """A new item has no interactions and a new user has no history, so fall back on
+CONTENT and context until behaviour exists.
+
+· NAME WHICH COLD START you are solving — new user, new item, or new system.
+  They need different answers and conflating them is the commonest weak
+  response.
+· NEW USER — popularity and trending, segmented by whatever you do know
+  (country, device, referral, time of day). Then onboarding: asking for three
+  preferences converts a cold start into a warm one in thirty seconds and is
+  usually worth the friction.
+· NEW ITEM — CONTENT features carry it: title, description, images, category,
+  price, creator. A two-tower model with content in the item tower produces a
+  usable embedding the moment the item is created, with zero interactions.
+· WHY THE ARCHITECTURE IS THE ANSWER — pure collaborative filtering literally
+  cannot represent an item nobody has touched. Content features are what make
+  the cold case expressible at all, which is a design decision rather than a
+  patch.
+· DELIBERATE EXPLORATION is required, not optional. Reserve a share of
+  impressions for cold items, or they are never shown, never gather data, and
+  never become recommendable. The system starves its own catalogue.
+· CONTEXTUAL BANDITS are the principled version — treat it as explore versus
+  exploit and use Thompson sampling, so you learn fast while still serving
+  something reasonable.
+· TRANSFER FROM SIMILAR ITEMS — place a new item near its nearest neighbours
+  by content and borrow their behaviour as a prior, letting real data override
+  it as it accumulates.
+· THE HYBRID BLEND — weight a content score against a collaborative score by
+  how much interaction data exists, so the weight shifts smoothly as an item
+  warms up and there is no cliff.
+· THE MEASUREMENT TRAP — overall CTR hides cold-start failure completely,
+  because popular items carry the average. Track coverage and long-tail
+  performance explicitly or the problem stays invisible while the dashboard
+  looks fine."""
+
+_ANSWER_V2["Design a large-scale Image Classification pipeline"] = """The model is the easy part - the pipeline is data ingestion, labelling,
+augmentation, distributed training and a serving path with a latency budget.
+
+· CLARIFY FIRST — how many classes, how much labelled data, what accuracy is
+  required, and what the latency and cost budget is at serving. Single-label,
+  multi-label and fine-grained classification are different problems.
+· DATA INGESTION — images arrive as files and must become a stream the GPU can
+  keep up with. Pack them into sharded record files (TFRecord, WebDataset),
+  because millions of small file reads will starve the accelerator long before
+  the model is the bottleneck.
+· LABELLING — start with whatever weak labels exist (tags, filenames, user
+  categories), then get a clean human-labelled evaluation set. The evaluation
+  set must be right even when the training labels are noisy, because it is the
+  only thing you can trust.
+· AUGMENTATION — flips, crops, colour jitter, and RandAugment or similar. Each
+  transform asserts an invariance, so check it holds: a horizontal flip is
+  fine for animals and wrong for text and for digits.
+· THE MODEL — start from a PRETRAINED backbone (ResNet, EfficientNet, or a
+  ViT) and fine-tune. Training from scratch needs orders of magnitude more
+  data and buys nothing on a standard domain.
+· DISTRIBUTED TRAINING — data parallel across GPUs, with the learning rate
+  scaled to the total batch size and warmup to survive the first steps. Mixed
+  precision roughly doubles throughput.
+· THE IMBALANCE that real catalogues always have — class-weighted loss or
+  resampling, and evaluate per-class rather than on overall accuracy, which a
+  head-heavy distribution flatters.
+· SERVING — export to a runtime (ONNX, TensorRT), quantise if the latency
+  budget demands it, batch requests, and put a CDN or cache in front for
+  repeated images. Measure p99, not the mean.
+· MONITORING — input distribution (resolution, aspect ratio, source mix),
+  prediction distribution, and per-class accuracy once labels arrive. New
+  camera hardware and new user behaviour both shift the input silently."""
+
+_ANSWER_V2["Design a Feature Store"] = """One definition of each feature, computed once and served to both training and
+inference - because two implementations is what training-serving skew is.
+
+· THE PROBLEM IT EXISTS FOR — a feature written in a training notebook and
+  rewritten in the serving code drift apart. The model then sees different
+  numbers in production from the ones it learned on, and degrades silently.
+  That is TRAINING-SERVING SKEW and it is the single commonest production ML
+  failure.
+· THE SECOND PROBLEM — every team recomputes "orders in the last 30 days"
+  slightly differently, so nothing is comparable and nothing is reused.
+· THE TWO STORES. OFFLINE (a warehouse or lake) holds full history for
+  training and batch scoring. ONLINE (Redis, DynamoDB) holds the latest value
+  per entity for low-latency lookup at inference. Same definition, two shapes.
+· POINT-IN-TIME CORRECTNESS is the hard requirement and the reason this is not
+  just a cache. Building a training set means asking what a feature's value WAS
+  at the moment of each label, not what it is now. Joining on today's values
+  leaks the future and produces a model that scores brilliantly and fails.
+· THE API — get_historical_features(entity_df, features) for training, with
+  the point-in-time join done for you; get_online_features(entity_ids,
+  features) for serving, in single-digit milliseconds.
+· FRESHNESS VARIES BY FEATURE and should be explicit — some are daily batch,
+  some are streaming, and a consumer needs to know which. A stale feature that
+  looks live is a quiet source of wrongness.
+· WHAT ELSE IT BUYS — discovery (what features exist), lineage (what produced
+  this), monitoring on the features themselves, and reuse across models.
+· WHEN NOT TO BUILD ONE — one model, one team, batch scoring. A feature store
+  is infrastructure for an organisation, and adopting it too early is a large
+  fixed cost for a problem you do not have yet. Saying that is the senior
+  answer.
+· THE OPTIONS — Feast is the common open-source choice; the cloud vendors have
+  their own; and a well-disciplined shared library plus a warehouse gets many
+  teams surprisingly far."""
+
+_ANSWER_V2["Design an A/B Testing (experimentation) platform"] = """Assign users to variants deterministically, log exposures, and compute results
+with the statistics decided in advance - the platform's job is making the
+right thing easy.
+
+· DETERMINISTIC ASSIGNMENT — hash(user_id + experiment_id) into a bucket. No
+  stored assignment table to look up, the same user always gets the same
+  variant, and including the experiment id means two experiments do not
+  correlate their splits.
+· LOG THE EXPOSURE, NOT THE ASSIGNMENT. A user counts as being in the
+  experiment only when they actually see the surface. Counting everyone
+  assigned dilutes the effect with people who never encountered the change and
+  is the most common analysis error.
+· THE SAMPLE RATIO MISMATCH CHECK is the platform's most valuable feature. If
+  a 50/50 split delivers 52/48, the experiment is broken — a bug in
+  assignment, logging or filtering — and no result from it can be trusted
+  regardless of significance. Run it automatically and refuse to show results
+  when it fires.
+· PRE-REGISTRATION — the primary metric, the minimum detectable effect and the
+  duration are declared before launch, and the platform computes the required
+  sample size. This is what stops the metric being chosen after the data
+  arrives.
+· GUARDRAIL METRICS run on every experiment without being asked: latency,
+  error rate, crash rate, revenue, complaint volume. Any of them can veto a
+  win.
+· DO NOT LET PEOPLE PEEK AND STOP. Repeated checking inflates false positives
+  badly. Either fix the duration up front, or implement sequential testing and
+  always-valid confidence intervals so continuous monitoring is legitimate.
+· VARIANCE REDUCTION is the highest-value statistical feature — CUPED uses
+  pre-experiment data to remove predictable variance and can halve the
+  required sample size. That is weeks of calendar time.
+· INTERACTION AND ISOLATION — most experiments can overlap safely; some cannot
+  and need mutually exclusive layers. Support both and default to overlapping.
+· REPORT INTERVALS, NOT VERDICTS — "+0.1% to +4%" tells you more than
+  "p = 0.04", especially whether the effect is large enough to be worth the
+  complexity it adds."""
+
+_ANSWER_V2["Cross-attention"] = """Queries from one sequence, keys and values from another - it is how a decoder
+reads an encoder, and how text conditions an image model.
+
+· THE ONE-LINE DIFFERENCE from self-attention: in self-attention Q, K and V
+  all come from the same sequence. In cross-attention the QUERIES come from
+  the sequence being generated and the KEYS and VALUES from the sequence being
+  read.
+· WHAT IT MEANS SEMANTICALLY — "for what I am writing right now, which parts
+  of the source are relevant?" That is exactly translation's question, and it
+  is why encoder-decoder models have it.
+· WHERE IT SITS in a transformer decoder block: self-attention over what has
+  been generated so far, THEN cross-attention over the encoder output, then
+  the feed-forward layer, each with a residual connection.
+· THE SHAPES DO NOT HAVE TO MATCH — the two sequences can be different lengths
+  and even different modalities, because the only requirement is that queries
+  and keys share a dimension. That is what makes it the standard bridge
+  between modalities.
+· WHERE IT SHOWS UP BEYOND TRANSLATION — Stable Diffusion conditions image
+  generation on a text embedding through cross-attention; Flamingo and similar
+  models attach a vision encoder to a language model the same way; Perceiver
+  uses it to compress a huge input into a fixed number of latents.
+· NO CAUSAL MASK IS NEEDED on the cross-attention itself. The decoder may see
+  the ENTIRE source — there is nothing to cheat at, since the source is the
+  input. The mask belongs on the decoder's self-attention only, and mixing
+  this up is a common confusion.
+· THE COST — O(target_length × source_length), which is why it is cheaper than
+  self-attention over a concatenation of both.
+· THE KV-CACHE APPLIES ESPECIALLY WELL here: the encoder output never changes
+  during generation, so its keys and values are computed once for the whole
+  output sequence rather than per token.
+· DECODER-ONLY MODELS DO WITHOUT IT by concatenating the source into the
+  prompt and using self-attention over everything. Simpler, and it pays the
+  quadratic cost over the combined length."""
+
+_ANSWER_V2["KV cache"] = """Keys and values for tokens already generated never change, so cache them -
+that is why generation speeds up sharply after the first token.
+
+· THE SETUP — generation is one token at a time, and each new token attends
+  over everything before it. Without a cache, producing token 1000 means
+  recomputing keys and values for the previous 999.
+· WHY THEY ARE CACHEABLE — a token's key and value depend only on that token
+  and its predecessors. Because attention is causal, appending a NEW token
+  never changes an old one's key or value. They are immutable once computed.
+· WHAT IS CACHED — K and V at every layer for every token so far. Queries are
+  not, because only the newest token has one that matters.
+· THE TWO PHASES this creates, and they have different bottlenecks. PREFILL
+  processes the whole prompt in parallel and is COMPUTE-bound — it is why the
+  first token takes noticeably longer. DECODE then produces one token at a
+  time reusing the cache and is MEMORY-BANDWIDTH-bound.
+· THE TWO LATENCY NUMBERS follow directly: time-to-first-token scales with
+  prompt length, time-per-output-token is roughly constant. Reporting one
+  average hides both.
+· THE MEMORY COST — 2 × layers × heads × head_dim × sequence_length × batch.
+  It grows with every token and, for a large model with long context, dwarfs
+  the weights. This is the real limit on concurrent users per GPU.
+· THE OPTIMISATIONS worth naming. Multi-query and grouped-query attention
+  share K/V across heads and cut the cache several-fold. PagedAttention (vLLM)
+  allocates it in pages like virtual memory to stop fragmentation. Quantising
+  the cache to 8 bits halves it again.
+· PROMPT CACHING is the product-level version — reuse the cache for an
+  unchanging prefix across requests, which is why providers charge a fraction
+  for cached input tokens. Put stable content FIRST in the prompt to benefit.
+· THE TRADE IN ONE LINE — the cache turns repeated quadratic work into linear
+  work, and pays for it in memory that scales with context."""
+
+_ANSWER_V2["Flash attention"] = """Compute attention without ever writing the full n×n matrix to memory - it is
+an exact algorithm made fast by respecting the memory hierarchy.
+
+· THE PROBLEM IT SOLVES — standard attention materialises an n×n score matrix
+  in GPU high-bandwidth memory. At 8k tokens that is 64 million entries per
+  head per layer, and the time is spent MOVING it, not computing it.
+· THE KEY OBSERVATION — attention is memory-bound, not compute-bound. The
+  arithmetic units are idle waiting for data, so the win comes from reading and
+  writing less, not from doing less maths.
+· THE MECHANISM — TILING. Process queries and keys in blocks small enough to
+  fit in the GPU's fast on-chip SRAM, compute the partial attention there, and
+  never write the intermediate scores back to main memory.
+· THE ONLINE SOFTMAX is what makes tiling possible. Softmax normally needs the
+  whole row to find its maximum and sum, which seems to defeat blocking. A
+  running maximum and running sum, rescaled as each block arrives, produce the
+  identical result incrementally.
+· IT IS EXACT, NOT APPROXIMATE. This is the point people miss and the reason it
+  was adopted universally: unlike sparse or linear attention, the output is
+  bit-comparable to standard attention. There is no quality trade to weigh.
+· THE BACKWARD PASS recomputes the attention scores from the stored statistics
+  rather than keeping them — trading a little extra computation for a large
+  reduction in memory, which is the right trade on this hardware.
+· WHAT IT BUYS — 2-4× faster training and inference, and memory that scales
+  LINEARLY rather than quadratically in sequence length. That linear memory is
+  what made long context practical.
+· THE COMPLEXITY IS UNCHANGED at O(n²) in arithmetic. Only the memory traffic
+  improves, and that is what the wall clock was actually measuring.
+· FLASHATTENTION-2 AND 3 improve the work partitioning across GPU warps and
+  exploit newer hardware. The idea is the same; the constants got better."""
+
+_ANSWER_V2["K-fold cross-validation"] = """Split the data into k parts, train k times holding out a different part each
+time, and average - so every row is used for validation exactly once.
+
+· THE PROBLEM IT SOLVES — a single train/validation split is one draw. With
+  limited data that draw can be lucky or unlucky, and you cannot tell which
+  from a single number.
+· THE MECHANICS — divide into k folds (5 or 10 typically), train on k-1 and
+  validate on the held-out one, rotate, then average the k scores.
+· THE STANDARD DEVIATION IS AS IMPORTANT AS THE MEAN. 0.82 ± 0.01 and
+  0.82 ± 0.09 are very different situations, and only the second tells you the
+  estimate is unstable. Report both.
+· STRATIFIED K-FOLD for classification — preserve the class proportions in
+  every fold. With an imbalanced target, plain random folds can produce one
+  with almost no positives, and its score is noise.
+· GROUPED K-FOLD when rows are not independent — several rows per patient, per
+  user, per document. The same group must not appear in both halves or the
+  model recognises the group rather than learning the pattern, and the score is
+  inflated.
+· TIME SERIES BREAKS IT ENTIRELY. Standard k-fold trains on the future to
+  predict the past. Use forward-chaining: train on the first n, test on n+1,
+  extend, repeat.
+· FIT PREPROCESSING INSIDE EACH FOLD, not before. Scaling or imputing on the
+  whole dataset first leaks the validation fold's distribution into training
+  and inflates every score. Use a pipeline so this cannot be forgotten.
+· THE COST — k times the training time. With a large model that is
+  prohibitive, which is why deep learning usually uses a single large held-out
+  set instead. Cross-validation is for the small-data regime.
+· LEAVE-ONE-OUT is k = n: almost unbiased, very high variance, and n training
+  runs. Rarely worth it.
+· NESTED CROSS-VALIDATION is the honest version when you are also tuning
+  hyperparameters — an inner loop selects them, an outer loop estimates
+  performance. Without it, the reported score has been tuned against and is
+  optimistic."""
+
+_ANSWER_V2["Flatten Binary Tree to Linked List"] = """Rewire the tree in place so every left pointer is null and the right pointers
+follow pre-order - and the neat solution walks it backwards.
+
+· THE PROBLEM — turn the tree into a right-leaning chain in pre-order (node,
+  left subtree, right subtree), modifying the existing nodes.
+· THE OBVIOUS APPROACH — do a pre-order traversal into a list, then relink.
+  O(n) time and O(n) extra space. Correct, and it is the answer being improved
+  on.
+· THE MORRIS-STYLE O(1) SOLUTION — for each node with a left child, find the
+  RIGHTMOST node of that left subtree (its pre-order predecessor of the right
+  subtree), attach the current right subtree there, move the left subtree to
+  the right, and set left to null. Then move to the new right and repeat.
+· WHY THAT WORKS — in pre-order, the last node of the left subtree is
+  immediately followed by the start of the right subtree. Splicing the right
+  subtree onto that rightmost node preserves exactly the order you want.
+· THE REVERSE-ORDER RECURSION is the other elegant answer — traverse in
+  right, left, node order, keeping a `prev` pointer. At each node set
+  node.right = prev, node.left = null, prev = node. It builds the chain
+  backwards from the tail, so nothing is overwritten before it is used.
+· THE BUG IN THE NAIVE RECURSION — flattening the left subtree first destroys
+  the pointer to the right subtree. Save it before recursing, or use one of
+  the two orders above where the problem cannot arise.
+· THE HAND TRACE on a root of 1 with left 2 (children 3, 4) and right 5:
+  the result is 1 → 2 → 3 → 4 → 5 down the right pointers.
+· COST — O(n) time; the Morris version is O(1) space and the reverse-order
+  recursion is O(h) for the stack.
+· WHAT IS BEING TESTED — pointer discipline and whether you notice that the
+  order of operations is the entire problem. Say which pointer you would
+  destroy first, before writing anything."""
+
+_ANSWER_V2["BLEU"] = """Counts how much of the CANDIDATE appears in the reference - precision-oriented,
+with a penalty for being too short.
+
+· THE DESIGN — for n = 1 to 4, count the candidate's n-grams that appear in the
+  reference, divided by the candidate's total n-grams, then take a geometric
+  mean of the four precisions.
+· WHY PRECISION AND NOT RECALL — it was built for translation, where the
+  characteristic failure is producing something the reference does not
+  support. ROUGE, built for summarisation, is recall-oriented for the opposite
+  reason: there the failure is leaving things out.
+· CLIPPING is essential and is the detail people miss. A candidate of "the the
+  the the" would otherwise score perfect unigram precision. Each n-gram is
+  counted at most as many times as it appears in the reference.
+· THE BREVITY PENALTY — pure precision rewards saying almost nothing, since a
+  one-word output that appears in the reference is 100% precise. The penalty
+  scales the score down when the candidate is shorter than the reference,
+  restoring the balance recall would have provided.
+· THE GEOMETRIC MEAN means a zero at any n makes the whole score zero. Short
+  sentences often have no matching 4-grams, so BLEU is unreliable at the
+  sentence level and is a CORPUS metric.
+· WHAT IT CANNOT SEE — a correct paraphrase using different words scores
+  badly, and word order beyond 4-grams is invisible. It measures surface
+  overlap, not meaning.
+· MULTIPLE REFERENCES help substantially by capturing legitimate variation,
+  and collecting them is expensive.
+· COMPARABILITY IS A REAL PROBLEM — BLEU depends on tokenisation, casing and
+  smoothing, so numbers from two papers are often not comparable. SacreBLEU
+  exists specifically to fix that by fixing the preprocessing.
+· WHAT IS USED NOW — COMET and BERTScore correlate far better with human
+  judgement. BLEU survives because it is cheap, deterministic and every prior
+  result is quoted in it, which is a reason to keep reporting it and not a
+  reason to trust it."""
+
+_ANSWER_V2["Mean Reciprocal Rank (MRR)"] = """The average of 1/rank of the FIRST correct result - the metric for when there
+is one right answer and finding it late is nearly as bad as not at all.
+
+· THE FORMULA — for each query, take the reciprocal of the position of the
+  first relevant result, then average across queries. Rank 1 scores 1, rank 2
+  scores 0.5, rank 5 scores 0.2, and no relevant result at all scores 0.
+· THE SHAPE THAT MATTERS — the drop from rank 1 to 2 is 0.5, and from rank 9
+  to 10 is 0.011. It is harshly top-weighted, which is a deliberate model of
+  how people actually read a result list.
+· WHEN IT IS RIGHT — question answering, entity lookup, "find the document
+  that answers this", navigational search. Anything with essentially ONE
+  correct answer.
+· WHEN IT IS WRONG — recommendation and exploratory search, where several
+  results are relevant and the user wants a good SET. MRR ignores everything
+  after the first hit entirely, so a list with one good result at rank 1 and
+  nine terrible ones scores perfectly.
+· THE ALTERNATIVES for that case — NDCG handles graded relevance across the
+  whole list, MAP averages precision at every relevant position, and recall@k
+  is right for the retrieval stage of a RAG pipeline where the generator can
+  use anything you fetched.
+· MRR@k truncates the list, scoring 0 if nothing relevant is in the top k.
+  Usually what you want, since results past the first page are not seen.
+· IT NEEDS BINARY RELEVANCE. If your judgements are graded (perfect, good,
+  fair, bad), you have to threshold them, which throws away information NDCG
+  would have used.
+· IT IS EASY TO EXPLAIN, which is a real advantage — "on average the right
+  answer is about second" is a sentence a product owner can act on, in a way
+  that an NDCG of 0.74 is not.
+· REPORT IT WITH RECALL@k for a retrieval system: one tells you whether the
+  answer was found, the other whether it was found FIRST, and those are
+  different failures with different fixes."""
+
+_ANSWER_V2["Recall@k"] = """Of all the relevant items that exist, how many appeared in the top k - the
+metric that decides whether a RAG generator had anything to work with.
+
+· THE FORMULA — relevant items retrieved in the top k, divided by the total
+  number of relevant items. It is recall, restricted to a cutoff.
+· WHY IT IS THE RETRIEVAL METRIC — in a two-stage system, the reranker or the
+  generator can only work with what the first stage fetched. Anything missed
+  at this point is unrecoverable, so recall is the thing that matters and
+  precision is the next stage's job.
+· THE PRACTICAL FRAMING for RAG — "did the chunk containing the answer make it
+  into the top k?" If recall@5 is 60%, then 40% of your answers are being
+  generated without the necessary text, and no prompt improvement fixes that.
+· CHOOSING k — it is the number the next stage can afford. Retrieval feeding a
+  cross-encoder can use k = 100; retrieval feeding an LLM prompt is limited by
+  the context window and by cost, so k = 5 to 20.
+· MEASURE IT SEPARATELY FROM ANSWER QUALITY. A bad answer from good chunks and
+  a good answer from lucky chunks are different bugs, and an end-to-end score
+  cannot tell you which you have.
+· THE COMPLEMENT — precision@k, which matters when a human reads the list, or
+  when irrelevant chunks crowd out useful ones in the prompt and distract the
+  model.
+· IT NEEDS A LABELLED SET — a hundred or so real queries with the passages
+  that genuinely answer them. Building it is the single highest-value thing
+  you can do for a retrieval system and the thing most often skipped.
+· HIT RATE (or recall@k with a single relevant item) is the common special
+  case, and worth distinguishing: with one right answer, recall@k is just
+  whether it appeared.
+· WHAT IT DOES NOT MEASURE — the ORDER within the top k. If position matters,
+  pair it with NDCG or MRR; if the whole set is passed on regardless, order is
+  genuinely irrelevant and recall@k alone is the right choice."""
+
+_ANSWER_V2["Calibration (Platt / isotonic)"] = """A calibrated model's 0.8 means it is right 80% of the time - which is not
+something accuracy or AUC checks, and most models are not.
+
+· THE DEFINITION — among all cases where the model says 0.8, roughly 80%
+  should be positive. That is a property of the PROBABILITIES, entirely
+  separate from whether the ranking is good.
+· WHY IT MATTERS — as soon as you use the number for anything other than
+  argmax, you need it to mean something: a threshold set from expected cost, a
+  risk score shown to a person, an expected-value calculation, or combining
+  models.
+· WHY MODELS ARE MISCALIBRATED — modern neural networks are systematically
+  OVERCONFIDENT, because training pushes logits apart indefinitely with hard
+  targets. Boosted trees are typically underconfident at the extremes. SVMs
+  produce distances rather than probabilities at all.
+· HOW TO SEE IT — a RELIABILITY DIAGRAM: bin the predictions, plot mean
+  predicted against actual fraction positive. Perfect calibration is the
+  diagonal, and being above or below it tells you the direction. Expected
+  Calibration Error summarises the gap into one number.
+· PLATT SCALING — fit a logistic regression on the model's outputs. Two
+  parameters, so it works with little data, and it can only apply a sigmoid
+  shape. Right when the miscalibration is a smooth systematic shift.
+· ISOTONIC REGRESSION — fit any non-decreasing function. Far more flexible,
+  and it overfits with small validation sets, so it wants a few thousand
+  points.
+· TEMPERATURE SCALING is the neural-network version — one parameter dividing
+  the logits, fitted on a validation set. Preserves the ranking exactly (so
+  accuracy and AUC are unchanged) and fixes most of the overconfidence.
+· FIT ON A HELD-OUT SET, never on training data. Calibrating on the data the
+  model already fits perfectly teaches it nothing.
+· CALIBRATION AND DISCRIMINATION ARE INDEPENDENT — a useless model that always
+  predicts the base rate is perfectly calibrated. Report AUC or PR-AUC for
+  discrimination and ECE for calibration; neither substitutes for the other."""
+
+_ANSWER_V2["Why is accuracy a poor metric for imbalanced classification?"] = """Because predicting the majority class every time already scores well, so a
+high number tells you nothing about the class you care about.
+
+· THE CONCRETE CASE — 1% of transactions are fraud. "Never fraud" is 99%
+  accurate, costs nothing to build, and catches nothing. Any accuracy figure
+  has to be read against that baseline.
+· THE STRUCTURAL REASON — accuracy weights every case equally, so it is
+  dominated by whichever class is largest. The rare class, which is the entire
+  point, barely moves it.
+· WHAT TO USE INSTEAD — precision and recall, which ignore true negatives
+  entirely, and PR-AUC to summarise across thresholds.
+· ALWAYS QUOTE THE BASE RATE alongside any metric. "92% precision" means
+  different things at 1% positives and at 50%, and PR-AUC's own baseline IS
+  the positive rate.
+· ROC-AUC IS ALSO MISLEADING HERE, which is the less obvious half of the
+  answer. Its false positive rate divides by the number of true negatives, and
+  with 99% negatives that denominator swallows even many false positives. A
+  fraud model can show 0.97 ROC-AUC and 9% precision at the same time.
+· THE COSTS ARE ASYMMETRIC TOO — a missed fraud costs the chargeback, a false
+  alarm costs some review time. Those are not equal, so the threshold is a
+  business decision, not a default of 0.5.
+· LOOK AT THE CONFUSION MATRIX rather than any single number. It shows WHICH
+  error the model makes, and the two errors have different consequences.
+· BALANCED ACCURACY (the mean of per-class recalls) is the fix if you must have
+  one accuracy-like number, since it stops the majority class dominating.
+· THE FULL ANSWER IN AN INTERVIEW — give the 99% example immediately, name
+  precision and recall, then say that the metric should follow from the cost
+  of each error type rather than being chosen first. That sequence is what is
+  being looked for."""
+
+_ANSWER_V2["Design a Trending / Hot-content ranking system"] = """Rank by how UNUSUAL the current activity is, not by how much of it there is -
+otherwise "trending" just means "popular".
+
+· THE CORE INSIGHT — a post with 10,000 likes from an account that always gets
+  10,000 is not trending. A post with 500 from an account that usually gets 20
+  is. Trending is about the DERIVATIVE and about the deviation from an
+  expectation, not the raw count.
+· THE VELOCITY APPROACH — engagement per unit time, in a recent window,
+  compared against that item's or that author's baseline. A z-score against
+  the recent history is a simple and effective form.
+· TIME DECAY is the other half. The Hacker News style score is
+  (points - 1) / (age + 2)^gravity, which lets a very popular old item be
+  overtaken by a moderately popular new one. Reddit's version uses a
+  logarithm of votes plus a linear function of time, so early votes matter far
+  more than late ones.
+· WHY LOGARITHMIC VOTES — the difference between 10 and 100 upvotes is much
+  more meaningful than between 1000 and 1090. Without the log, one runaway
+  item dominates the list for days.
+· THE WINDOW LENGTH IS THE PRODUCT DECISION — an hour for news, a day for
+  discussion, a week for long-form. Too short is noisy, too long is not
+  trending.
+· NEW-ITEM VARIANCE is the trap. An item with 3 views and 3 likes has a
+  100% rate and means nothing. Require a minimum volume, or use a smoothed
+  estimate (a Bayesian prior, or the lower bound of a Wilson confidence
+  interval) so small samples are pulled toward the mean.
+· GAMING IS GUARANTEED once a trending surface exists. Deduplicate coordinated
+  activity, weight by account age and reputation, and cap any single source's
+  contribution.
+· DIVERSITY — a real event produces many near-identical posts. Cluster them
+  and show the best representative, or the list becomes one story.
+· IMPLEMENTATION — count in a streaming aggregation (Redis sorted sets, or a
+  stream processor), recompute the ranking every minute or so, and serve from
+  cache. Nothing here needs to be computed per request."""
+
+_ANSWER_V2["Design a Similar-items / Related-products system"] = """"Similar" has at least three meanings and the product decides which - visually
+alike, bought together, or interchangeable.
+
+· ASK WHICH SIMILARITY FIRST, because they give different answers and often
+  contradict. Someone who just bought a phone wants a CASE (complementary),
+  not another phone (substitutable). Showing substitutes after a purchase is a
+  classic and expensive mistake.
+· CONTENT SIMILARITY — embed the title, description, images and attributes.
+  Works on day one with no interaction data, which makes it the answer for
+  cold items and new catalogues.
+· BEHAVIOURAL SIMILARITY — co-view and co-purchase counts, or item embeddings
+  learned from user sequences (item2vec). Captures what content cannot: that
+  two things serve the same need despite looking nothing alike.
+· THE NORMALISATION THAT MATTERS — raw co-occurrence just surfaces popular
+  items with everything. Normalise by each item's own popularity (pointwise
+  mutual information, or cosine over the co-occurrence vectors) or the widget
+  becomes a bestseller list on every page.
+· THE HYBRID — content for cold items, behaviour once there is data, blended by
+  how much interaction exists so there is no cliff as an item warms up.
+· PRECOMPUTE, DO NOT COMPUTE PER REQUEST. Similar-items is a per-item list
+  that changes slowly; build it in a nightly batch into a key-value store and
+  serve it in a millisecond.
+· BUSINESS FILTERS BELONG AFTER SIMILARITY, not inside it — in stock, ships to
+  this country, within a price band, not the item itself. Mixing them into the
+  scoring makes the model uninterpretable and the rules unchangeable.
+· DIVERSITY — ten near-identical variants of the same product is a worse widget
+  than five distinct options. Cluster and take representatives.
+· EVALUATION — CTR and downstream conversion on the widget, plus a human
+  eyeball check of a sample. Offline similarity metrics agree with human
+  judgement less often than you would hope, and the eyeball pass catches the
+  embarrassing cases nothing else does."""
+
+_ANSWER_V2["Design a Session-based Recommendation system"] = """Recommend from what the user has done in the last few minutes, because
+long-term history is often absent and current intent overrides it anyway.
+
+· WHY IT EXISTS — many users are anonymous or new, so there is no profile. And
+  even for a known user, someone shopping for a gift is not shopping as
+  themselves; the session's intent beats the history.
+· THE INPUT is a SEQUENCE, not a set. Order carries information: viewing a
+  laptop then a case means something different from the reverse.
+· THE SIMPLE BASELINE that is hard to beat — item-to-item co-occurrence within
+  sessions, recommending what most often followed the current item. Cheap,
+  interpretable, and the thing any fancier model must actually outperform.
+· SEQUENCE MODELS — GRU4Rec applied recurrent networks to this, and SASRec and
+  BERT4Rec use self-attention, which handles long-range dependencies within a
+  session better and trains in parallel.
+· THE TRAINING TRICK — next-item prediction over session sequences, exactly
+  like language modelling with items as tokens. That framing makes the whole
+  transformer toolkit available.
+· NEGATIVE SAMPLING is the practical difficulty — you observe what was clicked
+  and not what was rejected. In-batch negatives are cheap; items that were
+  SHOWN and not clicked are far more informative, if you logged impressions.
+· SESSION BOUNDARIES need defining — usually 30 minutes of inactivity. It is
+  arbitrary and it matters, because it decides what counts as one intent.
+· REAL-TIME SERVING is the constraint — the session updates on every click, so
+  the model must score in milliseconds from a short sequence. Precompute item
+  embeddings, run only the sequence encoder at request time.
+· THE RECENCY WEIGHTING — the last one or two actions usually dominate intent.
+  Attention learns this by itself, and a simple positional weighting captures
+  most of it if you need something simpler.
+· EVALUATION — hold out the LAST item of each session and measure recall@k and
+  MRR. Splitting sessions randomly leaks the future into the past and inflates
+  everything."""
+
+_ANSWER_V2["Design a Content Moderation / Toxicity system"] = """Automate the clear cases, route the uncertain band to humans, and accept that
+the boundary is a policy question rather than a modelling one.
+
+· THE FIRST THING TO ESTABLISH — what the policy actually says. "Toxic" is not
+  a technical category; it is a set of rules someone wrote, and they differ by
+  product, culture and jurisdiction. A model can only implement a definition,
+  not supply one.
+· THE THREE-BAND ARCHITECTURE — confidently fine (publish), confidently
+  violating (block or remove), and the middle (queue for human review). The
+  thresholds are set by the cost of each error, and most of the value is in
+  routing the middle band well rather than in shrinking it.
+· THE ASYMMETRIC COSTS — a false positive silences a real person who cannot
+  appeal to a model; a false negative leaves harmful content up. Which is worse
+  depends entirely on the category, so use different thresholds per category
+  rather than one global one.
+· CONTEXT IS WHERE MODELS FAIL — reclaimed slurs, quotation, counter-speech,
+  satire, and in-group usage all look like the thing they are describing. A
+  classifier on the message alone gets these wrong, so include the thread, the
+  relationship between the users, and the community's norms.
+· MULTI-MODAL AND MULTILINGUAL from the start — text in images, audio in
+  video, and the long tail of languages where labelled data is thin. Attackers
+  move to whichever modality is unmonitored.
+· ADVERSARIAL ADAPTATION — character substitution, spacing, image macros. As
+  with spam, behavioural and graph signals survive evasion far better than
+  textual ones.
+· THE HUMAN COST IS PART OF THE DESIGN — reviewers see the worst content
+  repeatedly. Blurring by default, limiting exposure, and rotating queues are
+  design requirements, not perks.
+· LABELS ARE GENUINELY AMBIGUOUS — annotator agreement on borderline toxicity
+  is low, and that is a property of the problem. Measure agreement, use
+  multiple annotators on the boundary, and do not treat a single label as
+  truth.
+· APPEALS CLOSE THE LOOP — they are both a fairness requirement and the best
+  source of labels for the cases the model gets wrong."""
+
+_ANSWER_V2["Design a Demand Forecasting system"] = """Forecast per item per location per period, respect time in every split, and
+beat seasonal-naive before doing anything clever.
+
+· CLARIFY THE GRANULARITY AND HORIZON FIRST — daily per SKU per store for the
+  next fortnight is a different problem from monthly per category nationally.
+  It changes the data volume, the model and the achievable accuracy.
+· ALWAYS START WITH NAIVE BASELINES — last value, and SEASONAL naive (the same
+  weekday last week). A surprising number of production forecasting systems
+  fail to beat seasonal naive, and if yours does not, that is the finding
+  rather than an embarrassment.
+· SPLIT BY TIME, ALWAYS. A random split lets the model see the future.
+  Backtest with rolling origins so you get several estimates and can see the
+  variance rather than one lucky window.
+· THE FEATURES — lags (t-1, t-7, t-364), rolling means and standard
+  deviations, calendar features, holidays, promotions, price, and stock-outs.
+  Every window must end strictly before the point being predicted.
+· THE STOCK-OUT TRAP is specific to demand and important: recorded SALES are
+  censored demand. If an item sold out on Friday, the zero afterwards is not
+  low demand, and training on it teaches the model to under-forecast exactly
+  the items that sell best. Mask or impute those periods.
+· THE MODEL LADDER — gradient boosting on lag features usually wins for many
+  related series with covariates; classical methods (ARIMA, exponential
+  smoothing) for a few well-behaved series; deep models (DeepAR, temporal
+  fusion transformers) when you have many series and a lot of history.
+· FORECAST INTERVALS, NOT POINTS. Inventory decisions need the range —
+  ordering to the 90th percentile of demand is a different quantity from
+  ordering to the mean, and the business is choosing a service level whether or
+  not anyone says so.
+· THE METRIC — MAPE breaks on zeros, which intermittent demand is full of. Use
+  MASE (scaled against a naive baseline) or weighted absolute error, and
+  WEIGHT BY VALUE so a forecast error on a high-value item counts more.
+· HIERARCHICAL RECONCILIATION — store forecasts should sum to the regional
+  one. Forecast at several levels and reconcile, or the numbers people compare
+  will disagree and nobody will trust any of them."""
+
+_ANSWER_V2["Why do we scale/normalize features before training many models?"] = """Because any model that measures distance or takes gradients treats a feature's
+UNITS as importance, and units are an accident.
+
+· THE CONCRETE CASE — salary runs 0 to 200,000 and age 0 to 100. In a distance
+  calculation, salary dominates by a factor of two thousand purely because of
+  what it is measured in. Change salary to thousands and the model's behaviour
+  changes, which shows the dependence is spurious.
+· WHO NEEDS IT. Anything distance-based: k-NN, k-means, SVM with an RBF
+  kernel, PCA. Anything gradient-based: linear and logistic regression, neural
+  networks. Anything regularised, because the penalty applies to weights and
+  unscaled features force wildly different weight magnitudes.
+· WHY GRADIENTS CARE — with features on very different scales the loss surface
+  is a long narrow valley, and gradient descent zigzags across it instead of
+  running down it. This is the single most common reason a correct
+  implementation appears not to converge.
+· WHO DOES NOT NEED IT — decision trees, random forests and gradient boosting.
+  They only ask "is this value above that threshold", and a monotonic rescaling
+  does not change any answer. Knowing which side of this line a model falls on
+  is the actual question.
+· THE TWO METHODS — STANDARDISATION (subtract the mean, divide by the standard
+  deviation) is the default and handles outliers better. MIN-MAX squashes to
+  0-1 and is right when a bounded range is required, and one outlier
+  compresses everything else into a sliver.
+· ROBUST SCALING uses the median and interquartile range, and is the answer
+  when there are outliers you cannot remove.
+· THE LEAK THAT COSTS PEOPLE THE OFFER — fit the scaler on the TRAINING data
+  only, then apply it to validation and test. Fitting on everything lets test
+  information reach the model and the score becomes a lie. Use a pipeline so
+  it cannot be forgotten inside cross-validation.
+· SAVE THE SCALER WITH THE MODEL. At serving time the same parameters must be
+  applied, and recomputing them from live data is a subtle, gradual, extremely
+  hard-to-find bug."""
+
+_ANSWER_V2["Next Greater Element II (circular)"] = """The same monotonic stack, run over the array TWICE - the second pass lets the
+front of the array answer the back.
+
+· THE PROBLEM — for each element find the next greater one, and the array
+  WRAPS, so the search continues from the start after reaching the end.
+· THE OBVIOUS FIX — concatenate the array with itself and run the ordinary
+  algorithm. Correct, and it doubles the memory.
+· THE BETTER FIX — iterate i from 0 to 2n-1 and index with i % n. Same effect,
+  no copy.
+· WHY TWO PASSES ARE ENOUGH — the answer for any element is at most n-1 steps
+  away, since after a full circle you are back where you started. A third pass
+  could not find anything the second did not.
+· THE STACK holds INDICES in the original range, with values decreasing. While
+  the current value exceeds the value at the stack top, pop and record the
+  answer.
+· PUSH ONLY DURING THE FIRST PASS. In the second pass you are only resolving
+  elements that are still waiting; pushing again would add duplicates that can
+  never be resolved. This one condition is the whole difference from the
+  non-circular version.
+· LEFTOVERS STAY -1 — anything still on the stack after both passes has no
+  greater element anywhere in the circle, and initialising the answer array to
+  -1 handles it with no extra code.
+· THE HAND TRACE on [1,2,1]: 1 waits, 2 pops it (answer 2), 2 waits, 1 waits.
+  Second pass: 1 resolves nothing, 2 pops the trailing 1 (answer 2), 1 pops
+  nothing. Result [2,-1,2].
+· COST — O(n) time, since each index is pushed once and popped at most once
+  across both passes, and O(n) space."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
