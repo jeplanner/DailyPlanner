@@ -4294,3 +4294,31 @@ def test_client_and_server_recurrence_rules_agree_exactly():
         f"{len(mismatches)} of {checked} disagreed:\n" +
         "\n".join(mismatches[:15]))
     assert checked > 2000, f"only {checked} combinations checked"
+
+
+def test_push_subscription_repairs_itself_on_load():
+    """A push subscription dies on its own — rotated by the browser,
+    invalidated by an OS update, or 410'd by the push service, after which
+    the server correctly marks the row inactive.
+
+    Nothing then brought it back. The browser still had a working
+    subscription, the server believed it had none, and the interface went
+    on showing notifications as enabled. Measured on 2026-08-23: six of
+    seven subscriptions inactive, every one of them the phone. That is why
+    the reminders stopped, and nobody could have known.
+    """
+    js = open("static/js/push.js", encoding="utf-8").read()
+    assert "function healSubscription" in js or "healSubscription" in js
+    # IT MUST NEVER PROMPT. The permission check has to come before any
+    # subscribe call, or a page load produces a dialog nobody asked for.
+    heal = js.split("async function healSubscription")[1].split("\n  }")[0]
+    perm = heal.index('Notification.permission !== "granted"')
+    assert perm < heal.index("pushManager.subscribe"), \
+        "it may prompt for permission on page load"
+    # The payload is NESTED under `subscription`; the server reads
+    # data["subscription"] and a flat body 400s every time.
+    assert "subscription: sub.toJSON()" in js
+    # Throttled, so it is one small POST a day rather than one per page.
+    assert "HEAL_EVERY_MS" in js
+    # And it runs on load, not only when someone opens Settings.
+    assert ".then(healSubscription)" in js

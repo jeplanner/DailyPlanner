@@ -169,12 +169,75 @@
     await refresh();
   }
 
+  /* ── SELF-HEAL ───────────────────────────────────────────────────────
+     A push subscription dies on its own. The browser rotates it, an OS
+     update invalidates it, or the push service returns 410 and the server
+     correctly marks the row inactive. Nothing then ever brings it back:
+     the browser still HAS a working subscription, the server believes it
+     has none, and the interface goes on showing notifications as enabled.
+
+     That is why this household's reminders stopped. Six of seven
+     subscriptions were inactive, every one of them the phone, and nobody
+     could have known — the switch said on.
+
+     So on every load, if permission is already granted, we re-register
+     whatever the browser has. It reactivates the row and costs one small
+     POST a day.
+
+     IT NEVER PROMPTS. The permission check comes first, so a page load can
+     never produce a permission dialog nobody asked for. */
+  const HEAL_KEY = "dp-push-heal";
+  const HEAL_EVERY_MS = 12 * 3600 * 1000;
+
+  async function healSubscription() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    // Only ever act on an ALREADY GRANTED permission — never ask.
+    if (typeof Notification === "undefined" ||
+        Notification.permission !== "granted") return;
+
+    try {
+      const last = parseInt(localStorage.getItem(HEAL_KEY) || "0", 10);
+      if (Date.now() - last < HEAL_EVERY_MS) return;
+    } catch (_) { /* private mode: heal every load, which is harmless */ }
+
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        // Permission granted but no subscription: the browser dropped it.
+        // Re-creating one shows no dialog, because permission is granted.
+        const vapid = await fetchVapidKey();
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapid),
+        });
+      }
+      await fetch("/api/push/subscribe", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        // NESTED under `subscription` — the server reads data["subscription"]
+        // and a flat body 400s every time.
+        body: JSON.stringify({
+          subscription: sub.toJSON(),
+          user_agent: navigator.userAgent,
+        }),
+      });
+      try { localStorage.setItem(HEAL_KEY, String(Date.now())); } catch (_) {}
+    } catch (_) {
+      // Offline, or the browser refused. Try again next load.
+    }
+  }
+
   // Registers the SW on every page load (so offline/push infra is warm).
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register(SW_PATH, { scope: "/" }).catch(() => {});
+      navigator.serviceWorker.register(SW_PATH, { scope: "/" })
+        .then(healSubscription)
+        .catch(() => {});
     });
   }
 
-  window.ClPush = { init, subscribe, unsubscribe, currentSubscription, sendTest };
+  window.ClPush = { init, subscribe, unsubscribe, currentSubscription, sendTest,
+                    healSubscription };
 })();
