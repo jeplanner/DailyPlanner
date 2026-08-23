@@ -256,7 +256,16 @@
      this is a text field someone types into once and should not have to
      get exactly right. Anything unparseable is dropped, and the caller
      shows what survived so nothing is silently ignored. */
-  function parseTimes(text) {
+  /* `defaultMer` is the AM/PM chosen with the buttons. It applies ONLY when
+     the typed text does not settle the question itself:
+
+       "5"      + PM  ->  17:00     (the chooser decides)
+       "5pm"    + AM  ->  17:00     (what you typed wins)
+       "17:00"  + AM  ->  17:00     (already unambiguous, chooser ignored)
+       "0:30"   + PM  ->  00:30     (hour 0 is 24-hour by construction)
+
+     Typing beats clicking, because someone who wrote "pm" meant it. */
+  function parseTimes(text, defaultMer) {
     var out = [];
     // A FULL STOP IS A TIME SEPARATOR. "5.00" is how most of the world writes
     // five o'clock, and the previous version split on any non-digit — so it
@@ -277,6 +286,11 @@
       var h = parseInt(m[1], 10), mi = parseInt(m[2] || "0", 10);
       var mer = (m[3] || "").replace(/\./g, "");
       if (mi > 59) return;
+      // Only a bare 1-12 is ambiguous. 0 and 13-23 can only be 24-hour.
+      if (!mer && (defaultMer === "am" || defaultMer === "pm") &&
+          h >= 1 && h <= 12) {
+        mer = defaultMer;
+      }
       // 12-HOUR INPUT, because "5pm" is what people type. Without a meridiem
       // the number is taken as-is, so 17:00 still works and 5 means 05:00.
       if (mer === "pm" && h < 12) h += 12;
@@ -849,6 +863,8 @@
       ".ta-dt i{font-style:normal;font-weight:500;text-transform:none;",
       "letter-spacing:0}",
       ".ta-dt input{width:100%}",
+      ".ta-dt .ta-timefld{width:100%}",
+      ".ta-dt .ta-timefld input{flex:1 1 auto;min-width:0}",
       ".ta-days{display:flex;flex-wrap:wrap;gap:4px}",
       ".ta-days[hidden]{display:none}",
       ".ta-days button{font:inherit;font-size:11px;font-weight:700;",
@@ -862,7 +878,20 @@
       "border-radius:8px;border:1px solid var(--color-border,#e5e7eb);",
       "background:var(--color-bg,#f9fafb);color:var(--color-text,#111827);",
       "min-width:0}",
-      "[data-ta-new-at]{flex:0 0 108px}",
+      ".ta-timefld{display:flex;align-items:stretch;gap:4px;flex:0 0 auto;min-width:0}",
+      ".ta-ampm{display:flex;border:1px solid var(--color-border,#e5e7eb);",
+      "border-radius:8px;overflow:hidden;flex:0 0 auto}",
+      ".ta-ampm button{font:inherit;font-size:10.5px;font-weight:800;",
+      "letter-spacing:.03em;padding:0 8px;border:0;cursor:pointer;",
+      "background:var(--color-bg,#f9fafb);color:var(--color-text-secondary,#6b7280)}",
+      ".ta-ampm button + button{border-left:1px solid var(--color-border,#e5e7eb)}",
+      ".ta-ampm button.on{background:#4338ca;color:#fff}",
+      /* Dimmed when the typed text already settles it — clicking would do
+         nothing, and a control that does nothing should look like it. */
+      ".ta-ampm button.moot{opacity:.4}",
+      ".ta-preview{display:block;margin-top:4px;font-size:11px;font-weight:700;",
+      "color:#4338ca;min-height:14px;font-variant-numeric:tabular-nums}",
+      "[data-ta-new-at]{flex:0 0 78px}",
       "[data-ta-new-text]{flex:1 1 140px}",
       "[data-ta-new-at][aria-invalid]{border-color:#b91c1c}",
       ".ta-add button{flex:0 0 auto;font:inherit;font-size:12px;",
@@ -870,6 +899,8 @@
       "background:#4338ca;color:#fff;cursor:pointer}",
       ".ta-hint{display:block;margin-top:5px;font-size:10.5px;line-height:1.45;",
       "color:var(--color-text-secondary,#6b7280)}",
+      ".ta-hint code{font-size:10px;padding:1px 3px;border-radius:3px;",
+      "background:var(--color-bg,#f3f4f6)}",
       ".ta-saved{float:right;font-size:11px;font-weight:800;color:#047857;",
       "background:color-mix(in srgb,#047857 14%,transparent);",
       "border:1px solid color-mix(in srgb,#047857 35%,transparent);",
@@ -934,6 +965,7 @@
     var sEl = pop.querySelector("[data-ta-new-start]");
     if (sEl && !sEl.value) sEl.value = todayYMD();
     paintDayChips();
+    paintMer();
     paintAtEcho();
 
     /* WHAT IS CURRENTLY SAVED, in words. Read back from the same state the
@@ -1027,6 +1059,69 @@
 
   //: Days selected in the ADD form, before the announcement exists.
   var newDays = [];
+  //: AM/PM chosen for each time field in the ADD form. Defaults to morning,
+  //: which is what a bare "5" nearly always means when someone is setting a
+  //: wake-up or a start-of-day reminder.
+  var newMer = { at: "am", until: "am" };
+
+  /* Is the chooser actually deciding anything for this text? It is not, when
+     the text already carries am/pm or is unambiguously 24-hour. Shown by
+     dimming the buttons, so nobody wonders why clicking them does nothing. */
+  function merApplies(text) {
+    var t = String(text || "").trim().toLowerCase();
+    if (!t) return true;
+    if (/(am|pm)/.test(t)) return false;
+    var m = /^(\d{1,2})/.exec(t.replace(/[.\-]/, ":"));
+    if (!m) return true;
+    var h = parseInt(m[1], 10);
+    return h >= 1 && h <= 12;
+  }
+
+  function paintMer() {
+    if (!pop) return;
+    ["at", "until"].forEach(function (which) {
+      var input = pop.querySelector(which === "at"
+        ? "[data-ta-new-at]" : "[data-ta-new-until]");
+      var live = merApplies(input && input.value);
+      pop.querySelectorAll('[data-ta-mer="' + which + '"]').forEach(function (b) {
+        var on = b.getAttribute("data-v") === newMer[which];
+        b.classList.toggle("on", on && live);
+        b.classList.toggle("moot", !live);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    });
+    paintPreview();
+  }
+
+  /* The whole point of the chooser is that nothing is left to guess, so the
+     resolved time is shown as it is typed rather than after adding. */
+  function paintPreview() {
+    var el = pop && pop.querySelector("[data-ta-preview]");
+    if (!el) return;
+    var atEl = pop.querySelector("[data-ta-new-at]");
+    var uEl = pop.querySelector("[data-ta-new-until]");
+    var mEl = pop.querySelector("[data-ta-new-mins]");
+    var a = parseTimes(atEl && atEl.value, newMer.at);
+    if (!a.length) { el.textContent = ""; return; }
+    var txt = "\u2192 " + a.map(friendly).join(", ");
+    var u = parseTimes(uEl && uEl.value, newMer.until);
+    var step = parseInt(mEl && mEl.value, 10);
+    if (u.length) {
+      txt += " until " + friendly(u[0]);
+      if (step > 0) {
+        var n = TA_countSlots(a[0], u[0], step);
+        txt += ", every " + step + " min" +
+               (n ? " \u00b7 " + n + " time" + (n === 1 ? "" : "s") + " a day" : "");
+      }
+    }
+    el.textContent = txt;
+  }
+
+  function TA_countSlots(from, to, step) {
+    var f = hhmmToMins(from), t = hhmmToMins(to);
+    if (f === null || t === null || t < f || !(step > 0)) return 0;
+    return Math.floor((t - f) / step) + 1;
+  }
 
   function paintDayChips() {
     if (!pop) return;
@@ -1057,7 +1152,7 @@
     var eEl = pop.querySelector("[data-ta-new-end]");
     var tEl = pop.querySelector("[data-ta-new-text]");
     // Reuse the forgiving parser, so "5.00" and "6.45pm" work here too.
-    var times = parseTimes(atEl.value);
+    var times = parseTimes(atEl.value, newMer.at);
     if (!times.length) {
       atEl.setAttribute("aria-invalid", "true");
       atEl.focus();
@@ -1069,7 +1164,7 @@
     // The daily window. Same forgiving parser, so "8pm" works here too.
     var until = null;
     if ((uEl.value || "").trim()) {
-      var u = parseTimes(uEl.value);
+      var u = parseTimes(uEl.value, newMer.until);
       if (!u.length) {
         uEl.setAttribute("aria-invalid", "true");
         note(false, "I could not read \u201c" + uEl.value + "\u201d as a time");
@@ -1125,6 +1220,7 @@
       });
     });
     atEl.value = ""; uEl.value = ""; mEl.value = ""; tEl.value = "";
+    newMer = { at: "am", until: "am" };
     state.lastSlot = null;
     save(); paint(); savedFlash();
     atEl.focus();
@@ -1181,8 +1277,14 @@
       '<ul class="ta-list" data-ta-list></ul>' +
       '<div class="ta-add">' +
         '<div class="ta-add-row">' +
-          '<input type="text" data-ta-new-at placeholder="5.00 / 9am / 13:30" ' +
-            'aria-label="Start time">' +
+          '<span class="ta-timefld">' +
+            '<input type="text" data-ta-new-at placeholder="5.00" ' +
+              'aria-label="Start time">' +
+            '<span class="ta-ampm" role="group" aria-label="Morning or afternoon">' +
+              '<button type="button" data-ta-mer="at" data-v="am">AM</button>' +
+              '<button type="button" data-ta-mer="at" data-v="pm">PM</button>' +
+            '</span>' +
+          '</span>' +
           '<select data-ta-new-repeat aria-label="How often">' +
             '<option value="daily">Every day</option>' +
             '<option value="once">Once</option>' +
@@ -1192,6 +1294,7 @@
             '<option value="custom">Chosen days</option>' +
           '</select>' +
         '</div>' +
+        '<small class="ta-preview" data-ta-preview></small>' +
         '<div class="ta-days" data-ta-days hidden>' +
           [0, 1, 2, 3, 4, 5, 6].map(function (d) {
             return '<button type="button" data-ta-day="' + d + '">' +
@@ -1200,7 +1303,13 @@
         '</div>' +
         '<div class="ta-add-row">' +
           '<label class="ta-dt">Until <i>optional</i>' +
-            '<input type="text" data-ta-new-until placeholder="8pm"></label>' +
+            '<span class="ta-timefld">' +
+              '<input type="text" data-ta-new-until placeholder="8.00">' +
+              '<span class="ta-ampm" role="group" aria-label="Morning or afternoon">' +
+                '<button type="button" data-ta-mer="until" data-v="am">AM</button>' +
+                '<button type="button" data-ta-mer="until" data-v="pm">PM</button>' +
+              '</span>' +
+            '</span></label>' +
           '<label class="ta-dt">Repeat every <i>optional</i>' +
             '<input type="number" min="0" max="720" step="5" ' +
             'data-ta-new-mins placeholder="60 min"></label>' +
@@ -1217,7 +1326,10 @@
           '<button type="button" data-ta-add>Add</button>' +
         '</div>' +
       '</div>' +
-      '<small class="ta-hint"><b>Until</b> and <b>repeat every</b> make one ' +
+      '<small class="ta-hint">Type the time and pick <b>AM</b> or <b>PM</b>. ' +
+      'If you write it in full &mdash; <code>5pm</code> or <code>17:00</code> ' +
+      '&mdash; what you typed wins and the buttons grey out. ' +
+      '<b>Until</b> and <b>repeat every</b> make one ' +
       'announcement speak through the day &mdash; 8am to 8pm every 60 minutes ' +
       'is one row, not thirteen. Leave them blank and it speaks once. ' +
       '<b>Starts</b> defaults to today; leave <b>Ends</b> blank and it runs ' +
@@ -1307,6 +1419,12 @@
         save(); paint(); savedFlash();
         return;
       }
+      var mer = ev.target.closest("[data-ta-mer]");
+      if (mer) {
+        newMer[mer.getAttribute("data-ta-mer")] = mer.getAttribute("data-v");
+        paintMer();
+        return;
+      }
       var day = ev.target.closest("[data-ta-day]");
       if (day) {
         var d = parseInt(day.getAttribute("data-ta-day"), 10);
@@ -1343,6 +1461,10 @@
 
     pop.addEventListener("input", function (ev) {
       var n = ev.target;
+      if (n.matches("[data-ta-new-at],[data-ta-new-until],[data-ta-new-mins]")) {
+        paintMer();
+        return;
+      }
       if (n.matches("[data-ta-every-in],[data-ta-label]")) savedFlash();
       if (n.matches("[data-ta-every-in]")) {
         var v = parseInt(n.value, 10);
@@ -1481,6 +1603,7 @@
     _isExpired: isExpired,
     _todayYMD: todayYMD,
     _parseTimes: parseTimes,
+    _merApplies: merApplies,
     _load: load,
     _friendly: friendly,
     _scheduleWords: scheduleWords,

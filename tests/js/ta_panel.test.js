@@ -127,6 +127,45 @@ click(q(".ta-btn"));
 doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 ok("Escape closes it", q(".ta-pop").hidden === true);
 
+// ── the AM/PM chooser ────────────────────────────────────────────────
+click(q(".ta-btn"));
+ok("AM/PM buttons exist", doc.querySelectorAll('[data-ta-mer="at"]').length === 2);
+ok("AM selected by default",
+   doc.querySelector('[data-ta-mer="at"][data-v="am"]').classList.contains("on"));
+
+q("[data-ta-new-at]").value = "5";
+q("[data-ta-new-at]").dispatchEvent(new window.Event("input", {bubbles:true}));
+ok("preview shows the AM reading", /5:00 AM/.test(q("[data-ta-preview]").textContent));
+
+click(doc.querySelector('[data-ta-mer="at"][data-v="pm"]'));
+ok("PM becomes selected",
+   doc.querySelector('[data-ta-mer="at"][data-v="pm"]').classList.contains("on"));
+ok("preview follows to PM", /5:00 PM/.test(q("[data-ta-preview]").textContent));
+
+q("[data-ta-new-text]").value = "Evening walk";
+click(q("[data-ta-add]"));
+ok("added at the chosen meridiem",
+   /5:00 PM/.test(doc.querySelector(".ta-when b").textContent));
+ok("chooser resets to AM after adding",
+   doc.querySelector('[data-ta-mer="at"][data-v="am"]').classList.contains("on"));
+
+// Typing the meridiem must beat the buttons, and say so by dimming them.
+q("[data-ta-new-at]").value = "9am";
+q("[data-ta-new-at]").dispatchEvent(new window.Event("input", {bubbles:true}));
+ok("buttons dim when the text settles it",
+   doc.querySelector('[data-ta-mer="at"][data-v="am"]').classList.contains("moot"));
+click(doc.querySelector('[data-ta-mer="at"][data-v="pm"]'));
+q("[data-ta-new-text]").value = "Morning";
+click(q("[data-ta-add]"));
+ok("typed 9am wins over the PM button",
+   /9:00 AM/.test(doc.querySelectorAll(".ta-when b")[0].textContent) ||
+   /9:00 AM/.test(doc.querySelectorAll(".ta-when b")[1].textContent));
+
+// Clear the list so the recurrence block starts from nothing.
+while (doc.querySelector("[data-ta-del]")) click(doc.querySelector("[data-ta-del]"));
+ok("list cleared for the next block", doc.querySelectorAll(".ta-item").length === 0);
+click(q("[data-ta-close]"));
+
 // ── the recurrence controls ──────────────────────────────────────────
 click(q(".ta-btn"));
 ok("repeat selector present", !!q("[data-ta-new-repeat]"));

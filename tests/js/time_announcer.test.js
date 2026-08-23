@@ -195,6 +195,41 @@ ok("dueItems skips a non-matching day", TA._dueItems(at(9,0,0)).length===0);  //
 TA._set({items:[R({id:"z2", at:"09:00", repeat:"weekly", start:"2026-08-22"})], said:{}});
 ok("dueItems fires on the anchor day",  TA._dueItems(at(9,0,0)).length===1);
 
+// ── THE AM/PM CHOOSER (2026-08-23) ──────────────────────────────────
+// "i will manually enter time but provide facility to choose am or pm."
+// The chooser supplies the meridiem ONLY when the typed text does not.
+const P = (txt, mer) => JSON.stringify(TA._parseTimes(txt, mer));
+
+ok("bare 5 + PM  => 17:00", P("5", "pm")==='["17:00"]');
+ok("bare 5 + AM  => 05:00", P("5", "am")==='["05:00"]');
+ok("5.30 + PM    => 17:30", P("5.30", "pm")==='["17:30"]');
+ok("5:30 + PM    => 17:30", P("5:30", "pm")==='["17:30"]');
+ok("12 + PM is noon",       P("12", "pm")==='["12:00"]');
+ok("12 + AM is midnight",   P("12", "am")==='["00:00"]');
+
+// Typing beats clicking.
+ok("5pm + AM stays 17:00",  P("5pm", "am")==='["17:00"]');
+ok("5am + PM stays 05:00",  P("5am", "pm")==='["05:00"]');
+ok("17:00 + AM stays 17:00",P("17:00", "am")==='["17:00"]');
+ok("0:30 + PM stays 00:30", P("0:30", "pm")==='["00:30"]');
+ok("23:15 + AM unchanged",  P("23:15", "am")==='["23:15"]');
+
+// No chooser at all behaves exactly as before, so nothing else changed.
+ok("no chooser => as typed", P("5")==='["05:00"]');
+ok("no chooser, pm typed",   P("5pm")==='["17:00"]');
+
+// A list still works, with the chooser applied to each ambiguous entry.
+ok("list + PM", P("5, 6, 7", "pm")==='["17:00","18:00","19:00"]');
+ok("list, mixed explicit + PM", P("5, 9am, 23:00", "pm")==='["09:00","17:00","23:00"]');
+
+// merApplies drives the dimming, so it must agree with the parser.
+ok("chooser applies to a bare hour",  TA._merApplies("5")===true);
+ok("...and to 5.30",                  TA._merApplies("5.30")===true);
+ok("...not when am/pm is typed",      TA._merApplies("5pm")===false);
+ok("...not for 24-hour hours",        TA._merApplies("17:00")===false);
+ok("...not for hour zero",            TA._merApplies("0:30")===false);
+ok("...applies to an empty field",    TA._merApplies("")===true);
+
 // ── THE DAILY WINDOW (2026-08-23) ───────────────────────────────────
 // "start at and ends at timing" meant a TIME window: one announcement that
 // speaks repeatedly through the day between two times.

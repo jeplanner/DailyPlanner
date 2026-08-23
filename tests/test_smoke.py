@@ -3820,3 +3820,24 @@ def test_announcer_supports_a_daily_time_window():
     # A step of 1 across a whole day is 1440 slots; anything past that is a
     # bug rather than a schedule.
     assert "out.length < 1441" in js, "no bound on the generated slot list"
+
+
+def test_announcer_has_an_am_pm_chooser():
+    """Asked 2026-08-23: "i will manually enter time but provide facility to
+    choose am or pm."
+
+    The chooser supplies the meridiem only when the typed text does not —
+    typing "5pm" or "17:00" beats clicking, and the buttons grey out to say
+    so. Precedence is exercised in tests/js/time_announcer.test.js.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert 'data-ta-mer="at"' in js and 'data-ta-mer="until"' in js, \
+        "no AM/PM control on both time fields"
+    assert "function merApplies" in js
+    # Only a bare 1-12 is ambiguous; 0 and 13-23 are already 24-hour and the
+    # chooser must not override them.
+    assert "h >= 1 && h <= 12" in js, "the chooser will override a 24-hour time"
+    # A control that cannot affect the result must not look like it can.
+    assert '"moot"' in js
+    # And the resolved time is shown as it is typed, so nothing is guessed.
+    assert "data-ta-preview" in js
