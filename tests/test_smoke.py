@@ -4322,3 +4322,39 @@ def test_push_subscription_repairs_itself_on_load():
     assert "HEAL_EVERY_MS" in js
     # And it runs on load, not only when someone opens Settings.
     assert ".then(healSubscription)" in js
+
+
+def test_announcement_chime_is_real_audio_and_on_by_default():
+    """Reported 2026-08-23: "audio notifications are not working".
+
+    Three separate things were true. The server WAS sending (two fires
+    logged that day). The phone had no active subscription, so nothing
+    arrived there. And even when a notification does arrive, its SOUND
+    belongs to the operating system — a web app cannot supply one.
+
+    Speech cannot fill that gap: browsers suspend the Web Speech API with
+    the screen off. MEDIA PLAYBACK is permitted there, which is the same
+    fact the keep-alive already relies on. So an announcement plays a real
+    audio file, and that is the only sound this app can make when locked.
+    """
+    import os
+    import wave
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "function playChime" in js and "data-ta-chime" in js
+    # ON by default: it is the only audible thing on a locked phone, so
+    # defaulting it off would ship the reported bug.
+    assert "chime: true" in js
+    # A real <audio> element, not Web Audio — Web Audio is not treated as
+    # playback and is exactly what a locked phone declines to run.
+    chime = js.split("function playChime")[1].split("\n  function ")[0]
+    assert 'createElement("audio")' in chime
+    assert "audio-chime.wav" in chime
+    # Chime BEFORE speak, so it cannot wait behind a speech call that may
+    # never start.
+    fire = js.split("save();\n    playChime();")[1][:60]
+    assert "speak(" in fire, "the chime is not played before speaking"
+
+    with wave.open("static/audio-chime.wav", "rb") as w:
+        seconds = w.getnframes() / float(w.getframerate())
+    assert 0.2 < seconds < 3, f"chime is {seconds:.2f}s"
+    assert os.path.getsize("static/audio-chime.wav") < 60000

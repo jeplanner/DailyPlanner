@@ -63,7 +63,8 @@
 
   function load() {
     var d = { mode: "off", every: 15, at: [], label: "",
-              items: [], said: {}, lastSlot: null, keepalive: false };
+              items: [], said: {}, lastSlot: null, keepalive: false,
+              chime: true };
     try {
       var raw = JSON.parse(localStorage.getItem(KEY));
       if (raw && typeof raw === "object") {
@@ -108,6 +109,7 @@
           });
         }
         d.keepalive = !!raw.keepalive;
+        if (typeof raw.chime === "boolean") d.chime = raw.chime;
       }
     } catch (_) {}
 
@@ -479,6 +481,49 @@
     } catch (_) {}
   }
 
+  /* ── THE CHIME ──────────────────────────────────────────────────────
+     Speech does not work on a locked phone — browsers suspend the Web
+     Speech API when the screen is off, and no setting changes that.
+     MEDIA PLAYBACK is the one thing that IS permitted there, which is the
+     same fact the keep-alive relies on.
+
+     So an announcement also plays a short real audio file. That is the
+     only sound this app can make with the screen off, and it is why
+     "I hear nothing" was true even once the notification arrived: a push
+     notification's sound is the operating system's to choose, and a web
+     app cannot supply one.
+
+     When you are at the desk you get the chime AND the spoken sentence,
+     which is the right pairing: the chime takes your attention and the
+     speech carries the content. */
+  var chimeEl = null;
+
+  function playChime() {
+    if (!state.chime) return;
+    try {
+      if (!chimeEl) {
+        chimeEl = document.getElementById("ta-chime");
+        if (!chimeEl) {
+          chimeEl = document.createElement("audio");
+          chimeEl.id = "ta-chime";
+          chimeEl.src = "/static/audio-chime.wav";
+          chimeEl.preload = "auto";
+          chimeEl.setAttribute("playsinline", "");
+          document.body.appendChild(chimeEl);
+        }
+      }
+      chimeEl.volume = 1;
+      chimeEl.currentTime = 0;
+      var p = chimeEl.play();
+      if (p && p.catch) {
+        p.catch(function (err) {
+          note(false, "the chime was blocked (" +
+                      ((err && err.name) || "autoplay policy") + ")");
+        });
+      }
+    } catch (e) { /* nothing to do; the notification still arrives */ }
+  }
+
   function speak(text) {
     if (!supported()) {
       note(false, "this browser has no speech synthesis");
@@ -584,6 +629,7 @@
     });
 
     save();
+    playChime();
     speak(parts.join(". "));
   }
 
@@ -984,6 +1030,8 @@
     });
     var keep = pop.querySelector("[data-ta-keep]");
     if (keep) keep.checked = !!state.keepalive;
+    var chk = pop.querySelector("[data-ta-chime]");
+    if (chk) chk.checked = !!state.chime;
     var tip = pop.querySelector(".ta-tip");
     if (tip) tip.hidden = !(isInstalled() && !state.keepalive);
     var warn = pop.querySelector(".ta-warn");
@@ -1767,6 +1815,12 @@
 
       /* ── DEVICE ─────────────────────────────────────────────────── */
       '<div class="ta-pane" data-ta-pane="device" hidden>' +
+        '<label class="ta-keep"><input type="checkbox" data-ta-chime> ' +
+          'Play a chime with every announcement</label>' +
+        '<p class="ta-note">A real sound, which is the ONLY thing that can be ' +
+        'heard with the screen off &mdash; speech is suspended there and a ' +
+        'notification\u2019s sound belongs to the operating system. At your ' +
+        'desk you get both: the chime for attention, the words for content.</p>' +
         '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
           'Keep going when minimised or locked</label>' +
         '<p class="ta-note">This holds an inaudible sound playing, which is ' +
@@ -1810,6 +1864,13 @@
         if (state.mode === "on") { armed = true; speak(phrase(new Date())); }
         applyMode();
         savedFlash();
+        return;
+      }
+      var ch = ev.target.closest("[data-ta-chime]");
+      if (ch) {
+        state.chime = !!ch.checked;
+        save(); paint(); savedFlash();
+        if (state.chime) { armed = true; playChime(); }   // prove it works
         return;
       }
       var k = ev.target.closest("[data-ta-keep]");
@@ -1921,6 +1982,7 @@
         // page that has not been touched yet.
         armed = true;
         note(null, "");
+        playChime();
         speak(phrase(new Date()));
         return;
       }
@@ -2112,6 +2174,7 @@
     _dueItems: dueItems,
     _matchesOn: matchesOn,
     _slotsFor: slotsFor,
+    _playChime: playChime,
     _timeWords: timeWords,
     _repeatWords: repeatWords,
     _isExpired: isExpired,

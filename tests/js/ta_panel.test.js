@@ -215,6 +215,33 @@ click(q("[data-ta-cancel]"));
 while (doc.querySelector("[data-ta-del]")) click(doc.querySelector("[data-ta-del]"));
 click(q("[data-ta-close]"));
 
+// ── THE CHIME (2026-08-23) ───────────────────────────────────────────
+// Reported: "audio notifications are not working". Speech is suspended
+// with the screen off and a push notification's sound belongs to the OS,
+// so a real audio file is the only sound this app can make when locked.
+click(q(".ta-btn"));
+click(doc.querySelector('[data-ta-tab="device"]'));
+ok("chime control exists", !!q("[data-ta-chime]"));
+ok("chime is ON by default", q("[data-ta-chime]").checked === true);
+{
+  // It must use a real <audio> element. Web Audio is not treated as
+  // playback and is exactly what a locked phone declines to run.
+  const before = doc.querySelectorAll("audio").length;
+  window.TimeAnnouncer._playChime();
+  const el = doc.getElementById("ta-chime");
+  ok("plays through a real audio element", !!el);
+  ok("...pointing at a real file",
+     (el.getAttribute("src") || "").indexOf("audio-chime") !== -1);
+}
+// A click on a checkbox ALREADY toggles it, in jsdom and in a browser.
+// Pre-setting .checked as well flips it twice and tests nothing.
+click(q("[data-ta-chime]"));
+ok("chime can be switched off", q("[data-ta-chime]").checked === false);
+click(q("[data-ta-chime]"));
+ok("...and back on", q("[data-ta-chime]").checked === true);
+click(doc.querySelector('[data-ta-tab="items"]'));
+click(q("[data-ta-close]"));
+
 // ── the AM/PM chooser ────────────────────────────────────────────────
 click(q(".ta-btn"));
 ok("AM/PM buttons exist", doc.querySelectorAll('[data-ta-mer="at"]').length === 2);
