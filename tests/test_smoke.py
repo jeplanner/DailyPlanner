@@ -4711,3 +4711,77 @@ def test_say_endpoint_degrades_when_tts_is_missing(auth_client, monkeypatch):
     r = auth_client.get("/api/announcer/say?text=hello")
     assert r.status_code == 503, r.status_code
     assert r.get_json()["error"] == "tts unavailable"
+
+
+# ── MOBILE FIT AND TOUCH TARGETS ───────────────────────────────────────
+def test_the_page_can_never_be_wider_than_the_screen():
+    """Reported 2026-08-23: "in mobile the screen should fit to size.
+    currently i can swipe right left and it pathetically awful."
+
+    No element in this codebase sets a hard pixel width larger than a
+    phone — checked — so the overflow came from the two things that always
+    cause it: flex children default to min-width:auto and therefore refuse
+    to shrink below their content, and unbreakable strings have no break
+    opportunity. This app is built almost entirely from flex rows, so one
+    long label is enough to make the whole page pannable.
+
+    Fixed globally rather than page by page, because the failure is
+    systemic and a per-page fix gets re-broken by the next page anyone
+    adds.
+    """
+    css = open("static/design-system.css", encoding="utf-8").read()
+    assert "overflow-x: hidden" in css
+    assert "overflow-wrap: break-word" in css
+    # The actual fix, not just the guard: flex/grid children must be
+    # allowed to shrink.
+    assert "min-width: 0;" in css
+    # Media and wide content constrained rather than allowed to widen the
+    # page.
+    assert "max-width: 100%" in css
+    assert "pre, code { overflow-x: auto" in css
+
+
+def test_touch_targets_are_finger_sized_on_touch_devices():
+    """Same day: icons "so small and hard to click with fingers".
+
+    44px is the figure Apple and Google both publish. Keyed off POINTER
+    TYPE rather than screen width, because a tablet is wide and still
+    operated with a thumb, and a small desktop window is narrow and still
+    has a mouse.
+    """
+    css = open("static/design-system.css", encoding="utf-8").read()
+    assert "@media (pointer: coarse)" in css
+    assert "min-height: 44px" in css and "min-width: 44px" in css
+    # Inline links in prose are exempt — they are read, not aimed at, and
+    # padding them out wrecks the paragraph.
+    assert "p a, li a, td a" in css
+
+    board = open("templates/day_board.html", encoding="utf-8").read()
+    assert "@media (pointer: coarse)" in board, \
+        "the Day Board has its own CSS and does not load the design system"
+    assert "min-width:44px" in board
+    # The board's icons were sized in --u, which the fit pass SHRINKS to
+    # make a busy day fit — so the controls got smaller exactly when there
+    # was more to tap. The minimum has to be absolute, not a multiple of --u.
+    coarse = board.split("@media (pointer: coarse)")[1][:400]
+    assert "var(--u)" not in coarse.split("min-width:44px")[0], \
+        "the touch minimum still scales with the fit pass"
+
+
+def test_the_menu_can_be_closed_from_anywhere_in_it():
+    """Reported: "when i scroll to knowledge base, references etc, i have
+    no other option to scroll all the way back to close that menu".
+
+    Correct — the only close button sat at the top of a drawer long enough
+    to need scrolling, and the strip of overlay beside a 288px drawer is
+    easy to miss on a phone.
+    """
+    nav = open("templates/_top_nav.html", encoding="utf-8").read()
+    header = nav.split(".sidebar-header{")[1].split("}")[0]
+    assert "position:sticky" in header, "Close scrolls out of reach again"
+    assert "top:0" in header
+    # Opaque, or the list scrolls visibly underneath it.
+    assert "background:#ffffff" in header
+    assert ".sidebar-close{min-width:44px" in nav
+    # Escape must still work, for the desktop half of the same problem.
+    assert 'e.key === "Escape"' in nav and "closeSidebar()" in nav

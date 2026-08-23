@@ -130,6 +130,30 @@ header{
   .cols{grid-template-columns:1fr; grid-template-rows:1.2fr 1fr}
 }
 
+/* ── FINGERS, NOT MICE ───────────────────────────────────────────────
+   Reported 2026-08-23: the board's icons are "so small and hard to click
+   with fingers". They were sized in --u, which the fit pass shrinks to
+   make the day fit — so on a busy day the controls got SMALLER, which is
+   exactly backwards.
+
+   44px is the figure Apple and Google both publish. Keyed off pointer
+   type rather than screen width, because a tablet is wide and still
+   operated with a thumb, and a small desktop window is narrow and still
+   has a mouse. */
+@media (pointer: coarse){
+  .ico{
+    min-width:44px;
+    min-height:44px;
+    font-size:max(calc(var(--u) * 1.15), 15px);
+  }
+  .ctl{gap:8px}
+  /* The date picker is a tap target too, and it was the smallest of all. */
+  .picker{min-height:44px; display:inline-flex; align-items:center}
+  /* Rows are what people actually tap on this screen, so give the
+     full-cell overlay a real minimum too. */
+  li{min-height:40px}
+}
+
 /* ── ON A PHONE, LET IT SCROLL ───────────────────────────────────────
    The no-scroll contract above is right for the surface this was built
    for: a spare monitor on a desk, glanced at from across the room. It is
@@ -173,10 +197,7 @@ header{
      thing "truncated on mobile" means. */
   .txt, .ev .ttl{-webkit-line-clamp:none; display:block; overflow:visible}
   .ev{overflow:visible}
-  /* Comfortable thumb targets. The desktop board is look-only; the phone
-     one is the version people actually tap. */
-  li{padding:calc(var(--u) * .45) 0}
-  .ico{min-width:calc(var(--u) * 2.4); min-height:calc(var(--u) * 2.4)}
+  li{padding:calc(var(--u) * .5) 0}
 }
 .right{min-height:0; display:grid; grid-template-rows:1fr 1fr;
        gap:calc(var(--u) * .7)}

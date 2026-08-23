@@ -518,9 +518,26 @@ html.dark .date-row--right{border-left-color:#334155;}
 }
 html.dark .sidebar{background:#1e293b;box-shadow:4px 0 28px rgba(0,0,0,.45);}
 .sidebar.open{transform:translateX(0);}
+@media (max-width:480px){
+  /* Leave a deliberate strip of overlay showing: it tells you there is a
+     page behind this and that tapping there returns to it. A drawer that
+     covers the whole screen looks like a new page, and people then look
+     for a Back button that does not exist. */
+  .sidebar{width:min(320px, 86vw);}
+}
 body.menu-open{overflow:hidden;}
 
+/* STICKY, so Close is reachable from anywhere in the list.
+   Reported 2026-08-23: "when i scroll to knowledge base, references etc, i
+   have no other option to scroll all the way back to close that menu".
+   Correct — the only close button sat at the top of a drawer long enough
+   to need scrolling, and the overlay strip beside a 288px drawer is easy
+   to miss on a phone. */
 .sidebar-header{
+  position:sticky;
+  top:0;
+  z-index:2;
+  background:#ffffff;
   display:flex;
   align-items:center;
   justify-content:space-between;
@@ -528,6 +545,9 @@ body.menu-open{overflow:hidden;}
   border-bottom:1px solid #f1f3f5;
   margin-bottom:10px;
 }
+html.dark .sidebar-header{background:#1e293b;border-bottom-color:#334155;}
+/* A finger-sized target, not a 24px glyph. */
+.sidebar-close{min-width:44px;min-height:44px;}
 html.dark .sidebar-header{border-bottom-color:#334155;}
 .sidebar-title{
   font-size:17px;

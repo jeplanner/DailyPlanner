@@ -330,3 +330,75 @@ html.light { color-scheme: light; }
         scroll-behavior: auto !important;
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MOBILE FIT — the page must never be wider than the screen
+   ═══════════════════════════════════════════════════════════════════════
+   Reported 2026-08-23: "in mobile the screen should fit to size. currently
+   i can swipe right left and it pathetically awful."
+
+   No element in this codebase sets a hard pixel width larger than a phone,
+   so the overflow comes from the two things that always cause it:
+
+   1. FLEX CHILDREN DEFAULT TO min-width:auto, which means they refuse to
+      shrink below their content. One long word, one nowrap label or one
+      wide table inside a flex row pushes the whole row past the viewport,
+      and the page becomes pannable. This app is built almost entirely from
+      flex rows, so it only takes one.
+
+   2. UNBREAKABLE STRINGS — a URL, a long token, a filename — have no break
+      opportunity and simply stick out.
+
+   Fixed here rather than page by page, because the failure is systemic and
+   a per-page fix would be re-broken by the next page anyone adds.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+html {
+    /* The belt. A page should never need this, and when one regresses the
+       user gets a slightly clipped element instead of a broken app. */
+    overflow-x: hidden;
+    /* Stop iOS inflating text in landscape, which itself causes overflow. */
+    -webkit-text-size-adjust: 100%;
+}
+
+body {
+    overflow-x: hidden;
+    max-width: 100%;
+    /* The braces: long URLs and tokens wrap instead of protruding. */
+    overflow-wrap: break-word;
+}
+
+/* THE ACTUAL FIX for cause 1. Flex and grid children may now shrink below
+   their content, which is what makes a row fit the screen. Scoped to
+   children of flex/grid containers so ordinary block layout is untouched. */
+:where(.top-context, .top-nav, nav, header, main, section, .card,
+       .settings-card, .settings-section) > * {
+    min-width: 0;
+}
+
+/* Media and embeds never exceed their container. */
+img, svg, video, canvas, iframe, embed, object {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Wide content scrolls INSIDE ITSELF rather than widening the page. */
+table { max-width: 100%; }
+pre, code { overflow-x: auto; max-width: 100%; }
+.table-wrap, .tablewrap, .scroll-x { overflow-x: auto; max-width: 100%; }
+
+/* ── TOUCH TARGETS ──────────────────────────────────────────────────────
+   Reported the same day: icons "so small and hard to click with fingers".
+   44px is the figure both Apple and Google publish, and most of this app's
+   icon buttons were around 34px. Applied on pointer:coarse only, so a
+   mouse-driven desktop keeps its denser layout. */
+@media (pointer: coarse) {
+    button, a.btn, .btn, .icon-btn, .help-btn, .hamburger,
+    [role="button"] {
+        min-height: 44px;
+        min-width: 44px;
+    }
+    /* Inline text links inside prose are exempt — they are read, not
+       tapped as targets, and padding them out wrecks the paragraph. */
+    p a, li a, td a { min-height: 0; min-width: 0; }
+}
