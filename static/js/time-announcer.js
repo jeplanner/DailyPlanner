@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v262";
+  var BUILD = "v265";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -676,16 +676,36 @@
 
   function playChime(onDone) {
     if (!state.chime) { if (onDone) onDone(); return; }
+
+    /* ── THE WORDS MUST NOT DEPEND ON AN EVENT THAT MAY NOT ARRIVE ────
+       The announcement is chained to the chime's `ended`, and if that
+       event never fires the words never start — which is exactly the
+       shape of "in android only get the chime sound, not the text when
+       the phone is locked". `ended` is genuinely unreliable here: a
+       stalled element, an interrupted stream, or the OS pausing playback
+       part-way all leave it pending forever.
+
+       The chime is 1.34 seconds. If nothing has happened after four, stop
+       waiting and say the words. Guarded so the two paths cannot both
+       run — hearing the announcement twice is its own bug. */
+    var went = false;
+    var go = function () {
+      if (went) return;
+      went = true;
+      if (onDone) onDone();
+    };
+    setTimeout(go, 4000);
+
     playThrough("/static/audio-chime.wav", function () {
       if (lastFire) { lastFire.chime = "played"; paint(); }
       nudgeKeepalive();
-      if (onDone) onDone();
+      go();
     }, function (err) {
       if (lastFire) { lastFire.chime = "blocked"; paint(); }
       nudgeKeepalive();
       note(false, "the chime was blocked (" +
                   ((err && err.name) || "autoplay policy") + ")");
-      if (onDone) onDone();
+      go();
     });
   }
 
@@ -714,12 +734,39 @@
         return r.blob();
       })
       .then(function (b) {
-        var url = URL.createObjectURL(b);
-        sayCache[text] = url;
-        sayState = "ready";
-        if (text === nextWords) preloadSpeech(text);
-        paint();
-        return url;
+        /* ── A data: URL, NOT A blob: URL ────────────────────────────
+           Measured on a locked Android, 2026-08-23:
+
+             "(page hidden) Chime: Played. Speech audio refused
+              (not supported error), rendered audio: cached"
+
+           NotSupportedError means the element could not decode its
+           source — and the source was a blob: URL that this page had
+           created before Android froze it. A frozen or discarded page
+           has its object URLs released, while the JavaScript string
+           naming them survives in the cache. So the announcement looked
+           cached, right up until the moment it was needed, and then
+           pointed at nothing.
+
+           A data: URL cannot be invalidated: it IS the audio. About a
+           third larger as base64, which for a handful of short phrases
+           is nothing next to being silent. */
+        return new Promise(function (resolve) {
+          try {
+            var fr = new FileReader();
+            fr.onload = function () { resolve(String(fr.result)); };
+            fr.onerror = function () { resolve(URL.createObjectURL(b)); };
+            fr.readAsDataURL(b);
+          } catch (e) {
+            resolve(URL.createObjectURL(b));
+          }
+        }).then(function (url) {
+          sayCache[text] = url;
+          sayState = "ready";
+          if (text === nextWords) preloadSpeech(text);
+          paint();
+          return url;
+        });
       });
   }
 
@@ -991,6 +1038,9 @@
       slotAt.setHours(Math.floor(slotMins / 60), slotMins % 60, 0, 0);
     }
     var words = wordsFor(slotAt, items);
+    //: One re-render per fire. Without this a source that never decodes
+    //: would loop fetching and failing until the slot passed.
+    var retried = false;
 
     /* ── A LATE ANNOUNCEMENT MUST SAY THAT IT IS LATE ─────────────────
        Reported as "strange. In android, when i open the app, then a
@@ -1050,6 +1100,18 @@
       //: "refused: synthesis-failed" and hid the reason the audio path —
       //: the only one that works on a locked Android — was skipped.
       audio: null,
+      //: THE TWO FACTS I KEPT HAVING TO GUESS AT.
+      //: Whether the keep-alive was actually holding at the moment this
+      //: fired separates "the page was asleep" from "the page was awake
+      //: and something refused it"; whether the speech element had ever
+      //: been unlocked decides whether the rendered-audio path could have
+      //: played at all. Both were invisible, and every wrong diagnosis in
+      //: this saga came from assuming one of them.
+      keep: !!keepCtx,
+      unlocked: (function () {
+        try { return speechSound().dataset.unlocked === "1"; }
+        catch (e) { return null; }
+      })(),
     };
     var spokeYet = false;
     var sayIt = function () {
@@ -1082,7 +1144,22 @@
          the device is in was never necessary — trying the thing that works
          everywhere is. `hidden` is still recorded, because it turned out
          to be the diagnosis, but it no longer decides anything. */
-      if (playSpeech(words, sayIt)) { lastFire.audio = "cached"; return; }
+      /* A CACHED ENTRY THAT WILL NOT PLAY IS WORSE THAN NO CACHE, because
+         it stops us fetching one that would. So a refusal re-renders the
+         audio once and tries again, and only then gives up to the speech
+         API — which, on the locked phone this whole path exists for, is
+         refused anyway. */
+      var recover = function () {
+        if (retried) { sayIt(); return; }
+        retried = true;
+        delete sayCache[words];
+        lastFire.audio = "cached copy would not play, re-fetching";
+        paint();
+        fetchSpeech(words)
+          .then(function () { if (!playSpeech(words, sayIt)) sayIt(); })
+          .catch(function () { sayIt(); });
+      };
+      if (playSpeech(words, recover)) { lastFire.audio = "cached"; return; }
       lastFire.audio = "not cached, fetching";
 
       // NOT CACHED. Fetch it NOW rather than giving up. A second late and
@@ -1208,6 +1285,11 @@
       el.addEventListener("playing", function () {
         keepCtx = { el: el };
         setMediaSession();
+        // Clear the "blocked until you tap the page" warning: it is true
+        // on every fresh load and stops being true the moment this fires,
+        // and a warning left standing after it is fixed is read as the
+        // feature still being broken.
+        note(null, "");
         paint();
       });
       el.addEventListener("pause", function () {
@@ -1750,7 +1832,11 @@
         fire.className = "ta-health " + (ok ? "good" : "bad");
         fire.textContent = "Last fired " + when + where +
           " \u2014 chime: " + ch + ", speech: " + sp +
-          (lastFire.audio ? ", rendered audio: " + lastFire.audio : "");
+          (lastFire.audio ? ", rendered audio: " + lastFire.audio : "") +
+          ", keep-alive: " + (lastFire.keep ? "holding" : "NOT holding") +
+          ", speech audio: " +
+          (lastFire.unlocked === null ? "unknown"
+           : lastFire.unlocked ? "unlocked" : "NEVER UNLOCKED");
       }
     }
 
@@ -2081,6 +2167,20 @@
       .catch(function () { /* offline: the cache is already loaded */ });
   }
 
+  /* RETURNS THE PARSED BODY. It used to return nothing at all, which was
+     harmless for the saves it was written for — they only care whether the
+     request succeeded — and silently broke both of the callers added later
+     that ASK the server something:
+
+       * /api/push/status always resolved undefined, so pushReach stayed
+         "unknown" and the "the server cannot reach this device" warning
+         could never appear. The whole check was inert.
+       * /api/push/diagnose always took the failure branch and printed
+         "Could not run the check" no matter what came back.
+
+     Both looked like server problems and were this. A response with no
+     body is not an error, so it resolves to an empty object rather than
+     rejecting. */
   function apiPost(url, body) {
     return fetch(url, {
       method: "POST",
@@ -2089,6 +2189,7 @@
       body: JSON.stringify(body),
     }).then(function (r) {
       if (!r.ok) throw new Error("save failed");
+      return r.json().catch(function () { return {}; });
     });
   }
 

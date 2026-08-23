@@ -597,6 +597,52 @@ click(q("[data-ta-new]"));
 }
 click(q("[data-ta-close]"));
 
+// ── apiPost MUST HAND BACK WHAT THE SERVER SAID (2026-08-23) ────────
+// It used to return nothing. Harmless for the saves it was written for —
+// they only care whether the request succeeded — and it silently broke
+// both callers added later that ASK the server something:
+//
+//   * /api/push/status always resolved undefined, so the "the server
+//     cannot reach this device" warning could never appear.
+//   * /api/push/diagnose always took the failure branch and printed
+//     "Could not run the check" whatever came back.
+//
+// Reported as "it showed asking the push service but got a message could
+// not run the check". Both looked like server faults and were this.
+{
+  const seen = [];
+  const realFetch = window.fetch;
+  window.fetch = function (url, opts) {
+    if (String(url).indexOf("/api/push/diagnose") === 0) {
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({
+          ok: true,
+          results: [{ device: "Android", tail: "ENDPOINT1", was_active: false,
+                      status: 403, outcome: "the signing key does not match",
+                      detail: "" }],
+        }),
+      });
+    }
+    return realFetch(url, opts);
+  };
+
+  click(q(".ta-btn"));
+  click(q("[data-ta-diag]"));
+  await tick(); await tick();
+
+  const out = q("[data-ta-diagout]");
+  ok("the check reports what came back", out.hidden === false);
+  ok("...not the generic failure line",
+     !/Could not run the check/.test(out.textContent));
+  ok("...naming the device", /Android/.test(out.textContent));
+  ok("...and the status it got back", /403/.test(out.textContent));
+  ok("...and marking a retired registration",
+     /retired/.test(out.textContent));
+  click(q("[data-ta-close]"));
+  window.fetch = realFetch;
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
 })();

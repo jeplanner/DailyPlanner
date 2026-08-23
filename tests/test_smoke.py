@@ -6015,15 +6015,31 @@ def test_announcer_never_decides_by_visibility():
     states and its refusal path still falls through to speechSynthesis.
     """
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
-    fire = js.split("playChime(function ()")[1].split("paint();")[0]
+    # Sliced to the end of the callback. It used to cut at the first
+    # "paint();", which the recovery step added later sits above — a window
+    # that stops covering the code it guards is the recurring failure of
+    # these source tests.
+    fire = js.split("playChime(function () {")[1].split("\n    });")[0]
 
     # The audio attempt must come before any speechSynthesis fallback, and
-    # must not sit behind a visibility test.
-    assert "playSpeech(words, sayIt)" in fire
+    # must not sit behind a visibility test. Asserted on the CALL, not on
+    # the name of its failure handler — that handler is now a recovery step
+    # rather than a straight fall-through to speech.
+    assert "playSpeech(words," in fire
     assert "if (!hidden) { sayIt(); return; }" not in fire, \
         "the fire path still decides by visibility"
-    assert fire.index("playSpeech(words, sayIt)") < fire.index("sayIt();"), \
-        "speechSynthesis is still tried before the rendered audio"
+    # ORDERING IS NOT READABLE FROM THE TEXT any more, and pretending
+    # otherwise produced two false failures: the recovery helper is DEFINED
+    # above the call it serves and mentions both sayIt() and fetchSpeech()
+    # inside itself, so index comparisons compare a definition against a
+    # call. What IS checkable, and is the regression that mattered, is that
+    # no statement at the top level of this callback reaches speech
+    # directly — every route to it is inside a failure handler.
+    top = [ln for ln in fire.splitlines()
+           if ln.startswith("      ") and not ln.startswith("       ")]
+    for ln in top:
+        assert "sayIt()" not in ln, \
+            f"speech is reached unconditionally: {ln.strip()}"
 
     # The flag is still RECORDED — it turned out to be the diagnosis — but
     # the label must not read as "the screen was on".
@@ -6155,3 +6171,82 @@ def test_push_diagnose_says_when_it_cannot_run(auth_client, monkeypatch):
     monkeypatch.setattr(ps, "get", lambda *a, **k: [])
     body = auth_client.post("/api/push/diagnose").get_json()
     assert body["ok"] is True and "no push subscriptions" in body["note"]
+
+
+def test_the_words_do_not_wait_forever_on_the_chime():
+    """"in android only get the chime sound, not the text when the phone is
+    locked" — the same shape, twice now.
+
+    The announcement is chained to the chime's `ended` event, and if that
+    event never arrives the words never start. `ended` is genuinely
+    unreliable here: a stalled element, an interrupted stream, or the OS
+    pausing playback part-way all leave it pending forever, and the chime
+    is the half that was always audible.
+
+    The chime is 1.34 seconds; after four, stop waiting and speak.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    chime = js.split("function playChime")[1].split("\n  }")[0]
+
+    assert "setTimeout(go, 4000)" in chime, \
+        "the words still wait on `ended` with no way out"
+    # Both paths must go through the same guard, or a chime that ends
+    # normally AND trips the timeout says everything twice.
+    assert "if (went) return;" in chime
+    assert chime.count("go();") >= 2, "a path still calls onDone directly"
+
+
+def test_each_fire_records_whether_it_could_have_worked():
+    """Every wrong diagnosis in this saga came from assuming one of two
+    facts that were never recorded.
+
+    Whether the keep-alive was holding at the moment of the fire separates
+    "the page was asleep" from "the page was awake and something refused".
+    Whether the speech element had ever been unlocked decides whether the
+    rendered-audio path could have played at all — Android grants that per
+    element, on a gesture.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    block = js.split("lastFire = {")[1].split("};")[0]
+    assert "keep: !!keepCtx" in block
+    assert "dataset.unlocked" in block
+
+    line = js.split('fire.textContent = "Last fired "')[1].split(";")[0]
+    assert "keep-alive" in line and "speech audio" in line
+    # Stated as the alarming case, not as a neutral flag — "false" in a
+    # diagnostics line is read as "fine" as often as not.
+    assert "NOT holding" in line and "NEVER UNLOCKED" in line
+
+
+def test_rendered_speech_is_cached_as_a_self_contained_url():
+    """Measured on a locked Android, 2026-08-23:
+
+        "(page hidden) Chime: Played. Speech audio refused (not supported
+         error), rendered audio: cached"
+
+    NotSupportedError means the element could not decode its source — and
+    the source was a blob: URL created before Android froze the page. A
+    frozen or discarded page has its object URLs released while the
+    JavaScript string naming them survives in the cache. The announcement
+    looked cached right up to the moment it was needed, then pointed at
+    nothing.
+
+    A data: URL cannot be invalidated: it IS the audio.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    fetch_fn = js.split("function fetchSpeech")[1].split("\n  }")[0]
+
+    assert "readAsDataURL" in fetch_fn, "speech is still cached as a blob URL"
+    # createObjectURL survives only as the fallback for a FileReader that
+    # fails — losing the audio entirely would be worse than a fragile URL.
+    assert fetch_fn.count("createObjectURL") <= 2
+    assert "fr.onerror" in fetch_fn
+
+    # AND IT HEALS. A cached entry that will not play is worse than no
+    # cache, because it stops us fetching one that would.
+    fire = js.split("playChime(function () {")[1].split("\n    });")[0]
+    assert "var recover" in fire
+    assert "delete sayCache[words]" in fire
+    # Exactly once per fire, or a source that never decodes loops until the
+    # slot has passed.
+    assert "if (retried) { sayIt(); return; }" in fire
