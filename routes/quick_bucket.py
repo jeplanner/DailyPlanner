@@ -27,6 +27,7 @@ from auth import login_required
 from services import quick_bucket_calendar_service as cal_sync
 from supabase_client import get, post, update
 from utils.quick_time import parse_at_schedule
+from utils.user_tz import user_today
 
 logger = logging.getLogger("daily_plan")
 quick_bucket_bp = Blueprint("quick_bucket", __name__)
@@ -258,9 +259,21 @@ def list_items():
         "top5_date,top5_position,"
         "created_at,updated_at"
     )
+    # FINISHED WORK LEAVES THE PAGE THE NEXT DAY.
+    #
+    # This query used to return every non-deleted row, which meant 66
+    # completed items being loaded and rendered on every visit, ordered
+    # done-last, forever. Ticking things off made the page longer.
+    #
+    # Today's completions STAY, because unticking a mistake has to be
+    # possible without going hunting. Everything older lives at /archive,
+    # which reads it in place — nothing is moved, so no count anywhere
+    # else changes.
+    _today_iso = user_today().isoformat()
     base_params = {
         "user_id": f"eq.{user_id}",
         "is_deleted": "eq.false",
+        "or": f"(is_done.eq.false,done_at.gte.{_today_iso})",
         "order": "is_done.asc,position.asc,created_at.desc",
         "limit": "500",
     }

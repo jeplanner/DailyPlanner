@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v247";
+  var BUILD = "v249";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -524,60 +524,88 @@
      When you are at the desk you get the chime AND the spoken sentence,
      which is the right pairing: the chime takes your attention and the
      speech carries the content. */
-  var chimeEl = null;
+  /* ── ONE ELEMENT FOR BOTH SOUNDS ────────────────────────────────────
+     Reported from a locked Android: "chime played, speech: audio blocked".
 
-  function playChime() {
-    if (!state.chime) return;
-    try {
-      if (!chimeEl) {
-        chimeEl = document.getElementById("ta-chime");
-        if (!chimeEl) {
-          chimeEl = document.createElement("audio");
-          chimeEl.id = "ta-chime";
-          chimeEl.src = "/static/audio-chime.wav";
-          chimeEl.preload = "auto";
-          chimeEl.setAttribute("playsinline", "");
-          document.body.appendChild(chimeEl);
-        }
-      }
-      chimeEl.volume = 1;
-      chimeEl.currentTime = 0;
-      var p = chimeEl.play();
-      if (p && p.then) {
-        p.then(function () {
-          if (lastFire) { lastFire.chime = "played"; paint(); }
-        }).catch(function (err) {
-          if (lastFire) { lastFire.chime = "blocked"; paint(); }
-          note(false, "the chime was blocked (" +
-                      ((err && err.name) || "autoplay policy") + ")");
-        });
-      }
-    } catch (e) { /* nothing to do; the notification still arrives */ }
-  }
+     Both are <audio> elements, so why does one play and the other not?
+     Because Android unlocks an audio element the first time it is played
+     DURING A USER GESTURE — and it unlocks that ELEMENT, not the page.
+     The chime element gets played when you tick its checkbox or press
+     Test, so it is unlocked from then on. The speech element was created
+     fresh, had never been played during a gesture, and was refused every
+     time — on a locked screen, where no gesture is ever coming.
+
+     So there is now ONE element. The chime unlocks it, and the words ride
+     on that same unlocked element immediately afterwards.
+
+     In SEQUENCE rather than together, which is better anyway: the chime
+     takes your attention and the words arrive once it has. */
+  var soundEl = null;
+  var sayCache = {}, sayPending = {};
 
   //: Held so the utterance is not garbage-collected mid-sentence, which is
-  //: a real Chrome bug: a speaking utterance with no live reference can be
-  //: collected and the speech simply stops partway through.
+  //: a real Chrome bug.
   var speaking = null;
-  //: Set after a failure, so the retry asks for no particular voice at all.
+  //: Set after a failure, so the retry asks for no particular voice.
   var noVoice = false;
+
+  function sound() {
+    if (soundEl) return soundEl;
+    soundEl = document.getElementById("ta-sound");
+    if (!soundEl) {
+      soundEl = document.createElement("audio");
+      soundEl.id = "ta-sound";
+      soundEl.preload = "auto";
+      soundEl.setAttribute("playsinline", "");
+      document.body.appendChild(soundEl);
+    }
+    return soundEl;
+  }
+
+  /* Play one source on the shared element. onDone fires when it finishes,
+     onFail when the browser refuses to start it — play() is asynchronous,
+     so starting is not the same as being heard. */
+  function playThrough(src, onDone, onFail) {
+    var el = sound();
+    try {
+      el.onended = null;
+      el.src = src;
+      el.volume = 1;
+      var p = el.play();
+      el.onended = function () { el.onended = null; if (onDone) onDone(); };
+      if (p && p.then) {
+        p.catch(function (err) {
+          el.onended = null;
+          if (onFail) onFail(err);
+        });
+      }
+      return true;
+    } catch (e) {
+      if (onFail) onFail(e);
+      return false;
+    }
+  }
+
+  function playChime(onDone) {
+    if (!state.chime) { if (onDone) onDone(); return; }
+    playThrough("/static/audio-chime.wav", function () {
+      if (lastFire) { lastFire.chime = "played"; paint(); }
+      if (onDone) onDone();
+    }, function (err) {
+      if (lastFire) { lastFire.chime = "blocked"; paint(); }
+      note(false, "the chime was blocked (" +
+                  ((err && err.name) || "autoplay policy") + ")");
+      if (onDone) onDone();
+    });
+  }
 
   /* ── SPOKEN AUDIO, FOR WHEN THE BROWSER WILL NOT SPEAK ──────────────
      Android Chrome refuses speechSynthesis while the page is hidden.
-     Measured: a locked Android played the CHIME — so the page was awake
-     and media playback was permitted — and spoke nothing. iPhone spoke
-     fine in the same state.
+     Media playback is allowed there, so the words are fetched as audio
+     and played through the element above.
 
-     Media playback is allowed in the background everywhere here, so the
-     words are fetched as audio and played through an element, exactly
-     like the chime. That is the only mechanism that can carry words to a
-     locked Android.
-
-     PREFETCHED, not fetched at fire time: the sound must not wait on a
-     network round trip at the moment it is due, and a phone that went
-     offline after the prefetch still speaks. */
-  var sayEl = null, sayCache = {}, sayPending = {};
-
+     PREFETCHED, so the sound does not wait on a network round trip at the
+     moment it is due, and a phone that dropped offline still speaks. */
   function sayUrl(text) {
     return "/api/announcer/say?text=" + encodeURIComponent(text);
   }
@@ -594,32 +622,19 @@
       .catch(function () { delete sayPending[text]; });
   }
 
-  /* Returns true if it managed to start playing rendered audio. */
-  function playSpeech(text) {
+  /* Returns false when there is nothing cached to play. Whether it was
+     HEARD is reported through onFail. */
+  function playSpeech(text, onFail) {
     var url = sayCache[text];
     if (!url) return false;
-    try {
-      if (!sayEl) {
-        sayEl = document.createElement("audio");
-        sayEl.id = "ta-say";
-        sayEl.preload = "auto";
-        sayEl.setAttribute("playsinline", "");
-        document.body.appendChild(sayEl);
+    return playThrough(url, function () {
+      if (lastFire) { lastFire.spoke = "played (audio)"; paint(); }
+    }, function () {
+      if (lastFire && !lastFire.spoke) {
+        lastFire.spoke = "audio blocked"; paint();
       }
-      sayEl.src = url;
-      sayEl.volume = 1;
-      var p = sayEl.play();
-      if (p && p.then) {
-        p.then(function () {
-          if (lastFire) { lastFire.spoke = "played (audio)"; paint(); }
-        }).catch(function () {
-          if (lastFire && !lastFire.spoke) {
-            lastFire.spoke = "audio blocked"; paint();
-          }
-        });
-      }
-      return true;
-    } catch (e) { return false; }
+      if (onFail) onFail();
+    });
   }
 
   function speak(text, isRetry) {
@@ -806,16 +821,20 @@
       chime: null,
       spoke: null,
     };
-    playChime();
-
     var words = parts.join(". ");
-    // WHEN HIDDEN, PLAY AUDIO. speechSynthesis is refused there on Android
-    // and works on iOS, so try the audio first and fall through to speech
-    // if it is not ready — on iOS the speech will simply win the race and
-    // nothing is lost.
-    var usedAudio = false;
-    if (lastFire && lastFire.hidden) usedAudio = playSpeech(words);
-    if (!usedAudio) speak(words);
+    var spokeYet = false;
+    var sayIt = function () {
+      if (spokeYet) return;
+      spokeYet = true;
+      speak(words);
+    };
+    // The chime plays FIRST and the words follow when it ENDS, on the same
+    // element — which is what makes them audible at all on a locked
+    // Android. If the rendered audio is missing or refused, fall back to
+    // the speech API, which still works on iOS in that state.
+    playChime(function () {
+      if (!(lastFire && lastFire.hidden && playSpeech(words, sayIt))) sayIt();
+    });
     paint();
   }
 
@@ -2297,7 +2316,10 @@
       if (ch) {
         state.chime = !!ch.checked;
         save(); paint(); savedFlash();
-        if (state.chime) { armed = true; playChime(); }   // prove it works
+        // Playing it here is not only a confirmation: this is the GESTURE
+        // that unlocks the shared audio element, without which a locked
+        // phone can never play anything through it.
+        if (state.chime) { armed = true; playChime(); }
         return;
       }
       var k = ev.target.closest("[data-ta-keep]");

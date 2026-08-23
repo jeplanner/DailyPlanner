@@ -257,12 +257,17 @@ ok("chime is ON by default", q("[data-ta-chime]").checked === true);
 {
   // It must use a real <audio> element. Web Audio is not treated as
   // playback and is exactly what a locked phone declines to run.
-  const before = doc.querySelectorAll("audio").length;
   window.TimeAnnouncer._playChime();
-  const el = doc.getElementById("ta-chime");
+  // ONE shared element, id "ta-sound". Android unlocks an audio element on
+  // its first gesture-driven play and unlocks that ELEMENT, not the page,
+  // so a second never-tapped element is refused forever on a locked
+  // screen — measured as "chime played, speech: audio blocked".
+  const el = doc.getElementById("ta-sound");
   ok("plays through a real audio element", !!el);
   ok("...pointing at a real file",
      (el.getAttribute("src") || "").indexOf("audio-chime") !== -1);
+  ok("...and there is only ONE announcement audio element",
+     doc.querySelectorAll("audio#ta-sound").length === 1);
 }
 // A click on a checkbox ALREADY toggles it, in jsdom and in a browser.
 // Pre-setting .checked as well flips it twice and tests nothing.

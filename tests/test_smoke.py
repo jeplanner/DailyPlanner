@@ -4399,17 +4399,30 @@ def test_announcement_chime_is_real_audio_and_on_by_default():
     # These two facts are what matter and they are unambiguous in the file:
     # a real <audio> element (Web Audio is not treated as playback and is
     # exactly what a locked phone declines to run) pointed at a real file.
-    assert 'chimeEl.id = "ta-chime"' in js
-    assert 'chimeEl.src = "/static/audio-chime.wav"' in js
+    # ONE ELEMENT for the chime and the words. Android unlocks an audio
+    # element the first time it is played during a user GESTURE, and it
+    # unlocks that ELEMENT rather than the page — so a second, never-tapped
+    # element is refused forever on a locked screen. Measured exactly that
+    # way: "chime played, speech: audio blocked".
+    assert 'soundEl.id = "ta-sound"' in js
+    assert '"/static/audio-chime.wav"' in js
+    assert "function playThrough" in js
+    assert 'soundEl = document.createElement("audio")' in js
+    # And exactly one audio element for announcements, or the bug returns.
+    assert js.count('createElement("audio")') <= 2, \
+        "a second audio element is back; it will be blocked when locked"
     # Chime BEFORE speak, so it cannot wait behind a speech call that may
     # never start. Asserted on the ORDER of the two calls rather than on
     # the exact lines around them, which now carry the per-fire recording.
     # The words are now joined before the branch that chooses audio vs
     # speech, so the assertion follows the chime against whichever of the
     # two actually carries them.
-    ci = js.index("playChime();\n\n    var words")
-    si = js.index("if (!usedAudio) speak(words);")
-    assert ci < si, "the chime is not played before the words"
+    # The words now follow the chime's `ended` event on the same element,
+    # so the ordering is structural rather than two calls in sequence.
+    assert "playChime(function () {" in js
+    fire = js.split("playChime(function () {")[1][:220]
+    assert "playSpeech(words" in fire and "sayIt()" in fire, \
+        "the words are not chained to the end of the chime"
 
     with wave.open("static/audio-chime.wav", "rb") as w:
         seconds = w.getnframes() / float(w.getframerate())
@@ -4679,8 +4692,16 @@ def test_words_are_rendered_as_audio_for_a_hidden_page(auth_client, monkeypatch)
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
     # Rendered audio is used when the page is HIDDEN, and speech otherwise —
     # speech is better when it works, and on iOS it always does.
-    assert "if (lastFire && lastFire.hidden) usedAudio = playSpeech(words);" in js
-    assert "if (!usedAudio) speak(words);" in js
+    assert "playSpeech(words, sayIt)" in js
+    # THE FALLBACK MUST SURVIVE A REFUSED PLAY. play() is asynchronous, so
+    # starting it is not the same as being heard. The first version treated
+    # a started request as success and skipped speak() entirely — so
+    # whenever a hidden page refused the audio, which it frequently does,
+    # NOTHING was said. That silenced both phones, including iPhone where
+    # speech had been working.
+    assert "if (onFail) onFail();" in js, \
+        "a refused audio play will silence the announcement again"
+    assert "var spokeYet = false;" in js, "the fallback can double-speak"
     # PREFETCHED, or the sound waits on a network round trip at the exact
     # moment it is due — and a phone that dropped offline would be silent.
     assert "function prefetchNext" in js and "prefetchSpeech" in js
@@ -4785,3 +4806,69 @@ def test_the_menu_can_be_closed_from_anywhere_in_it():
     assert ".sidebar-close{min-width:44px" in nav
     # Escape must still work, for the desktop half of the same problem.
     assert 'e.key === "Escape"' in nav and "closeSidebar()" in nav
+
+
+# ── ARCHIVE ────────────────────────────────────────────────────────────
+def test_archive_page_renders_and_groups_by_day(auth_client, monkeypatch):
+    """Asked 2026-08-23: "all the tasks done move it to archivedtasks and
+    keep all the history there."
+
+    Completed work accumulated in the live tables and never left — 66
+    finished Quick Bucket items were loaded into the bucket page on every
+    visit, ordered done-last, forever. Ticking things off made the page
+    longer.
+    """
+    import routes.archive as ar
+
+    def fake_get(table, params=None, **kw):
+        if table == "quick_bucket":
+            return [{"text": "Pay rent", "done_at": "2026-08-23T09:00:00Z"},
+                    {"text": "Call bank", "done_at": "2026-08-22T11:00:00Z"}]
+        if table == "todo_matrix":
+            return [{"category": "Ship the board",
+                     "updated_at": "2026-08-23T10:00:00Z"}]
+        return []
+
+    monkeypatch.setattr(ar, "get", fake_get)
+    html = auth_client.get("/archive").get_data(as_text=True)
+    assert "Pay rent" in html and "Call bank" in html
+    assert "Ship the board" in html
+    # Grouped by the day it was finished, newest first — that is the
+    # question this page answers.
+    assert html.index("Pay rent") < html.index("Call bank")
+    assert "Today" in html
+
+
+def test_archive_moves_nothing(monkeypatch):
+    """A VIEW, not a move. project_tasks carries 40 columns, and project
+    progress is computed from live task counts — so archiving by moving
+    would silently change the completion figure on every project the tasks
+    came from, for a reason nothing on screen would explain. That argument
+    settled /backlog and applies harder here.
+    """
+    src = open("routes/archive.py", encoding="utf-8").read()
+    for writer in ("post(", "update(", "delete(", "sb_delete"):
+        assert writer not in src, f"the archive writes: {writer}"
+
+
+def test_archive_excludes_binned_work():
+    """'skipped' and 'not_required' are closed, not achieved. Counting them
+    as done would make this page flatter the reader."""
+    src = open("routes/archive.py", encoding="utf-8").read()
+    assert 'DONE_STATUSES = ("done", "completed")' in src
+    assert "skipped" in src and "not_required" in src, \
+        "the exclusion is not documented where the next person will look"
+
+
+def test_bucket_page_stops_carrying_old_completions():
+    """Today's completions STAY — unticking a mistake has to be possible
+    without going hunting. Everything older is read in place by /archive.
+    """
+    src = open("routes/quick_bucket.py", encoding="utf-8").read()
+    assert '"or": f"(is_done.eq.false,done_at.gte.{_today_iso})"' in src
+    assert "from utils.user_tz import user_today" in src
+
+
+def test_archive_is_reachable_from_the_menu():
+    nav = open("templates/_top_nav.html", encoding="utf-8").read()
+    assert 'href="/archive"' in nav, "a page nobody can find"
