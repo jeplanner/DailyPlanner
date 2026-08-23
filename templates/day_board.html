@@ -20,6 +20,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{{ date_label }} — Day Board</title>
+{# day_board_bp is NOT csrf-exempt, and this page is standalone — it does
+   not include the shared nav that carries this tag everywhere else. Tagging
+   a to-do with a time posts to /api/day-board/task-time, which is rejected
+   without it. #}
+<meta name="csrf-token"
+      content="{{ csrf_token() if csrf_token is defined else '' }}">
 {% include "_pwa_head.html" %}
 <script src="/static/js/celebrate.js" defer></script>
 <style>
@@ -1101,10 +1107,16 @@ li.done .when{color:var(--dim); font-weight:500}
     var id = el.getAttribute("data-task-time");
     var val = el.value || "";
     el.disabled = true;
+    // day_board_bp is not CSRF-exempt, so this is rejected without the
+    // token — and TestingConfig turns CSRF off, so nothing here caught it.
+    var _csrf = document.querySelector('meta[name=csrf-token]');
     fetch("/api/day-board/task-time", {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": _csrf ? _csrf.getAttribute("content") : "",
+      },
       body: JSON.stringify({ id: id, time: val }),
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) {

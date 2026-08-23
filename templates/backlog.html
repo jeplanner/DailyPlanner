@@ -74,6 +74,11 @@
     html.dark .bk-tag.soon{background:#3a2a06;color:#fcd34d}
     .bk-item.is-late{border-color:#fca5a5;
       background:color-mix(in srgb,#ef4444 6%,var(--color-surface))}
+    /* AN ANNOUNCEMENT IS NOT A DESTINATION, it is something the item now
+       does — so it reads as a property of the row rather than as a place
+       the row has gone. */
+    .bk-tag.say{color:#3730a3;border-color:#a5b4fc;background:#eef2ff}
+    html.dark .bk-tag.say{background:#1e1b4b;color:#a5b4fc;border-color:#3730a3}
     .bk-mins{flex:none;font-size:10.5px;font-weight:700;
       color:var(--color-text-secondary);white-space:nowrap;
       font-variant-numeric:tabular-nums}
@@ -225,6 +230,11 @@
         <li class="bk-item{% if it.overdue %} is-late{% endif %}"
             data-kind="bucket" data-id="{{ it.id }}" data-text="{{ it.text }}">
           <span class="t">{{ it.text }}</span>
+          {% if it.announced %}
+            <span class="bk-tag say" title="Spoken aloud {{ it.announced }}">
+              &#128266; {{ it.announced }}
+            </span>
+          {% endif %}
           {% if it.planned_minutes %}
             <span class="bk-mins">{{ it.planned_minutes }} min</span>
           {% endif %}

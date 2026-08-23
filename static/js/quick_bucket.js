@@ -588,6 +588,40 @@
     wireDragDrop();
     wireSwipeRight();
     checkBucketLoad();
+    revealFocused();
+  };
+
+  /* ── ?focus=<id> — ARRIVING AT A ROW, NOT AT A PAGE ─────────────────
+     The Day Board links here for an item you were already looking at, and
+     landing at the top of a list this long is barely better than not
+     linking at all. Scrolled to and marked, once — a highlight that
+     survives every later render would still be lit tomorrow.
+
+     The row may be inside a collapsed group, so the group is opened first;
+     scrolling to something still hidden lands nowhere. */
+  let _focusDone = false;
+  const revealFocused = () => {
+    if (_focusDone) return;
+    let want = "";
+    try { want = new URLSearchParams(location.search).get("focus") || ""; }
+    catch (_) { return; }
+    if (!want) { _focusDone = true; return; }
+
+    const row = document.querySelector(`#qb-groups [data-id="${CSS.escape(want)}"]`);
+    if (!row) return;                 // may not be rendered yet; try next render
+    _focusDone = true;
+
+    const group = row.closest("details");
+    if (group && !group.open) group.open = true;
+
+    requestAnimationFrame(() => {
+      try { row.scrollIntoView({ block: "center", behavior: "smooth" }); }
+      catch (_) { row.scrollIntoView(); }
+      row.classList.add("is-focused");
+      // Removed rather than left on: this marks where you just arrived,
+      // not a state the row is in.
+      setTimeout(() => row.classList.remove("is-focused"), 2600);
+    });
   };
 
   // ─────────── swipe-right on a row to mark done ────────────

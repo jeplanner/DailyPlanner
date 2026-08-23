@@ -41,11 +41,25 @@
     say._t = setTimeout(function () { msgEl.className = "bk-msg"; }, 4000);
   }
 
+  /* THE TOKEN IS NOT OPTIONAL HERE.
+
+     backlog_bp is not one of the CSRF-exempt blueprints, so every POST
+     below is rejected without it — and TestingConfig turns CSRF off, so
+     the whole suite passed while this was dead in production. The page
+     already carries the token in a meta tag; it just was not being sent. */
+  function csrfToken() {
+    var m = document.querySelector('meta[name=csrf-token]');
+    return m ? m.getAttribute("content") : "";
+  }
+
   function postJSON(url, body) {
     return fetch(url, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken(),
+      },
       body: JSON.stringify(body || {}),
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) {
@@ -273,6 +287,60 @@
       };
     },
 
+    /* ── SAY IT OUT LOUD ────────────────────────────────────────────
+       "some backlog items, i want to make it as announcement."
+
+       THE ITEM DOES NOT MOVE. Every other destination here is a place the
+       work goes and leaves the backlog behind; an announcement is not a
+       place, it is something the item now DOES. Sending it away would
+       leave you being reminded, out loud, about a task that is no longer
+       on any list. The row stays and gains a 🔊 chip instead.
+
+       Posted to the announcer's own endpoint so the same validation, the
+       same upsert and the same sync to every device all apply — the panel
+       picks it up on its next load with nothing extra to do. */
+    announce: function (li, text) {
+      var now = new Date();
+      var ymd = now.getFullYear() + "-" +
+                ("0" + (now.getMonth() + 1)).slice(-2) + "-" +
+                ("0" + now.getDate()).slice(-2);
+      return {
+        title: "Announce it out loud",
+        why: "The clock reads this aloud at the time you set, on every " +
+             "device you are signed in on. The item stays in the backlog \u2014 " +
+             "an announcement reminds you about it, it does not file it away.",
+        build: function (form) {
+          form.appendChild(fld("Say", input("text", text.slice(0, 120))));
+          form.appendChild(two(
+            fld("At", input("at", "", "time")),
+            fld("Repeat", select("repeat", [
+              ["daily", "Every day"], ["once", "Once"],
+              ["weekly", "Every week"], ["monthly", "Every month"],
+              ["yearly", "Every year"],
+            ], "daily"))));
+        },
+        submit: function (v) {
+          if (!v.at) throw new Error("Pick a time to say it");
+          return postJSON("/api/announcer/items", {
+            items: [{
+              // The panel's own ids look like "i1-<ms>"; this keeps the
+              // shape while saying where it came from, which matters when
+              // you are looking at a list of them wondering what made one.
+              id: "bk-" + Date.now(),
+              at: v.at.slice(0, 5),
+              until: null, mins: 0,
+              repeat: v.repeat, days: [],
+              start: ymd, end: null,
+              text: v.text, on: true,
+            }],
+          });
+        },
+        ok: function (v) { return "Will be announced at " + v.at + "."; },
+        cta: "Announce",
+        keep: true,          // the row stays; only the chip changes
+      };
+    },
+
     reference: function (li, text) {
       return {
         title: "Save to References",
@@ -347,7 +415,10 @@
     var go = document.createElement("button");
     go.type = "submit";
     go.className = "bk-btn";
-    go.textContent = spec.title.split(" ")[0] === "Move" ? "Move" : "Save";
+    // The button says what will happen, not a generic verb — "Save" on a
+    // dialog that is about to start speaking at you is a poor warning.
+    go.textContent = spec.cta ||
+      (spec.title.split(" ")[0] === "Move" ? "Move" : "Save");
     acts.appendChild(cancel);
     acts.appendChild(go);
     form.appendChild(acts);
@@ -368,6 +439,18 @@
       }
       go.disabled = true;
       closeDialog();
+      if (spec.keep) {
+        // Nothing was moved, so the row must not be removed. Reloading is
+        // how the new chip appears — it is rendered server-side from the
+        // announcements, not from anything this page already holds.
+        p.then(function () {
+          say(spec.ok(v), false);
+          setTimeout(function () { window.location.reload(); }, 700);
+        }).catch(function (err) {
+          say(err.message || "That did not save.", true);
+        });
+        return;
+      }
       run(li, p, spec.ok(v));
     });
 
@@ -402,6 +485,9 @@
       }
       menu.appendChild(opt("Note", function () {
         closeMenu(); openDialog(li, "note");
+      }));
+      menu.appendChild(opt("\uD83D\uDD0A Announce it", function () {
+        closeMenu(); openDialog(li, "announce");
       }));
 
       // Only when there is actually a link. Both destinations store a URL

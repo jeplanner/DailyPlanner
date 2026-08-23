@@ -742,7 +742,13 @@ def _link_bucket(item, plan_date):
         if topic:
             args["topic"] = topic
         return page + "?" + urlencode(args)
-    return url_for("quick_bucket.quick_bucket_page", **_back_args(plan_date))
+    # POINTED AT THE ROW, not just the page. Reported as "if i click a item
+    # in dayboard which belongs to quickbucket it does go to quickbucket but
+    # not to the specific item which i clicked". The bucket is long enough
+    # that landing at the top of it is barely better than not linking at
+    # all — you still have to find the thing you were already looking at.
+    return url_for("quick_bucket.quick_bucket_page",
+                   focus=item.get("id") or "", **_back_args(plan_date))
 
 
 def _quote_of_day(plan_date):

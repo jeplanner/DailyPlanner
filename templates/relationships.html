@@ -491,7 +491,7 @@
     };
     const r = await fetch("/api/relationships", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
       body: JSON.stringify(payload),
     });
     if (r.ok) {
@@ -505,8 +505,19 @@
     }
   }
 
+  /* relationships_bp is NOT csrf-exempt, so every POST here is rejected
+     without this. The page has carried the token in a meta tag all along;
+     it was simply never sent — invisible to the suite because
+     TestingConfig turns CSRF off. */
+  function csrfToken() {
+    const m = document.querySelector('meta[name=csrf-token]');
+    return m ? m.getAttribute("content") : "";
+  }
+
   async function touchRelationship(id) {
-    const r = await fetch(`/api/relationships/${id}/touch`, { method: "POST" });
+    const r = await fetch(`/api/relationships/${id}/touch`,
+                          { method: "POST",
+                            headers: { "X-CSRFToken": csrfToken() } });
     if (r.ok) {
       if (window.showToast) showToast("Logged contact for today", "success", 1500);
       loadRelationships();

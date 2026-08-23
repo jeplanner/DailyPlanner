@@ -69,6 +69,55 @@ backlog_bp = Blueprint("backlog", __name__)
 _CLOSED = {"done", "skipped", "deleted", "not_required"}
 
 
+_REPEAT_WORDS = {
+    "once": "once", "daily": "every day", "weekly": "every week",
+    "monthly": "every month", "yearly": "every year", "custom": "on set days",
+}
+
+
+def _spoken_at(hhmm):
+    """"19:45" → "7:45 PM". The panel reads times back this way too."""
+    try:
+        h, m = (int(x) for x in str(hhmm)[:5].split(":", 1))
+    except (ValueError, TypeError):
+        return str(hhmm)
+    ampm = "AM" if h < 12 else "PM"
+    h12 = 12 if h % 12 == 0 else h % 12
+    return "%d:%02d %s" % (h12, m, ampm)
+
+
+def _announced(user_id):
+    """{say_text: "7:45 PM every day"} for this user's live announcements.
+
+    KEYED BY TEXT, which is the same rule progress, notes and effort all
+    follow here — an announcement carries no reference to the row it came
+    from, and adding one would mean a column and a migration to show a
+    chip. Text is what the user typed in both places, and a rename simply
+    drops the chip rather than corrupting anything.
+    """
+    try:
+        rows = get("announcer_items", params={
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "select": "say_text,at_time,repeat_rule,is_on",
+            "limit": "200",
+        }) or []
+    except Exception:
+        # The table arrives with MIGRATION_ANNOUNCER_SYNC.sql.
+        logger.debug("backlog: announcer_items unavailable", exc_info=True)
+        return {}
+
+    out = {}
+    for r in rows:
+        text = (r.get("say_text") or "").strip()
+        if not text or r.get("is_on") is False:
+            continue
+        out[text] = "%s %s" % (
+            _spoken_at(r.get("at_time")),
+            _REPEAT_WORDS.get(r.get("repeat_rule") or "daily", "every day"))
+    return out
+
+
 def promote_due(user_id, today, lead_days=1):
     """Move backlog items into the Quick Bucket before their deadline bites.
 
@@ -263,6 +312,15 @@ def backlog_page():
     except Exception:
         logger.warning("backlog: bucket read failed", exc_info=True)
         future = []
+
+    # Which of these already speak for themselves.
+    try:
+        spoken = _announced(user_id)
+    except Exception:
+        logger.warning("backlog: announcement read failed", exc_info=True)
+        spoken = {}
+    for row in future:
+        row["announced"] = spoken.get((row.get("text") or "").strip())
     try:
         projects, task_count = _undated_project_tasks(user_id)
     except Exception:

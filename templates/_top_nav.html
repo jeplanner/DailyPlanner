@@ -773,6 +773,11 @@ html.dark .section-title{color:#f1f5f9;}
         Quick Bucket
       </a>
 
+      <a href="/backlog" data-match="^/backlog" title="Backlog — capture anything here, then send it to the Quick Bucket, a project, a note or an announcement">
+        <i data-feather="inbox"></i>
+        Backlog
+      </a>
+
       <a href="/todo" data-match="^/todo" title="Priorities — Eisenhower matrix, what to do first">
         <i data-feather="grid"></i>
         Priorities
@@ -2247,6 +2252,40 @@ setInterval(updateDateTime, 1000);
    broader ones so they match first. _currentHelpEntry() returns the
    FIRST regex hit, not the longest. */
 const HELP_PAGES = [
+  {
+    match: /^\/backlog/,
+    title: "Backlog — the one place to dump everything",
+    lead: "Capture anything here without deciding where it belongs. <b>Backlog</b> is the laundry list; the <b>Quick Bucket</b> is the shorter list of things you have actually prioritised to do.",
+    sections: [
+      {
+        title: "Capturing",
+        items: [
+          "Paste a whole list — <b>every line becomes its own item</b>.",
+          "<b>Takes … min</b> and <b>Do within … days</b> are optional and apply to every line you paste.",
+          "Days are counted from today, because \"3 days\" is what you know while emptying your head and \"the 26th\" is arithmetic.",
+          "No clock times here on purpose — something with a time on it is not backlog."
+        ]
+      },
+      {
+        title: "Sending it onward",
+        items: [
+          "<b>Send →</b> opens a small form asking only what that destination actually uses.",
+          "<b>Quick Bucket</b> asks <i>when</i> — that choice is the whole point; everything landing on \"Now\" just moves the pile.",
+          "<b>A project</b> asks for a due date and priority; <b>Note</b> for a notebook.",
+          "<b>Announce it</b> reads the item aloud at a time you set, and the item <b>stays</b> in the backlog — an announcement reminds you about it, it does not file it away.",
+          "<b>Inbox</b> and <b>References</b> appear only when the line contains a link."
+        ]
+      },
+      {
+        title: "Deadlines look after themselves",
+        items: [
+          "Anything with a deadline <b>moves itself into the Quick Bucket the day before it is due</b>.",
+          "Missed dates go red and sort to the top, so the overdue thing is not buried under everything typed since.",
+          "Project tasks shown here are never relocated — promoting one dates it for today and keeps it in its project, so the project's progress stays honest."
+        ]
+      }
+    ]
+  },
   {
     match: /^\/quick-bucket/,
     title: "Quick Bucket — quick capture by time horizon",

@@ -5686,3 +5686,187 @@ def test_backlog_shows_effort_and_time_remaining(auth_client, monkeypatch):
     html = auth_client.get("/backlog").get_data(as_text=True)
     assert "45 min" in html
     assert "5 days left" in html
+
+
+def test_every_posting_client_carries_a_csrf_token(app):
+    """The bug this whole suite is structurally blind to.
+
+    CSRF is enabled in production and DISABLED in TestingConfig, so a POST
+    that would 400 for the user passes here without a murmur. That is how
+    the entire Backlog router and the day board's time tagging shipped
+    dead: neither blueprint is csrf-exempt and neither client sent a token.
+
+    Most API blueprints here opt out with csrf.exempt(). The ones that do
+    NOT must send X-CSRFToken from every client that posts to them, and the
+    page must carry the meta tag to read it from. This checks both halves
+    for each such endpoint.
+    """
+    import os
+    import re
+    from extensions import csrf
+
+    exempt = set()
+    for attr in ("_exempt_blueprints", "_exempt_views"):
+        for v in getattr(csrf, attr, set()) or set():
+            exempt.add(getattr(v, "name", v))
+
+    # Every POST endpoint whose blueprint has NOT opted out.
+    guarded = {}
+    for rule in app.url_map.iter_rules():
+        if "POST" not in (rule.methods or set()):
+            continue
+        bp = (rule.endpoint.split(".", 1)[0]) if "." in rule.endpoint else ""
+        if not bp or bp in exempt:
+            continue
+        # Blueprint objects register under their name; the exempt set may
+        # hold either, so check the module path too.
+        view = app.view_functions.get(rule.endpoint)
+        if view and f"{view.__module__}.{view.__name__}" in exempt:
+            continue
+        if str(rule).startswith("/api/"):
+            guarded.setdefault(bp, set()).add(str(rule))
+
+    # Which files mention those paths, and do they send the header?
+    roots = []
+    for base in ("static", "templates"):
+        for dirpath, _dirs, files in os.walk(base):
+            if "node_modules" in dirpath:
+                continue
+            for f in files:
+                if f.endswith((".js", ".html")):
+                    roots.append(os.path.join(dirpath, f))
+
+    offenders = []
+    for path in roots:
+        try:
+            body = open(path, encoding="utf-8").read()
+        except Exception:
+            continue
+        if "method: \"POST\"" not in body and "method:\"POST\"" not in body:
+            continue
+        for bp, rules in guarded.items():
+            for r in rules:
+                # Compare on the literal prefix before any <param>.
+                stem = re.split(r"<", r)[0].rstrip("/")
+                if len(stem) < 8 or stem not in body:
+                    continue
+                if "X-CSRFToken" not in body:
+                    offenders.append(f"{path} posts to {stem} ({bp}) "
+                                     f"without X-CSRFToken")
+    assert not offenders, "\n".join(sorted(set(offenders)))
+
+
+def test_pages_that_post_carry_the_token_to_read(auth_client, monkeypatch):
+    """A client that sends the header still needs somewhere to read it from.
+
+    The day board is standalone — it does not include the shared nav that
+    carries this tag on every other page — so it sent an empty token and
+    was rejected just the same.
+    """
+    import routes.day_board as db
+    for name in ("_events_for", "_checklist_for", "_tasks_for"):
+        monkeypatch.setattr(db, name, lambda u, d: [])
+    monkeypatch.setattr(db, "_bucket_for", lambda u, d, t: [])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
+
+    for path in ("/backlog", "/day-board", "/quick-bucket"):
+        html = auth_client.get(path).get_data(as_text=True)
+        assert 'name="csrf-token"' in html, f"{path} has no token to post with"
+
+
+def test_backlog_shows_which_items_speak(auth_client, monkeypatch):
+    """"some backlog items, i want to make it as announcement."
+
+    An announcement is not a destination — it is something the item now
+    DOES — so the row stays put and gains a chip. Sending it away would
+    leave you being reminded, out loud, about a task no longer on any list.
+
+    Matched by TEXT, the same rule progress, notes and effort all follow
+    here: an announcement carries no reference back to the row, and adding
+    one would mean a column and a migration to show a chip. A rename simply
+    drops the chip rather than corrupting anything.
+    """
+    import routes.backlog as bk
+
+    def fake_get(table, params=None, **k):
+        if table == "quick_bucket":
+            return [
+                {"id": "b1", "text": "Tell slokas", "time_bucket": "future",
+                 "due_at": None, "created_at": "2026-08-01"},
+                {"id": "b2", "text": "Renew passport", "time_bucket": "future",
+                 "due_at": None, "created_at": "2026-08-02"},
+            ]
+        if table == "announcer_items":
+            return [
+                {"say_text": "Tell slokas", "at_time": "19:45",
+                 "repeat_rule": "daily", "is_on": True},
+                # Switched off speaks for nobody, so it must not show a chip.
+                {"say_text": "Renew passport", "at_time": "09:00",
+                 "repeat_rule": "once", "is_on": False},
+            ]
+        return []
+
+    monkeypatch.setattr(bk, "get", fake_get)
+    html = auth_client.get("/backlog").get_data(as_text=True)
+
+    assert "7:45 PM every day" in html, "the announced item shows no time"
+    assert "9:00 AM" not in html, "a switched-off announcement still shows"
+
+    # 24-hour storage, 12-hour display — the panel reads times back the
+    # same way, and two screens disagreeing about 19:45 is its own bug.
+    assert "19:45" not in html.split("<body")[1]
+
+    # The table arrives with MIGRATION_ANNOUNCER_SYNC.sql; before that this
+    # is a feature that does not exist yet, not a page that 500s.
+    def boom(table, params=None, **k):
+        if table == "announcer_items":
+            raise RuntimeError("relation announcer_items does not exist")
+        return fake_get(table, params, **k)
+    monkeypatch.setattr(bk, "get", boom)
+    assert auth_client.get("/backlog").status_code == 200
+
+
+def test_backlog_has_its_own_menu_entry(auth_client):
+    """Asked for directly. It was reachable only by typing the URL, which
+    for the page meant to be the first stop for every loose thought is the
+    same as not existing."""
+    html = auth_client.get("/quick-bucket").get_data(as_text=True)
+    nav = html.split("HELP_PAGES")[0]
+    assert 'href="/backlog"' in nav, "no Backlog link in the menu"
+    assert "data-match=\"^/backlog\"" in nav, "the entry never highlights itself"
+    # The help button is per-page and would otherwise open the wrong page's
+    # help, which is worse than none.
+    assert "/^\\/backlog/" in html, "no contextual help entry for /backlog"
+
+
+def test_day_board_bucket_row_links_to_the_row_not_the_page(auth_client,
+                                                            monkeypatch):
+    """Reported: "if i click a item in dayboard which belongs to quickbucket
+    it does go to quickbucket but not to the specific item which i clicked".
+
+    The bucket is long enough that landing at the top of it is barely better
+    than not linking at all — you still have to find the thing you were
+    already looking at.
+    """
+    import routes.day_board as db
+    for name in ("_events_for", "_checklist_for", "_tasks_for"):
+        monkeypatch.setattr(db, name, lambda u, d: [])
+    monkeypatch.setattr(db, "_bucket_for", lambda u, d, t: [
+        {"id": "B7", "title": "Call the bank", "at": None, "done": False},
+    ])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
+
+    html = auth_client.get("/day-board").get_data(as_text=True)
+    assert "focus=B7" in html, "the link does not name the row"
+
+    # And the bucket page must act on it, or the parameter is decoration.
+    js = open("static/js/quick_bucket.js", encoding="utf-8").read()
+    assert "revealFocused" in js
+    reveal = js.split("const revealFocused")[1].split("\n  };")[0]
+    assert 'get("focus")' in reveal
+    assert "scrollIntoView" in reveal
+    # A collapsed group hides the row, and scrolling to something hidden
+    # lands nowhere.
+    assert "group.open = true" in reveal
+    # Marked, then unmarked: this says "here", not "this row is special".
+    assert 'classList.remove("is-focused")' in reveal

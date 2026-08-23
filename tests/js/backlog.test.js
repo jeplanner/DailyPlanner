@@ -114,6 +114,58 @@ doc.dispatchEvent(new window.KeyboardEvent("keydown",
                                            { key: "Escape", bubbles: true }));
 ok("Escape closes it", q("[data-bk-modal]").hidden === true);
 
+// ── A BACKLOG ITEM THAT SPEAKS (2026-08-23) ──────────────────────────
+// "some backlog items, i want to make it as announcement."
+//
+// Every other destination is a place the work GOES, and the row leaves the
+// backlog behind. An announcement is not a place — it is something the item
+// now does — so the row must stay. Sending it away would leave you being
+// reminded, out loud, about a task no longer on any list.
+{
+  const row = doc.querySelector('.bk-item[data-kind="bucket"]');
+  click(row.querySelector("[data-bk-send]"));
+  const entry = Array.prototype.filter.call(
+    q("[data-bk-menu]").querySelectorAll("button"),
+    (b) => /Announce/.test(b.textContent))[0];
+  ok("announcing is offered", !!entry);
+  click(entry);
+  ok("the dialog opens", q("[data-bk-modal]").hidden === false);
+
+  const at = q("[data-bk-modal] input[name=at]");
+  ok("it asks for a time", !!at && at.type === "time");
+  ok("...and how often", !!q("[data-bk-modal] select[name=repeat]"));
+  ok("...and what to say", !!q("[data-bk-modal] input[name=text]"));
+
+  // A time is required: an announcement with no time can never fire, and a
+  // silently-guessed one is worse than being asked.
+  const before = calls.length;
+  q("[data-bk-modal] form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }));
+  ok("refuses to save without a time", calls.length === before);
+  ok("...and stays open to say so", q("[data-bk-modal]").hidden === false);
+
+  at.value = "19:45";
+  q("[data-bk-modal] select[name=repeat]").value = "daily";
+  q("[data-bk-modal] form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }));
+  await tick();
+
+  const posted = sent("/api/announcer/items");
+  ok("it posts to the announcer's own endpoint", posted.length === 1);
+  ok("...as a list, which is what that endpoint takes",
+     Array.isArray(posted[0].body.items));
+  const made = posted[0].body.items[0];
+  ok("...at the time given", made.at === "19:45");
+  ok("...with the repeat given", made.repeat === "daily");
+  ok("...switched on", made.on === true);
+  ok("...carrying the words", !!made.text);
+
+  // THE ROW MUST NOT BE MOVED OR DROPPED.
+  ok("the item is not sent anywhere", sent("/api/backlog/send").length === 1);
+  ok("...and not dropped from the backlog",
+     sent("/api/backlog/drop").length === 0);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
 })();
