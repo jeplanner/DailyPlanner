@@ -1969,10 +1969,14 @@ def test_time_announcer_never_reads_out_a_time_that_has_passed():
     # the repeating interval keyed on its slot, and each named announcement
     # keyed on (id, date, time) — and both re-read from storage first so
     # whichever tab gets there wins.
-    assert "fresh.lastSlot !== slotFor" in js, \
-        "sibling tabs would double-announce the interval"
-    assert 'fresh.said[it.id] !== today' in js, \
-        "sibling tabs would double-announce a scheduled item"
+    # Both paths re-read from storage before speaking. Asserted on the
+    # RE-READ rather than on an exact comparison expression, because that
+    # expression has now moved twice (once for named announcements, once
+    # again for per-slot keys) and each time this guard failed for a change
+    # that was correct. What matters is that `fresh` is consulted.
+    assert "var fresh = load();" in js, "no re-read; sibling tabs will double-announce"
+    assert "fresh.lastSlot" in js, "the interval does not check for a sibling tab"
+    assert "fresh.said[" in js, "scheduled items do not check for a sibling tab"
     # A queued backlog read out in sequence is the failure mode people
     # remember, so anything pending is cancelled first — but ONLY when
     # something really is in flight. cancel() followed by speak() in the same
@@ -3715,21 +3719,30 @@ def test_announcer_supports_multiple_named_announcements_with_dates():
 
 
 def test_announcer_panel_close_and_inside_click_guards_are_present():
-    """The source half of the delete-closes-the-panel fix.
+    """The source half of the delete-closes-the-panel fix, and of the modal.
 
     Kept separate from the jsdom test below so it REPORTS as passing rather
     than being swallowed by that test's skip — a guard that silently does not
     run is the thing this whole file keeps learning about.
     """
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
-    # The fix itself: a click whose target has been removed from the document
-    # is still an inside click.
-    assert "if (!document.contains(ev.target)) return;" in js, \
-        "the panel will close itself again when a row is deleted"
-    # And a handled click never reaches the outside-click listener at all.
+    # It is a MODAL now, so there is no outside-click listener left to be
+    # fooled by a detached node — the delete bug cannot recur because the
+    # mechanism that caused it is gone. What must not come back is a
+    # document-level click handler that hides the panel.
+    assert 'aria-modal", "true"' in js, "the panel is not a modal"
+    assert "ta-backdrop" in js
+    assert "function closePanel" in js and "function openPanel" in js
+    # A handled click still stops propagating, so nothing downstream can act
+    # on a row this function is about to remove.
     assert "ev.stopPropagation()" in js
     # The close control that was missing entirely.
     assert "data-ta-close" in js
+    # Only a deliberate press ON the backdrop closes it. Using "click" here
+    # would reintroduce exactly the reported bug: a drag that starts inside
+    # and finishes outside fires a click whose target is the page.
+    assert 'backdrop.addEventListener("mousedown"' in js, \
+        "a drag ending outside will close the dialog again"
 
 
 def test_announcer_recurrence_rules():
@@ -3784,3 +3797,26 @@ def test_announcer_panel_survives_its_own_delete():
                        capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "0 failed" in r.stdout, r.stdout
+
+
+def test_announcer_supports_a_daily_time_window():
+    """Asked 2026-08-23, clarified as TIME rather than date: "start at and
+    ends at timing so that based on recurring option and time it can
+    announce".
+
+    One announcement can now speak repeatedly through the day between two
+    times — 8am to 8pm every 60 minutes is one row, not thirteen. The slot
+    arithmetic is exercised in tests/js/time_announcer.test.js.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "function slotsFor" in js
+    assert "data-ta-new-until" in js and "data-ta-new-mins" in js
+    # Each slot settles on its own, or the first announcement of the day
+    # would silence the rest of the window.
+    assert 'minsToHHMM(slots[k])' in js, "slots share one key and will silence each other"
+    # Half a window is always a mistake, so it is refused rather than guessed.
+    assert "add how often to repeat between those times" in js
+    assert "add a time to repeat until" in js
+    # A step of 1 across a whole day is 1440 slots; anything past that is a
+    # bug rather than a schedule.
+    assert "out.length < 1441" in js, "no bound on the generated slot list"

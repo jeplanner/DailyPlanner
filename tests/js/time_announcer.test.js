@@ -195,6 +195,60 @@ ok("dueItems skips a non-matching day", TA._dueItems(at(9,0,0)).length===0);  //
 TA._set({items:[R({id:"z2", at:"09:00", repeat:"weekly", start:"2026-08-22"})], said:{}});
 ok("dueItems fires on the anchor day",  TA._dueItems(at(9,0,0)).length===1);
 
+// ── THE DAILY WINDOW (2026-08-23) ───────────────────────────────────
+// "start at and ends at timing" meant a TIME window: one announcement that
+// speaks repeatedly through the day between two times.
+const W = (o) => Object.assign(
+  {id:"w", at:"08:00", until:null, mins:0, repeat:"daily", days:[],
+   start:"2026-08-01", end:null, text:"", on:true}, o);
+const slots = (o) => TA._slotsFor(W(o));
+
+ok("no window => one slot",       JSON.stringify(slots({}))==="[480]");
+ok("window without an interval => one slot",
+   JSON.stringify(slots({until:"20:00"}))==="[480]");
+ok("interval without a window => one slot",
+   JSON.stringify(slots({mins:60}))==="[480]");
+
+const s8to12 = slots({until:"12:00", mins:60});
+ok("8am-12pm every 60m is 5 slots", s8to12.length===5);
+ok("...starting at 08:00",          s8to12[0]===480);
+ok("...ending at 12:00",            s8to12[4]===720);
+ok("...and stepping by an hour",    s8to12[1]-s8to12[0]===60);
+
+ok("a 90m step lands correctly",
+   JSON.stringify(slots({until:"12:00", mins:90}))==="[480,570,660]");
+ok("the end is included when it lands exactly",
+   slots({until:"12:00", mins:120}).indexOf(720)!==-1);
+ok("the end is not overshot",
+   slots({until:"12:00", mins:100}).every(m => m<=720));
+ok("until BEFORE at is ignored rather than looping",
+   JSON.stringify(slots({until:"06:00", mins:30}))==="[480]");
+ok("a 1-minute step is capped, not infinite",
+   slots({at:"00:00", until:"23:59", mins:1}).length<=1441);
+
+// Each slot settles on its own, so the whole window is not silenced by one.
+TA._set({mode:"on", every:0, said:{},
+         items:[W({id:"win", at:"09:00", until:"11:00", mins:60})]});
+ok("window fires at its start",  TA._dueItems(at(9,0,0)).length===1);
+ok("...and at the middle slot",  TA._dueItems(at(10,0,0)).length===1);
+ok("...and at the last slot",    TA._dueItems(at(11,0,0)).length===1);
+ok("...but not between slots",   TA._dueItems(at(9,30,0)).length===0);
+ok("...and not after the end",   TA._dueItems(at(12,0,0)).length===0);
+ok("the slot key names the SLOT, not the start",
+   TA._dueItems(at(10,0,0))[0].key.slice(-5)==="10:00");
+TA._set({said:{win:"2026-08-22|10:00"}});
+ok("a said slot is skipped",     TA._dueItems(at(10,0,0)).length===0);
+ok("...without silencing the others", TA._dueItems(at(11,0,0)).length===1);
+
+// The recurrence still gates the whole window.
+TA._set({said:{}, items:[W({id:"w2", at:"09:00", until:"11:00", mins:60,
+                            repeat:"custom", days:[1]})]});
+ok("a window on a non-matching day is silent", TA._dueItems(at(10,0,0)).length===0);
+
+ok("words: plain time",  TA._timeWords(W({}))==="8:00 AM");
+ok("words: window",      TA._timeWords(W({until:"20:00", mins:60}))
+                          ==="8:00 AM\u20138:00 PM \u00b7 60m");
+
 // ── MIGRATION from the shapes already in people's browsers ──────────
 // _set bypasses load(), so the migration needs its own exercise. Anyone
 // upgrading has data in one of the two older shapes and must lose nothing.
@@ -208,6 +262,7 @@ ok("v1: the shared label is kept", mig.items.every(i => i.text==="Stand up"));
 ok("v1: interval survives", mig.every===30);
 ok("v1: keepalive survives", mig.keepalive===true);
 ok("v1: the old list is cleared", mig.at.length===0);
+ok("v1: no window by default",   mig.items.every(i => i.until===null && i.mins===0));
 
 store[KEY] = JSON.stringify({mode:"on", items:[
   {id:"a", at:"09:00", date:null, text:"Daily one", on:true},

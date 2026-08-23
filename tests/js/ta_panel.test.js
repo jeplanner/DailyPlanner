@@ -93,9 +93,34 @@ ok("deleting the last row is fine", doc.querySelectorAll(".ta-item").length === 
 ok("panel still open with an empty list", q(".ta-pop").hidden === false);
 ok("empty state is shown", !!q(".ta-empty"));
 
-// ── a genuine outside click must still close it ──────────────────────
+// ── IT IS A MODAL (2026-08-23) ───────────────────────────────────────
+// Reported: "currently it closes if i drag or click something." It was a
+// popover that shut on any click outside itself, so a drag inside it that
+// finished outside registered as an outside click and closed it mid-edit.
+ok("dialog role", q(".ta-pop").getAttribute("role") === "dialog");
+ok("marked modal", q(".ta-pop").getAttribute("aria-modal") === "true");
+ok("backdrop shown while open", q(".ta-backdrop").hidden === false);
+ok("page scroll locked",
+   doc.documentElement.classList.contains("ta-locked"));
+
 click(doc.body);
-ok("clicking the page closes it", q(".ta-pop").hidden === true);
+ok("clicking the page does NOT close it", q(".ta-pop").hidden === false);
+
+// A drag that starts on a field and ends on the page fires a click whose
+// target is the page. That must not close the dialog either.
+q("[data-ta-new-text]").dispatchEvent(
+  new window.MouseEvent("mousedown", { bubbles: true }));
+doc.body.dispatchEvent(new window.MouseEvent("mouseup", { bubbles: true }));
+click(doc.body);
+ok("a drag ending outside does NOT close it", q(".ta-pop").hidden === false);
+
+// A deliberate press on the backdrop is still a way out.
+q(".ta-backdrop").dispatchEvent(
+  new window.MouseEvent("mousedown", { bubbles: true }));
+ok("pressing the backdrop closes it", q(".ta-pop").hidden === true);
+ok("backdrop hidden with it", q(".ta-backdrop").hidden === true);
+ok("scroll lock released",
+   !doc.documentElement.classList.contains("ta-locked"));
 
 // ── escape ───────────────────────────────────────────────────────────
 click(q(".ta-btn"));

@@ -93,6 +93,9 @@
             return {
               id: String(it.id || ""),
               at: it.at,
+              until: isHHMM(it.until) ? it.until : null,
+              mins: parseInt(it.mins, 10) > 0
+                ? Math.min(720, parseInt(it.mins, 10)) : 0,
               repeat: rep,
               days: Array.isArray(it.days)
                 ? it.days.filter(function (d) { return d >= 0 && d <= 6; })
@@ -113,8 +116,9 @@
     // nobody loses a setting by upgrading.
     if (!d.items.length && d.at.length) {
       d.items = d.at.map(function (t, i) {
-        return { id: "m" + i + t, at: t, repeat: "daily", days: [],
-                 start: todayYMD(), end: null, text: d.label, on: true };
+        return { id: "m" + i + t, at: t, until: null, mins: 0,
+                 repeat: "daily", days: [], start: todayYMD(), end: null,
+                 text: d.label, on: true };
       });
       d.at = [];
     }
@@ -213,6 +217,13 @@
       : "no days chosen";
     if (rep !== "once" && isYMD(it.end)) base += ", until " + shortDate(it.end);
     return base;
+  }
+
+  /* "5:00 AM", or "8:00 AM–8:00 PM every 60m" when it repeats in a window. */
+  function timeWords(it) {
+    if (!(it.mins > 0) || !isHHMM(it.until)) return friendly(it.at);
+    return friendly(it.at) + "\u2013" + friendly(it.until) +
+           " \u00b7 " + it.mins + "m";
   }
 
   function ordinal(n) {
@@ -329,6 +340,40 @@
      steps from midnight (00:00, 00:45, 01:30, ...) rather than resetting
      each hour, which is the only definition of "every 45 minutes" that is
      actually every 45 minutes. */
+  /* THE TIMES ONE ANNOUNCEMENT SPEAKS ON A DAY IT IS ACTIVE.
+     Returns minutes-since-midnight, ascending.
+
+     `at` is when it starts. `until` is when it stops, and `mins` is how often
+     it repeats in between — so "drink water, every day, 08:00 to 20:00, every
+     60 minutes" is one announcement rather than thirteen.
+
+     Leave `until` and `mins` empty and it speaks ONCE at `at`, which is what
+     every existing announcement does and why nothing had to be migrated. */
+  function slotsFor(it) {
+    var from = hhmmToMins(it.at);
+    if (from === null) return [];
+    var step = parseInt(it.mins, 10);
+    var to = isHHMM(it.until) ? hhmmToMins(it.until) : null;
+    if (!(step > 0) || to === null || to < from) return [from];
+
+    var out = [];
+    // A guard rather than a while(true): a step of 1 across a full day is
+    // 1440 slots, and anything past that is a bug, not a schedule.
+    for (var m = from; m <= to && out.length < 1441; m += step) out.push(m);
+    return out;
+  }
+
+  function hhmmToMins(v) {
+    if (!isHHMM(v)) return null;
+    var p = v.split(":");
+    return parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
+  }
+
+  function minsToHHMM(m) {
+    var h = Math.floor(m / 60), mm = m % 60;
+    return (h < 10 ? "0" + h : h) + ":" + (mm < 10 ? "0" + mm : mm);
+  }
+
   /* WHICH NAMED ANNOUNCEMENTS ARE DUE RIGHT NOW.
      Returns the items, not just a flag, because several can land on the same
      minute and all of them must be said.
@@ -344,12 +389,19 @@
       var it = state.items[i];
       if (!it.on) continue;                       // stopped individually
       if (!matchesOn(it, today)) continue;        // not a day this rule fires
-      var p = it.at.split(":");
-      var b = parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
-      var late = (mins - b) * 60000 + now.getSeconds() * 1000;
-      if (late < 0 || late > GRACE_MS) continue;  // not yet, or slept past it
-      if (state.said[it.id] === today + "|" + it.at) continue;   // already said
-      out.push(it);
+
+      // A windowed announcement has many slots in a day, and each settles on
+      // its own — so the key carries the SLOT, not the item's start time.
+      var slots = slotsFor(it);
+      for (var k = 0; k < slots.length; k++) {
+        var late = (mins - slots[k]) * 60000 + now.getSeconds() * 1000;
+        if (late < 0 || late > GRACE_MS) continue;   // not yet, or slept past
+        var key = today + "|" + minsToHHMM(slots[k]);
+        if (state.said[it.id] === key) continue;     // already said this slot
+        out.push({ item: it, slot: slots[k], key: key,
+                   id: it.id, text: it.text, at: it.at, on: it.on });
+        break;                                       // one slot per tick
+      }
     }
     return out;
   }
@@ -488,8 +540,8 @@
     var fresh = load();
 
     // ── the named announcements ──────────────────────────────────────
-    var items = dueItems(now).filter(function (it) {
-      return fresh.said[it.id] !== today + "|" + it.at;
+    var items = dueItems(now).filter(function (d) {
+      return fresh.said[d.id] !== d.key;
     });
 
     // ── the repeating interval ───────────────────────────────────────
@@ -507,8 +559,8 @@
     });
     parts.push(phrase(now));
 
-    items.forEach(function (it) {
-      state.said[it.id] = today + "|" + it.at;
+    items.forEach(function (d) {
+      state.said[d.id] = d.key;
     });
     if (intervalDue) state.lastSlot = slotFor(now, boundary);
 
@@ -695,11 +747,23 @@
       ".ta-dot{position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;",
       "background:#4338ca}",
       ".ta-btn.is-paused .ta-dot{background:#f59e0b}",
-      ".ta-pop{position:fixed;z-index:10060;min-width:216px;padding:12px;",
-      "border-radius:12px;border:1px solid var(--color-border,#e5e7eb);",
+      ".ta-backdrop{position:fixed;inset:0;z-index:10059;",
+      "background:rgba(15,18,28,.45);backdrop-filter:blur(1.5px)}",
+      ".ta-backdrop[hidden]{display:none}",
+      "html.ta-locked, html.ta-locked body{overflow:hidden}",
+      /* CENTRED, not anchored to the button. It is a dialog with several
+         fields, a day picker and a list — dragging inside it must not be
+         able to land outside it. */
+      ".ta-pop{position:fixed;z-index:10060;top:50%;left:50%;",
+      "transform:translate(-50%,-50%);width:min(420px,calc(100vw - 24px));",
+      "max-height:min(86vh,720px);overflow-y:auto;overscroll-behavior:contain;",
+      "padding:14px 16px 16px;",
+      "border-radius:14px;border:1px solid var(--color-border,#e5e7eb);",
       "background:var(--color-surface,#fff);color:var(--color-text,#111827);",
-      "box-shadow:0 16px 40px rgba(0,0,0,.18);font-size:13px}",
+      "box-shadow:0 24px 64px rgba(0,0,0,.28);font-size:13px}",
       ".ta-pop[hidden]{display:none}",
+      "@media (max-width:520px){.ta-pop{width:calc(100vw - 16px);",
+      "max-height:92vh}}",
       ".ta-pop h4{margin:0 0 3px;font-size:13.5px;font-weight:800;padding-right:22px}",
       ".ta-x{position:absolute;top:6px;right:7px;border:0;background:none;",
       "cursor:pointer;font-size:19px;line-height:1;padding:2px 5px;border-radius:6px;",
@@ -748,7 +812,7 @@
       ".ta-sec{margin:12px 0 5px;font-size:11px;font-weight:800;",
       "letter-spacing:.05em;text-transform:uppercase;",
       "color:var(--color-text-secondary,#6b7280)}",
-      ".ta-list{list-style:none;margin:0;padding:0;max-height:190px;",
+      ".ta-list{list-style:none;margin:0;padding:0;max-height:260px;",
       "overflow:auto;border:1px solid var(--color-border,#e5e7eb);",
       "border-radius:9px}",
       ".ta-list:empty{display:none}",
@@ -792,7 +856,8 @@
       "border:1px solid var(--color-border,#e5e7eb);",
       "background:var(--color-bg,#f9fafb);color:var(--color-text,#111827)}",
       ".ta-days button.on{background:#4338ca;border-color:#4338ca;color:#fff}",
-      "[data-ta-new-end][aria-invalid]{border-color:#b91c1c}",
+      "[data-ta-new-end][aria-invalid],[data-ta-new-until][aria-invalid]",
+      "{border-color:#b91c1c}",
       ".ta-add input{font:inherit;font-size:12px;padding:5px 7px;",
       "border-radius:8px;border:1px solid var(--color-border,#e5e7eb);",
       "background:var(--color-bg,#f9fafb);color:var(--color-text,#111827);",
@@ -823,7 +888,7 @@
     document.head.appendChild(el);
   }
 
-  var btn = null, pop = null;
+  var btn = null, pop = null, backdrop = null;
 
   function paint() {
     if (!btn) return;
@@ -950,7 +1015,7 @@
                'aria-pressed="' + (it.on ? "true" : "false") + '" ' +
                'title="' + (it.on ? "Stop this one" : "Start this one") + '">' +
                (it.on ? "\u25CF" : "\u25CB") + '</button>' +
-             '<span class="ta-when"><b>' + esc(friendly(it.at)) + '</b>' +
+             '<span class="ta-when"><b>' + esc(timeWords(it)) + '</b>' +
                '<i>' + esc(when) + '</i></span>' +
              '<span class="ta-what">' + esc(it.text || "(just the time)") +
              '</span>' +
@@ -985,6 +1050,8 @@
 
   function addItem() {
     var atEl = pop.querySelector("[data-ta-new-at]");
+    var uEl = pop.querySelector("[data-ta-new-until]");
+    var mEl = pop.querySelector("[data-ta-new-mins]");
     var rEl = pop.querySelector("[data-ta-new-repeat]");
     var sEl = pop.querySelector("[data-ta-new-start]");
     var eEl = pop.querySelector("[data-ta-new-end]");
@@ -998,6 +1065,39 @@
       return;
     }
     atEl.removeAttribute("aria-invalid");
+
+    // The daily window. Same forgiving parser, so "8pm" works here too.
+    var until = null;
+    if ((uEl.value || "").trim()) {
+      var u = parseTimes(uEl.value);
+      if (!u.length) {
+        uEl.setAttribute("aria-invalid", "true");
+        note(false, "I could not read \u201c" + uEl.value + "\u201d as a time");
+        return;
+      }
+      until = u[0];
+      if (hhmmToMins(until) < hhmmToMins(times[0])) {
+        uEl.setAttribute("aria-invalid", "true");
+        note(false, "the end time is before the start time");
+        return;
+      }
+    }
+    uEl.removeAttribute("aria-invalid");
+
+    var stepMins = parseInt(mEl.value, 10);
+    stepMins = stepMins > 0 ? Math.min(720, stepMins) : 0;
+    // A window with no interval would speak once and ignore the window, and
+    // an interval with no window would run to midnight. Neither is what
+    // anyone means, so ask rather than guess.
+    if (until && !stepMins) {
+      note(false, "add how often to repeat between those times");
+      return;
+    }
+    if (stepMins && !until) {
+      note(false, "add a time to repeat until");
+      return;
+    }
+
     var repeat = REPEATS.indexOf(rEl.value) === -1 ? "daily" : rEl.value;
     var start = isYMD(sEl.value) ? sEl.value : todayYMD();
     var end = isYMD(eEl.value) ? eEl.value : null;
@@ -1019,11 +1119,12 @@
     // quietly keeping the first — the parser already returns a list.
     times.forEach(function (t) {
       state.items.push({
-        id: newId(), at: t, repeat: repeat, days: newDays.slice(),
+        id: newId(), at: t, until: until, mins: stepMins,
+        repeat: repeat, days: newDays.slice(),
         start: start, end: end, text: text, on: true,
       });
     });
-    atEl.value = ""; tEl.value = "";
+    atEl.value = ""; uEl.value = ""; mEl.value = ""; tEl.value = "";
     state.lastSlot = null;
     save(); paint(); savedFlash();
     atEl.focus();
@@ -1037,9 +1138,17 @@
   }
 
   function buildPop() {
+    backdrop = document.createElement("div");
+    backdrop.className = "ta-backdrop";
+    backdrop.hidden = true;
+    document.body.appendChild(backdrop);
+
     pop = document.createElement("div");
     pop.className = "ta-pop";
     pop.hidden = true;
+    pop.setAttribute("role", "dialog");
+    pop.setAttribute("aria-modal", "true");
+    pop.setAttribute("aria-label", "Announce the time");
     pop.innerHTML =
       '<button type="button" class="ta-x" data-ta-close ' +
         'aria-label="Close">&times;</button>' +
@@ -1073,7 +1182,7 @@
       '<div class="ta-add">' +
         '<div class="ta-add-row">' +
           '<input type="text" data-ta-new-at placeholder="5.00 / 9am / 13:30" ' +
-            'aria-label="Time">' +
+            'aria-label="Start time">' +
           '<select data-ta-new-repeat aria-label="How often">' +
             '<option value="daily">Every day</option>' +
             '<option value="once">Once</option>' +
@@ -1090,6 +1199,13 @@
           }).join("") +
         '</div>' +
         '<div class="ta-add-row">' +
+          '<label class="ta-dt">Until <i>optional</i>' +
+            '<input type="text" data-ta-new-until placeholder="8pm"></label>' +
+          '<label class="ta-dt">Repeat every <i>optional</i>' +
+            '<input type="number" min="0" max="720" step="5" ' +
+            'data-ta-new-mins placeholder="60 min"></label>' +
+        '</div>' +
+        '<div class="ta-add-row">' +
           '<label class="ta-dt">Starts' +
             '<input type="date" data-ta-new-start></label>' +
           '<label class="ta-dt">Ends <i>optional</i>' +
@@ -1101,9 +1217,12 @@
           '<button type="button" data-ta-add>Add</button>' +
         '</div>' +
       '</div>' +
-      '<small class="ta-hint">Starts defaults to today. Leave Ends blank and ' +
-      'it repeats for good. A monthly reminder on the 31st still fires on the ' +
-      'last day of a short month rather than skipping it.</small>' +
+      '<small class="ta-hint"><b>Until</b> and <b>repeat every</b> make one ' +
+      'announcement speak through the day &mdash; 8am to 8pm every 60 minutes ' +
+      'is one row, not thirteen. Leave them blank and it speaks once. ' +
+      '<b>Starts</b> defaults to today; leave <b>Ends</b> blank and it runs ' +
+      'for good. A monthly reminder on the 31st still fires on the last day ' +
+      'of a short month rather than skipping it.</small>' +
       '<p class="ta-auto">Everything here saves as you type &mdash; there is no ' +
       'Save button, and closing this panel keeps your settings.</p>' +
       '<p class="ta-now" data-ta-now></p>' +
@@ -1137,11 +1256,7 @@
       // about a node this function may be about to remove.
       if (ev.target.closest("button, input, label")) ev.stopPropagation();
 
-      if (ev.target.closest("[data-ta-close]")) {
-        pop.hidden = true;
-        if (btn) btn.focus();
-        return;
-      }
+      if (ev.target.closest("[data-ta-close]")) { closePanel(); return; }
       var m = ev.target.closest("[data-ta-mode]");
       if (m) {
         state.mode = m.getAttribute("data-ta-mode");
@@ -1245,12 +1360,41 @@
     });
   }
 
-  function place() {
-    var r = btn.getBoundingClientRect();
+  /* A modal is CENTRED, so there is no anchoring arithmetic left — the old
+     place() positioned it under the button, which is a popover's job. */
+  function openPanel() {
+    backdrop.hidden = false;
     pop.hidden = false;
-    var w = pop.offsetWidth;
-    pop.style.top = (r.bottom + 8) + "px";
-    pop.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left)) + "px";
+    document.documentElement.classList.add("ta-locked");
+    paint();
+    // Focus goes into the dialog, not left on the button behind it.
+    var first = pop.querySelector("[data-ta-new-at]");
+    if (first) { try { first.focus(); } catch (e) {} }
+  }
+
+  function closePanel() {
+    pop.hidden = true;
+    backdrop.hidden = true;
+    document.documentElement.classList.remove("ta-locked");
+    if (btn) { try { btn.focus(); } catch (e) {} }
+  }
+
+  /* Tab must not escape into the page underneath. Small enough to do by
+     hand: wrap from the last focusable element back to the first. */
+  function trapTab(ev) {
+    if (ev.key !== "Tab" || pop.hidden) return;
+    var f = pop.querySelectorAll(
+      'button, input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    f = Array.prototype.filter.call(f, function (el) {
+      return !el.disabled && el.offsetParent !== null;
+    });
+    if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (ev.shiftKey && document.activeElement === first) {
+      ev.preventDefault(); last.focus();
+    } else if (!ev.shiftKey && document.activeElement === last) {
+      ev.preventDefault(); first.focus();
+    }
   }
 
   function mount() {
@@ -1272,30 +1416,30 @@
     buildPop();
     btn.addEventListener("click", function (ev) {
       ev.stopPropagation();
-      if (pop.hidden) { place(); paint(); } else { pop.hidden = true; }
+      if (pop.hidden) openPanel(); else closePanel();
     });
-    document.addEventListener("click", function (ev) {
-      if (pop.hidden) return;
-      // A CLICK THAT DELETED ITS OWN BUTTON IS STILL AN INSIDE CLICK.
-      //
-      // Deleting an announcement rebuilds the list with innerHTML, which
-      // DETACHES the button that was clicked. The event then carries on
-      // bubbling to here, where ev.target.closest(".ta-pop") walks up from a
-      // node that is no longer in the document and finds nothing — so the
-      // panel treated its own delete as an outside click and shut itself,
-      // dropping you back on the page behind it.
-      if (!document.contains(ev.target)) return;
-      if (ev.target.closest(".ta-pop") || ev.target.closest(".ta-btn")) return;
-      pop.hidden = true;
+    /* IT IS A MODAL, so nothing outside it closes it.
+       The previous popover shut on any click that was not inside it, which
+       meant a DRAG — selecting a time, dragging a number field — ended
+       outside and registered as a click, closing the panel mid-edit. There
+       is real editing in here now: several fields, a day picker and a list.
+       That is a dialog, not a popover.
+
+       (The detached-node guard that used to be needed here is gone with the
+       listener itself; deleting a row can no longer reach anything that
+       would close the panel.) */
+    backdrop.addEventListener("mousedown", function (ev) {
+      // Only a deliberate press ON the backdrop, not a drag that happens to
+      // finish there. Kept as a convenience; the × and Escape are the real
+      // ways out.
+      if (ev.target === backdrop) closePanel();
     });
 
     // Escape closes it, which is what every panel should do and what people
     // try first.
     document.addEventListener("keydown", function (ev) {
-      if (ev.key === "Escape" && !pop.hidden) {
-        pop.hidden = true;
-        if (btn) btn.focus();
-      }
+      if (ev.key === "Escape" && !pop.hidden) closePanel();
+      trapTab(ev);
     });
 
     if (window.feather) { try { window.feather.replace(); } catch (_) {} }
@@ -1331,6 +1475,8 @@
     _dueSlot: dueSlot,
     _dueItems: dueItems,
     _matchesOn: matchesOn,
+    _slotsFor: slotsFor,
+    _timeWords: timeWords,
     _repeatWords: repeatWords,
     _isExpired: isExpired,
     _todayYMD: todayYMD,
