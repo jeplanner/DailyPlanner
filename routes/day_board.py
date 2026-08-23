@@ -32,6 +32,7 @@ should never show a half-loaded screen, and a display left running for weeks
 should not depend on a token still being valid in JavaScript.
 """
 import logging
+import re
 from datetime import date, datetime, time, timedelta
 from urllib.parse import urlencode
 
@@ -40,7 +41,7 @@ from flask import Blueprint, jsonify, render_template, request, session, url_for
 from services.login_service import login_required
 from services import checklist_schedule
 from services import streak as streak_service, event_recurrence, loud
-from supabase_client import get
+from supabase_client import get, update
 from utils.user_tz import user_now, user_today
 
 logger = logging.getLogger("daily_plan")
@@ -808,3 +809,50 @@ def day_board():
         refresh=refresh,
         theme=(request.args.get("theme") or "dark").lower(),
     )
+
+
+_HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+@day_board_bp.route("/api/day-board/task-time", methods=["POST"])
+@login_required
+def set_task_time():
+    """Tag a to-do with a time, from the board itself.
+
+    The board already SHOWED task_time and already sorted by it, but the
+    only place to put one there was the matrix page — so the column that
+    decides where a task sits in the day could not be set while looking at
+    the day. Asked for as "tag time in to do in day board".
+
+    An empty string CLEARS it. That has to be reachable: a time tagged by
+    mistake is otherwise permanent, and a wrong time is worse than none
+    because the board sorts by it.
+    """
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    task_id = data.get("id")
+    raw = (data.get("time") or "").strip()
+
+    if not task_id:
+        return jsonify({"error": "id required"}), 400
+    if raw and not _HHMM.match(raw):
+        return jsonify({"error": "Time must be HH:MM"}), 400
+
+    rows = get("todo_matrix", params={
+        "id": f"eq.{task_id}",
+        "user_id": f"eq.{user_id}",
+        "select": "id",
+        "limit": "1",
+    }) or []
+    if not rows:
+        return jsonify({"error": "Not found"}), 404
+
+    try:
+        update("todo_matrix",
+               {"id": f"eq.{task_id}", "user_id": f"eq.{user_id}"},
+               {"task_time": raw or None})
+    except Exception:
+        logger.exception("day board: could not set task_time")
+        return jsonify({"error": "Could not save the time"}), 502
+
+    return jsonify({"status": "ok", "task_time": raw or None})

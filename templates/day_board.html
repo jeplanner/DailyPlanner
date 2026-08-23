@@ -188,6 +188,9 @@ header{
   .right{grid-template-rows:none}
   .panel{overflow:visible}
   .panel .body{overflow:visible}
+  /* The PAGE scrolls here, so a nested scroller would only trap a finger
+     inside the list and stop the page moving. */
+  [data-fit]{max-height:none; overflow:visible}
   .panel.cal .body{height:66vh}          /* the timeline keeps a real height */
   .more{display:none}                    /* nothing is truncated down here */
   /* ...and neither is any individual TITLE. The two-line clamp is right on a
@@ -216,6 +219,29 @@ header{
 }
 .panel h2 .n{color:var(--text)}
 .body{min-height:0; overflow:hidden; position:relative}
+
+/* ── WHEN THE DAY IS LONGER THAN THE SCREEN ──────────────────────────
+   The board still cannot scroll AS A PAGE — that contract is what keeps
+   the header, the columns and the timeline where they are. What changed
+   is what happens when even the smallest readable size overflows: the
+   list scrolls inside its own panel instead of hiding its tail behind
+   "+7 more". Asked for as "it should be scrollable on desktop also",
+   and it is strictly better than truncating — nothing is out of reach,
+   and the scrollbar says there is more far more directly than a counter
+   at the bottom did.
+
+   The fit pass is unchanged and still runs first, so a day that DOES fit
+   is still shown whole with no scrollbar at all. */
+[data-fit]{
+  max-height:100%; overflow-y:auto; overscroll-behavior:contain;
+  scrollbar-width:thin; scrollbar-color:var(--line) transparent;
+}
+[data-fit]::-webkit-scrollbar{width:calc(var(--u) * .55)}
+[data-fit]::-webkit-scrollbar-track{background:transparent}
+[data-fit]::-webkit-scrollbar-thumb{
+  background:var(--line); border-radius:999px;
+}
+[data-fit]::-webkit-scrollbar-thumb:hover{background:var(--dim)}
 
 /* ── TIMELINE ───────────────────────────────────────────────────────── */
 .rail{position:relative; height:100%}
@@ -304,6 +330,34 @@ li.done .txt{text-decoration:line-through}
      -webkit-box-orient:vertical; overflow:hidden}
 .at{flex:0 0 auto; color:var(--dim); font-size:calc(var(--u) * .85);
     font-variant-numeric:tabular-nums}
+
+/* THE TIME TAG, EDITABLE IN PLACE.
+   z-index above .hit, which is an absolutely positioned overlay covering
+   the whole row — without this the row's link swallows every tap and the
+   picker never opens. */
+.settime{
+  position:relative; z-index:3;
+  background:transparent; border:1px solid transparent; color:var(--dim);
+  font-family:inherit; font-size:calc(var(--u) * .85);
+  font-variant-numeric:tabular-nums;
+  border-radius:calc(var(--u) * .3);
+  padding:calc(var(--u) * .12) calc(var(--u) * .2);
+  cursor:pointer; width:auto;
+}
+.settime:hover, .settime:focus{border-color:var(--line); color:var(--text)}
+.settime:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+/* An untagged task must still show a target to tap. An empty time input
+   renders as "--:--" on its own, which reads as "no time set" and is
+   already the affordance — it only needs to be visible enough to find. */
+.settime:not([value=""]){color:var(--text)}
+.settime::-webkit-calendar-picker-indicator{
+  filter:invert(.6); cursor:pointer; padding:0; margin:0;
+}
+html[data-theme="light"] .settime::-webkit-calendar-picker-indicator{filter:none}
+li.done .settime{opacity:.55}
+@media (pointer: coarse){
+  .settime{min-height:34px; padding:calc(var(--u) * .3) calc(var(--u) * .35)}
+}
 /* CHECKLIST TIME BANDS. The heading is a list row so the fit/truncate pass
    measures it like any other; it is styled to read as a rule, not an item. */
 li.band{
@@ -474,7 +528,15 @@ li.done .when{color:var(--dim); font-weight:500}
                 {% if done %}<span class="tick">✓</span>
                 {% else %}<span class="dot"></span>{% endif %}
                 <span class="txt">{{ t.task_text }}</span>
-                {% if t.task_time %}<span class="at">{{ t.task_time[:5] }}</span>{% endif %}
+                {# A real <input type="time">, not a chip that opens a custom
+                   picker: it puts the NATIVE picker one tap away on a phone,
+                   which is the whole reason this control is wanted here. It
+                   sits above .hit so tapping the time does not open the
+                   matrix instead. #}
+                <input type="time" class="at settime"
+                       value="{{ t.task_time[:5] if t.task_time else '' }}"
+                       data-task-time="{{ t.id }}"
+                       aria-label="Time for {{ t.task_text }}">
                 <a class="hit" href="{{ t.href }}"
                    aria-label="Open {{ t.task_text }} in the matrix"></a>
               </li>
@@ -648,45 +710,18 @@ li.done .when{color:var(--dim); font-weight:500}
     }
     setU(best);
 
-    // If even the smallest readable size overflows, TRUNCATE HONESTLY: hide
-    // the tail and say how much is hidden. Silently clipping the bottom of a
-    // to-do list is the one failure this board must never have.
-    if (Math.abs(best - MIN_U) < 0.01) {
-      document.querySelectorAll("[data-fit]").forEach(function (ul) {
-        var box = ul.parentElement;
-        var more = box.querySelector(".more");
-        var items = Array.prototype.slice.call(ul.children);
-        var hiddenCount = 0;
-        for (var j = items.length - 1; j >= 0 && ul.scrollHeight > box.clientHeight - 1; j--) {
-          items[j].hidden = true;
-          hiddenCount++;
-        }
-        // A band heading whose every row got hidden is a lie — it says
-        // "After 6pm" over nothing. Hide it too, and do not count it as
-        // one of the hidden ITEMS, because the reader is being told how
-        // much WORK is off-screen, not how much furniture.
-        var kids = Array.prototype.slice.call(ul.children);
-        kids.forEach(function (el, k) {
-          if (!el.classList.contains("band") || el.hidden) return;
-          var live = false;
-          for (var m = k + 1; m < kids.length; m++) {
-            if (kids[m].classList.contains("band")) break;
-            if (!kids[m].hidden) { live = true; break; }
-          }
-          if (!live) { el.hidden = true; }
-        });
-        // Recount from the DOM rather than trusting the tally: the loop
-        // above hid headings, and the loop before it may have hidden some
-        // too. "+3 more" has to mean three things to DO.
-        hiddenCount = kids.filter(function (el) {
-          return el.hidden && !el.classList.contains("band");
-        }).length;
-        if (hiddenCount > 0 && more) {
-          more.textContent = "+" + hiddenCount + " more";
-          more.hidden = false;
-        }
-      });
-    }
+    // If even the smallest readable size overflows, the list SCROLLS
+    // inside its panel — see the [data-fit] rule in the stylesheet.
+    //
+    // This used to hide the tail and print "+7 more". That was the honest
+    // version of clipping, but it was still a board that showed less work
+    // than there was, and the only way to read the rest was to leave the
+    // page. Everything stays on it now; the scrollbar is the disclosure.
+    // Nothing is hidden, so the counter has nothing left to count.
+    document.querySelectorAll(".more").forEach(function (m) {
+      m.hidden = true;
+      m.textContent = "";
+    });
   }
 
   // ── CLOCK + LIVE "NOW" LINE ─────────────────────────────────────────
@@ -847,6 +882,39 @@ li.done .when{color:var(--dim); font-weight:500}
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { el.classList.remove("show"); }, 3200);
   }
+
+  /* ── TAGGING A TO-DO WITH A TIME ───────────────────────────────────
+     Delegated, because the fit pass and the truncation loops move these
+     rows around and a listener bound per input would be lost with them.
+
+     The row is NOT re-sorted after a save. The board sorts by quadrant
+     then time on the server, and re-ordering under the finger that just
+     typed is how you lose your place on a list you are working down. The
+     order is correct on the next load, which is when it is being read
+     rather than edited. */
+  document.addEventListener("change", function (ev) {
+    var el = ev.target;
+    if (!el || !el.hasAttribute || !el.hasAttribute("data-task-time")) return;
+    var id = el.getAttribute("data-task-time");
+    var val = el.value || "";
+    el.disabled = true;
+    fetch("/api/day-board/task-time", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id, time: val }),
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error(j.error || ("Server said " + r.status));
+        // Keep the attribute in step with the property so the CSS that
+        // dims an untagged time keeps telling the truth after an edit.
+        el.setAttribute("value", val);
+        toast(val ? "Tagged " + val : "Time cleared");
+      });
+    }).catch(function (err) {
+      toast(err.message || "Could not save the time");
+    }).then(function () { el.disabled = false; });
+  });
 
   function bind(id, fn) {
     var el = document.getElementById(id);

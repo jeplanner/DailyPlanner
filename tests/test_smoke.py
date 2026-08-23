@@ -4975,3 +4975,153 @@ def test_speech_audio_failure_is_visible_and_recoverable():
     # The prefetch also runs when the panel opens, so the first slot after
     # enabling is not automatically a miss.
     assert "try { prefetchNext(new Date()); } catch (e) {}" in js
+
+
+def test_day_board_lets_a_todo_be_tagged_with_a_time(auth_client, monkeypatch):
+    """Asked for as "i requested to tag time in to do in day board".
+
+    The board already SHOWED task_time and already sorted by it, so the one
+    column deciding where a task sits in the day was the one thing that
+    could only be set on another page.
+
+    A real <input type="time">, not a chip wired to a custom picker: the
+    native control is what puts the phone's own time wheel one tap away.
+    """
+    import routes.day_board as db
+    monkeypatch.setattr(db, "_events_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_checklist_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_tasks_for", lambda u, d: [
+        {"id": "T1", "task_text": "Call the bank", "quadrant": "Q1",
+         "is_done": False, "task_time": "14:30"},
+        {"id": "T2", "task_text": "Untagged one", "quadrant": "Q2",
+         "is_done": False, "task_time": None},
+    ])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
+    html = auth_client.get("/day-board").get_data(as_text=True)
+
+    assert 'data-task-time="T1"' in html and 'data-task-time="T2"' in html
+    assert 'type="time"' in html
+    assert 'value="14:30"' in html
+    # An untagged task still gets a control — otherwise the only tasks you
+    # could tag would be the ones already tagged.
+    # Match the ATTRIBUTE with its value — a bare "data-task-time" count
+    # also picks up the two references in the delegated change handler.
+    assert html.count('data-task-time="') == 2
+
+    # .hit covers the whole row at z-index 2. A control underneath it can
+    # never be tapped, which is the bug this ordering exists to prevent.
+    css = html.split("<style>")[1].split("</style>")[0]
+    settime = css.split(".settime{")[1].split("}")[0]
+    assert "z-index:3" in settime.replace(" ", "")
+
+
+def test_day_board_task_time_endpoint_validates_and_clears(auth_client, monkeypatch):
+    """A wrong time is worse than none, because the board SORTS by it — so
+    clearing has to be reachable, and nonsense has to be refused."""
+    import routes.day_board as db
+    saved = []
+    monkeypatch.setattr(db, "get", lambda *a, **k: [{"id": "T1"}])
+    monkeypatch.setattr(db, "update",
+                        lambda t, params, j, **k: saved.append((t, params, j)))
+
+    r = auth_client.post("/api/day-board/task-time",
+                         json={"id": "T1", "time": "14:30"})
+    assert r.status_code == 200
+    assert saved[-1][0] == "todo_matrix"
+    assert saved[-1][2] == {"task_time": "14:30"}
+
+    # Empty CLEARS rather than storing "".
+    auth_client.post("/api/day-board/task-time", json={"id": "T1", "time": ""})
+    assert saved[-1][2] == {"task_time": None}
+
+    saved.clear()
+    for bad in ("25:00", "9:5", "half past", "14:60", "14:30:00"):
+        r = auth_client.post("/api/day-board/task-time",
+                             json={"id": "T1", "time": bad})
+        assert r.status_code == 400, f"{bad} was accepted"
+    assert not saved
+
+    # Someone else's task is a 404, not a silent write.
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
+    r = auth_client.post("/api/day-board/task-time",
+                         json={"id": "T1", "time": "14:30"})
+    assert r.status_code == 404
+    assert not saved
+
+
+def test_day_board_scrolls_a_long_list_instead_of_hiding_its_tail():
+    """Asked for as "it should be scrollable on desktop also".
+
+    The page still cannot scroll — that contract is what keeps the header,
+    the columns and the timeline in place. What changed is the overflow
+    endgame: the list scrolls inside its own panel rather than hiding rows
+    behind "+7 more". Nothing is out of reach any more, so the counter has
+    nothing left to count.
+    """
+    html = open("templates/day_board.html", encoding="utf-8").read()
+    css = html.split("<style>")[1].split("</style>")[0]
+
+    # There are two [data-fit] rules — the desktop scroller and the phone
+    # override that turns it off. Take the one that scrolls, by content,
+    # rather than by position: the phone media query is declared first.
+    blocks = [b.split("}")[0].replace(" ", "").replace("\n", "")
+              for b in css.split("[data-fit]{")[1:]]
+    fit = [b for b in blocks if "max-height:100%" in b]
+    assert fit, blocks
+    fit = fit[0]
+    assert "overflow-y:auto" in fit
+    # A nested scroller must not trap the finger inside the list.
+    assert "overscroll-behavior:contain" in fit
+
+    # The page-level contract is untouched.
+    assert "html,body{height:100%;overflow:hidden" in css.replace(" ", "")
+
+    # The truncation loop is gone — not merely unreachable.
+    script = html.split("<script>")[-1]
+    assert "TRUNCATE HONESTLY" not in html
+    assert "hiddenCount" not in script
+
+    # On a phone the PAGE scrolls, so the nested scroller is turned off.
+    phone = html.split("@media (max-width: 720px)")[1].split("\n}")[0]
+    assert "[data-fit]{max-height:none; overflow:visible}" in phone
+
+
+def test_day_board_script_actually_parses(auth_client, monkeypatch):
+    """The board's JavaScript lives inside the Jinja template, so nothing
+    else in this suite ever executes it — every other board test asserts on
+    rendered HTML and would pass just as happily over a syntax error.
+
+    That is not hypothetical: this file has had blocks spliced into the
+    middle of a function twice, and a stray brace there takes out the fit
+    pass, the clock and the time tagging in one go, silently.
+
+    Skipped rather than failed when node is missing, so the suite still
+    runs on a machine without it.
+    """
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+
+    import routes.day_board as db
+    monkeypatch.setattr(db, "_events_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_checklist_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_tasks_for", lambda u, d: [])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
+
+    html = auth_client.get("/day-board").get_data(as_text=True)
+    blocks = re.findall(r"<script>(.*?)</script>", html, re.S)
+    assert blocks, "the board rendered with no inline script at all"
+
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False,
+                                     encoding="utf-8") as fh:
+        # Separated, because they are separate scripts in the document and
+        # joining them bare could invent a syntax error that is not there.
+        fh.write("\n;\n".join(blocks))
+        path = fh.name
+
+    r = subprocess.run(["node", "--check", path], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
