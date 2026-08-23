@@ -364956,6 +364956,1590 @@ in effectively constant time - each group is a tree, named by its root.
 · WORTH MEMORISING — this is fifteen lines and appears constantly. Being able
   to write it without thinking frees your attention for the actual problem."""
 
+_ANSWER_V2["Implement Logistic Regression with gradient descent"] = """Linear regression pushed through a sigmoid to produce a probability, trained by
+repeatedly nudging the weights in the direction that reduces the loss.
+
+· THE MODEL — compute z = X·w + b, then squash it with the sigmoid
+  1 / (1 + e^-z), which maps any real number into (0, 1) and can therefore be
+  read as a probability.
+· WHY NOT LINEAR REGRESSION FOR CLASSIFICATION — it produces values below 0 and
+  above 1, which are not probabilities, and its squared loss punishes confident
+  correct answers. The sigmoid fixes the range and cross-entropy fixes the loss.
+· THE LOSS — binary cross-entropy: -[y·log(p) + (1-y)·log(1-p)], averaged over
+  the batch. It goes to infinity as a confident prediction turns out wrong,
+  which is what makes it train sharply.
+· THE GRADIENT IS THE BEAUTIFUL PART — after all the calculus it collapses to
+  dw = Xᵀ(p - y) / n and db = mean(p - y). The sigmoid's derivative cancels
+  against the log in the loss, leaving just the error. Being able to state that
+  simplification is the point of the exercise.
+· THE LOOP — for each iteration: compute z, apply sigmoid, compute the
+  gradient, then w -= lr × dw and b -= lr × db.
+· NUMERICAL STABILITY — exp(-z) overflows for large negative z. Use a piecewise
+  sigmoid, or clip z, or use the log-sum-exp trick. Also clip p away from
+  exactly 0 and 1 before taking the log, or you get -inf.
+· VECTORISE IT — write the whole batch as matrix operations rather than looping
+  over rows. Interviewers watch for this, and the Python loop version is
+  hundreds of times slower.
+· THE PRACTICAL DETAILS — standardise the features first or convergence is
+  slow and lopsided; add L2 regularisation by adding λ·w to dw; and initialise
+  the weights to zeros, which is safe here (unlike neural networks) because the
+  loss is convex.
+· CONVEXITY IS WHY THIS IS EASY — logistic regression's loss has one global
+  minimum, so gradient descent cannot get stuck. Say that when comparing it to
+  neural networks."""
+
+_ANSWER_V2["The ML system design framework (6 steps)"] = """Six steps in a fixed order, and the discipline is spending real time on the
+first two - candidates who jump to the model lose the round there.
+
+· STEP 1, CLARIFY THE PROBLEM — what is the business goal, who uses this, what
+  decision does the output drive, what scale, what latency budget? Turn a vague
+  ask into a specific ML task and a specific metric. Spend five minutes here.
+· STEP 2, FRAME AS AN ML PROBLEM — is it classification, ranking, regression,
+  retrieval? What exactly is the label, and where does it come from? Ranking
+  versus classification changes the entire design and is the commonest thing
+  people skip.
+· STEP 3, DATA — sources, volume, labelling strategy, class balance, and the
+  point-in-time discipline that prevents leakage. Say what you would do if
+  labels are delayed or absent, because they usually are.
+· STEP 4, FEATURES AND MODEL — start with a simple baseline and say why. Then
+  the features that matter, then the model, then how you would train and
+  validate it. A baseline you can beat is worth more than a sophisticated model
+  you cannot explain.
+· STEP 5, EVALUATION — offline metrics chosen to match the task (PR-AUC for
+  imbalance, NDCG for ranking), then the ONLINE metric the business cares
+  about, then how you would A/B test. Name the gap between the two.
+· STEP 6, DEPLOYMENT AND MONITORING — batch or real time, serving architecture,
+  latency, cost, drift detection, retraining cadence, and rollback.
+· THE TWO-STAGE PATTERN answers most large-scale questions — cheap retrieval to
+  a few hundred candidates, then expensive ranking. Search, feeds, recommenders
+  and ads all share it.
+· WHAT INTERVIEWERS ACTUALLY GRADE — structure, trade-offs stated out loud, and
+  whether you notice the hard part. Announce the framework at the start so they
+  can follow you, and check in before moving between steps.
+· THE SINGLE BIGGEST MISTAKE — designing for a scale or a latency nobody asked
+  for. Ask first."""
+
+_ANSWER_V2["Design a recommendation system (worked example)"] = """Two stages: retrieve a few hundred candidates from millions cheaply, then rank
+those precisely - no system scores the whole catalogue per request.
+
+· CLARIFY FIRST — how many users and items, what counts as success (clicks,
+  watch time, purchases, retention), what latency budget, and is it a feed, a
+  related-items rail, or a search result? Each has a different objective.
+· THE LABEL PROBLEM — implicit feedback only. A click is a weak positive and a
+  non-click is not a negative, since the user may never have seen the item.
+  State this; it drives negative sampling and evaluation.
+· CANDIDATE GENERATION — several cheap sources in parallel: a two-tower
+  embedding model with approximate nearest-neighbour search, co-visitation
+  ('people who watched this also watched'), trending, and the user's own
+  history. Union them, aiming for recall rather than precision.
+· RANKING — a gradient-boosted tree or a neural net scoring each candidate with
+  the full feature set: user features, item features, and crucially CROSS
+  features (has this user watched this creator before, how long since they last
+  engaged with this category).
+· RE-RANKING FOR BUSINESS RULES — diversity so the feed is not ten items from
+  one creator, freshness, deduplication, and any policy or contractual
+  constraints. This layer is where products actually differ.
+· THE FEATURES THAT CARRY THE MODEL — recency and frequency of interaction,
+  item popularity with a time decay, context (time of day, device), and
+  sequence features from the last N interactions.
+· EVALUATION — offline with recall@k and NDCG on a time-based split; online
+  with an A/B test on the business metric. Expect them to disagree, and trust
+  the online one.
+· THE FEEDBACK LOOP is the trap to name — the model recommends what it already
+  believes is popular, users click it, and it becomes more popular.
+  Counteract with exploration, diversity constraints, and by monitoring
+  long-tail coverage.
+· COLD START — content features let a new item be embedded immediately;
+  popularity and onboarding preferences cover a new user.
+· SERVING — precompute item embeddings and the ANN index offline, run only the
+  user tower and the ranker at request time, cache aggressively, and set a
+  timeout with a popularity fallback."""
+
+_ANSWER_V2["What happens when you type a URL and press Enter?"] = """A cache-checking cascade, then DNS, then TCP, then TLS, then HTTP, then the
+browser's own rendering pipeline - and the interview is about how much detail
+you can supply at each layer.
+
+· CACHES FIRST, IN ORDER — the browser cache, the OS cache, the router, then
+  the ISP resolver. Most requests never reach a name server, and mentioning
+  this before DNS shows you know the fast path.
+· DNS RESOLUTION — the resolver asks a root server, then the .com TLD server,
+  then the domain's authoritative name server, and gets back an IP. Recursive
+  from your side, iterative from the resolver's side.
+· TCP HANDSHAKE — SYN, SYN-ACK, ACK. One round trip before any data, which is
+  why connection reuse matters so much for page speed.
+· TLS HANDSHAKE for https — negotiate the cipher, the server presents its
+  certificate, the browser validates it against a trusted root, and they agree
+  a session key. TLS 1.3 does this in one round trip; earlier versions took
+  two.
+· THE HTTP REQUEST — method, path, Host header (which is what allows many sites
+  on one IP), cookies, Accept headers. The server responds with a status code,
+  headers and a body.
+· WHAT THE SERVER MIGHT DO — hit a CDN edge, a load balancer, an application
+  server, a cache, a database. Say where a CDN would short-circuit this.
+· PARSING AND RENDERING — HTML becomes the DOM, CSS becomes the CSSOM, they
+  combine into a render tree, then layout computes geometry and paint fills
+  pixels. JavaScript can block parsing, which is why scripts go at the end or
+  carry defer.
+· THE SUBRESOURCE ROUND — images, CSS, JS and fonts each repeat much of the
+  above, subject to connection limits and HTTP/2 multiplexing.
+· HOW TO ANSWER WELL — give the outline in thirty seconds, then ask which part
+  they want expanded. The question is a menu, not an essay, and every layer has
+  a deeper follow-up waiting."""
+
+_ANSWER_V2["Why can a model with 99% accuracy be useless?"] = """Because if 99% of cases are negative, predicting 'negative' every time scores
+99% while catching nothing - accuracy measures the majority class.
+
+· THE CONCRETE CASE — 1,000 fraudulent transactions in 100,000. A model that
+  always says 'not fraud' is 99% accurate and has caught zero fraud. It is also
+  free to build, which makes the number meaningless as evidence.
+· THE GENERAL PRINCIPLE — accuracy is dominated by whichever class is largest.
+  When the class you care about is rare, it tells you almost nothing about
+  performance on that class.
+· WHAT TO USE INSTEAD — precision (of those I flagged, how many were right),
+  recall (of the real cases, how many did I catch), and PR-AUC across
+  thresholds. All three ignore true negatives, which is exactly the point.
+· ALWAYS QUOTE THE BASE RATE alongside any metric. '92% precision' means
+  something different when positives are 50% of the data than when they are
+  0.5%.
+· THE COSTS ARE USUALLY ASYMMETRIC TOO — missing a fraud case costs the
+  chargeback; a false positive costs an annoyed customer and some review time.
+  Those are not the same size, so the threshold is a business decision, not a
+  default of 0.5.
+· THE OTHER WAY 99% IS USELESS — when the baseline is already 98.5%. An
+  improvement must be measured against the naive alternative, not against zero.
+· THE DIAGNOSTIC HABIT — always look at the confusion matrix rather than a
+  single number. It shows which kind of error the model makes, and the two
+  kinds usually have different consequences.
+· HOW TO ANSWER IN AN INTERVIEW — give the fraud example immediately, name
+  precision and recall, then say the metric must follow from the cost of each
+  error type. That sequence is the complete answer."""
+
+_ANSWER_V2["Why split data into train / validation / test — why not just train and test?"] = """Because the moment you use the test set to make a decision, it stops measuring
+generalisation and starts measuring how well you tuned to it.
+
+· WHAT EACH SET IS FOR — TRAIN fits the parameters. VALIDATION chooses between
+  models and hyperparameters. TEST is looked at once, at the end, to estimate
+  performance on data nobody has optimised against.
+· THE LEAK IS SUBTLE — you never train on the test set, but if you try fifty
+  configurations and keep the one with the best test score, you have selected
+  for luck on that particular sample. The reported number is optimistic and you
+  have no way to know by how much.
+· THE ANALOGY — validation is your practice exam, test is the real one. Sitting
+  the real exam fifty times and reporting your best attempt is not an estimate
+  of your ability.
+· THE TYPICAL SPLIT — 60/20/20, or 80/10/10 with a lot of data. With very large
+  datasets the validation and test sets can be a small percentage, because what
+  matters is their absolute size, not their share.
+· CROSS-VALIDATION replaces a fixed validation set when data is scarce: rotate
+  which fold is held out, average the results. The test set stays separate and
+  untouched throughout.
+· THE ORDER MATTERS FOR PREPROCESSING — fit scalers, encoders and imputers on
+  the training fold only, then apply them. Fitting on everything leaks
+  distribution information and is the commonest silent leak.
+· TIME SERIES BREAKS THE RULES — split chronologically, never randomly, or the
+  model trains on the future to predict the past.
+· HOW OFTEN CAN YOU LOOK AT TEST — ideally once. In practice, rarely and
+  deliberately, and if you find yourself iterating against it, you need a fresh
+  holdout.
+· THE HONEST FRAMING — the three-way split exists because model selection is
+  itself a form of fitting, and anything you fit needs its own held-out
+  evaluation."""
+
+_ANSWER_V2["Why does more data usually beat a cleverer algorithm?"] = """Because most model families converge to similar performance once they have
+enough examples, while data adds information no algorithm can invent.
+
+· THE CLASSIC EVIDENCE — Banko and Brill showed several quite different
+  algorithms for word disambiguation converging as training data grew, with the
+  worst algorithm on lots of data beating the best on little. The finding has
+  been reproduced repeatedly since.
+· THE INTUITION — a model can only learn patterns present in the data. More
+  data means rarer patterns appear often enough to be learned, and it also
+  reduces VARIANCE, which is the part of error that comes from having seen an
+  unrepresentative sample.
+· WHAT MORE DATA FIXES — high variance. If your training error is low and your
+  test error is high, more data helps directly.
+· WHAT MORE DATA DOES NOT FIX — high bias. If the model is too simple to
+  express the pattern, a million more rows will not help; you need a more
+  flexible model or better features. Diagnosing which you have is what makes
+  this a useful principle rather than a slogan.
+· QUALITY IS NOT OPTIONAL — more mislabelled data makes things worse. The claim
+  is about more RELEVANT, correctly labelled data from the same distribution.
+· THE PRACTICAL PRIORITY ORDER — fix label quality, then get more data, then
+  engineer features, then tune the model. Most teams do this backwards because
+  tuning is the most enjoyable part.
+· THE ECONOMICS — data collection and labelling cost money and time; model
+  tuning costs an engineer's afternoon. Sometimes the clever algorithm is
+  genuinely the cheaper option, and saying so shows judgement.
+· THE MODERN VERSION — scaling laws, where model loss falls predictably with
+  data, parameters and compute together. It is the same observation formalised,
+  and it is why frontier models are trained the way they are.
+· THE CAVEAT WORTH ADDING — diminishing returns are real. Going from 1,000 to
+  10,000 examples usually transforms a model; 100,000 to a million often does
+  very little."""
+
+_ANSWER_V2["Why might adding more features hurt performance?"] = """Every extra feature adds parameters to estimate from the same data, so noise
+gets fitted as if it were signal - and in high dimensions everything looks
+equally far apart.
+
+· THE VARIANCE ARGUMENT — more features means more freedom, and more freedom
+  fitted on a fixed number of rows means more opportunity to memorise noise.
+  Test error rises even as training error falls.
+· THE CURSE OF DIMENSIONALITY — as dimensions grow, the volume of the space
+  grows exponentially, so your data becomes sparse in it. Distances between
+  points converge, which breaks k-NN, k-means and anything else built on
+  nearness.
+· THE RULE OF THUMB — you want many more rows than features. When features
+  approach or exceed the row count, a linear model can fit the training data
+  perfectly and generalise terribly.
+· IRRELEVANT FEATURES ARE NOT FREE — a pure-noise column will occasionally
+  correlate with the target by chance, and the model will use it. With enough
+  noise columns, one of them always looks useful.
+· MULTICOLLINEARITY — highly correlated features make coefficients unstable and
+  uninterpretable in linear models. The predictions may be fine while the
+  explanations are nonsense, which matters if anyone is reading them.
+· LEAKY FEATURES ARE THE WORST KIND — a feature computed after the prediction
+  point looks brilliant offline and is worthless in production. Adding features
+  carelessly is how leaks get in.
+· THE PRACTICAL COSTS beyond accuracy — slower training, more memory, more data
+  pipeline to maintain, and more things that can break at serving time.
+· WHAT TO DO — regularisation (L1 drives useless coefficients to exactly zero),
+  feature selection by importance, dimensionality reduction with PCA, or simply
+  starting small and adding features only when validation improves.
+· THE EXCEPTION worth naming — trees and forests are relatively robust to
+  irrelevant features because they simply do not split on them, which is one
+  reason they are so forgiving on messy tabular data."""
+
+_ANSWER_V2["If deep learning is so powerful, why do gradient-boosted trees still win on tabular data?"] = """Because tabular data has no spatial or sequential structure to exploit, and
+that structure is exactly what deep learning's architectures are built to
+capture.
+
+· WHAT NEURAL NETWORKS ARE GOOD AT — data where nearby things are related.
+  Pixels next to each other, words in sequence, audio over time. Convolutions
+  and attention encode those relationships as an inductive bias.
+· WHY TABLES DIFFER — the columns have no order. Column 3 being next to column
+  4 means nothing, so there is no structure for a specialised architecture to
+  exploit, and a neural network must learn everything from scratch.
+· WHAT TREES EXPLOIT INSTEAD — axis-aligned splits. 'Is income above 50,000' is
+  exactly the shape of decision that tabular features support, and a tree finds
+  it directly rather than approximating it with a smooth function.
+· MIXED TYPES AND SCALES — trees handle numeric and categorical columns
+  together, need no scaling, and are unbothered by outliers or skewed
+  distributions. A neural network needs all of that handled first.
+· MISSING VALUES — modern boosting libraries learn a default direction for
+  missing data at each split. Neural networks require imputation, which itself
+  introduces assumptions.
+· DATA SIZE — tabular datasets are usually thousands to millions of rows, not
+  billions. Deep learning's advantage appears at scales tabular problems rarely
+  reach.
+· THE PRACTICAL ARGUMENT that decides most projects — boosting trains in
+  minutes on a CPU, needs almost no tuning to be competitive, and gives
+  feature importances for free. Getting a neural network to match it takes far
+  longer.
+· THE HONEST CAVEAT — this gap has narrowed. TabNet, FT-Transformer and similar
+  architectures are competitive on some benchmarks, and embeddings for
+  high-cardinality categoricals genuinely help. But the 2022 study by Grinsztajn
+  and colleagues still found trees ahead on most tabular benchmarks.
+· WHERE DEEP LEARNING DOES WIN ON TABLES — when you need to combine tabular
+  columns with text or images in one model, since a neural network can consume
+  all three."""
+
+_ANSWER_V2["Why do we need a learning rate — why not jump straight to the minimum?"] = """Because the gradient tells you which way is downhill right here, not how far
+away the bottom is - it is a direction, not a destination.
+
+· WHAT THE GRADIENT ACTUALLY IS — the slope at your current point. It is a
+  local, linear approximation of a surface that is neither local nor linear, so
+  it is only trustworthy for a small step.
+· THE HILL ANALOGY — in thick fog you can feel which way the ground slopes
+  under your feet. That tells you the direction to walk. It tells you nothing
+  about whether the valley is ten metres or ten kilometres away.
+· TOO LARGE A STEP — you overshoot the minimum, land on the far wall, overshoot
+  back, and the loss oscillates or diverges to infinity. This is the commonest
+  training failure and it looks like NaNs.
+· TOO SMALL A STEP — you get there eventually, taking far longer than you can
+  afford, and you may stall on a plateau where progress is indistinguishable
+  from noise.
+· WHY NOT SOLVE FOR THE MINIMUM DIRECTLY — for linear regression you can, with
+  the normal equation. For anything non-convex with millions of parameters
+  there is no closed form, and the matrix inversion the closed form requires is
+  O(n³) anyway.
+· WHAT ABOUT SECOND-ORDER METHODS — Newton's method uses curvature to choose
+  the step size and genuinely does jump closer to the minimum. It needs the
+  Hessian, which is quadratic in the parameter count, so for a large model it
+  is simply not computable.
+· WHAT PRACTICE DOES INSTEAD — schedules that start higher and decay (cosine,
+  step decay), warmup to avoid a wild first few steps, and adaptive optimisers
+  like Adam that keep a per-parameter effective rate from gradient history.
+· THE TUNING ADVICE — the learning rate is the single most important
+  hyperparameter. Sweep it on a log scale, and use a range test: increase it
+  gradually and plot the loss to find where it starts diverging.
+· THE ONE-LINE ANSWER — the gradient gives direction only, so the step size is
+  a separate decision, and no cheap computation supplies it."""
+
+_ANSWER_V2["Why is O(n log n) the limit for comparison sorting — can we beat it?"] = """Comparisons can only ask 'is a before b', and there are n! possible orderings -
+distinguishing between them needs log2(n!) yes/no answers, which is n log n.
+
+· THE DECISION-TREE ARGUMENT — model any comparison sort as a binary tree where
+  each internal node is one comparison and each leaf is one final ordering.
+  There must be at least n! leaves, since every permutation is a possible
+  input.
+· THE HEIGHT BOUND — a binary tree with n! leaves has height at least
+  log2(n!). Height is the worst-case number of comparisons, so no comparison
+  sort can beat that.
+· WHY THAT EQUALS n log n — by Stirling's approximation, log2(n!) is
+  approximately n·log2(n) - 1.44n, which is Θ(n log n). You are not expected to
+  derive Stirling, only to know the conclusion.
+· WHAT THE BOUND ACTUALLY CONSTRAINS — only algorithms whose sole tool is
+  comparing two elements. That is the escape hatch.
+· HOW TO BEAT IT — stop comparing. Counting sort uses the values as array
+  INDICES and runs in O(n + k) for a value range k. Radix sort applies counting
+  sort digit by digit for O(d(n + k)). Bucket sort scatters uniformly
+  distributed values into buckets.
+· THE PRICE OF BEATING IT — you must know something about the values. Counting
+  sort needs a small integer range; radix needs fixed-width keys; bucket sort
+  needs a roughly uniform distribution. General data gives you none of these.
+· MERGE SORT AND HEAPSORT ACHIEVE THE BOUND in the worst case, so they are
+  optimal comparison sorts. Quicksort is O(n²) worst case and usually faster in
+  practice because of cache behaviour and low constants.
+· THE INTERVIEW ANSWER — state the n! decision-tree argument, say the bound
+  applies only to comparison-based sorting, then name counting and radix sort
+  as the way around it and what they assume. That full arc is what is being
+  asked for."""
+
+_ANSWER_V2["Why does a hash table give O(1) lookup — and when does it fail?"] = """A hash function computes WHERE the value lives instead of searching for it - so
+the work does not grow with the data, until collisions turn a bucket into a
+list.
+
+· THE MECHANISM — hash the key into a number, take it modulo the table size,
+  and that is the slot. One computation and one memory access, regardless of
+  how many items are stored.
+· WHY IT IS 'AVERAGE' O(1) AND NOT GUARANTEED — different keys can hash to the
+  same slot. That is a COLLISION, and it is not an edge case: by the birthday
+  paradox, collisions appear far sooner than intuition suggests.
+· CHAINING — each slot holds a list of entries. Lookup finds the slot then
+  scans the list. With a good hash and a reasonable load factor, chains stay
+  around length 1.
+· OPEN ADDRESSING — on collision, probe for the next free slot (linear,
+  quadratic, or by double hashing). Better cache behaviour, and deletion needs
+  tombstones, which complicates it.
+· THE LOAD FACTOR is the control — items divided by slots. Above roughly 0.7,
+  collisions rise sharply, so the table RESIZES: allocate a bigger array and
+  rehash everything. That single operation is O(n), which is why the guarantee
+  is AMORTISED O(1) rather than worst-case.
+· WHEN IT DEGRADES TO O(n) — a bad hash function, or an adversary choosing keys
+  that all collide. This is a real denial-of-service attack, and it is why
+  languages added randomised hash seeds.
+· THE OTHER FAILURE MODES — mutable keys (change a key after inserting and you
+  can never find it again), an expensive hash function on long strings, and
+  memory overhead from empty slots.
+· WHAT REAL IMPLEMENTATIONS DO — Java converts a long chain into a balanced
+  TREE, bounding the worst case at O(log n). Worth naming; it shows you have
+  looked past the textbook.
+· WHEN NOT TO USE ONE — when you need sorted order, range queries, or a
+  predictable worst case. A balanced tree gives O(log n) for all operations and
+  keeps things in order, which a hash table cannot do at all."""
+
+_ANSWER_V2["Why is recursion elegant but sometimes dangerous?"] = """It mirrors recursive structures exactly, which makes the code short and
+obviously correct - and every pending call sits on a stack that can run out.
+
+· WHY IT IS ELEGANT — a tree's child is a tree, so a function that handles a
+  tree by calling itself on its children matches the data's own definition. The
+  code is often three lines and needs no bookkeeping.
+· THE ARGUMENT YOU GET FOR FREE — inductive reasoning. Show the base case is
+  right and that the recursive step is right assuming the smaller call works,
+  and correctness follows. That is much easier than reasoning about a loop's
+  invariant.
+· THE STACK IS THE DANGER — each pending call keeps its own frame with its
+  variables and return address. Depth n costs O(n) memory, and Python stops at
+  about 1000 frames with a RecursionError, while C simply crashes.
+· THE CONCRETE CASE — a linked list of 100,000 nodes, or a degenerate BST that
+  is really a chain. Both are perfectly ordinary inputs that blow the stack.
+· THE EXPONENTIAL TRAP — naive recursive Fibonacci recomputes the same
+  subproblems endlessly, O(2ⁿ). Memoisation fixes it and turns the same
+  function into dynamic programming.
+· TAIL CALLS — when the recursive call is the last thing done, some languages
+  reuse the frame and the recursion costs O(1) space. Python deliberately does
+  NOT, so tail recursion buys nothing there and you must rewrite as a loop.
+· THE PERFORMANCE COST even when it fits — function calls have overhead
+  compared with a loop iteration. Usually irrelevant, occasionally not.
+· WHEN TO CONVERT TO ITERATION — deep or unbounded input, a hot inner loop, or
+  a language without tail-call optimisation. Use an explicit stack, which gives
+  you the same algorithm with heap memory instead of stack memory.
+· THE BALANCED ANSWER for an interview — recursion for trees, graphs and
+  divide-and-conquer where depth is logarithmic; iteration for linear
+  structures where depth equals input size."""
+
+_ANSWER_V2["Why do we distinguish latency from throughput?"] = """Latency is how long ONE request takes; throughput is how many finish per
+second - and optimising for one routinely damages the other.
+
+· THE ANALOGY — a motorway. Latency is your journey time. Throughput is cars
+  per hour past a point. Adding lanes raises throughput without making any
+  single journey faster.
+· WHY THEY TRADE OFF — batching is the clearest case. Waiting to collect 32
+  requests before processing them raises throughput sharply and adds the
+  waiting time to every request's latency. GPU inference lives on this
+  trade-off.
+· LITTLE'S LAW ties them together: concurrency = throughput × latency. Two of
+  the three determine the third, which is why you cannot raise throughput at
+  fixed concurrency without latency rising.
+· WHICH TO OPTIMISE — user-facing interactive work is latency-bound; offline
+  jobs, ETL and training are throughput-bound. Deciding which you are is the
+  first design question and it changes every subsequent answer.
+· THE QUEUEING EFFECT people miss — as utilisation approaches 100%, latency
+  does not degrade gracefully, it explodes. That is why systems are run at
+  60-70% rather than being 'fully used'.
+· NEVER REPORT AVERAGE LATENCY — it hides the tail. Use p50, p95 and p99, and
+  understand that on a page making twenty requests, a p99 backend affects a
+  large share of page loads.
+· HOW TO IMPROVE EACH — latency comes down through caching, fewer round trips,
+  faster algorithms, and doing work ahead of time. Throughput comes up through
+  parallelism, batching, more machines and less per-item overhead.
+· BANDWIDTH IS NOT THROUGHPUT — bandwidth is capacity, throughput is what you
+  actually achieve. And latency has a floor set by physics: light takes about
+  60ms round trip between London and New York, which no amount of engineering
+  removes.
+· THE PRACTICAL DISCIPLINE — state both in any design, with numbers. 'p99 under
+  200ms at 5,000 requests per second' is a specification; 'fast' is not."""
+
+_ANSWER_V2["Overfitting"] = """The model has memorised the training data, including its noise, so it performs
+well on what it has seen and badly on anything new.
+
+· THE EVERYDAY PICTURE — a student who memorises last year's exam paper instead
+  of learning the subject. Perfect on that paper, lost on this year's.
+· THE SIGNATURE — training error keeps falling while validation error stops
+  falling and starts rising. That divergence IS overfitting, and watching for
+  it is why you keep a validation set.
+· WHY IT HAPPENS — the model has more capacity than the data supports, so
+  instead of finding the general pattern it fits the individual points, noise
+  included.
+· WHAT MAKES IT LIKELY — too many parameters, too few examples, too many
+  features, training for too long, or a target that is genuinely noisy.
+· THE FIXES, roughly in order of effectiveness. MORE DATA is the most reliable.
+  REGULARISATION (L1/L2, dropout, weight decay) penalises complexity.
+  EARLY STOPPING halts when validation stops improving. A SIMPLER MODEL. DATA
+  AUGMENTATION where the domain allows it. ENSEMBLING, which averages away the
+  idiosyncratic part.
+· CROSS-VALIDATION is how you detect it reliably when data is scarce, since a
+  single validation split can be unrepresentative.
+· THE OPPOSITE, UNDERFITTING, looks different — high training error AND high
+  validation error. The fixes are the reverse: more capacity, better features,
+  less regularisation. Diagnosing which you have is the actual skill.
+· THE SUBTLE CASE worth naming — overfitting the VALIDATION set by trying many
+  configurations against it. It is real, it is common, and it is why the test
+  set exists.
+· THE MODERN WRINKLE — very large neural networks can interpolate the training
+  data perfectly and still generalise well ('double descent'). The classical
+  story is a good default and not the whole truth."""
+
+_ANSWER_V2["Regularization"] = """Deliberately make the model's job harder so it cannot memorise - a penalty on
+complexity that trades a little training accuracy for a lot of generalisation.
+
+· THE CORE IDEA — add a term to the loss that grows as the weights grow. The
+  optimiser now has to balance fitting the data against keeping the weights
+  small, and small weights mean a smoother, less contorted function.
+· L2 (RIDGE) — add λ times the sum of squared weights. It SHRINKS every weight
+  toward zero without reaching it, and it handles correlated features by
+  splitting the weight between them. This is the default.
+· L1 (LASSO) — add λ times the sum of absolute weights. It drives some weights
+  to EXACTLY zero, so it performs feature selection as a side effect. Useful
+  when you believe most features are irrelevant.
+· WHY L1 ZEROES AND L2 DOES NOT — the absolute-value penalty has a constant
+  gradient all the way to zero, so it keeps pushing; the squared penalty's
+  gradient shrinks as the weight does, so it approaches zero asymptotically.
+  That geometric difference is the whole distinction.
+· ELASTIC NET combines both, which is the pragmatic choice with many correlated
+  features.
+· DROPOUT, for neural networks — randomly switch off a fraction of neurons each
+  training step, so no neuron can rely on any specific other one. It behaves
+  like training an ensemble of thinned networks.
+· THE OTHERS worth naming — early stopping (an implicit regulariser), data
+  augmentation, batch normalisation's noise, weight decay (L2 as implemented in
+  optimisers), and label smoothing.
+· λ IS A HYPERPARAMETER tuned on the validation set. Too small and it does
+  nothing; too large and the model underfits. Sweep it on a log scale.
+· SCALE YOUR FEATURES FIRST — the penalty applies to weights, and unscaled
+  features produce weights of wildly different magnitudes, so the penalty lands
+  unevenly. This is a real bug, not a nicety."""
+
+_ANSWER_V2["Gradient Descent"] = """Compute which direction increases the loss, step the opposite way, repeat -
+the whole of modern machine learning training is this loop.
+
+· THE MECHANIC — the gradient is the vector of partial derivatives, pointing in
+  the direction of steepest INCREASE. So you subtract it: w = w - lr × gradient.
+· THE FOG ANALOGY — you are on a hillside in thick fog trying to reach the
+  valley. You can feel the slope under your feet, so you step downhill, then
+  feel again. You never see the whole landscape.
+· THE THREE VARIANTS. BATCH uses all the data per step: accurate gradients,
+  slow, and impossible if the data does not fit in memory. STOCHASTIC uses one
+  example: fast and noisy. MINI-BATCH uses 32-512 examples and is what everyone
+  actually does, because it balances the two and suits GPU parallelism.
+· THE NOISE IS USEFUL — stochastic gradients jitter, which helps escape narrow
+  local minima and saddle points. Perfectly accurate gradients are not
+  obviously better.
+· THE LEARNING RATE decides the step size and is the most important
+  hyperparameter. Too large diverges, too small crawls.
+· THE IMPROVEMENTS, in the order they were invented. MOMENTUM accumulates a
+  velocity so consistent directions accelerate and oscillations cancel.
+  RMSProp scales each parameter's step by its recent gradient magnitude. ADAM
+  combines both and is the sensible default.
+· WHAT STOPS IT — saddle points (flat in some directions, which is far more
+  common than local minima in high dimensions), vanishing gradients in deep
+  networks, and plateaus.
+· CONVEXITY MATTERS — for logistic or linear regression the loss has one
+  minimum and gradient descent finds it. For neural networks it does not, and
+  the surprising empirical fact is that the many minima it does find are
+  usually good enough.
+· WHAT TO WATCH WHILE TRAINING — the loss curve. Rising means the learning rate
+  is too high; flat means too low or a vanishing gradient; jagged but
+  descending is normal for mini-batch."""
+
+_ANSWER_V2["Backpropagation"] = """The chain rule applied backwards through the network, reusing each intermediate
+result - which is what makes computing millions of gradients affordable.
+
+· THE PROBLEM IT SOLVES — you need the derivative of the loss with respect to
+  every weight. Computing each independently would repeat enormous amounts of
+  shared work.
+· THE INSIGHT — layers are nested functions, so by the chain rule the gradient
+  for an early layer includes the gradients of every later layer. Compute from
+  the OUTPUT backwards and each layer's result feeds the next one down.
+· THE TWO PASSES. FORWARD: compute the output layer by layer, CACHING the
+  intermediate activations. BACKWARD: start from the loss, and at each layer
+  compute the gradient with respect to its inputs and its weights, passing the
+  input-gradient further back.
+· WHY THE CACHE — the backward pass needs the activations from the forward
+  pass. That is why training uses far more memory than inference, and why
+  gradient checkpointing (recomputing instead of storing) exists.
+· THE COST — roughly the same as two forward passes, regardless of parameter
+  count. That efficiency is the entire reason deep learning is practical.
+· VANISHING GRADIENTS — the chain rule multiplies many terms. With sigmoid
+  activations, whose derivative peaks at 0.25, twenty layers multiply twenty
+  small numbers and the gradient reaching layer 1 is effectively zero. ReLU,
+  residual connections and normalisation all exist to fix this.
+· EXPLODING GRADIENTS are the same phenomenon with factors above 1, producing
+  NaNs. Gradient clipping is the standard fix.
+· IT IS JUST AUTOMATIC DIFFERENTIATION — modern frameworks build a computation
+  graph during the forward pass and traverse it in reverse. You never write
+  backprop yourself, and understanding it is what lets you diagnose training
+  failures.
+· THE INTERVIEW-READY SUMMARY — forward computes and caches, backward applies
+  the chain rule from the loss down, reusing shared terms so the whole gradient
+  costs about one extra forward pass."""
+
+_ANSWER_V2["Time vs Space complexity"] = """Time counts operations as input grows; space counts EXTRA memory beyond the
+input - and you can nearly always trade one for the other.
+
+· THE DEFINITIONS — time complexity is how the number of steps scales with n.
+  Space complexity is how much additional memory scales with n, not counting
+  the input itself, which is the convention that trips people up.
+· THE CLASSIC TRADE — Two Sum with nested loops is O(n²) time and O(1) space; a
+  hash map makes it O(n) time and O(n) space. You bought time with memory,
+  which is the single most common optimisation in interviews.
+· THE OTHER DIRECTION — recomputing a value instead of storing it saves memory
+  and costs time. Gradient checkpointing in deep learning is exactly this.
+· WHAT COUNTS AS EXTRA SPACE — auxiliary arrays, hash maps, and the RECURSION
+  STACK. That last one is forgotten constantly: a recursive tree traversal is
+  O(h) space even though it allocates nothing.
+· 'IN PLACE' MEANS O(1) EXTRA, not zero memory. A few variables are fine; an
+  array proportional to n is not.
+· THE OUTPUT USUALLY DOES NOT COUNT, by convention, when the problem requires
+  returning something of that size. Say which convention you are using rather
+  than assuming.
+· WHICH MATTERS MORE IN PRACTICE — usually time, because memory is cheap. But
+  memory has a hard ceiling: exceeding it crashes rather than slows, and cache
+  misses make a memory-hungry algorithm slow anyway.
+· ALWAYS STATE BOTH when you finish a problem. Giving only time complexity is
+  an incomplete answer and interviewers notice.
+· THE PRACTICAL HABIT — after solving, ask 'can I do this in one pass?' and
+  'can I avoid the extra array?'. Those two questions convert most acceptable
+  solutions into good ones."""
+
+_ANSWER_V2["Hash table (hash map)"] = """Key-value storage where a hash function computes the location directly, so
+lookup, insert and delete are all effectively constant time.
+
+· THE STRUCTURE — an array of buckets, plus a hash function turning any key
+  into an index. Storing and finding both cost one hash computation and one
+  array access.
+· WHAT A HASH FUNCTION MUST DO — be deterministic (same key, same index
+  always), be fast, and distribute keys evenly. Even distribution is what keeps
+  buckets short.
+· COLLISIONS ARE INEVITABLE — more possible keys than buckets, always. Chaining
+  puts a list in each bucket; open addressing probes for another free slot.
+· THE LOAD FACTOR — entries divided by buckets. Past about 0.7 the collision
+  rate climbs, so the table doubles and rehashes everything. That resize is
+  O(n), which is why the guarantee is AMORTISED O(1).
+· KEYS MUST BE IMMUTABLE AND HASHABLE. Mutating a key after insertion changes
+  its hash, and the entry becomes unreachable — it is still in the table and
+  you can never find it. This is why Python forbids list keys.
+· HASH AND EQUALITY MUST AGREE — equal objects must have equal hashes, or
+  lookups fail unpredictably. In Java, overriding equals without hashCode is
+  the canonical bug.
+· WHEN IT IS THE WRONG CHOICE — you need sorted order, range queries, or nearest
+  neighbours. Hashing destroys ordering by design; use a balanced tree.
+· THE VARIANTS worth naming — a SET is a hash table with no values; a
+  DICTIONARY preserving insertion order (Python 3.7+) does so as an
+  implementation guarantee; a CONCURRENT hash map shards its locks so threads
+  rarely contend.
+· WHERE IT SHOWS UP IN PROBLEMS — deduplication, counting, 'have I seen this',
+  grouping by a key, and caching. Any nested loop searching for a match is
+  usually a hash table waiting to happen."""
+
+_ANSWER_V2["BFS vs DFS"] = """BFS explores in rings and finds the SHORTEST path on unweighted graphs; DFS
+plunges down one branch and is the natural fit for exhaustive exploration.
+
+· BFS USES A QUEUE — first in, first out. It visits everything at distance 1,
+  then everything at distance 2, and so on. That ordering is why the first time
+  it reaches a node is by the fewest edges.
+· DFS USES A STACK — explicitly, or implicitly via recursion. It follows one
+  path as deep as possible, then backtracks.
+· THE DECIDING QUESTION — do you need the SHORTEST path? If yes and edges are
+  unweighted, BFS. If the edges have weights, neither: use Dijkstra.
+· WHERE DFS IS RIGHT — cycle detection, topological sorting, finding connected
+  components, path existence, and any backtracking search over all
+  possibilities.
+· WHERE BFS IS RIGHT — shortest path, level-order traversal, finding the
+  nearest anything, and web-crawler-style exploration where you want breadth
+  first.
+· THE MEMORY TRADE — BFS holds a whole frontier, which on a wide graph can be
+  enormous. DFS holds one path, which on a deep graph can overflow the stack.
+  Choose by the graph's shape, not just the question.
+· MARK VISITED WHEN ENQUEUEING in BFS, not when dequeuing. Otherwise a node
+  enters the queue many times before being processed and the queue explodes.
+  This is the single commonest BFS bug.
+· MULTI-SOURCE BFS — enqueue every starting point at distance 0 and run once.
+  It answers 'nearest X for every cell' in one pass, and it is the trick behind
+  Rotting Oranges and 01 Matrix.
+· BOTH ARE O(V + E) in time and O(V) in space on a graph. On a grid that is
+  O(rows × columns).
+· THE SIBLING worth naming — iterative deepening DFS gives BFS's shortest-path
+  guarantee with DFS's memory profile, by repeatedly running depth-limited DFS."""
+
+_ANSWER_V2["Precision"] = """Of everything the model FLAGGED, what fraction was actually right - it answers
+'can I trust an alert?'
+
+· THE FORMULA — true positives divided by (true positives + false positives).
+  The denominator is everything you predicted positive.
+· THE PLAIN-WORDS VERSION — you raised 100 alarms; 80 were real fires.
+  Precision is 80%.
+· WHEN IT IS THE METRIC THAT MATTERS — when acting on a positive is expensive
+  or harmful. Spam filtering (a real email in the spam folder is a disaster),
+  medical treatment with side effects, or anything a human has to review
+  manually.
+· IT IGNORES WHAT YOU MISSED — a model that flags one case, correctly, has 100%
+  precision and is useless. That is why precision is never quoted alone.
+· THE TRADE WITH RECALL — raising the decision threshold makes you more
+  selective, so precision rises and recall falls. They move in opposite
+  directions by construction, and the threshold is where you choose the
+  balance.
+· PRECISION AT k, for ranking — of the top 10 results, how many were relevant?
+  This is the version that matters for search and recommendation, where nobody
+  looks past the first page.
+· IT IS ALSO CALLED positive predictive value in medicine and statistics.
+  Recognising the synonym is occasionally useful.
+· THE MEMORY AID — preCision is about what you Called positive. Recall is about
+  what was Really positive.
+· ALWAYS PAIR IT — quote precision with recall, or use F1 or PR-AUC which
+  combine them. A single number here always hides the other half of the story."""
+
+_ANSWER_V2["Recall (sensitivity)"] = """Of everything that was ACTUALLY positive, what fraction did you catch - it
+answers 'what am I missing?'
+
+· THE FORMULA — true positives divided by (true positives + false negatives).
+  The denominator is every real positive that exists, whether you found it or
+  not.
+· THE PLAIN-WORDS VERSION — there were 100 real fires; you detected 80. Recall
+  is 80%.
+· WHEN IT IS THE METRIC THAT MATTERS — when MISSING a case is the expensive
+  error. Cancer screening, fraud detection, security threats, safety-critical
+  alerts. In all of these a false alarm is an inconvenience and a miss is a
+  catastrophe.
+· IT IGNORES FALSE ALARMS — a model that flags everything has 100% recall and
+  no value. That is the mirror image of precision's failure, and why neither is
+  quoted alone.
+· THE TRADE — lowering the threshold catches more real cases and also more
+  false ones, so recall rises as precision falls.
+· THE SYNONYMS — sensitivity in medicine, true positive rate in signal
+  detection. They are the same quantity, and the ROC curve plots this against
+  the false positive rate.
+· SPECIFICITY IS THE COMPLEMENT for the negative class — of everything actually
+  negative, how much did you correctly leave alone. High sensitivity with low
+  specificity means you are flagging almost everything.
+· RECALL AT k, for retrieval — of all the relevant documents, how many appeared
+  in the top k? This is the metric that matters for the retrieval stage of a
+  RAG system, where the generator can only use what was fetched.
+· THE PRACTICAL FRAMING — decide which error costs more, then optimise the
+  corresponding metric and report both. That reasoning is what interviewers
+  want, more than the formulas."""
+
+_ANSWER_V2["F1 score"] = """The harmonic mean of precision and recall - one number that only looks good
+when BOTH are good.
+
+· THE FORMULA — 2 × (precision × recall) / (precision + recall).
+· WHY HARMONIC AND NOT ARITHMETIC — the harmonic mean is dragged down hard by
+  the smaller value. With precision 1.0 and recall 0.0, the arithmetic mean is
+  a respectable 0.5 while F1 is 0. Since a model that catches nothing is
+  worthless, F1 gives the honest answer.
+· THE PRACTICAL CONSEQUENCE — you cannot game F1 by pushing one metric to the
+  extreme. Flagging everything gives perfect recall and terrible precision, and
+  F1 stays low.
+· WHEN TO USE IT — imbalanced classes where you care about the positive class
+  and have no strong reason to prefer precision over recall.
+· WHEN NOT TO — when the two errors have clearly different costs. F1 weights
+  them equally, which is a decision, not a neutral default. If a miss costs ten
+  times a false alarm, F1 is quietly the wrong objective.
+· F-BETA generalises it: beta > 1 weights recall more (F2 is common in medical
+  screening), beta < 1 weights precision more. Naming F-beta shows you know F1
+  is a special case rather than a law.
+· THE AVERAGING CHOICE for multi-class, which matters and is often skipped.
+  MACRO averages the per-class F1 equally, so rare classes count as much as
+  common ones. MICRO pools all the counts first, so it is dominated by frequent
+  classes. WEIGHTED averages by class size.
+· F1 DOES NOT USE TRUE NEGATIVES, which is exactly why it survives severe
+  imbalance where accuracy does not.
+· IT IS A THRESHOLD-SPECIFIC NUMBER — it describes one operating point. PR-AUC
+  summarises all thresholds, and is the better single number when you have not
+  yet chosen one."""
+
+_ANSWER_V2["Confusion matrix"] = """A 2×2 table of what actually happened against what you predicted - every
+classification metric is computed from these four numbers.
+
+· THE FOUR CELLS. TRUE POSITIVE: predicted yes, was yes. FALSE POSITIVE:
+  predicted yes, was no (a false alarm, also called a Type I error). FALSE
+  NEGATIVE: predicted no, was yes (a miss, Type II). TRUE NEGATIVE: predicted
+  no, was no.
+· THE READING ORDER that stops the confusion — the second word is what you
+  PREDICTED, the first says whether you were right. 'False positive' means you
+  predicted positive and were wrong.
+· THE METRICS ALL FALL OUT OF IT. Accuracy = (TP+TN)/all. Precision =
+  TP/(TP+FP). Recall = TP/(TP+FN). Specificity = TN/(TN+FP). Learning the
+  table means you never have to memorise the formulas.
+· WHY LOOK AT IT AT ALL — a single accuracy figure hides which mistake the
+  model makes, and the two mistakes usually have very different costs. The
+  matrix shows the shape of the failure.
+· THE IMBALANCE TELL — a huge TN count with a tiny TP count is the signature of
+  a model that has learned to predict the majority class. Accuracy will look
+  excellent.
+· MULTI-CLASS extends it to n×n, with the diagonal being correct predictions.
+  The off-diagonal cells tell you WHICH classes get confused with which, which
+  is genuinely actionable — it often points at a labelling problem.
+· THE THRESHOLD MOVES IT — every cell changes as you shift the decision
+  threshold. The matrix describes one operating point, and ROC or PR curves
+  describe all of them.
+· WHAT TO DO IN AN INTERVIEW — draw it. Answering a metrics question by
+  sketching the matrix and deriving from it is faster and far more convincing
+  than reciting formulas.
+· THE NORMALISATION CHOICE when plotting — normalise by row to see recall per
+  class, by column to see precision per class. Say which you used, because they
+  look similar and mean different things."""
+
+_ANSWER_V2["Dropout"] = """Randomly switch off a fraction of neurons during each training step, so the
+network cannot rely on any single one - it is regularisation by forced
+redundancy.
+
+· THE MECHANISM — for each training batch, independently set each neuron's
+  output to zero with probability p. A different random subset is dropped every
+  step.
+· WHY IT REGULARISES — a neuron cannot depend on a specific partner being
+  present, because that partner may be absent. So the network learns redundant,
+  distributed representations instead of brittle co-adapted ones.
+· THE ENSEMBLE VIEW — each training step trains a different thinned network,
+  and at test time using all the neurons approximates averaging over that huge
+  ensemble. That is Hinton's original framing and it is the one to give.
+· THE SCALING DETAIL people get wrong — dropout is ON during training and OFF
+  during inference. To keep the expected activations consistent, INVERTED
+  dropout divides the surviving activations by (1-p) during training, so
+  nothing needs changing at test time. All modern frameworks do this.
+· THE FRAMEWORK TRAP — forgetting model.eval() in PyTorch leaves dropout active
+  at inference, producing different predictions each call. This is a real and
+  common production bug.
+· TYPICAL RATES — 0.5 for fully connected layers, 0.1 to 0.3 for convolutional
+  or transformer layers. Higher on the layers with the most parameters.
+· WHERE IT IS USED LESS NOW — convolutional networks largely replaced it with
+  batch normalisation, whose noise regularises similarly. Transformers still
+  use it, at low rates.
+· IT INTERACTS BADLY WITH BATCH NORM if placed carelessly, because dropout
+  changes the variance that batch norm has estimated. The usual guidance is to
+  put dropout after the normalisation, not between it and the activation.
+· MONTE CARLO DROPOUT is a neat trick worth naming — keep dropout ON at
+  inference and sample several predictions to get an uncertainty estimate
+  almost for free."""
+
+_ANSWER_V2["Attention"] = """A learned, content-based weighted average: each position looks at every other
+and decides how much each one matters to it.
+
+· THE THREE ROLES — QUERY (what I am looking for), KEY (what I offer), VALUE
+  (what I contribute). All three are learned linear projections of the same
+  input vectors.
+· THE COMPUTATION — score each query against every key with a dot product,
+  divide by √d, softmax into weights that sum to 1, then take the weighted sum
+  of the values. Four steps, and that is the whole mechanism.
+· WHY THE DOT PRODUCT — it measures alignment between two vectors, so a query
+  scores highly against keys pointing the same way. Similarity is being
+  computed, not looked up.
+· WHY DIVIDE BY √d — with large dimensions the dot products grow large, pushing
+  softmax into a saturated region where gradients vanish and attention
+  collapses onto one token too early.
+· WHAT IT BUYS OVER RECURRENCE — any position can reach any other in ONE step
+  rather than n, so long-range dependencies survive; and every position is
+  computed in parallel rather than sequentially, which is what made large-scale
+  training feasible.
+· THE COST — O(n²) in sequence length, since every token attends to every
+  other. This is the reason long context is expensive and the motivation for
+  FlashAttention, sliding-window attention and every efficiency variant.
+· SELF VS CROSS — self-attention draws Q, K and V from the same sequence;
+  cross-attention takes Q from one sequence and K/V from another, which is how
+  a decoder reads an encoder's output.
+· MASKED ATTENTION, in a decoder, sets future positions to -infinity before the
+  softmax so a token cannot see what comes after it. Without the mask,
+  next-token training is trivially cheating.
+· MULTI-HEAD runs several attentions in parallel with different projections and
+  concatenates, so one head can track syntax while another tracks coreference.
+  A single head must average all those jobs into one pattern."""
+
+_ANSWER_V2["Token"] = """The unit a language model actually reads and writes - usually a word piece
+rather than a word, which is why costs and limits are quoted in tokens.
+
+· WHAT IT IS — text is split into pieces from a fixed vocabulary, and each
+  piece maps to an integer id. The model only ever sees those ids.
+· THE ROUGH CONVERSION — about 0.75 words per token in English, so 1,000 tokens
+  is roughly 750 words or 4,000 characters. Code, non-English text and unusual
+  names use noticeably more tokens per character.
+· WHY NOT WHOLE WORDS — the vocabulary would be enormous and would still meet
+  words it has never seen. Word pieces let any string be represented by
+  composing known fragments, so there is no out-of-vocabulary case.
+· WHY NOT CHARACTERS — sequences would be several times longer, and attention
+  costs quadratic in length. Sub-word units are the compromise between
+  vocabulary size and sequence length.
+· HOW THE PIECES ARE CHOSEN — byte-pair encoding merges the most frequent
+  adjacent pair repeatedly, so common words become single tokens and rare ones
+  split into fragments. 'the' is one token; an unusual surname might be four.
+· WHY IT MATTERS PRACTICALLY — you are billed per token, the context window is
+  measured in tokens, and latency scales with them. Estimating in words will
+  under-count, especially for code.
+· THE CLASSIC FAILURE it explains — models are poor at counting letters or
+  reversing strings, because they never see letters. 'How many r's in
+  strawberry' is hard for a structural reason, not a reasoning one.
+· TOKENISATION IS LANGUAGE-BIASED — English is cheapest because the vocabularies
+  are trained mostly on English. The same sentence in Hindi or Thai can cost
+  several times more tokens, which is a real fairness and cost issue.
+· THE PRACTICAL HABIT — count tokens with the model's own tokeniser before
+  sending, rather than discovering the limit at runtime."""
+
+_ANSWER_V2["Transformer"] = """A stack of identical blocks, each doing attention then a feed-forward network,
+with residual connections and normalisation around both.
+
+· THE ORIGIN — the 2017 paper 'Attention Is All You Need', whose point was that
+  recurrence could be removed entirely. Everything since is a variation on that
+  block.
+· WHAT ONE BLOCK CONTAINS — multi-head self-attention, then a position-wise
+  feed-forward network (two linear layers with a non-linearity), each wrapped
+  in a residual connection and a layer normalisation.
+· WHY THE RESIDUALS — depth. Adding the input back gives gradients an
+  unobstructed path backwards, which is what makes 96-layer models trainable at
+  all.
+· WHY THE FEED-FORWARD LAYER — attention MIXES information between positions;
+  the feed-forward layer TRANSFORMS each position independently. You need both,
+  and it holds roughly two thirds of the parameters.
+· POSITION MUST BE INJECTED — attention is a set operation and has no notion of
+  order, so positional information is added, nowadays as rotary embeddings that
+  make attention depend on relative distance.
+· THE THREE ARCHITECTURES — encoder-only (BERT) for understanding, decoder-only
+  (GPT, Llama) for generation, encoder-decoder (T5) for transforming one
+  sequence into another. Decoder-only dominates because it scales well and
+  almost any task can be phrased as continuing text.
+· WHY IT BEAT RECURRENT NETWORKS — full parallelism during training, and a
+  constant path length between any two positions rather than a linear one. Both
+  matter enormously at scale.
+· THE COST — attention is O(n²) in sequence length, which is the central
+  engineering constraint and the reason for FlashAttention, sparse attention
+  and long-context tricks.
+· PRE-NORM VS POST-NORM is worth knowing — the original put normalisation after
+  the sublayer, and modern models put it before, which trains far more stably
+  at depth."""
+
+_ANSWER_V2["Linked list"] = """Nodes scattered in memory, each pointing to the next - O(1) insertion and
+deletion once you are there, and O(n) to get there.
+
+· THE STRUCTURE — each node holds a value and a reference to the next node. A
+  head pointer marks the start; the last node points to null.
+· VERSUS AN ARRAY — an array is contiguous, so indexing is O(1) but inserting
+  in the middle means shifting everything after it. A list inserts in O(1) and
+  cannot index at all without walking.
+· THE HIDDEN COST people forget — CACHE LOCALITY. Array elements sit next to
+  each other and arrive in the same cache line; list nodes are scattered, so
+  each hop can be a cache miss. In practice arrays often win even where the
+  complexity says otherwise.
+· WHEN A LIST IS GENUINELY RIGHT — frequent insertion and deletion at known
+  positions, no need for random access, an unknown or unbounded size, or when
+  you must splice two sequences in O(1).
+· THE VARIANTS — singly linked (one pointer, minimal memory), doubly linked
+  (backwards too, so you can delete a node given only that node), and circular
+  (the tail points at the head, useful for round-robin).
+· THE DUMMY-HEAD TECHNIQUE — allocate a placeholder node before the real head
+  so that operations affecting the first element need no special case. It
+  removes most of the fiddly branches in list problems.
+· THE TWO-POINTER TOOLKIT that solves most interview questions — fast and slow
+  pointers find the middle and detect cycles; a pointer k ahead finds the kth
+  from the end; three pointers reverse a list in place.
+· THE CLASSIC PROBLEMS — reverse, detect a cycle (Floyd's), merge two sorted
+  lists, remove the nth from the end, and find where two lists intersect.
+· WHERE IT SHOWS UP IN REAL SYSTEMS — LRU caches (a doubly linked list plus a
+  hash map), adjacency lists for graphs, and chaining inside hash tables."""
+
+_ANSWER_V2["Heap (priority queue)"] = """A tree kept just ordered enough that the smallest (or largest) element is
+always at the root - O(1) to peek, O(log n) to insert or remove.
+
+· THE HEAP PROPERTY — every parent is smaller than its children (a min-heap) or
+  larger (a max-heap). Note this is a WEAKER guarantee than sorting: siblings
+  are unordered, which is precisely why maintenance is cheap.
+· THE ARRAY TRICK — a complete binary tree is stored in a flat array with no
+  pointers. For index i, the children are 2i+1 and 2i+2 and the parent is
+  (i-1)//2. Perfect cache behaviour and no allocation per node.
+· INSERT — append at the end, then SIFT UP: swap with the parent while it is
+  out of order. At most log n swaps.
+· EXTRACT-MIN — take the root, move the last element into its place, then SIFT
+  DOWN: swap with the smaller child while out of order. Again log n.
+· HEAPIFY AN EXISTING ARRAY in O(n), not O(n log n) — sift down from the last
+  parent backwards. The tighter bound comes from most nodes being near the
+  leaves and needing almost no work. This is a genuinely surprising fact worth
+  quoting.
+· WHAT IT IS FOR — 'give me the smallest/largest repeatedly'. Dijkstra's
+  algorithm, Prim's, task scheduling, merging k sorted lists, and streaming
+  top-k.
+· THE TOP-K PATTERN — for the k largest, keep a MIN-heap of size k and evict the
+  root whenever something bigger arrives. O(n log k) time and O(k) space, and
+  it works on a stream. The inversion (min-heap for largest) is the part that
+  confuses people.
+· PYTHON'S heapq IS A MIN-HEAP ONLY. For a max-heap, negate the values, or push
+  tuples with a negated first element.
+· WHAT IT CANNOT DO — search for an arbitrary element (O(n)), or iterate in
+  sorted order without destroying it. If you need those, use a balanced tree."""
+
+_ANSWER_V2["Graph"] = """Nodes joined by edges - the right model whenever the problem is about
+relationships rather than sequence.
+
+· THE VOCABULARY — vertices (nodes) and edges (connections). DIRECTED edges go
+  one way (a follows b); UNDIRECTED go both (a is friends with b). WEIGHTED
+  edges carry a cost, such as distance or price.
+· THE TWO REPRESENTATIONS. ADJACENCY LIST: for each node, a list of its
+  neighbours. O(V + E) space, and the default for sparse graphs, which is
+  almost all real ones. ADJACENCY MATRIX: a V×V grid. O(V²) space, O(1) edge
+  lookup, and right only for dense graphs.
+· HOW TO CHOOSE — if E is close to V², use the matrix; otherwise the list. A
+  social network has millions of users and a few hundred edges each, so the
+  matrix would be absurd.
+· THE ALGORITHMS AND WHAT EACH IS FOR. BFS: shortest path on unweighted graphs.
+  DFS: cycles, connected components, topological order. DIJKSTRA: shortest path
+  with non-negative weights. BELLMAN-FORD: shortest path allowing negative
+  weights, and negative-cycle detection. KRUSKAL/PRIM: minimum spanning tree.
+  UNION-FIND: connectivity as edges arrive.
+· THE PROPERTIES THAT CHANGE THE ANSWER — is it directed, weighted, cyclic,
+  connected, dense? Ask these before choosing an algorithm; they eliminate most
+  of the options immediately.
+· A TREE IS A SPECIAL GRAPH — connected, undirected, acyclic, with exactly
+  V-1 edges. A DAG is a directed graph with no cycles, which is what makes
+  topological sorting possible.
+· HOW TO SPOT ONE IN A PROBLEM — words like network, connection, dependency,
+  route, prerequisite, friend, or a grid where you move between cells. Grids
+  are graphs, and treating them as such unlocks BFS and DFS immediately.
+· THE PRACTICAL STARTING MOVE — build the adjacency list first, in its own few
+  lines, before writing any traversal. Most graph bugs are in the construction,
+  not the search."""
+
+_ANSWER_V2["Greedy algorithm"] = """Take the best-looking option right now and never reconsider - fast and simple,
+and only correct when you can prove local choices lead to a global optimum.
+
+· THE DEFINITION — at each step make the locally optimal choice, with no
+  backtracking and no lookahead.
+· WHEN IT WORKS — when the problem has the GREEDY CHOICE PROPERTY (a locally
+  optimal choice is part of some global optimum) and OPTIMAL SUBSTRUCTURE (the
+  best solution contains best solutions to subproblems).
+· HOW TO PROVE IT, and this is what interviews actually grade. The EXCHANGE
+  ARGUMENT: take any optimal solution, show you can swap in your greedy choice
+  without making it worse, and repeat. If that works, greedy is optimal.
+· WHERE IT FAILS FAMOUSLY — the 0/1 knapsack. Taking the highest
+  value-per-weight item first is not optimal, because items have different
+  sizes and greed can waste capacity. That needs DP.
+· THE COIN CHANGE ILLUSTRATION — with coins {1, 5, 10, 25}, greedy is optimal.
+  With {1, 3, 4}, making 6 greedily gives 4+1+1 = three coins when 3+3 = two is
+  better. The same algorithm, right on one currency and wrong on another.
+· WHERE IT IS PROVABLY RIGHT — interval scheduling by earliest finish time,
+  Huffman coding, Dijkstra's algorithm, Kruskal's and Prim's MST, and
+  fractional knapsack.
+· THE COMMON SHAPE — sort by some key, then sweep taking whatever is still
+  feasible. If you find yourself sorting first, you are probably writing a
+  greedy algorithm.
+· VERSUS DP — greedy commits, DP explores all options and keeps the best.
+  Greedy is faster (usually O(n log n) versus O(n²) or worse) and applies far
+  less often.
+· THE INTERVIEW DISCIPLINE — state your greedy rule, then either justify it
+  with an exchange argument or find a counterexample. Presenting an unjustified
+  greedy answer is the failure mode, even when the answer happens to be right."""
+
+_ANSWER_V2["Divide and conquer"] = """Split the problem into independent subproblems, solve them recursively, then
+combine - and the combine step is usually where the real work lives.
+
+· THE THREE PHASES — DIVIDE the input into smaller pieces, CONQUER by recursing
+  on each, COMBINE the results into the answer.
+· THE DEFINING PROPERTY — the subproblems are INDEPENDENT and do not overlap.
+  That is what distinguishes it from dynamic programming, where subproblems
+  repeat and are cached.
+· THE CANONICAL EXAMPLES — merge sort (the combine is the merge), quicksort
+  (the divide is the partition, and combining is free), binary search (which
+  discards one half rather than recursing into both), and Karatsuba
+  multiplication.
+· WHY IT USUALLY GIVES n log n — halving produces log n levels, and if each
+  level does O(n) total work the product is n log n. Recognising that shape
+  saves you doing the algebra.
+· THE MASTER THEOREM formalises it for T(n) = a·T(n/b) + f(n), comparing f(n)
+  against n^(log_b a). Knowing that the three cases exist matters more than
+  memorising them.
+· WHERE THE WORK SITS varies — merge sort does nothing to divide and everything
+  to combine; quicksort does everything to divide and nothing to combine. Which
+  end carries the cost tells you a lot about the algorithm's behaviour.
+· IT PARALLELISES NATURALLY, because the subproblems are independent. That is a
+  practical advantage worth naming and a genuine reason it appears in
+  distributed systems, where MapReduce is divide and conquer at cluster scale.
+· THE PITFALLS — recursion depth on large inputs, the overhead of many small
+  calls (so switch to insertion sort below about 10 elements, which real
+  library sorts do), and the memory allocated by the combine step.
+· HOW TO RECOGNISE IT IN A PROBLEM — 'can I solve this for half the input and
+  cheaply merge?' If yes, you have the algorithm. If the halves need each
+  other's results, you need DP instead."""
+
+_ANSWER_V2["Topological sort"] = """A linear ordering of a directed acyclic graph where every edge points forwards -
+it answers 'what order can I do these tasks in?'
+
+· WHAT IT REQUIRES — a DIRECTED graph with NO CYCLES. If a cycle exists no
+  valid ordering can, because each task in the cycle waits on the next.
+· THE EVERYDAY PICTURE — university prerequisites, or getting dressed: socks
+  before shoes, shirt before jacket. Several valid orders usually exist, and
+  any of them is a correct answer.
+· KAHN'S ALGORITHM (BFS-based) — count each node's in-degree, enqueue everything
+  with in-degree 0, and repeatedly remove a node, output it, and decrement its
+  neighbours' in-degrees, enqueueing any that reach 0.
+· THE CYCLE DETECTION FALLS OUT FREE — if the output contains fewer nodes than
+  the graph, the remainder is inside a cycle. That is the cleanest way to
+  answer 'can this be scheduled at all?'
+· THE DFS ALTERNATIVE — run DFS and push each node onto a stack after its
+  descendants are finished. The reversed finishing order is a topological
+  order. Cycle detection needs three colours (unvisited, in progress, done),
+  and meeting an in-progress node means a cycle.
+· WHICH TO USE — Kahn's when you also want to detect cycles or process level by
+  level; DFS when you are already traversing. Kahn's is usually easier to
+  explain out loud.
+· THE ORDER IS NOT UNIQUE unless the graph is a chain. Interviewers may accept
+  any valid order, so ask whether a specific one is required.
+· COST — O(V + E) for both approaches.
+· WHERE IT ACTUALLY APPEARS — build systems and package managers resolving
+  dependencies, spreadsheet formula evaluation, task schedulers, and course
+  planning. The LeetCode name is Course Schedule.
+· THE LEVEL-BY-LEVEL VARIANT — processing all in-degree-0 nodes as one batch
+  gives the minimum number of parallel rounds, which is what a build system
+  wants."""
+
+_ANSWER_V2["Dijkstra's algorithm"] = """Repeatedly finalise the closest unvisited node - because with non-negative
+weights, nothing you visit later can offer a shorter route to it.
+
+· THE PROBLEM — shortest path from one source to all other nodes in a weighted
+  graph.
+· THE GREEDY INSIGHT — pick the unvisited node with the smallest known
+  distance. Its distance is now FINAL, because every other route to it would
+  have to pass through a node that is already further away, and adding
+  non-negative edges cannot make it shorter.
+· THAT ARGUMENT IS WHY NEGATIVE WEIGHTS BREAK IT — with a negative edge, a
+  longer route can later become shorter, so finalising early is wrong. Use
+  Bellman-Ford instead, and be ready to say exactly why.
+· THE IMPLEMENTATION — a min-heap keyed by tentative distance. Pop the closest,
+  and for each neighbour try to RELAX the edge: if distance[u] + weight <
+  distance[v], update it and push v.
+· THE STALE-ENTRY DETAIL — you cannot cheaply decrease a key in a binary heap,
+  so you push duplicates and skip any popped node already finalised. Forgetting
+  that check processes nodes twice.
+· COST — O((V + E) log V) with a binary heap. On a dense graph an array-based
+  version is O(V²) and can be faster.
+· IT IS BFS WITH A PRIORITY QUEUE. On an unweighted graph the two are
+  equivalent, which is why you should use plain BFS there and say so — reaching
+  for Dijkstra on uniform edges is a small red flag.
+· THE VARIANTS — stop early once the target is finalised; A* adds a heuristic
+  estimate of the remaining distance and explores far fewer nodes, and is what
+  routing engines actually use.
+· RECONSTRUCTING THE PATH — keep a predecessor pointer at each relaxation and
+  walk back from the target. Interviewers usually ask for this as the
+  follow-up."""
+
+_ANSWER_V2["Momentum"] = """Accumulate a running velocity instead of stepping on the raw gradient - so
+consistent directions build speed and oscillations cancel out.
+
+· THE PROBLEM IT SOLVES — in a ravine (steep across, shallow along), plain
+  gradient descent bounces from wall to wall and creeps forward slowly. Most
+  of each step is wasted going sideways.
+· THE MECHANISM — v = β·v + gradient, then w -= lr·v. The velocity is an
+  exponentially weighted average of recent gradients.
+· WHY OSCILLATIONS CANCEL — the sideways components alternate in sign and
+  average toward zero, while the consistent forward component accumulates. The
+  effective step along the valley grows and across it shrinks.
+· THE BALL ANALOGY — a ball rolling downhill carries momentum through small
+  bumps and shallow dips rather than stopping in each one, which also helps it
+  past local minima and saddle points.
+· β IS TYPICALLY 0.9, meaning the velocity averages roughly the last ten
+  gradients. At 0.99 it averages a hundred and can overshoot badly.
+· THE EFFECTIVE LEARNING RATE is amplified by roughly 1/(1-β), so 0.9 multiplies
+  it by about ten. When adding momentum to an existing setup, reduce the
+  learning rate or it will diverge — this is the practical detail that catches
+  people.
+· NESTEROV MOMENTUM looks ahead: compute the gradient at where the momentum is
+  about to take you, not where you are. It corrects overshoot slightly earlier
+  and is a small, free improvement.
+· ADAM COMBINES MOMENTUM WITH PER-PARAMETER SCALING — its β1 is exactly this
+  velocity term, and β2 tracks squared gradients to normalise the step size.
+  Knowing momentum is half of Adam is the connection worth making.
+· WHEN PLAIN SGD WITH MOMENTUM STILL WINS — image models often generalise
+  slightly better with SGD plus momentum than with Adam, which is why it
+  remains the default in vision research despite being older."""
+
+_ANSWER_V2["MSE (Mean Squared Error)"] = """Average of the squared differences - squaring means large errors dominate, and
+the units are squared too.
+
+· THE FORMULA — mean of (actual - predicted)². One number, always
+  non-negative, zero only when every prediction is exact.
+· WHY SQUARE AT ALL — it removes the sign so errors cannot cancel, and it is
+  differentiable everywhere, which absolute error is not at zero. That
+  smoothness is why it is the default for gradient-based training.
+· THE CONSEQUENCE OF SQUARING — an error of 10 contributes a hundred times what
+  an error of 1 does. So MSE is the right loss when large mistakes are
+  disproportionately bad, and the wrong one when your data has outliers you
+  cannot remove.
+· THE UNITS PROBLEM — predicting house prices in pounds gives an MSE in pounds
+  SQUARED, which is uninterpretable. RMSE (the square root) puts it back into
+  pounds and is what you should report to anyone non-technical.
+· WHAT IT OPTIMISES FOR — minimising MSE drives predictions toward the
+  conditional MEAN. Minimising MAE drives them toward the MEDIAN. That is the
+  cleanest way to say what the choice actually changes.
+· THE STATISTICAL JUSTIFICATION — minimising squared error is maximum likelihood
+  under Gaussian noise. If your errors are not roughly Gaussian, the
+  justification weakens.
+· WHEN NOT TO USE IT — with outliers (use MAE or Huber), for classification
+  (use cross-entropy, because MSE's gradient vanishes exactly when a sigmoid
+  output is confidently wrong), or when errors matter proportionally rather
+  than absolutely (use a log transform or MAPE).
+· THE DECOMPOSITION worth knowing — expected MSE equals bias² + variance +
+  irreducible noise. That identity is exactly the bias-variance trade-off, and
+  it holds for squared loss specifically.
+· RMSE ≥ MAE ALWAYS, and the gap between them tells you how much variance
+  there is in your error sizes. A large gap means a few big misses."""
+
+_ANSWER_V2["MAE (Mean Absolute Error)"] = """Average of the absolute differences - every error counts in proportion to its
+size, which makes it robust to outliers.
+
+· THE FORMULA — mean of |actual - predicted|. Same units as the target, so it
+  is directly interpretable: 'on average we are £12,000 out'.
+· THE KEY PROPERTY — it is LINEAR in the error. An error of 10 counts exactly
+  ten times an error of 1, where MSE would count it a hundred times.
+· WHY THAT MATTERS — one wildly wrong data point drags MSE enormously and MAE
+  only a little. If your data has genuine outliers (a mis-entered price, a
+  sensor glitch), MAE describes typical performance better.
+· WHAT IT OPTIMISES FOR — the conditional MEDIAN, not the mean. A model trained
+  on MAE will under-predict in a right-skewed distribution relative to one
+  trained on MSE, and that is a real behavioural difference, not a rounding
+  detail.
+· THE GRADIENT PROBLEM — the derivative of |x| is constant (±1) everywhere
+  except zero, where it is undefined. So the step size does not shrink as you
+  approach the optimum, and convergence can oscillate near the minimum.
+· HUBER LOSS is the standard fix: quadratic for small errors, linear for large
+  ones. You get MSE's smooth gradients near the optimum and MAE's outlier
+  resistance far from it.
+· MAE VERSUS RMSE FOR REPORTING — RMSE is always at least MAE, and the gap
+  grows with the variance of the errors. Quoting both tells you whether you
+  have consistent medium errors or mostly-good with a few disasters.
+· THE FORECASTING RELATIVES — MAPE expresses it as a percentage and breaks on
+  zeros; sMAPE is symmetric; MASE scales against a naive baseline and is the
+  right choice when comparing across series of different magnitudes.
+· HOW TO CHOOSE — ask whether a single large error is much worse than several
+  small ones summing to the same total. If yes, MSE. If they are equally bad,
+  MAE."""
+
+_ANSWER_V2["R-squared (coefficient of determination)"] = """The fraction of the target's variance your model explains, measured against
+just predicting the mean every time.
+
+· THE FORMULA — 1 - (sum of squared residuals / total sum of squares). The
+  denominator is the error you would get by always predicting the mean.
+· THE INTERPRETATION — 0.75 means the model explains 75% of the variation, and
+  that a quarter remains unexplained.
+· THE BASELINE IS THE POINT — R² compares against the most naive model there
+  is. R² = 0 means you are no better than the mean; R² = 1 means perfect.
+· IT CAN GO NEGATIVE, which surprises people. A model worse than predicting the
+  mean gets a negative R², and this happens routinely on a test set even though
+  it cannot on the training set for a linear model with an intercept.
+· THE FATAL FLAW — R² never decreases when you add a feature, even a random
+  one. So it cannot be used to compare models with different numbers of
+  features, and chasing it leads directly to overfitting.
+· ADJUSTED R² fixes that by penalising the feature count, so it can fall when a
+  useless feature is added. Use it whenever you are comparing model sizes.
+· IT SAYS NOTHING ABOUT CORRECTNESS OF FORM — Anscombe's quartet is four
+  datasets with identical R² and completely different shapes, one of them a
+  perfect curve badly fitted by a line. Always plot the residuals.
+· IT IS NOT A MEASURE OF PREDICTION ERROR in usable units. A high R² with a
+  large RMSE is perfectly possible when the target itself varies enormously.
+  Report RMSE or MAE alongside it.
+· WHAT COUNTS AS 'GOOD' IS DOMAIN-DEPENDENT — 0.3 can be strong in social
+  science and terrible in physics. Quoting a threshold without the domain is
+  meaningless, and saying so is the sophisticated answer."""
+
+_ANSWER_V2["Generalization"] = """Performing well on data you have never seen - the only thing that actually
+matters, and the thing training accuracy cannot tell you about.
+
+· THE DEFINITION — the gap between performance on the training data and
+  performance on new data from the same distribution. Small gap means it
+  generalised; large gap means it memorised.
+· WHY IT IS THE WHOLE POINT — a model is deployed on data that did not exist
+  when it was trained. Training performance measures memory, not ability.
+· HOW IT IS MEASURED — a held-out test set, or cross-validation. This is why
+  the data split exists, and why looking at the test set repeatedly destroys
+  its value.
+· WHAT HELPS — more and more varied data, regularisation, simpler models where
+  the data is limited, early stopping, data augmentation, and ensembling.
+· THE ASSUMPTION UNDERNEATH — that new data comes from the same distribution as
+  the training data. When it does not, that is DISTRIBUTION SHIFT, and no
+  amount of good generalisation on the old distribution helps.
+· THE BIAS-VARIANCE FRAME — poor generalisation with low training error is
+  variance; poor performance on both is bias. The fixes are opposite, so the
+  diagnosis matters more than the label.
+· THE CLASSICAL PICTURE says capacity beyond a point hurts. The modern
+  observation is DOUBLE DESCENT — very over-parameterised networks interpolate
+  the training data and then generalise BETTER again. Both are worth knowing;
+  the classical story is the right default.
+· WHAT SILENTLY DESTROYS IT — data leakage. A feature computed after the
+  prediction point, or preprocessing fitted on the whole dataset, produces
+  excellent held-out scores and a model that fails immediately in production.
+· THE PRACTICAL TEST — if your validation score is far better than early
+  production performance, suspect leakage or shift before suspecting the model."""
+
+_ANSWER_V2["Variance (bias-variance)"] = """How much the fitted model would CHANGE if you retrained it on a different
+sample - high variance means the model is chasing noise.
+
+· THE DEFINITION — retrain on many different samples from the same population
+  and look at how much the predictions differ. That spread is variance.
+· THE INTUITION — a deep unpruned decision tree fitted twice on two halves of
+  the data gives two visibly different trees. A straight line fitted to the
+  same halves gives nearly the same line. The tree has high variance.
+· THE SYMPTOM — low training error and high test error. The model fits its
+  particular sample beautifully, including the parts that were noise.
+· WHY NOISE IS THE CULPRIT — noise differs between samples by definition, so a
+  model that fits noise produces different answers each time. Signal is stable;
+  noise is not.
+· NOT TO BE CONFUSED with the variance of the data, or of a feature. Here it
+  specifically means variance of the MODEL's predictions across training sets.
+· THE FIXES — more data (the most reliable, since noise averages out),
+  regularisation, a simpler model, feature selection, and ENSEMBLING.
+· WHY BAGGING TARGETS IT DIRECTLY — averaging many high-variance, low-bias
+  models cancels the independent errors and leaves the shared signal. Random
+  forests decorrelate the trees further by sampling features at each split,
+  which is what makes the averaging effective.
+· THE TRADE — reducing variance usually raises bias. The best total error is a
+  balance, not an extreme, and where that balance sits depends on how much data
+  you have.
+· HOW TO DIAGNOSE IT PROPERLY — a learning curve. Plot training and validation
+  error against training set size. If they converge as data grows, it was
+  variance and more data will help. If both plateau high and close together, it
+  is bias and more data will not."""
+
+_ANSWER_V2["Memoization"] = """Cache the result of each call so a repeated subproblem is answered from the
+table rather than recomputed - recursion with a notebook.
+
+· THE MECHANISM — before computing, look the arguments up in a dictionary. If
+  present, return the stored answer. If not, compute it, store it, then return.
+· THE CANONICAL SAVING — naive recursive Fibonacci is O(2ⁿ) because fib(n-2) is
+  recomputed in both branches, all the way down. Memoising it makes each value
+  computed once, so it becomes O(n). That is exponential to linear from four
+  lines.
+· WHEN IT APPLIES — the function must be PURE (same inputs always give the same
+  output, no side effects) and the subproblems must actually OVERLAP. Without
+  overlap you are just adding dictionary overhead.
+· IT IS TOP-DOWN DYNAMIC PROGRAMMING. Write the natural recursion, add the
+  cache, and you have DP. That is why it is the version to reach for under time
+  pressure — you never have to work out the fill order.
+· TABULATION IS THE BOTTOM-UP SIBLING — fill a table from base cases upward. It
+  avoids recursion depth limits, is usually faster (no call overhead), and
+  makes space optimisation possible. It also requires you to work out the
+  dependency order yourself.
+· THE PRACTICAL TOOL — in Python, @functools.lru_cache or @cache on the
+  function. One line, and it handles the dictionary for you.
+· THE KEY MUST BE HASHABLE, so lists must become tuples. This is the commonest
+  practical obstacle.
+· THE COSTS — memory proportional to the number of distinct subproblems, and
+  recursion depth proportional to the chain length. Both can matter on large
+  inputs, and converting to tabulation is the escape.
+· WHERE IT GENERALISES — any expensive pure computation, not just recursion:
+  caching an API response, a database query, or a parsed configuration. The
+  idea is the same and the invalidation problem is what makes the general case
+  hard."""
+
+_ANSWER_V2["Tabulation"] = """Fill a table from the base cases upward, so every value is ready before
+anything needs it - bottom-up dynamic programming.
+
+· THE CONTRAST WITH MEMOISATION — memoisation starts at the answer and recurses
+  down, caching as it goes. Tabulation starts at the base cases and builds up
+  iteratively. Same subproblems, opposite direction.
+· THE FOUR THINGS TO DECIDE — the STATE (what dp[i] means, in one sentence),
+  the TRANSITION (how it is built from earlier entries), the BASE CASES, and
+  the ORDER that guarantees dependencies are filled first.
+· THE ORDER IS THE PART TABULATION MAKES YOU THINK ABOUT, and memoisation
+  handles for you. Getting it wrong reads an uninitialised cell, which is why
+  the fill order deserves saying out loud.
+· WHY IT IS USUALLY FASTER — no function-call overhead, no dictionary hashing,
+  and contiguous array access that suits the CPU cache.
+· NO RECURSION LIMIT, which matters in Python at around 1000 frames. For a
+  large n, tabulation is often the only version that runs at all.
+· THE SPACE OPTIMISATION IT UNLOCKS — if dp[i] depends only on dp[i-1] and
+  dp[i-2], you never need the array. Two variables suffice, turning O(n) space
+  into O(1). Fibonacci and House Robber both collapse this way, and 2D problems
+  often collapse from a table to two rows.
+· WHEN MEMOISATION IS BETTER — when only a small fraction of the state space is
+  actually reachable. Tabulation fills everything; memoisation computes only
+  what is asked for.
+· THE PRACTICAL WORKFLOW under time pressure — write the recursion, memoise it
+  to get something correct, then convert to tabulation if you need the speed or
+  the space. Do not start with the table.
+· HOW TO PRESENT IT — state the meaning of dp[i] in plain English before
+  writing any code. Interviewers grade the state definition more heavily than
+  the loop."""
+
+_ANSWER_V2["Amortized analysis"] = """The average cost per operation across a SEQUENCE, when an occasional expensive
+step is paid for by many cheap ones.
+
+· THE PROBLEM IT SOLVES — worst-case-per-operation is sometimes misleadingly
+  pessimistic. A dynamic array's append is usually O(1) and occasionally O(n),
+  and quoting O(n) would badly misdescribe its behaviour.
+· THE CANONICAL EXAMPLE — a dynamic array that DOUBLES when full. Copying n
+  elements is O(n), but it happens only after n cheap appends, so the cost
+  spread across them is O(1) each. That is amortised O(1).
+· WHY DOUBLING SPECIFICALLY — the resize costs are 1 + 2 + 4 + ... + n, a
+  geometric series summing to less than 2n. Growing by a CONSTANT amount
+  instead gives 1 + 2 + 3 + ... which is O(n²) total, or O(n) amortised per
+  append. The growth factor is what makes the guarantee work.
+· AMORTISED IS NOT AVERAGE-CASE. Average-case is about a probability
+  distribution over inputs. Amortised is a worst-case guarantee over a
+  sequence, with no randomness assumed. Confusing the two is the classic error.
+· THE THREE METHODS OF PROOF. AGGREGATE: total cost of n operations divided by
+  n. ACCOUNTING: charge each cheap operation slightly extra and save the credit
+  to pay for the expensive one. POTENTIAL: define a function measuring stored
+  work and show each operation's real cost plus the change in potential is
+  small.
+· WHERE ELSE IT APPLIES — hash table resizing, union-find with path compression
+  (amortised near-constant), splay trees, and the incremental garbage collector
+  in most runtimes.
+· WHY IT CAN BE THE WRONG FRAME — in a real-time or latency-sensitive system,
+  one 100ms pause matters even if the average is 1ms. Amortised guarantees say
+  nothing about the tail, which is why p99 latency is reported separately.
+· THE INTERVIEW ANSWER — define it, give the doubling array with the geometric
+  series, then distinguish it explicitly from average-case. That third part is
+  what people forget."""
+
+_ANSWER_V2["Stable sort"] = """Equal elements keep their original relative order - which is what lets you sort
+by one key and then another without destroying the first.
+
+· THE DEFINITION — if two records compare equal, a stable sort guarantees the
+  one that came first stays first.
+· WHY IT MATTERS — multi-key sorting. To order employees by department and then
+  by salary within each department, sort by salary FIRST, then stably by
+  department. The salary order survives inside each group.
+· THE ORDER IS COUNTERINTUITIVE — sort by the LEAST significant key first and
+  the most significant last. That is the opposite of how people describe the
+  requirement, and it is where the bug goes.
+· WHICH SORTS ARE STABLE — merge sort, insertion sort, bubble sort, counting
+  sort (when implemented with the prefix-sum and a backward pass), and Timsort,
+  which is what Python and Java use for objects.
+· WHICH ARE NOT — quicksort and heapsort. The partition and the sift operations
+  both move elements past each other arbitrarily.
+· THE LANGUAGE GUARANTEES worth knowing — Python's sorted() and list.sort() are
+  stable, always. Java's Arrays.sort is stable for objects (Timsort) and NOT
+  for primitives (dual-pivot quicksort), which is a genuinely surprising
+  asymmetry. C++'s std::sort is not stable; std::stable_sort is.
+· THE COST OF STABILITY — usually extra memory. Merge sort needs O(n), which is
+  the main reason quicksort is preferred where stability is not required.
+· HOW MERGE SORT ACHIEVES IT — when the two front elements are equal, take from
+  the LEFT list. That single choice is the whole mechanism, and swapping it to
+  the right silently breaks stability while still sorting correctly.
+· THE MODERN ALTERNATIVE — a tuple sort key, sorting by (department, salary) in
+  one pass. It is clearer than relying on stability across two sorts, and it is
+  what you should usually write."""
+
+_ANSWER_V2["Adjacency list"] = """For each node, a list of its neighbours - O(V + E) space, which is why it is
+the default representation for the sparse graphs that occur in practice.
+
+· THE STRUCTURE — a dictionary or array where entry v holds the nodes v
+  connects to. In Python, defaultdict(list) is the usual choice.
+· THE SPACE — O(V + E). A social network with a million users averaging 200
+  friends stores 200 million entries; the matrix equivalent would need 10¹²
+  cells, almost all of them zero.
+· WHAT IT IS FAST AT — iterating a node's neighbours, which is exactly what BFS,
+  DFS, Dijkstra and topological sort spend all their time doing. That is why
+  these algorithms are stated as O(V + E).
+· WHAT IT IS SLOW AT — asking 'is there an edge between u and v?' That is O(degree)
+  since you must scan the list. Using sets instead of lists makes it O(1) at
+  some memory cost, which is a good trade when you need the query.
+· THE MATRIX COMPARISON — an adjacency matrix is O(V²) space with O(1) edge
+  lookup. Choose it only when the graph is DENSE (E close to V²) or when you
+  need constant-time edge queries and V is small.
+· THE UNDIRECTED DETAIL — an undirected edge must be added in BOTH directions.
+  Forgetting the second is the most common graph-building bug, and it produces a
+  traversal that mysteriously misses half the graph.
+· WEIGHTED EDGES — store tuples of (neighbour, weight), which is exactly what
+  Dijkstra's inner loop consumes.
+· THE BUILD STEP DESERVES ITS OWN LINES — construct the whole list before
+  writing any traversal. Most graph bugs live in the construction rather than
+  the search, and separating them makes both easier to check.
+· THE EDGE LIST is the third representation — just a list of (u, v, weight)
+  triples. It is the natural input format and what Kruskal's algorithm sorts
+  directly, so it is worth naming as the one you convert FROM."""
+
+_ANSWER_V2["Fine-tuning"] = """Continue training a pretrained model on your own data, so it keeps the general
+knowledge and picks up your specific task.
+
+· WHY IT WORKS — a pretrained model has already learned general structure
+  (language, or visual features). Your task needs that plus a small
+  specialisation, and relearning the general part from scratch would need far
+  more data than you have.
+· THE MECHANICS — start from the pretrained weights rather than random ones,
+  and train on your dataset with a MUCH SMALLER learning rate, typically 10 to
+  100 times smaller. A normal rate destroys the pretrained knowledge in the
+  first few steps.
+· CATASTROPHIC FORGETTING is the risk — the model overfits your narrow dataset
+  and loses general ability. Guard against it with a low learning rate, few
+  epochs, and by mixing in some general data.
+· FREEZING LAYERS — a common approach is to freeze the early layers (which
+  learned general features) and train only the later ones. Full fine-tuning
+  updates everything and needs more data and more memory.
+· WHEN TO FINE-TUNE AN LLM, and this is the question that actually gets asked:
+  to teach FORMAT, STYLE, or a narrow skill. To teach a consistent JSON output,
+  a house tone of voice, or a classification behaviour.
+· WHEN NOT TO — to add knowledge. Facts change, fine-tuning them in is
+  expensive and hard to update, and the model will still hallucinate confidently
+  around the edges. Use retrieval for knowledge. Getting this distinction right
+  is most of the marks.
+· THE ORDER TO TRY THINGS — prompt engineering first, then few-shot examples,
+  then RAG, then fine-tuning. Fine-tuning is the most expensive and least
+  flexible, so it should not be the first move.
+· PARAMETER-EFFICIENT VARIANTS — LoRA trains a tiny low-rank update instead of
+  all the weights, cutting memory enormously and letting you swap adapters per
+  task. QLoRA quantises the frozen base to 4 bits and puts a 70B fine-tune on
+  one GPU.
+· THE DATA REQUIREMENT is smaller than people expect — often 500 to 5,000 good
+  examples. Quality and consistency matter far more than volume, and
+  inconsistent examples teach inconsistency."""
+
+_ANSWER_V2["LoRA (Low-Rank Adaptation)"] = """Freeze the model and train two thin matrices whose product is the weight
+UPDATE - roughly 0.1% of the parameters, with almost none of the memory.
+
+· THE PROBLEM — full fine-tuning of a 7B model needs the weights, their
+  gradients and the optimiser state in memory, around 70-100GB, and produces a
+  full-size new model per task.
+· THE INSIGHT — the update a fine-tune applies is LOW RANK. You are adapting an
+  existing capability, not learning a new one, so the change does not need the
+  full expressive freedom of the original matrix.
+· THE MECHANISM — for a weight matrix W, learn thin matrices A and B and compute
+  W + BA. With W at 4096×4096 and rank 8, that is about 65,000 trainable
+  numbers instead of 16.7 million.
+· WHY THE MEMORY COLLAPSES — frozen weights need no gradients and no optimiser
+  state. Only the adapters do, and they are tiny. That is what puts a 7B
+  fine-tune on a single consumer GPU.
+· THE INITIALISATION detail — A is random and B is ZERO, so BA starts at zero
+  and the model begins exactly as the pretrained one. Training then departs
+  from it smoothly rather than starting from a random perturbation.
+· THE HYPERPARAMETERS — rank r (8 to 64; higher means more capacity and more
+  memory), alpha for scaling (commonly 2r), and which layers to adapt. The
+  attention projections are the usual target; adding the feed-forward layers
+  helps on harder tasks.
+· MERGING — BA can be folded into W after training, so inference has ZERO added
+  latency. Or keep the adapters separate and hot-swap them, which is the real
+  operational win: one base model serving many tasks.
+· QLoRA quantises the frozen base to 4 bits while training the adapters in
+  higher precision, which is what makes a 70B fine-tune feasible on one GPU.
+· WHAT IT DOES NOT CHANGE — it is still fine-tuning, so it teaches format and
+  style rather than facts. Reach for retrieval when you need knowledge."""
+
+_ANSWER_V2["Word2vec"] = """Train a model to predict a word from its neighbours, then throw the model away
+and keep the hidden weights - those weights are the embeddings.
+
+· THE CORE IDEA, from linguistics — you shall know a word by the company it
+  keeps. Words appearing in similar contexts end up with similar vectors,
+  without anyone defining what 'similar' means.
+· THE TWO ARCHITECTURES. SKIP-GRAM predicts the surrounding context from the
+  centre word, and works better on rare words and small corpora. CBOW predicts
+  the centre word from the context, and is faster.
+· THE TRICK THAT MAKES IT SCALE — the true objective needs a softmax over the
+  entire vocabulary, which is far too expensive. NEGATIVE SAMPLING replaces it
+  with a binary task: distinguish the real context word from a handful of
+  randomly sampled fake ones. That single change is what made word2vec
+  practical.
+· THE EMBEDDINGS ARE A SIDE EFFECT — the prediction task is never used for
+  anything. The hidden layer weights are the product, which is a genuinely
+  elegant idea worth stating explicitly.
+· THE FAMOUS PROPERTY — vector arithmetic captures relationships. king - man +
+  woman lands near queen. It works because the training pushes analogous pairs
+  into parallel offsets, and it is more fragile in practice than the demo
+  suggests.
+· THE LIMITATION THAT MATTERS — one vector per word, regardless of meaning.
+  'Bank' by a river and 'bank' holding money get the same embedding. Word2vec
+  is STATIC and context-independent.
+· WHAT REPLACED IT — contextual embeddings from BERT and its successors, where
+  a word's vector depends on the sentence around it. That is the single
+  biggest improvement, and naming it shows you know where word2vec sits
+  historically.
+· WHERE IT IS STILL USED — as a fast, cheap baseline, and the same idea applied
+  to non-text sequences: item2vec for products, node2vec for graphs. The
+  technique generalises to anything with meaningful co-occurrence.
+· GLOVE is the contemporary alternative, factorising a global co-occurrence
+  matrix rather than training on local windows. Similar quality, different
+  route."""
+
+_ANSWER_V2["Perplexity"] = """How surprised the model is by the text - the exponential of the average
+cross-entropy, read as 'how many words was it effectively choosing between'.
+
+· THE FORMULA — exp(average negative log likelihood per token). Lower is
+  better, and a perfect model that assigns probability 1 to the actual text has
+  perplexity 1.
+· THE INTUITION — perplexity 50 means the model is about as uncertain as if it
+  were picking uniformly among 50 options at each step. That branching-factor
+  reading is the one to give.
+· WHY EXPONENTIATE — cross-entropy is in bits or nats, which are hard to feel.
+  Exponentiating converts it into an effective vocabulary size, which is
+  interpretable.
+· WHAT IT MEASURES — how well the model predicts held-out text. It is the
+  standard intrinsic metric for language models and it is what pretraining
+  optimises.
+· THE COMPARISON TRAP that makes most quoted numbers meaningless — perplexity
+  depends on the TOKENISER and the test set. Two models with different
+  vocabularies cannot have their perplexities compared, and the same model
+  scores differently on different corpora. Always state both.
+· IT DOES NOT MEASURE USEFULNESS — a model can have excellent perplexity and be
+  unhelpful, untruthful or unsafe. That is precisely why instruction tuning and
+  RLHF exist, and why downstream benchmarks replaced perplexity as the headline
+  number.
+· THE RELATIONSHIP TO LOSS — perplexity is just exp(loss) when the loss is
+  cross-entropy in nats. Watching one is watching the other.
+· LOWER IS NOT ALWAYS BETTER IN CONTEXT — a model that memorised the test set
+  has superb perplexity and no ability. Contamination is a real and widespread
+  problem with public benchmarks.
+· WHERE IT IS STILL THE RIGHT TOOL — comparing checkpoints of the SAME model
+  during training, and detecting domain shift by measuring perplexity on new
+  data. Both keep the tokeniser fixed, which is what makes the comparison
+  valid."""
+
+# ── DUPLICATE PAIRS ──────────────────────────────────────────────────
+# Each of the two titles below is the CANONICAL half of a pair in
+# ai_sde_dupes.py, whose shadow was rewritten just above. She is routed to
+# the canonical, so a rewrite landing only on the shadow is a rewrite nobody
+# reads — and test_ai_sde_duplicate_pairs_point_at_the_richer_entry catches
+# it by noticing the shadow has become the richer half. Write pairs together.
+
+_ANSWER_V2["LoRA / PEFT"] = _ANSWER_V2["LoRA (Low-Rank Adaptation)"]
+
+_ANSWER_V2["Why does more/better data often beat a fancier algorithm?"] = \
+    _ANSWER_V2["Why does more data usually beat a cleverer algorithm?"]
+
+_ANSWER_V2["Why do we need a separate validation set AND a test set?"] = \
+    _ANSWER_V2["Why split data into train / validation / test — why not just train and test?"]
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])

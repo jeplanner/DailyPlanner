@@ -74,7 +74,13 @@ _LEADING_BULLET = re.compile(r"^[\s·•\-\*–—]+")
 #: "p = 1/(1+e^-(w·x+b))", and the summary for logistic regression loses
 #: its formula to a rule about list formatting.
 _BULLET_HEAD = re.compile(r"^[·•]\s")
-_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+#: A sentence ends at .!? — OPTIONALLY followed by a closing quote or
+#: bracket. Without the second alternative, a sentence finishing on a quoted
+#: question ("...can I trust an alert?'") is not recognised as ending at all,
+#: and the summary runs on into the bullet list beneath it. Found by
+#: test_a_summary_does_not_trail_off_into_a_bullet_list, which is exactly
+#: what that test is for.
+_SENTENCE = re.compile(r"(?<=[.!?])\s+|(?<=[.!?][\"'\u2019\u201d)\]])\s+")
 
 
 def summarise_text(text, cap=SUMMARY_CAP):
