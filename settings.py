@@ -27,6 +27,13 @@ class BaseConfig:
     # their own devices, where the alternative is the app not being used.
     # Lower it here if that ever stops being true.
     PERMANENT_SESSION_LIFETIME = timedelta(days=90)
+    #: The handbook, published as a private page. Defined here rather than
+    #: written into two templates, so moving it is one edit — and settable
+    #: per environment without a code change.
+    USER_GUIDE_URL = os.environ.get(
+        "USER_GUIDE_URL",
+        "https://claude.ai/code/artifact/1848f7ec-2746-49b4-8d01-7f9f2fb8eb79",
+    )
     SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
     SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
     WTF_CSRF_TIME_LIMIT = 3600

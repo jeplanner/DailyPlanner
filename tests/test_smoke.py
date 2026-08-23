@@ -4058,3 +4058,26 @@ def test_no_supabase_update_is_called_payload_first():
                 suspect.append(f"{f}:{line} update({m.group(1)!r}, ...)")
     assert not suspect, "payload passed as the filter argument:\n" + \
         "\n".join(suspect)
+
+
+def test_user_guide_is_reachable_from_inside_the_app(auth_client):
+    """A guide nobody can find is a guide nobody reads.
+
+    Linked from the avatar menu (where people already go for Settings) and
+    from Settings itself. The URL is a config value, not a literal in two
+    templates, so moving it is one edit — and it can be pointed elsewhere
+    per environment without a code change.
+    """
+    from settings import BaseConfig
+    url = BaseConfig.USER_GUIDE_URL
+    assert url.startswith("https://"), url
+
+    nav = open("templates/_top_nav.html", encoding="utf-8").read()
+    assert "config.USER_GUIDE_URL" in nav, "not linked from the avatar menu"
+    # An external link opened in a new tab needs noopener, or the opened page
+    # gets a handle on this one through window.opener.
+    assert 'rel="noopener noreferrer"' in nav
+
+    html = auth_client.get("/settings").get_data(as_text=True)
+    assert url in html, "not linked from Settings"
+    assert "Open the user guide" in html

@@ -1109,6 +1109,12 @@ html.dark .section-title{color:#f1f5f9;}
         <a href="{{ url_for('settings.settings_page') }}" class="user-popover-item" role="menuitem">
           <i data-feather="settings"></i> Settings
         </a>
+        {% if config.USER_GUIDE_URL %}
+        <a href="{{ config.USER_GUIDE_URL }}" class="user-popover-item" role="menuitem"
+           target="_blank" rel="noopener noreferrer">
+          <i data-feather="book-open"></i> User guide
+        </a>
+        {% endif %}
         <a href="javascript:void(0)" class="user-popover-item" role="menuitem" onclick="toggleDarkMode();closeUserMenu();">
           <i data-feather="moon"></i> Toggle dark mode
         </a>
