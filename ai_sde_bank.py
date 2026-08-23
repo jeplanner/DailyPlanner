@@ -371087,6 +371087,456 @@ so you replace the whole thing instead of editing it.
   converging toward a declared state is the pragmatic middle ground, and
   saying so is better than treating immutability as universal."""
 
+_ANSWER_V2["Convert BST to Greater Tree"] = """Traverse in REVERSE in-order — right, node, left — keeping a running sum, so
+every node is visited after everything larger than it.
+
+· THE PROBLEM — replace each node's value with its own value plus the sum of
+  every value greater than it in the tree.
+· THE KEY OBSERVATION — reverse in-order visits a BST in DESCENDING order. So
+  by the time you reach a node, you have already seen exactly the nodes larger
+  than it, and their running total is precisely what you need to add.
+· THE ALGORITHM — recurse right, then add the node's value to a running total
+  and write the total back into the node, then recurse left. Three lines.
+· THE RUNNING TOTAL MUST PERSIST across the whole traversal, not be a local
+  variable per call. Use an instance attribute, a nonlocal, or a single-element
+  list. A fresh local silently produces the original tree back.
+· THE ORDER WITHIN THE VISIT — add first, then assign. total += node.val;
+  node.val = total. Assigning before adding gives an off-by-one where each
+  node misses itself.
+· THE HAND TRACE on a BST holding 1, 2, 3 (2 as root): visit 3 → total 3, node
+  becomes 3. Visit 2 → total 5, node becomes 5. Visit 1 → total 6, node
+  becomes 6. Result 6, 5, 3.
+· THE ITERATIVE VERSION uses an explicit stack pushing the RIGHT spine first,
+  and is worth knowing for the "what if the tree is very deep" follow-up.
+· COST — O(n) time, since every node is visited once, and O(h) space for the
+  stack or recursion.
+· THE FAMILY — Kth Smallest, Validate BST, and Minimum Absolute Difference all
+  rest on in-order being sorted. This one is the same fact read backwards, and
+  noticing that is what makes it a two-minute problem instead of a hard one."""
+
+_ANSWER_V2["Add Digits (digital root)"] = """Repeatedly summing digits until one remains is the same as 1 + (n-1) % 9 - a
+closed form, no loop needed.
+
+· THE PROBLEM — add the digits repeatedly until a single digit remains. 38 →
+  3+8 = 11 → 1+1 = 2.
+· THE LOOP VERSION works and is the obvious answer: while n >= 10, replace n
+  with the sum of its digits. Say it first.
+· THE CLOSED FORM — return 0 if n is 0, else 1 + (n - 1) % 9.
+· WHY IT WORKS — a number is congruent to the sum of its digits MODULO 9,
+  because 10 ≡ 1 (mod 9), so every power of ten contributes its digit
+  unchanged. Summing digits therefore preserves the value mod 9, and repeating
+  it lands on the unique single digit with the same remainder.
+· WHY THE FORMULA IS SHIFTED — the digital root of a multiple of 9 is 9, not
+  0. The 1 + (n-1) % 9 form maps 9 → 9, 18 → 9 and so on, which the naive
+  n % 9 gets wrong. That shift is the whole subtlety.
+· ZERO IS THE ONE EXCEPTION and needs its own check, since the formula would
+  give 1 + (-1) % 9.
+· THE HAND TRACE — 38: 1 + 37 % 9 = 1 + 1 = 2. Correct. 9: 1 + 8 % 9 = 9.
+  Correct. 18: 1 + 17 % 9 = 1 + 8 = 9. Correct.
+· COST — O(1) time and space, against O(log n) for the loop.
+· HOW TO PRESENT IT — give the loop, then say you recognise this as the
+  digital root and derive the formula from the mod-9 property. Producing the
+  formula with no explanation looks memorised; deriving it is the point."""
+
+_ANSWER_V2["Self Dividing Numbers"] = """A number is self-dividing if every digit divides it - so extract the digits and
+test, guarding against a zero digit.
+
+· THE DEFINITION — 128 is self-dividing because 128 % 1, 128 % 2 and 128 % 8
+  are all zero. A number containing a 0 digit never qualifies, since division
+  by zero is undefined.
+· THE CHECK — copy the number, and while the copy is non-zero: take
+  d = copy % 10; return False if d is 0 or if the ORIGINAL number modulo d is
+  non-zero; then copy //= 10.
+· TEST AGAINST THE ORIGINAL, not the copy. This is the one real trap: the copy
+  is being consumed digit by digit, and 128 % 8 is the question, not 12 % 8.
+· THE ZERO GUARD MUST COME FIRST, before the modulo, or the check itself
+  raises. Ordering the two conditions correctly is what makes the single line
+  safe.
+· THE STRING VERSION is shorter — for each character, convert to an int,
+  return False on 0 or on a non-zero remainder. Perfectly acceptable; the
+  arithmetic version is what to write if the interviewer says no string
+  conversion.
+· THE HAND TRACE on 128: digits 8, 2, 1 all divide 128 → True. On 26: 6 does
+  not divide 26 → False. On 102: contains a 0 → False.
+· THE FULL PROBLEM asks for every self-dividing number in a range, so it is
+  this predicate inside a loop.
+· COST — O(number of digits) per candidate, so O((right - left) × log n)
+  overall.
+· WHY IT IS ASKED — it is a five-line predicate whose only content is the two
+  ordering decisions: test against the original, and guard zero before
+  dividing. Say both before writing and the code follows."""
+
+_ANSWER_V2["Perfect Number"] = """A number equals the sum of its proper divisors - and you only need to check up
+to the square root, adding both members of each divisor pair.
+
+· THE DEFINITION — a positive number equal to the sum of its divisors
+  EXCLUDING itself. 28 = 1 + 2 + 4 + 7 + 14.
+· THE NAIVE LOOP tests every number up to n-1, which is O(n) and too slow for
+  large inputs.
+· THE SQUARE-ROOT INSIGHT — divisors come in PAIRS. If i divides n then so does
+  n/i, and one of each pair is at most √n. So loop i from 2 while i*i <= n, and
+  when i divides n add BOTH i and n//i.
+· START THE SUM AT 1, because 1 divides everything and is a proper divisor.
+  Start the loop at 2, so n itself is never added.
+· THE PERFECT SQUARE TRAP — when i*i == n, i and n//i are the same number and
+  adding both double-counts it. Guard with `if i != n // i`.
+· THE EDGE CASE — n <= 1 has no proper divisors summing to it, and 1's only
+  divisor is itself. Return False before the loop.
+· THE HAND TRACE on 28: sum starts at 1. i=2 divides, add 2 and 14 → 17. i=3
+  no. i=4 divides, add 4 and 7 → 28. i=5 stops since 25 < 28 but 36 > 28...
+  in fact i goes to 5, 5*5=25 <= 28, 5 does not divide. i=6, 36 > 28, stop.
+  Sum is 28 → True.
+· COST — O(√n) time, O(1) space.
+· THE MATHEMATICAL SHORTCUT, if it comes up — every known perfect number is
+  even and has the form 2^(p-1) × (2^p - 1) where 2^p - 1 is a Mersenne prime.
+  There are only five below ten million (6, 28, 496, 8128, 33550336), so a
+  lookup table is a legitimate answer to the constrained version. Whether odd
+  perfect numbers exist is an open problem, which is a nice thing to know."""
+
+_ANSWER_V2["Longest Common Prefix"] = """Take the first string as a candidate and shrink it against each of the others -
+or compare column by column and stop at the first mismatch.
+
+· THE PROBLEM — the longest string that begins every string in the array.
+· THE VERTICAL SCAN, which is the one to write: walk character position 0, 1,
+  2... For each position, compare that character across every string. Stop at
+  the first mismatch or when any string runs out.
+· WHY IT IS EFFICIENT — it stops as soon as the answer is determined. With one
+  short string or an early difference, it exits almost immediately rather than
+  processing everything.
+· THE HORIZONTAL SCAN is the alternative — start with the first string as the
+  prefix, and for each subsequent string shorten the prefix until it matches
+  that string's start. Equivalent work, and it repeatedly builds substrings.
+· THE EDGE CASES — an empty array returns "". An array containing an empty
+  string returns "" too, and the vertical scan handles it naturally by running
+  out of characters immediately.
+· THE SORTING TRICK worth mentioning — sort the array, then compare only the
+  FIRST and LAST strings. Any prefix common to those two is common to
+  everything between them. O(n log n) for the sort, and it makes the
+  comparison trivially short.
+· THE HAND TRACE on ["flower","flow","flight"]: position 0 all 'f', position 1
+  all 'l', position 2 has 'o','o','i' → stop. Answer "fl".
+· COST — O(total characters) worst case, and much less in practice because it
+  exits early. O(1) extra space.
+· THE TRIE ANSWER — insert every string and walk down while each node has
+  exactly one child and is not an end-of-word. Overkill for one query, and the
+  right structure if you will answer many prefix questions over the same set,
+  which is the follow-up worth raising."""
+
+_ANSWER_V2["Implement strStr() (indexOf)"] = """Slide the needle along the haystack and compare - and the interesting answer is
+KMP, which never re-examines a character it has already matched.
+
+· THE PROBLEM — return the index of the first occurrence of `needle` in
+  `haystack`, or -1.
+· THE BRUTE FORCE — for each starting position, compare characters until a
+  mismatch. O(n·m) worst case, and perfectly acceptable as a first answer.
+· THE WORST CASE that makes it bad — haystack "aaaaaaaaab" and needle "aaab".
+  Every start matches almost entirely before failing, so the work is genuinely
+  quadratic. That input is the reason KMP exists.
+· THE KMP INSIGHT — when a mismatch happens after matching k characters, you
+  ALREADY KNOW those k characters. You do not need to restart at the next
+  position and re-read them; you can jump forward by however much the needle's
+  own structure allows.
+· THE FAILURE FUNCTION (or LPS array) encodes that: for each prefix of the
+  needle, the length of the longest proper prefix that is also a suffix. On a
+  mismatch, fall back to that length rather than to zero.
+· WHY IT IS O(n + m) — the haystack pointer never moves backwards, and the
+  needle pointer only decreases via the failure function, which it can do at
+  most as many times as it increased. Being able to say that is the point of
+  the question.
+· THE EDGE CASE — an empty needle returns 0 by convention. Handle it
+  explicitly; it is the most common wrong submission.
+· THE HAND TRACE of the failure function for "aab": [0, 1, 0]. After matching
+  "aa" and failing on the third character, you fall back to 1 rather than 0,
+  because the "a" already matched.
+· THE OTHER ALGORITHMS worth naming — Rabin-Karp uses a rolling hash and is
+  the right answer for finding MANY patterns at once; Boyer-Moore scans the
+  needle backwards and can skip ahead by whole needle lengths, which makes it
+  fastest in practice for long needles.
+· HOW TO ANSWER — give brute force with its complexity, name the pathological
+  input, then explain KMP's idea. Implementing KMP correctly under pressure is
+  a separate ask; the idea is what is being tested."""
+
+_ANSWER_V2["Reverse Words in a String"] = """Split on whitespace, reverse the list, join with single spaces - and the
+content of the question is the whitespace handling, not the reversal.
+
+· THE PROBLEM — reverse the order of the WORDS, not the characters. Leading,
+  trailing and repeated internal spaces must all collapse to single separators.
+· THE ONE-LINER — " ".join(reversed(s.split())). Python's split() with no
+  argument already discards leading and trailing whitespace and collapses
+  runs, which is exactly the specification.
+· SAY WHY THAT WORKS rather than just writing it, because split(" ") with an
+  explicit space does NOT collapse runs and produces empty strings. That
+  distinction is what the question is checking.
+· THE IN-PLACE VERSION, for the follow-up where you get a character array:
+  reverse the ENTIRE array, then reverse each word individually. The same
+  three-reversal trick as rotating an array.
+· WHY THAT WORKS — reversing everything puts the words in the right order and
+  each word backwards; reversing each word individually fixes them. Two
+  wrongs, precisely arranged.
+· THE THIRD PASS for the in-place version is the fiddly part: compacting the
+  extra spaces, which requires a read and a write pointer moving at different
+  rates.
+· THE HAND TRACE on "  the sky  is blue  ": split gives
+  ["the","sky","is","blue"], reversed and joined gives "blue is sky the".
+· THE MANUAL VERSION without split — walk from the END, find each word's
+  boundaries, and append. One pass, no intermediate list, and worth writing if
+  asked to avoid built-ins.
+· COST — O(n) time and O(n) space for the split version, O(1) extra for the
+  in-place character-array version.
+· WHY IT IS ASKED — as a warm-up that separates people who read the whitespace
+  requirements from people who reverse a list. Restate the space rules before
+  coding."""
+
+_ANSWER_V2["Base 7 Conversion"] = """Repeated division by 7, collecting remainders, then reverse - the standard base
+conversion, with the sign and zero as the only special cases.
+
+· THE ALGORITHM — while n is non-zero: append n % 7 to a list, then n //= 7.
+  Reverse the list and join.
+· WHY REVERSED — division produces the LEAST significant digit first, and the
+  answer is written most significant first. Collecting then reversing is
+  cleaner than prepending each time.
+· ZERO NEEDS ITS OWN CASE. The loop body never runs for 0, so it produces an
+  empty string. Return "0" explicitly before starting.
+· NEGATIVES — take the absolute value, convert, then prepend the minus sign.
+  Doing the arithmetic on a negative is where this goes wrong in Python
+  specifically, because -7 % 7 is 0 but -8 % 7 is 6 rather than -1, so the
+  digits come out nonsensical. Handle the sign separately and it cannot arise.
+· THE HAND TRACE on 100: 100 % 7 = 2, n = 14. 14 % 7 = 0, n = 2. 2 % 7 = 2,
+  n = 0. Digits collected [2,0,2], reversed "202". Check: 2×49 + 0×7 + 2 =
+  100.
+· ON -7: absolute value 7 → 7 % 7 = 0, n = 1 → 1 % 7 = 1, n = 0. Digits [0,1]
+  reversed "10", with the sign → "-10".
+· THE GENERAL FORM — the same loop works for any base from 2 to 10 by changing
+  the divisor. Above 10 you need a digit alphabet ("0123456789ABC..."), which
+  is the natural extension to mention.
+· COST — O(log₇ n) iterations, O(log n) space for the digits.
+· THE RELATED PROBLEMS — Excel column title is base 26 with NO zero digit,
+  which is why it needs an extra `n -= 1` each round. Comparing the two makes
+  both memorable, since the difference is exactly one line and exactly one
+  reason."""
+
+_ANSWER_V2["Add to Array-Form of Integer"] = """Walk the digit array from the right adding the integer's contribution as a
+running carry - no need to convert either side.
+
+· THE PROBLEM — a number is given as an array of digits, and an integer k is
+  to be added. Return the digits of the sum.
+· THE ELEGANT FRAMING — treat k itself as the initial carry. From the last
+  digit backwards: carry += digit; append carry % 10; carry //= 10. When the
+  array is exhausted, keep going while the carry is non-zero.
+· WHY THAT WORKS — adding k to the last digit and propagating is exactly what
+  long addition does, and letting k live in the carry variable means you never
+  have to extract its digits separately.
+· THE CONTINUATION AFTER THE ARRAY ENDS is what handles a k larger than the
+  number, or a carry that ripples past the front. [9,9,9] + 1 becomes
+  [1,0,0,0], and the loop must run three extra times.
+· REVERSE AT THE END, since digits were collected least significant first.
+· WHY NOT CONVERT — joining the array into an int works in Python and fails in
+  any fixed-width language, since the array can hold ten thousand digits. The
+  question exists to test the manual carry.
+· THE HAND TRACE on [2,7,4] + 181: carry 181 + 4 = 185 → write 5, carry 18.
+  18 + 7 = 25 → write 5, carry 2. 2 + 2 = 4 → write 4, carry 0. Reversed:
+  [4,5,5]. Check: 274 + 181 = 455.
+· COST — O(max(n, log k)) time and space for the output.
+· THE FAMILY — Plus One is this with k fixed at 1, Add Strings is it with both
+  operands as digit sequences, and Add Binary is the base-2 version. One
+  right-to-left carry loop covers all four, which is the return on learning it
+  properly once."""
+
+_ANSWER_V2["Number to Excel Column Title"] = """Base 26 with NO zero digit - so subtract 1 before each divmod, and that single
+line is the whole problem.
+
+· THE MAPPING — 1 → A, 26 → Z, 27 → AA, 52 → AZ, 53 → BA.
+· THE NAIVE ATTEMPT — divmod by 26 and map the remainder to a letter. It
+  breaks immediately: 26 gives remainder 0, and there is no letter for 0.
+· THE FIX — n -= 1 BEFORE each divmod. Then the remainder runs 0 to 25, maps
+  cleanly onto A to Z, and the quotient is correct for the next round.
+· WHY THE SUBTRACTION IS NEEDED — this is BIJECTIVE base 26. Ordinary base 26
+  has digits 0 to 25 and a representation for zero; this system's digits are 1
+  to 26 with no zero at all, so the sequence goes Z (26) straight to AA (27)
+  with nothing in between.
+· THE LOOP — while n > 0: n -= 1; append chr(ord('A') + n % 26); n //= 26.
+  Then reverse.
+· THE HAND TRACE on 26: n becomes 25, remainder 25 → 'Z', n //= 26 → 0. Loop
+  ends. Answer "Z". Without the subtraction you would get remainder 0 → '@'
+  and a quotient of 1, producing "A@".
+· ON 28: n → 27, 27 % 26 = 1 → 'B', n = 1. Then n → 0, 0 % 26 = 0 → 'A',
+  n = 0. Reversed: "AB". Correct.
+· COST — O(log₂₆ n) iterations, O(1) space beyond the output.
+· THE PAIR WITH ITS INVERSE — Excel Sheet Column Number goes the other way and
+  needs a +1 rather than a -1, for exactly the same reason. Learning them
+  together makes both stick, because the one-indexing is the single idea
+  behind both."""
+
+_ANSWER_V2["Number of Steps to Reduce a Number to Zero"] = """If it is even, halve it; if it is odd, subtract one - and count. In binary
+that is "shift right, or clear the lowest bit".
+
+· THE ALGORITHM — while n is non-zero: if n is even, n //= 2; else n -= 1;
+  increment the counter.
+· THE BINARY READING, which is the insight worth offering: halving is a RIGHT
+  SHIFT, and subtracting one from an odd number CLEARS its lowest bit. So
+  every step either removes a bit position or turns a 1 into a 0.
+· THE CLOSED FORM follows — the answer is (number of bits) + (number of set
+  bits) - 1. Each bit position needs one shift, and each 1 needs one
+  subtraction, minus one because the final 1 needs no shift after it.
+· CHECK IT on 14 (binary 1110): 4 bits, 3 set → 4 + 3 - 1 = 6. The loop gives
+  14→7→6→3→2→1→0, which is 6 steps. Correct.
+· THE BITWISE OPERATIONS are faster than arithmetic if asked: n >>= 1 for the
+  halving and n & 1 for the parity test.
+· THE COUNTER IS THE ANSWER, not n. An easy slip when the loop is this short.
+· COST — O(log n), since each step removes at least one bit. The closed form is
+  O(1) given a popcount instruction.
+· ZERO returns 0 steps, and the loop handles it by not executing.
+· WHY IT IS ASKED — the loop is four lines, so the interviewer is looking for
+  whether you SEE the binary structure. Give the loop, then say "this is
+  bit-length plus popcount minus one" and show the check. That is the whole
+  difference between a passing answer and a good one."""
+
+_ANSWER_V2["Detect Capital"] = """Three valid patterns — all upper, all lower, or capitalised — so test for those
+three rather than walking character by character.
+
+· THE RULE — usage is correct if the word is entirely uppercase ("USA"),
+  entirely lowercase ("leetcode"), or has only its first letter uppercase
+  ("Google").
+· THE ONE-LINER — return word.isupper() or word.islower() or word.istitle().
+  Say you would use it, then give the manual version, which is what is being
+  asked.
+· THE MANUAL VERSION — count the uppercase letters. The word is valid if the
+  count equals the length (all caps), the count is 0 (all lower), or the count
+  is 1 AND the first character is the uppercase one.
+· THAT LAST CONDITION IS THE TRAP — a count of 1 is not enough. "gooGle" has
+  exactly one capital and is invalid. The capital must be at index 0.
+· THE ALTERNATIVE FORMULATION, which is neater: if the first character is
+  lowercase, the entire rest must be lowercase. If it is uppercase, the rest
+  must be uniformly one case (all upper or all lower). Two branches, no
+  counting.
+· istitle() HAS A SUBTLETY worth knowing if you use it — it returns False for
+  a single uppercase letter followed by nothing, and it treats non-letters as
+  word boundaries. For this problem's constraints it behaves, but it is not a
+  general "is capitalised" test.
+· THE HAND TRACE — "USA": count 3 == length → valid. "FlaG": count 2, not 0,
+  not the length, not 1 → invalid. "g": count 0 → valid.
+· THE EMPTY-STRING CASE is usually excluded by the constraints; if not,
+  decide and state whether it is valid.
+· COST — O(n) time, O(1) space, one pass.
+· WHY IT IS ASKED — as a specification-reading exercise. Enumerate the three
+  legal shapes out loud before writing anything, and the implementation is
+  whichever of the two formulations you find clearer."""
+
+_ANSWER_V2["Find the Difference (XOR)"] = """XOR every character of both strings together - the shared ones cancel and the
+added letter is what survives.
+
+· THE PROBLEM — string t is string s with its letters shuffled plus ONE extra
+  character inserted. Find the extra one.
+· THE XOR SOLUTION — XOR the character codes of every character in s and every
+  character in t into one accumulator. Every letter present in both cancels
+  itself, and the single extra survives.
+· WHY SHUFFLING DOES NOT MATTER — XOR is commutative and associative, so the
+  order is irrelevant. That is exactly the property this problem is built
+  around, and it is why sorting first is unnecessary.
+· WHY IT IS O(1) SPACE — you never store what you have seen, only a running
+  cancellation. A counter dictionary is also O(n) time and costs O(1) space
+  only because the alphabet is bounded, which is a weaker argument.
+· THE SUM ALTERNATIVE — sum the character codes of t and subtract those of s.
+  The difference is the extra character's code. Equally clean, and it risks
+  overflow in fixed-width languages on very long strings, which XOR does not.
+· THE COUNTER ALTERNATIVE — count characters in s, decrement for t, return
+  whichever goes negative. Correct, more code, and it generalises to "find all
+  the differences" where XOR does not.
+· THE HAND TRACE on s = "abcd", t = "abcde": all of a, b, c, d appear twice
+  and cancel; 'e' remains.
+· CONVERT BACK — the accumulator holds a character CODE, so return chr(x) not
+  x. Forgetting the conversion is the standard slip.
+· COST — O(n) time, O(1) space, one pass over each string.
+· THE FAMILY — Single Number, Missing Number and Find the Difference are the
+  same cancellation trick. Recognising "everything pairs up except one" as an
+  XOR signal is the transferable part."""
+
+_ANSWER_V2["Monotonic Array"] = """Track whether it could still be increasing and whether it could still be
+decreasing, in ONE pass - the answer is either flag surviving.
+
+· THE DEFINITION — monotonic means entirely non-decreasing OR entirely
+  non-increasing. Equal adjacent values are allowed in both, which is the
+  detail to confirm before coding.
+· THE TWO-FLAG METHOD — start both `increasing` and `decreasing` as True. For
+  each adjacent pair: if a[i] > a[i+1] then it cannot be increasing; if
+  a[i] < a[i+1] then it cannot be decreasing. Return increasing or decreasing.
+· WHY BOTH FLAGS RATHER THAN DETECTING THE DIRECTION FIRST — the array may
+  start with a run of equal values, so there is no direction to detect yet.
+  Carrying both possibilities avoids a special case for that entirely.
+· EQUAL VALUES TOUCH NEITHER FLAG, which is what makes [1,1,1] correctly
+  monotonic in both directions.
+· ONE PASS, NOT TWO. The obvious answer checks non-decreasing, then checks
+  non-increasing, walking the array twice. The two-flag version does it once
+  and is barely longer.
+· THE EARLY EXIT — once both flags are False you can return immediately. Worth
+  a line on a long array.
+· THE HAND TRACE on [1,2,2,3]: no pair decreases, so `increasing` stays True →
+  monotonic. On [1,3,2]: 3 > 2 clears increasing, 1 < 3 clears decreasing →
+  both False → not monotonic.
+· THE EDGE CASES — arrays of length 0 or 1 are monotonic, and the loop
+  handles them by not executing.
+· COST — O(n) time, O(1) space.
+· WHY IT IS ASKED — the naive answer is two passes with a duplicated
+  condition. Doing it in one with two booleans is a small piece of clear
+  thinking, and interviewers use it to see whether you reach for it."""
+
+_ANSWER_V2["Count Negatives in a Sorted Matrix"] = """The matrix is sorted both ways, so walk a staircase from the bottom-left -
+every step rules out a whole row or a whole column.
+
+· THE SETUP — each row is sorted in non-increasing order, and so is each
+  column. So negatives cluster in the bottom-right and positives in the
+  top-left.
+· THE STAIRCASE — start at the BOTTOM-LEFT corner. If the value is negative,
+  everything to its RIGHT in that row is also negative, so add the whole
+  remainder of the row and move UP. If it is non-negative, everything ABOVE it
+  in that column is non-negative too, so move RIGHT.
+· WHY BOTTOM-LEFT — it is the corner where the two sort directions disagree,
+  so each comparison eliminates an entire row or column. Starting at
+  top-left or bottom-right gives a corner where both directions agree and no
+  such elimination is possible.
+· THE COUNT WHEN NEGATIVE — the number of columns minus the current column,
+  because that entire tail of the row is negative.
+· COST — O(m + n), since each step moves either up or right and never
+  backwards. Compare with O(m·n) for scanning everything, and O(m log n) for
+  binary searching each row.
+· THE BINARY SEARCH ALTERNATIVE — per row, find the first negative with
+  bisect. O(m log n), simple to write, and worth offering before the staircase.
+· THE HAND TRACE on [[4,3,2,-1],[3,2,1,-1],[1,1,-1,-2],[-1,-1,-2,-3]]: start
+  at row 3 col 0 (value -1) → add 4, move up. Row 2 col 0 (1) → move right.
+  Row 2 col 2 (-1) → add 2, move up. Row 1 col 2 (1) → move right. Row 1 col 3
+  (-1) → add 1, move up. Row 0 col 3 (-1) → add 1, move up. Total 8.
+· THE FAMILY — Search a 2D Matrix II uses exactly the same staircase to find a
+  target. Recognising the "sorted in both directions" signal is the
+  transferable part, and it is worth saying which corner and why."""
+
+_ANSWER_V2["Lucky Numbers in a Matrix"] = """A lucky number is the minimum of its row and the maximum of its column - and
+there can be at most one.
+
+· THE DEFINITION — an element that is simultaneously the smallest in its row
+  and the largest in its column.
+· THE ALGORITHM — compute the minimum of every row and the maximum of every
+  column, then return the values that appear in both sets. Two passes, one
+  intersection.
+· THE ELEGANT PROOF THAT THERE IS AT MOST ONE, which is what the question is
+  really about. Suppose a and b are both lucky, in different rows and columns.
+  Look at the element c where a's row meets b's column. Then a <= c because a
+  is its row's minimum, and c <= b because b is its column's maximum. So
+  a <= b. Running the same argument the other way gives b <= a. Therefore
+  a == b, so there is at most one distinct lucky value.
+· KNOWING THAT lets you return as soon as you find one, and it is the
+  observation that separates a recited answer from an understood one.
+· THE IMPLEMENTATION — row_mins = [min(r) for r in matrix]; col_maxs =
+  [max(c) for c in zip(*matrix)]; return the intersection. Three lines in
+  Python.
+· zip(*matrix) TRANSPOSES, which is how you get columns without index
+  arithmetic. Worth naming, since it is the idiom that makes this short.
+· THE HAND TRACE on [[3,7,8],[9,11,13],[15,16,17]]: row minimums are 3, 9, 15;
+  column maximums are 15, 16, 17. The intersection is {15}.
+· COST — O(m·n) time to compute both, which is optimal since every element
+  must be examined at least once, and O(m + n) space for the two lists.
+· THE EDGE CASE — no lucky number exists in most matrices, so returning an
+  empty list is the common outcome rather than an error."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
