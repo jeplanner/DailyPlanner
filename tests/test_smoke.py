@@ -3886,3 +3886,97 @@ def test_announcer_mutes_migration_is_additive_and_rerunnable():
     assert "ADD COLUMN IF NOT EXISTS NOTIFY_MUTED" in sql
     assert "DEFAULT FALSE" in sql, "existing items would default to muted"
     assert "DROP" not in sql, "a migration for a new flag should drop nothing"
+
+
+# ── ANNOUNCEMENTS SYNC TO THE SERVER ───────────────────────────────────
+def test_announcer_state_degrades_instead_of_erroring(auth_client, monkeypatch):
+    """Before MIGRATION_ANNOUNCER_SYNC.sql is run the tables do not exist.
+
+    That must be a DEGRADED read — the panel keeps working from its local
+    cache — rather than a 500 that looks like a broken app. It must also
+    not be silent: the announcer is the feature people notice stopping.
+    """
+    import routes.announcer as an
+
+    def missing(*a, **k):
+        raise RuntimeError("404 Client Error: Not Found")
+
+    monkeypatch.setattr(an, "get", missing)
+    r = auth_client.get("/api/announcer/state")
+    assert r.status_code == 503, r.status_code
+    assert r.get_json()["ok"] is False
+
+
+def test_announcer_state_returns_the_client_shape(auth_client, monkeypatch):
+    """The stored columns must come back in the exact shape the browser
+    already uses, or the sync silently replaces every announcement with a
+    malformed one."""
+    import routes.announcer as an
+
+    rows = [{
+        "client_id": "i1-123", "at_time": "08:00", "until_time": "20:00",
+        "every_mins": 60, "repeat_rule": "custom", "days": [1, 3],
+        "start_date": "2026-08-01", "end_date": None,
+        "say_text": "Drink water", "is_on": True,
+    }]
+    monkeypatch.setattr(an, "get", lambda t, *a, **k:
+                        rows if t == "announcer_items" else
+                        [{"every_mins": 45, "label": "Stretch"}])
+    body = auth_client.get("/api/announcer/state").get_json()
+    assert body["every"] == 45 and body["label"] == "Stretch"
+    it = body["items"][0]
+    assert it == {
+        "id": "i1-123", "at": "08:00", "until": "20:00", "mins": 60,
+        "repeat": "custom", "days": [1, 3], "start": "2026-08-01",
+        "end": None, "text": "Drink water", "on": True,
+    }
+
+
+def test_announcer_rejects_an_announcement_that_could_never_fire(monkeypatch):
+    """A bad repeat rule would be stored and then never match a day, which
+    is worse than refusing it — the row sits there looking armed."""
+    import routes.announcer as an
+    assert an._clean({"id": "x", "at": "09:00", "repeat": "fortnightly"})[
+        "repeat_rule"] == "daily"
+    assert an._clean({"id": "x", "at": "nonsense"}) is None
+    assert an._clean({"id": "x", "at": "09:00", "mins": 99999})["every_mins"] == 720
+    assert an._clean({"id": "x", "at": "09:00", "days": [9, 1, 1, -2]})["days"] == [1]
+
+
+def test_announcer_delete_is_soft(monkeypatch):
+    src = open("routes/announcer.py", encoding="utf-8").read()
+    assert '{"is_deleted": True}' in src, "announcements are being hard deleted"
+    assert "sb_delete" not in src and "delete(" not in src.replace(
+        "def delete_item", "")
+
+
+def test_announcer_writes_are_idempotent_upserts():
+    """A phone on a flaky connection retries. Without on_conflict every retry
+    creates a duplicate announcement, and the original becomes unreachable."""
+    src = open("routes/announcer.py", encoding="utf-8").read()
+    assert "on_conflict=user_id,client_id" in src
+    assert "on_conflict=user_id" in src
+    assert "resolution=merge-duplicates" in src
+    sql = open("MIGRATION_ANNOUNCER_SYNC.sql", encoding="utf-8").read().lower()
+    # The upsert target must actually be unique or on_conflict cannot work.
+    assert "create unique index" in sql and "(user_id, client_id)" in sql
+
+
+def test_announcer_sync_keeps_runtime_state_local():
+    """Mode, keep-alive and the said-marks must NOT sync. Pausing on the
+    phone must not silence the laptop you are sitting at, and a synced
+    `said` would mean the first device to speak silences all the others."""
+    src = open("routes/announcer.py", encoding="utf-8").read()
+    for local in ("keepalive", '"said"', "lastSlot"):
+        assert local not in src, f"{local} is being synced and should not be"
+    sql = open("MIGRATION_ANNOUNCER_SYNC.sql", encoding="utf-8").read().lower()
+    assert "keepalive" not in sql and "last_slot" not in sql
+
+
+def test_announcer_first_sync_does_not_wipe_existing_local_schedule():
+    """Someone upgrading has announcements in localStorage and nothing on the
+    server. Overwriting theirs with the empty server list is the one outcome
+    that must not happen."""
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "if (!j.items.length && state.items.length)" in js, \
+        "an upgrade will wipe the schedule already on the device"

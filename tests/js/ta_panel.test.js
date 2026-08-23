@@ -33,6 +33,26 @@ window.speechSynthesis = {
 };
 window.SpeechSynthesisUtterance = function () {};
 
+// ── fetch stub ───────────────────────────────────────────────────────
+// jsdom has no fetch, and the announcer now syncs to the server. Recording
+// the calls turns a missing global into an actual test of the sync.
+const calls = [];
+window.fetch = function (url, opts) {
+  opts = opts || {};
+  calls.push({ url: String(url), method: opts.method || "GET",
+               headers: opts.headers || {},
+               body: opts.body ? JSON.parse(opts.body) : null });
+  const json = String(url).indexOf("/api/announcer/state") === 0
+    ? { ok: true, every: 15, label: "", items: [] }      // empty server
+    : { ok: true };
+  return Promise.resolve({
+    ok: true, status: 200,
+    json: () => Promise.resolve(json),
+  });
+};
+const sent = (method, part) =>
+  calls.filter(c => c.method === method && c.url.indexOf(part) !== -1);
+
 window.eval(fs.readFileSync(SRC, "utf8"));
 
 // jsdom with runScripts:"outside-only" leaves readyState === "loading"
@@ -46,6 +66,10 @@ const doc = window.document;
 const q = (s) => doc.querySelector(s);
 const click = (el) => el.dispatchEvent(
   new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+
+// ── server sync (2026-08-23) ─────────────────────────────────────────
+// Announcements moved off localStorage so they follow you between devices.
+ok("pulls the stored schedule on load", sent("GET", "/api/announcer/state").length === 1);
 
 // ── it mounts ────────────────────────────────────────────────────────
 ok("button mounted in the top bar", !!q(".ta-btn"));
@@ -80,6 +104,7 @@ ok("second row added", doc.querySelectorAll(".ta-item").length === 2);
 // ── the reported bug ─────────────────────────────────────────────────
 click(doc.querySelector("[data-ta-toggle]"));
 ok("toggle stops just that one", doc.querySelectorAll(".ta-item.off").length === 1);
+ok("toggling syncs the row", sent("POST", "/api/announcer/items").length >= 1);
 ok("panel STAYS OPEN after toggle", q(".ta-pop").hidden === false);
 
 click(doc.querySelector("[data-ta-del]"));
@@ -161,6 +186,17 @@ q("[data-ta-new-text]").value = "Evening walk";
 click(q("[data-ta-add]"));
 ok("added at the chosen meridiem",
    /5:00 PM/.test(doc.querySelector(".ta-when b").textContent));
+{
+  const posts = sent("POST", "/api/announcer/items");
+  ok("adding pushes it to the server", posts.length >= 1);
+  const last = posts[posts.length - 1];
+  ok("...as a list of items", Array.isArray(last.body.items));
+  ok("...carrying the resolved 24h time", last.body.items[0].at === "17:00");
+  ok("...and its text", last.body.items[0].text === "Evening walk");
+  // A real check, not a placeholder: without this header every write is
+  // rejected and the schedule silently stops syncing.
+  ok("...with a CSRF header", "X-CSRFToken" in last.headers);
+}
 ok("chooser resets to AM after adding",
    doc.querySelector('[data-ta-mer="at"][data-v="am"]').classList.contains("on"));
 
@@ -177,8 +213,11 @@ ok("typed 9am wins over the PM button",
    /9:00 AM/.test(doc.querySelectorAll(".ta-when b")[1].textContent));
 
 // Clear the list so the recurrence block starts from nothing.
+const delsBefore = sent("DELETE", "/api/announcer/items/").length;
 while (doc.querySelector("[data-ta-del]")) click(doc.querySelector("[data-ta-del]"));
 ok("list cleared for the next block", doc.querySelectorAll(".ta-item").length === 0);
+ok("deleting tells the server too",
+   sent("DELETE", "/api/announcer/items/").length > delsBefore);
 click(q("[data-ta-close]"));
 
 // ── the recurrence controls ──────────────────────────────────────────
@@ -229,6 +268,8 @@ click(q("[data-ta-close]"));
 // ── the interval buttons highlight ───────────────────────────────────
 click(q(".ta-btn"));
 click(doc.querySelector('[data-ta-every="45"]'));
+ok("choosing an interval pushes settings",
+   sent("POST", "/api/announcer/settings").length >= 1);
 ok("45m becomes the selected interval",
    doc.querySelector('[data-ta-every="45"]').classList.contains("on"));
 ok("...and 15m is no longer selected",

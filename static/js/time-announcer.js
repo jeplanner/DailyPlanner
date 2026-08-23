@@ -1143,6 +1143,101 @@
     });
   }
 
+  /* ── SERVER SYNC ────────────────────────────────────────────────────
+     The announcements, the interval and the label live on the server so
+     they follow you between devices. localStorage stays as the CACHE, not
+     as the record: it is what makes the announcer work offline, before the
+     first response arrives, and on a page where the fetch fails.
+
+     Mode, keep-alive and the `said` marks stay purely local. Pausing on
+     your phone must not silence the laptop you are sitting at.
+
+     PULL ONCE PER PAGE, then push on every change. There is one person
+     editing at a time in practice, and per-item upserts mean two devices
+     adding different announcements merge rather than clobber. */
+  var synced = false;
+
+  function pullState() {
+    if (synced) return;
+    synced = true;
+    fetch("/api/announcer/state", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || !j.ok) return;
+
+        // FIRST RUN ON A NEW ACCOUNT: the server has nothing and this
+        // browser has a schedule someone built before the sync existed.
+        // Push it up rather than wiping it — losing their work to an
+        // upgrade is the one outcome that must not happen.
+        if (!j.items.length && state.items.length) {
+          pushItems(state.items);
+          pushSettings();
+          return;
+        }
+
+        state.items = j.items.map(function (it) {
+          return {
+            id: it.id, at: it.at, until: it.until || null,
+            mins: it.mins || 0, repeat: it.repeat || "daily",
+            days: it.days || [],
+            start: it.start || todayYMD(), end: it.end || null,
+            text: it.text || "", on: it.on !== false,
+          };
+        });
+        state.every = j.every;
+        state.label = j.label || "";
+        save();
+        paint();
+      })
+      .catch(function () { /* offline: the cache is already loaded */ });
+  }
+
+  function apiPost(url, body) {
+    return fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+      body: JSON.stringify(body),
+    }).then(function (r) {
+      if (!r.ok) throw new Error("save failed");
+    });
+  }
+
+  function pushItems(items) {
+    return apiPost("/api/announcer/items", { items: items })
+      .catch(function () {
+        // The local copy is already saved, so nothing is lost — but a
+        // schedule that exists on one device only is exactly the problem
+        // this feature was built to remove, so say so.
+        note(false, "saved on this device, but could not reach the server");
+      });
+  }
+
+  //: These two fire on every keystroke, so the write is debounced. The
+  //: LOCAL save is not — losing a character to a dropped connection would
+  //: be absurd.
+  var settingsTimer = null;
+  function pushSettingsSoon() {
+    if (settingsTimer) clearTimeout(settingsTimer);
+    settingsTimer = setTimeout(pushSettings, 800);
+  }
+
+  function pushSettings() {
+    return apiPost("/api/announcer/settings",
+                   { every: state.every, label: state.label })
+      .catch(function () {});
+  }
+
+  function pushDelete(id) {
+    return fetch("/api/announcer/items/" + encodeURIComponent(id), {
+      method: "DELETE",
+      credentials: "same-origin",
+      headers: { "X-CSRFToken": csrfToken() },
+    }).catch(function () {
+      note(false, "deleted here, but could not reach the server");
+    });
+  }
+
   /* ── REMINDER NOTIFICATIONS ─────────────────────────────────────────
      Separate from the spoken announcements above: these are push
      notifications that arrive with the app closed, and until now they had
@@ -1328,6 +1423,7 @@
     newMer = { at: "am", until: "am" };
     state.lastSlot = null;
     save(); paint(); savedFlash();
+    pushItems(state.items.slice(-times.length));
     atEl.focus();
   }
 
@@ -1505,6 +1601,7 @@
         state.lastSlot = null;
         applyMode();
         savedFlash();
+        pushSettings();
         return;
       }
       if (ev.target.closest("[data-ta-custom]")) {
@@ -1518,7 +1615,11 @@
       if (tog) {
         var li = tog.closest("[data-id]");
         var it = byId(li && li.getAttribute("data-id"));
-        if (it) { it.on = !it.on; save(); paint(); savedFlash(); }
+        if (it) {
+          it.on = !it.on;
+          save(); paint(); savedFlash();
+          pushItems([it]);
+        }
         return;
       }
       var del = ev.target.closest("[data-ta-del]");
@@ -1528,6 +1629,7 @@
         state.items = state.items.filter(function (x) { return x.id !== id; });
         delete state.said[id];
         save(); paint(); savedFlash();
+        if (id) pushDelete(id);
         return;
       }
       var mu = ev.target.closest("[data-ta-mute]");
@@ -1590,11 +1692,13 @@
         state.lastSlot = null;
         save();
         paint();
+        pushSettingsSoon();
         return;
       }
       if (n.matches("[data-ta-label]")) {
         state.label = n.value.slice(0, 60);
         save();
+        pushSettingsSoon();
       }
     });
   }
@@ -1723,6 +1827,7 @@
     _parseTimes: parseTimes,
     _merApplies: merApplies,
     _load: load,
+    _pullState: pullState,
     _friendly: friendly,
     _scheduleWords: scheduleWords,
     _health: function () { return health; },
@@ -1734,6 +1839,7 @@
   };
 
   primeVoices();
+  pullState();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", function () { mount(); applyMode(); });
   } else {

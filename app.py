@@ -70,6 +70,7 @@ def create_app():
     from routes.goals import goals_bp
     from routes.reports import reports_bp
     from routes.settings import settings_bp
+    from routes.announcer import announcer_bp
     from routes.checklist import checklist_bp
     from routes.push import push_bp
     from routes.prayer import prayer_bp
@@ -99,6 +100,7 @@ def create_app():
     from routes.investments import investments_bp
     from routes.interview_prep import interview_prep_bp
 
+    app.register_blueprint(announcer_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
     app.register_blueprint(planner_bp)
