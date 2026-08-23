@@ -2992,6 +2992,11 @@ async function _markTaskDone(item) {
   const btn = document.getElementById("peek-action");
   btn.disabled = true; btn.textContent = "Saving…";
 
+  // Whatever kind of thing it was — a project task, a bucket row, a matrix
+  // task — finishing it is finishing it, and this is the one place the
+  // summary closes any of them.
+  if (window.dpParty) window.dpParty(btn, item.title || item.text || "");
+
   let url, body;
   if (item.source === "project") {
     // Strip the "pt-" prefix — backend expects the raw task_id

@@ -2423,6 +2423,13 @@ function resolveTask(taskId, status) {
   const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
   if (!task) return;
 
+  // FINISHING is worth a clap; skipping and deleting are not — they close
+  // the row without the work having happened, and applauding those teaches
+  // you to ignore the applause.
+  if (status === "done" && window.dpParty) {
+    window.dpParty(task, (task.textContent || "").trim().slice(0, 60));
+  }
+
   const kind = _taskKind(taskId);
   if (kind === "event") return; // events are read-only
 

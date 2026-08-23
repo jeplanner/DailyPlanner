@@ -453,6 +453,11 @@
 
   async function toggleDone(id, want, row) {
     try {
+      // Ticking is the achievement; unticking is a correction.
+      if (want && window.dpParty) {
+        const task = state.tasks.find(t => t.id === id);
+        window.dpParty(row, task ? task.title || task.text : "");
+      }
       await apiPost(`/api/family-tasks/${encodeURIComponent(id)}/done`, { done: want });
       // Local toggle so the user sees feedback without a re-fetch.
       row.classList.toggle("is-done", want);

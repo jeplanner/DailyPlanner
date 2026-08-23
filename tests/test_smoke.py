@@ -5489,6 +5489,24 @@ def test_finished_things_get_a_clap():
     for tpl in ("_top_nav.html", "java.html", "day_board.html"):
         assert "celebrate.js" in open(f"templates/{tpl}", encoding="utf-8").read(), tpl
 
+    # ── "clap when something is closed in ANY of the screens" ──────────
+    # Every place that closes a task, not just the ones that were easy.
+    for tpl, why in (
+        ("todo.html", "the Eisenhower matrix"),
+        ("family_tasks.html", "family tasks"),
+        ("summary.html", "the summary's peek panel"),
+    ):
+        body = open(f"templates/{tpl}", encoding="utf-8").read()
+        assert "dpParty" in body, f"nothing claps in {why}"
+        assert "_top_nav.html" in body, f"{why} never loads celebrate.js"
+
+    # Skipping and deleting are not achievements — they close a row without
+    # the work having happened, and applauding those teaches you to ignore
+    # the applause.
+    todo = open("templates/todo.html", encoding="utf-8").read()
+    seg = todo.split("window.dpParty")[0][-260:]
+    assert 'status === "done"' in seg, "the matrix claps for skipped/deleted too"
+
 
 def test_backlog_capture_takes_effort_and_a_deadline(auth_client, monkeypatch):
     """"when i add to backlog it should capture the planned minutes" and
