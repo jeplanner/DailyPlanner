@@ -370680,6 +370680,413 @@ string - the second version is the one that scales.
   the extensible version and say why in one sentence; that is the whole
   signal."""
 
+_ANSWER_V2["Why aggregate streams by event time instead of processing time?"] = """Because the answer should be the same whether you compute it now, tomorrow, or
+after replaying the log - and processing time makes it depend on when the data
+happened to arrive.
+
+· THE TWO CLOCKS. EVENT TIME is when the thing actually happened, stamped at
+  the source. PROCESSING TIME is when your system got round to it.
+· THEY DIVERGE CONSTANTLY — a phone offline in a tunnel uploads twenty minutes
+  late, a consumer lags behind after a deploy, a partition rebalances, a
+  backfill replays a week of history in ten minutes.
+· THE CORRECTNESS ARGUMENT — "orders per hour" bucketed by processing time
+  puts that tunnel user's 9am order in the 9:20 bucket. Reprocess the same log
+  tomorrow and it lands somewhere else again. The result is not reproducible,
+  which means it cannot be audited or compared.
+· EVENT TIME MAKES THE ANSWER DETERMINISTIC — the same input always produces
+  the same buckets, whenever it is computed. That is what makes replay,
+  backfill and testing possible at all.
+· THE PRICE IS THAT YOU MUST WAIT, and you never know for how long. Data for
+  the 9am window can arrive at any point afterwards, so a window can never be
+  provably complete.
+· WATERMARKS ARE THE MECHANISM — a moving assertion that "no more events older
+  than T are expected". When the watermark passes a window's end, the window
+  fires. It is a HEURISTIC, deliberately, because certainty is unobtainable.
+· LATENESS IS THEN A TUNING DECISION — a longer allowed-lateness catches more
+  stragglers and delays every result. Some frameworks emit an early result and
+  a correction later, which is the honest version of the trade.
+· WHAT TO DO WITH LATE DATA past the window: drop it, send it to a side output
+  for inspection, or re-emit an updated aggregate. Choosing silently is how
+  numbers quietly go wrong.
+· WHERE PROCESSING TIME IS FINE — monitoring and alerting, where you care about
+  what your system is seeing right now rather than about a correct historical
+  aggregate. Saying which of the two you are building is the first thing to
+  establish."""
+
+_ANSWER_V2["gRPC vs REST"] = """gRPC is a binary contract-first RPC over HTTP/2; REST is resources over HTTP
+with human-readable JSON. Pick by who is calling.
+
+· WHAT gRPC IS — you define the service and messages in a .proto file, and a
+  compiler generates the client and server code in every language. The wire
+  format is Protocol Buffers, which is binary.
+· WHAT REST IS — resources identified by URLs and manipulated with HTTP verbs,
+  usually carrying JSON. No enforced schema, readable by anyone with curl.
+· THE PERFORMANCE GAP IS REAL BUT NOT THE MAIN POINT — protobuf messages are
+  several times smaller than the equivalent JSON and much cheaper to parse,
+  and HTTP/2 multiplexes many calls over one connection. That matters at
+  service-to-service volumes and rarely matters for a web page.
+· THE CONTRACT IS THE ACTUAL ARGUMENT. The .proto is the single source of
+  truth, generated clients cannot drift from it, and a breaking change is
+  caught at compile time rather than in production. With REST the contract is
+  a document that describes the code and slowly stops matching it.
+· STREAMING IS gRPC'S CAPABILITY — server-streaming, client-streaming and
+  bidirectional, all first class. REST needs polling, server-sent events or a
+  separate WebSocket to approximate it.
+· WHERE REST WINS — browsers (gRPC needs a proxy, gRPC-Web, because browsers
+  cannot control HTTP/2 frames), public APIs where third parties must integrate
+  with whatever they have, caching (HTTP caching works on URLs and verbs and
+  gives you CDNs for free), and debuggability, since a human can read the
+  traffic.
+· THE PRACTICAL DIVISION most organisations settle on — gRPC between internal
+  services, REST at the edge for browsers and partners. A gateway translates.
+· ERROR HANDLING DIFFERS more than people expect: gRPC has its own status
+  codes and rich error details; REST reuses HTTP codes, which are coarse and
+  frequently misused.
+· THE HONEST CAVEAT — gRPC brings a build step, a code-generation pipeline and
+  tooling that is worse than curl. For a small system with a handful of
+  endpoints, REST with an OpenAPI schema gets most of the contract benefit for
+  much less machinery."""
+
+_ANSWER_V2["Why does HTTP/2 multiplexing not fully eliminate head-of-line blocking, and how does HTTP/3 fix it?"] = """HTTP/2 removed blocking at the HTTP layer and left it at the TCP layer - a
+single lost packet still stalls every stream, because TCP delivers one ordered
+byte stream.
+
+· THE HTTP/1.1 PROBLEM — one request at a time per connection. A slow response
+  blocks everything behind it, which is why browsers opened six connections
+  per host and why people concatenated assets.
+· WHAT HTTP/2 FIXED — many logical STREAMS multiplexed over one TCP
+  connection, interleaved as frames. At the HTTP layer nothing waits for
+  anything else, and that part genuinely works.
+· WHY BLOCKING SURVIVES — TCP guarantees ordered delivery of ONE byte stream.
+  It has no idea your bytes belong to twelve independent responses. Lose a
+  single packet and TCP holds back everything received afterwards until the
+  retransmission arrives, even though eleven of those streams are complete and
+  intact.
+· SO THE BLOCKING MOVED DOWN A LAYER rather than disappearing. On a clean
+  network HTTP/2 is a large win; on a lossy mobile connection it can be WORSE
+  than six separate HTTP/1.1 connections, because those six fail independently
+  and one stalled connection does not stall the others.
+· HTTP/3'S FIX IS TO STOP USING TCP. It runs over QUIC, which is built on UDP
+  and implements its own streams — and crucially each stream has its OWN
+  ordering guarantee.
+· SO A LOST PACKET NOW BLOCKS ONLY THE STREAM IT BELONGED TO. The other
+  eleven responses are delivered to the application immediately. That is the
+  whole point of QUIC's stream model.
+· THE OTHER QUIC WINS that come along with it — TLS is integrated into the
+  handshake so connection setup is one round trip instead of two or three, and
+  connections are identified by a connection ID rather than by the IP-and-port
+  tuple, so switching from wifi to mobile does not break them.
+· WHY NOT JUST FIX TCP — it is implemented in operating system kernels and in
+  every middlebox on the internet. Deploying a change takes a decade. UDP is
+  already forwarded everywhere, so building on it is how you ship a new
+  transport this year.
+· THE TRADE — QUIC does congestion control and loss recovery in userspace,
+  which costs more CPU than the kernel's TCP stack. That has narrowed and is
+  the honest cost to name."""
+
+_ANSWER_V2["Why should PUT/DELETE be idempotent but POST not — and why does it matter for retries?"] = """Because a client that gets no response cannot tell whether the request
+arrived, and only an idempotent operation is safe to retry blindly.
+
+· THE DEFINITION — idempotent means applying it N times has the same effect as
+  applying it once. It is about the resulting STATE, not the response body:
+  DELETE returning 404 on the second call is still idempotent, because the
+  resource is absent either way.
+· WHY PUT IS — it says "make this resource look exactly like this". Sending it
+  five times leaves the same final state.
+· WHY POST IS NOT — it says "create a new thing here". Five identical POSTs
+  create five orders, which is precisely the bug users report as being charged
+  twice.
+· THE ACK AMBIGUITY IS THE REASON ANY OF THIS MATTERS. A client that times out
+  cannot distinguish "the request never arrived" from "it succeeded and the
+  response was lost". Those need opposite actions, and no amount of waiting
+  resolves it.
+· SO THE VERB IS A CONTRACT WITH EVERY RETRY MECHANISM in the stack — client
+  libraries, proxies, service meshes and browsers all retry idempotent methods
+  automatically and refuse to retry POST. Getting the semantics wrong means
+  something in that chain quietly duplicates your side effects.
+· SAFE IS THE STRONGER PROPERTY — GET and HEAD change nothing at all. Every
+  safe method is idempotent; not every idempotent method is safe.
+· HOW TO MAKE POST RETRY-SAFE ANYWAY — an IDEMPOTENCY KEY. The client sends a
+  unique id with the request, the server records it, and a repeat with the same
+  key returns the original result instead of acting again. This is exactly what
+  payment APIs do and it is the answer to give.
+· PATCH IS NOT IDEMPOTENT IN GENERAL — "increment the balance by 10" applied
+  twice is different. A PATCH that sets absolute values is idempotent in
+  practice, which is why the specification cannot promise it.
+· THE PRACTICAL RULE — if a client can safely retry it without asking you,
+  make it idempotent. If it cannot, give it an idempotency key so it can."""
+
+_ANSWER_V2["Why does the browser enforce the same-origin policy, and why do we then need CORS?"] = """Because the browser attaches your cookies to every request automatically, so
+without the policy any site could act as you - and CORS is the controlled
+exemption.
+
+· THE THREAT IT PREVENTS — you are logged into your bank, and you open a
+  malicious page. It makes a request to the bank, and the browser helpfully
+  attaches your session cookie. Without the same-origin policy, that page could
+  read your balance and act on your behalf.
+· AMBIENT AUTHORITY IS THE ROOT CAUSE. Credentials travel automatically by
+  origin, not by who initiated the request, so the browser cannot tell your
+  intent from an attacker's.
+· WHAT AN ORIGIN IS — scheme, host AND port, all three. https://a.com and
+  http://a.com are different origins, and so are two ports on localhost, which
+  is why local development trips over this constantly.
+· WHAT THE POLICY ACTUALLY BLOCKS — READING the response. The request is often
+  still SENT, which is why CSRF is a separate problem needing its own defence
+  (tokens or SameSite cookies). Confusing "blocked" with "not sent" is the
+  commonest misunderstanding.
+· WHY WE THEN NEED CORS — legitimate architectures span origins: an SPA on
+  app.example.com calling api.example.com, or any public API. The policy is a
+  safe default that would otherwise forbid useful things.
+· HOW CORS WORKS — the SERVER opts in by returning
+  Access-Control-Allow-Origin. The browser enforces it. This is the key point:
+  CORS is a relaxation granted by the server, not a restriction imposed on it,
+  and it is enforced client-side.
+· THE PREFLIGHT — for anything beyond a simple GET or form POST, the browser
+  first sends OPTIONS asking whether the real request is permitted. That is why
+  adding one custom header suddenly doubles your request count and appears to
+  break things that worked.
+· CREDENTIALS NEED EXPLICIT PERMISSION — with credentials included, the server
+  must send Access-Control-Allow-Credentials and cannot use the wildcard
+  origin. The specification forbids the combination deliberately, because a
+  wildcard plus cookies is the original vulnerability again.
+· CORS IS NOT A SERVER-SIDE SECURITY CONTROL. curl and any backend ignore it
+  entirely. It protects a user's browser session; it does not protect your
+  API, which still needs authentication and authorisation of its own."""
+
+_ANSWER_V2["TCP vs UDP"] = """TCP gives you an ordered, reliable byte stream and makes you wait for it. UDP
+gives you individual datagrams and gets out of the way.
+
+· TCP IS CONNECTION-ORIENTED — a three-way handshake before any data, then
+  sequence numbers, acknowledgements, retransmission of losses, ordered
+  delivery, flow control and congestion control.
+· UDP IS FIRE AND FORGET — a header with ports and a checksum, and the
+  datagram is sent. No handshake, no acknowledgement, no ordering, no
+  retransmission.
+· THE TRADE IN ONE SENTENCE — TCP trades LATENCY for reliability, and UDP
+  trades reliability for latency. Which is right depends on whether stale data
+  is worth having.
+· WHEN LATE DATA IS WORTHLESS, UDP WINS. In a voice call, a packet that arrives
+  200ms late cannot be played; retransmitting it adds delay and delivers
+  something unusable. Better to conceal the gap and move on.
+· HEAD-OF-LINE BLOCKING is TCP's specific cost — a single lost packet holds
+  back everything received after it, even data that arrived intact and belongs
+  to something else entirely.
+· WHAT USES WHICH — TCP: HTTP/1 and 2, SSH, SMTP, database connections, file
+  transfer. UDP: DNS, DHCP, video and voice, gaming, QUIC (and therefore
+  HTTP/3).
+· UDP DOES NOT MEAN UNRELIABLE APPLICATIONS. QUIC implements retransmission,
+  ordering and congestion control on top of UDP — but PER STREAM, so one loss
+  does not stall the rest. UDP is a blank canvas, not a decision to give up.
+· THE HEADER SIZES — 20 bytes for TCP, 8 for UDP. Marginal for large payloads
+  and significant for the tiny ones DNS and telemetry send by the million.
+· MULTICAST AND BROADCAST are UDP-only, because TCP is inherently a
+  conversation between exactly two endpoints.
+· HOW TO ANSWER — name the trade, give one example each where the other choice
+  would be actively wrong, then mention QUIC as the case that shows the
+  boundary is about WHERE reliability is implemented rather than whether."""
+
+_ANSWER_V2["Why is UDP used for video, gaming, VoIP, and DNS despite being unreliable?"] = """Because for all four, a late packet is worse than a missing one - and for DNS,
+retrying is cheaper than a handshake.
+
+· THE PRINCIPLE — TCP's reliability costs TIME. Retransmission takes at least
+  a round trip, and every packet behind the lost one waits too. If the data has
+  an expiry, that wait produces something worthless.
+· VOICE AND VIDEO — audio arriving 200ms late cannot be played; the moment has
+  passed. Codecs conceal a lost frame with interpolation and the listener
+  barely notices, whereas a 300ms stall is immediately audible. Continuity
+  matters more than completeness.
+· GAMING — position updates are sent many times a second, so a lost update is
+  superseded by the next one before a retransmission could arrive. Delivering
+  a stale position would actively make things worse by rewinding a player.
+· HEAD-OF-LINE BLOCKING is the specific TCP cost in both cases: one lost packet
+  freezes everything after it, turning a single loss into a visible stall.
+· DNS IS A DIFFERENT ARGUMENT ENTIRELY. It is one small request and one small
+  response. A TCP handshake would triple the round trips before the query even
+  starts, and a resolver handling millions of queries would hold enormous
+  numbers of connections. Retrying a lost query costs one round trip; setting
+  up TCP costs one before every query.
+· DNS DOES FALL BACK TO TCP when the response exceeds what fits in a datagram,
+  and for zone transfers. So it is not that UDP is sufficient, but that it is
+  the right DEFAULT with an escape hatch.
+· APPLICATIONS ADD BACK WHAT THEY NEED — sequence numbers to detect loss and
+  reordering, forward error correction so some losses are recoverable without
+  retransmission, and jitter buffers to smooth arrival. This is selective
+  reliability rather than none.
+· THE MODERN ILLUSTRATION IS QUIC — full reliability and congestion control
+  implemented over UDP, but per stream. It shows the real question was never
+  reliable-versus-not, but WHERE the reliability is implemented and at what
+  granularity.
+· THE ONE-LINE ANSWER — use UDP when data has a deadline after which it is
+  useless, or when the handshake costs more than the retry."""
+
+_ANSWER_V2["Why did QUIC/HTTP/3 build a new protocol over UDP instead of just improving TCP?"] = """Because TCP lives in operating system kernels and in every middlebox on the
+path, so changing it takes a decade - and some of the problems are structural
+anyway.
+
+· THE DEPLOYMENT ARGUMENT IS THE MAIN ONE. TCP is implemented in kernels,
+  which users upgrade slowly, and inspected by firewalls, NATs and
+  load balancers that drop anything unfamiliar. A new TCP option is often
+  silently stripped in transit. TCP Fast Open was standardised in 2014 and
+  still is not reliably usable.
+· OSSIFICATION is the word for this — the internet's middle has calcified
+  around the protocols it already recognises. UDP is forwarded everywhere,
+  so building on it is how you deploy a new transport this decade rather than
+  next.
+· THE USERSPACE ARGUMENT follows — QUIC ships inside the browser and the
+  server application, so a congestion-control improvement rolls out with a
+  browser update rather than an OS release.
+· THE STRUCTURAL PROBLEM TCP CANNOT FIX — it delivers ONE ordered byte stream.
+  HTTP/2 multiplexes many responses over it, so a single lost packet blocks
+  all of them. Fixing that requires the transport to know about streams, which
+  means changing what TCP fundamentally is.
+· QUIC HAS STREAMS AS A FIRST-CLASS CONCEPT, each independently ordered, so a
+  loss blocks only its own stream.
+· ENCRYPTION IS BUILT IN, not layered on. TLS is part of the handshake, so
+  connection setup takes one round trip instead of TCP's handshake followed by
+  TLS's. It also encrypts most of the transport header, which prevents future
+  ossification by making the protocol opaque to middleboxes.
+· CONNECTION MIGRATION — a QUIC connection is identified by a connection ID
+  rather than the IP-and-port tuple, so moving from wifi to mobile data keeps
+  it alive. TCP cannot do this because the tuple IS the identity.
+· THE COSTS, honestly — more CPU than the kernel's highly optimised TCP path,
+  some networks rate-limit or block UDP, and the whole ecosystem of TCP
+  tooling and hardware offload had to be rebuilt. Both have narrowed
+  considerably.
+· THE ONE-LINE ANSWER — the problems were partly in TCP's design and entirely
+  in TCP's deployability, and UDP was the only viable substrate for shipping a
+  replacement."""
+
+_ANSWER_V2["Why (and when) choose L7 load balancing over L4?"] = """L4 forwards connections without looking inside; L7 reads the request, so it can
+route on content and do things a connection-level balancer cannot see.
+
+· L4 balances TCP connections using only IP addresses and ports. It is fast,
+  cheap, protocol-agnostic and completely blind to what is being carried.
+· L7 terminates the connection and reads the HTTP request — method, path,
+  host, headers, cookies. Everything it can do follows from that visibility.
+· WHAT ONLY L7 CAN DO — route /api to one pool and /static to another, split
+  traffic by header or cookie for canaries and A/B tests, retry a failed
+  request on another backend (L4 can only reset the connection), terminate
+  TLS centrally, compress, cache, and rate-limit per user rather than per IP.
+· THE RETRY POINT IS UNDERRATED — an L4 balancer that loses a backend drops
+  every in-flight connection. An L7 balancer can resend an idempotent request
+  elsewhere and the client never knows.
+· WHAT L4 IS BETTER AT — raw throughput and latency, because there is no
+  parsing and often no TLS work; any protocol, not just HTTP; and preserving
+  the client IP naturally rather than through X-Forwarded-For.
+· THE COSTS OF L7 — more CPU per request, higher latency, and it becomes a
+  point where request-level state and configuration accumulate. It also has to
+  understand your protocol, so a non-HTTP service gets nothing from it.
+· HEALTH CHECKS DIFFER IN QUALITY — L4 can only ask whether the port accepts
+  connections, which a wedged application will happily do. L7 can call a real
+  endpoint and read the status, which is the difference between "the process
+  is running" and "it can serve".
+· THE COMMON ARCHITECTURE IS BOTH — L4 at the edge for volume and DDoS
+  absorption, feeding L7 balancers that do the routing. Saying that is the
+  complete answer rather than picking one.
+· THE MODERN CONTEXT — a service mesh sidecar is an L7 proxy per service,
+  which is what makes per-request retries, circuit breaking and traffic
+  shifting available everywhere rather than only at the front door."""
+
+_ANSWER_V2["DNS recursion / resolution"] = """Your machine asks ONE question recursively; the resolver then asks several
+questions iteratively on your behalf. That split is what the terms mean.
+
+· THE TWO MODES, which is the distinction being tested. A RECURSIVE query says
+  "give me the final answer, do whatever it takes". An ITERATIVE query says
+  "tell me what you know, and I will follow the referral myself".
+· YOUR MACHINE SENDS ONE RECURSIVE QUERY to its configured resolver and waits.
+  It does not walk the hierarchy itself.
+· THE RESOLVER THEN WORKS ITERATIVELY — it asks a ROOT server, which does not
+  know the answer but refers it to the .com TLD servers. It asks those, which
+  refer it to the domain's AUTHORITATIVE servers. It asks those, and gets the
+  record.
+· WHY THE HIERARCHY IS SPLIT THIS WAY — no single server could hold the whole
+  internet, and delegation lets each zone's owner manage their own records
+  without anyone else's involvement. The NS record is the delegation.
+· CACHING IS WHAT MAKES IT WORK AT ALL — the resolver caches every answer for
+  its TTL, and so do the OS and the browser. Root servers see a tiny fraction
+  of the queries that are actually made.
+· AUTHORITATIVE VS NON-AUTHORITATIVE — an answer from the zone's own server is
+  authoritative; one from a cache is not, and may be up to its TTL out of
+  date.
+· NEGATIVE CACHING exists too — an NXDOMAIN is cached, governed by the SOA
+  record's minimum field. This is why a newly created record can appear
+  missing for a while after you first queried it too early.
+· THE PRACTICAL CONSEQUENCE OF TTL — a DNS change is not a deployment, it is a
+  gradual rollout bounded by whoever cached the old value. Lower the TTL days
+  BEFORE a migration, or your rollback is as slow as the old TTL.
+· WHY IT MATTERS OPERATIONALLY — DNS is a routine cause of outages that
+  present as application failures, and it is how regional failover and
+  blue-green cutovers are often implemented. Knowing which layer caches what
+  is how you tell "it is broken" from "it has not propagated"."""
+
+_ANSWER_V2["Why does the median minimize total absolute distance while the mean minimizes squared distance?"] = """Because their derivatives differ: absolute error counts how many points are on
+each side, while squared error weights them by how far away they are.
+
+· THE ABSOLUTE CASE — stand at a point and take one step right. Your distance
+  to everyone on the right falls by 1 and to everyone on the left rises by 1.
+  The net change is (number left) minus (number right). Moving is worth it
+  exactly while more points lie to the right, and that stops at the MEDIAN.
+· THE DERIVATIVE OF |x - c| is ±1 regardless of magnitude, so only the COUNT
+  on each side matters. Set the sum of those signs to zero and you get the
+  point with equal numbers either side.
+· THE SQUARED CASE — the derivative of (x - c)² is 2(x - c), which is
+  proportional to the DISTANCE. Setting the sum to zero gives c equal to the
+  average, so a far-away point pulls harder than a near one.
+· THE ONE-LINE SUMMARY — absolute error asks how many are on each side;
+  squared error asks how much total pull there is from each side. Different
+  questions, different answers.
+· WHY THE MEDIAN IS ROBUST follows immediately. Move one point to infinity and
+  the mean follows it; the median does not move at all, because the COUNT on
+  each side is unchanged. That is what "robust to outliers" actually means
+  mechanically.
+· THE EVEN-COUNT CASE — with an even number of points, every value between the
+  two middle ones is equally optimal for absolute distance. The convention of
+  averaging them is a tie-break, not a derivation.
+· WHY IT MATTERS IN ML — MAE as a loss drives predictions toward the
+  conditional MEDIAN and MSE toward the conditional MEAN. On a right-skewed
+  target that is a systematic difference in what your model predicts, not a
+  rounding detail.
+· THE GENERALISATION — minimising the pinball loss at quantile q gives the qth
+  QUANTILE. The median is the q = 0.5 case, and this is exactly how quantile
+  regression produces prediction intervals.
+· WHERE IT SHOWS UP IN PROBLEMS — Minimum Moves to Equal Array Elements II is
+  this fact as an interview question, and the answer is "move everything to
+  the median" with this argument as the justification."""
+
+_ANSWER_V2["Why prefer immutable infrastructure over patching servers in place?"] = """Because a server you keep patching becomes unique, and nobody can reproduce it -
+so you replace the whole thing instead of editing it.
+
+· CONFIGURATION DRIFT is the problem. Servers built identically diverge over
+  months as patches, hotfixes and manual interventions land in different
+  orders. Eventually one behaves differently and nobody knows why, because the
+  difference is the sum of a hundred untracked changes.
+· THE SNOWFLAKE SERVER is the end state — a machine nobody dares touch,
+  because its exact configuration exists only on the machine and is not
+  written down anywhere.
+· THE IMMUTABLE MODEL — build an image from a definition in version control,
+  deploy instances of it, and NEVER modify a running instance. To change
+  anything, build a new image and replace the instances.
+· WHAT THAT BUYS. REPRODUCIBILITY: the same definition produces the same
+  server, every time, so staging really does match production. ROLLBACK: it is
+  redeploying the previous image, which is a known-good artifact rather than
+  an attempt to undo a change. And the artifact you tested is bit-for-bit the
+  artifact you ran.
+· IT REMOVES A WHOLE CLASS OF FAILURE — a patch that half-applies, a
+  dependency upgraded on three of five machines, a config file edited during
+  an incident and never committed.
+· IT MAKES SCALING TRIVIAL, because a new instance is just another copy of the
+  image with no bootstrapping sequence to get wrong.
+· THE COSTS — image builds take minutes, every change means a full redeploy
+  even for a one-line config fix, and state must live somewhere else. That last
+  one is the real work: databases, uploads, logs and caches all have to be
+  externalised before instances can be disposable.
+· CATTLE, NOT PETS is the usual phrasing — instances are numbered and
+  replaceable rather than named and nursed.
+· WHERE IT DOES NOT APPLY CLEANLY — genuinely stateful systems, long-running
+  jobs, and hardware you own. There, configuration management (Ansible, Chef)
+  converging toward a declared state is the pragmatic middle ground, and
+  saying so is better than treating immutability as universal."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
