@@ -21,6 +21,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{{ date_label }} — Day Board</title>
 {% include "_pwa_head.html" %}
+<script src="/static/js/celebrate.js" defer></script>
 <style>
 :root{
   /* THE ONE KNOB. Every size below is a multiple of this, so the fit pass
@@ -243,6 +244,67 @@ header{
 }
 [data-fit]::-webkit-scrollbar-thumb:hover{background:var(--dim)}
 
+/* ── THE WELCOME OVERLAY ─────────────────────────────────────────────
+   Sized in px rather than --u: it is not part of the board's fit problem,
+   and shrinking the one thing meant to be read on arrival along with a
+   crowded timeline would be exactly backwards. */
+#welcome{position:fixed;inset:0;z-index:200;display:grid;place-items:center;
+  background:rgba(6,9,15,.72);padding:16px;
+  animation:wc-in .28s ease-out}
+#welcome[hidden]{display:none}
+.wc-card{position:relative;width:min(440px,100%);
+  background:var(--panel);border:1px solid var(--line);border-radius:16px;
+  padding:22px 22px 18px;box-shadow:0 30px 80px rgba(0,0,0,.5);
+  animation:wc-rise .42s cubic-bezier(.2,.9,.25,1)}
+.wc-x{position:absolute;top:10px;right:10px;width:34px;height:34px;
+  display:inline-flex;align-items:center;justify-content:center;
+  border-radius:999px;border:1px solid var(--line);background:var(--bg);
+  color:var(--text);font-size:20px;line-height:1;cursor:pointer}
+.wc-x:hover{background:#ef4444;border-color:#ef4444;color:#fff}
+.wc-card h2{margin:0 0 6px;font-size:22px;font-weight:800;letter-spacing:-.01em;
+  padding-right:34px}
+.wc-say{margin:0 0 16px;font-size:14px;line-height:1.55;color:var(--text)}
+.wc-nums{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;
+  margin:0 0 16px}
+.wc-nums div{background:var(--bg);border:1px solid var(--line);
+  border-radius:10px;padding:8px 4px;text-align:center;min-width:0}
+.wc-nums b{display:block;font-size:19px;font-weight:800;
+  font-variant-numeric:tabular-nums;color:var(--accent)}
+.wc-nums span{display:block;font-size:9.5px;line-height:1.25;color:var(--dim);
+  margin-top:2px}
+
+.wc-chart{display:flex;align-items:flex-end;gap:6px;height:74px;
+  padding:0 2px;margin:0 0 8px}
+.wc-bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+  align-items:center;gap:3px;height:100%;min-width:0}
+.wc-bar i{display:block;width:100%;border-radius:4px 4px 2px 2px;
+  background:var(--line);
+  /* Grown from nothing on open — the motion IS the report arriving. */
+  animation:wc-grow .55s cubic-bezier(.2,.9,.25,1) backwards}
+.wc-bar.met i{background:var(--ok)}
+.wc-bar em{font-style:normal;font-size:9.5px;font-weight:700;color:var(--dim);
+  font-variant-numeric:tabular-nums}
+.wc-bar:nth-child(1) i{animation-delay:.06s}
+.wc-bar:nth-child(2) i{animation-delay:.12s}
+.wc-bar:nth-child(3) i{animation-delay:.18s}
+.wc-bar:nth-child(4) i{animation-delay:.24s}
+.wc-bar:nth-child(5) i{animation-delay:.30s}
+.wc-bar:nth-child(6) i{animation-delay:.36s}
+.wc-bar:nth-child(7) i{animation-delay:.42s}
+.wc-foot{margin:0;font-size:11px;color:var(--dim)}
+
+@keyframes wc-in{from{opacity:0}to{opacity:1}}
+@keyframes wc-rise{from{opacity:0;transform:translateY(14px) scale(.97)}
+                   to{opacity:1;transform:none}}
+@keyframes wc-grow{from{height:0 !important}}
+
+/* A celebration is the first thing that should go quiet for someone who
+   asked for less movement. The report still appears; it just stops
+   performing. */
+@media (prefers-reduced-motion: reduce){
+  #welcome,.wc-card,.wc-bar i{animation:none}
+}
+
 /* ── TIMELINE ───────────────────────────────────────────────────────── */
 .rail{position:relative; height:100%}
 .evlayer{position:absolute; inset:0 0 0 calc(var(--u) * 3.4)}
@@ -431,6 +493,10 @@ li.done .when{color:var(--dim); font-weight:500}
         <input type="date" id="pick" value="{{ plan_date.isoformat() }}"
                aria-label="Choose a day to display">
       </span>
+      {% if perf %}
+      <button class="ico" id="howami" title="How am I doing (H)"
+              aria-label="How am I doing">&#128200;</button>
+      {% endif %}
       <button class="ico" id="size" aria-live="polite"
               aria-label="Text size"
               title="Text size — bigger type, fewer rows (press A)">A</button>
@@ -618,6 +684,48 @@ li.done .when{color:var(--dim); font-weight:500}
   </div>
   <div id="toast" role="status" aria-live="polite"></div>
 </div>
+
+{% if perf %}
+{# ── THE WELCOME, AND THE REPORT ──────────────────────────────────────
+   Asked for as three things that turned out to be one: the login name and
+   "appreciate something about the person", a motivational animation when
+   the dashboard opens, and reporting on how I am performing.
+
+   It is an OVERLAY rather than a panel on the board because the board's
+   whole contract is one screen with no scrolling — a permanent report
+   would have to come out of the day itself. This costs nothing until it
+   is asked for, and it answers all three at once.
+
+   IT DOES NOT REPLAY. The board reloads itself every few minutes, so a
+   welcome tied to page load would fire at you all day. Shown once per day
+   per device, and on demand from the 📈 button. #}
+<div id="welcome" hidden>
+  <div class="wc-card" role="dialog" aria-modal="true" aria-labelledby="wc-hi">
+    <button class="wc-x" id="wc-close" aria-label="Close">&times;</button>
+    <h2 id="wc-hi">{{ greeting }}{% if display_name %}, {{ display_name }}{% endif %}</h2>
+    {% if appreciation %}<p class="wc-say">{{ appreciation }}</p>{% endif %}
+
+    <div class="wc-nums">
+      <div><b>{{ perf.streak }}</b><span>day chain</span></div>
+      <div><b>{{ perf.total }}</b><span>done this week</span></div>
+      <div><b>{{ perf.hit }}/7</b><span>days past the bar</span></div>
+      <div><b>{{ perf.best }}</b><span>best chain</span></div>
+    </div>
+
+    <div class="wc-chart" role="img"
+         aria-label="Things finished on each of the last seven days">
+      {% for d in perf.days %}
+        <span class="wc-bar{% if d.met %} met{% endif %}" title="{{ d.date }} — {{ d.n }}">
+          <i style="height:{{ d.pct if d.pct > 4 else 4 }}%"></i>
+          <em>{{ d.n }}</em>
+        </span>
+      {% endfor %}
+    </div>
+    <p class="wc-foot">The bar is {{ perf.bar }} things a day. Averaging
+      {{ perf.avg }}.</p>
+  </div>
+</div>
+{% endif %}
 
 <script>
 (function () {
@@ -886,6 +994,46 @@ li.done .when{color:var(--dim); font-weight:500}
     });
   }
 
+  /* ── THE WELCOME, ONCE A DAY ──────────────────────────────────────
+     The board refreshes itself on a timer, so anything tied to page load
+     fires at you all day. Keyed by DATE so it greets you the first time
+     you open the board each day and then leaves you alone — and the 📈
+     button brings it back whenever you want it. */
+  var WC_KEY = "dp-board-welcome";
+  var wc = document.getElementById("welcome");
+
+  function wcShow(celebrate) {
+    if (!wc) return;
+    wc.hidden = false;
+    if (celebrate && window.dpClap) {
+      // Clap for the day being MET, not merely for the board opening.
+      // Applause for showing up is applause that stops meaning anything.
+      setTimeout(function () {
+        window.dpClap(wc.querySelector(".wc-nums"), "Today is done");
+      }, 420);
+    }
+  }
+
+  function wcHide() { if (wc) wc.hidden = true; }
+
+  if (wc) {
+    var today = "{{ plan_date.isoformat() }}";
+    var met = {{ 'true' if (perf and perf.days and perf.days[-1].met) else 'false' }};
+    var seen = null;
+    try { seen = localStorage.getItem(WC_KEY); } catch (e) {}
+    // Only on TODAY's board: being greeted with "Good morning" while
+    // paging back through last Tuesday is nonsense.
+    if (isToday && seen !== today) {
+      try { localStorage.setItem(WC_KEY, today); } catch (e) {}
+      wcShow(met);
+    }
+    document.getElementById("wc-close").addEventListener("click", wcHide);
+    wc.addEventListener("click", function (ev) {
+      if (ev.target === wc) wcHide();      // the backdrop, not the card
+    });
+    bind("howami", function () { wcShow(false); });
+  }
+
   var toastTimer;
   function toast(msg) {
     var el = document.getElementById("toast");
@@ -942,7 +1090,13 @@ li.done .when{color:var(--dim); font-weight:500}
     if (e.key === "ArrowRight") goTo("{{ next_date }}");
     if (e.key === "t" || e.key === "T") goTo(null);
     if (e.key === "a" || e.key === "A") cycleSize();
-    if (e.key === "Escape") location.href = "/summary?view=daily";
+    if (e.key === "Escape") {
+      // The report first — Escape leaving the page while a dialog is open
+      // is the one thing it must not do.
+      if (wc && !wc.hidden) { wcHide(); return; }
+      location.href = "/summary?view=daily";
+    }
+    if ((e.key === "h" || e.key === "H") && wc) { wcShow(false); return; }
   });
 })();
 </script>

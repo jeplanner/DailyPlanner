@@ -553,6 +553,50 @@ ok("there is exactly one start-time input",
 }
 click(q("[data-ta-close]"));
 
+// ── AM/PM MUST BE CLICKABLE AND MUST LOOK SELECTED (2026-08-23) ──────
+// "AM, PM on announcements is not highlighting properly."
+//
+// The buttons had been wrapped in a <label>. A label must not contain
+// interactive content, and when it does the browser hands the click to the
+// labelled input instead of the button — so the tap landed on the time
+// field and the pair never lit up.
+click(q(".ta-btn"));
+click(q("[data-ta-new]"));
+{
+  const pairs = doc.querySelectorAll("[data-ta-mer]");
+  ok("both time fields have an AM/PM pair", pairs.length === 4);
+  ok("...and none of them sits inside a <label>",
+     Array.prototype.every.call(pairs, (b) => !b.closest("label")));
+
+  const at = q("[data-ta-new-at]");
+  at.value = "6.45";
+  at.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const am = doc.querySelector('[data-ta-mer="at"][data-v="am"]');
+  const pm = doc.querySelector('[data-ta-mer="at"][data-v="pm"]');
+
+  click(pm);
+  ok("clicking PM selects it", pm.classList.contains("on"));
+  ok("...and deselects AM", !am.classList.contains("on"));
+  // Colour alone is not the signal — the selected one must actually differ.
+  ok("...visibly, not just by class",
+     window.getComputedStyle(pm).backgroundColor !==
+     window.getComputedStyle(am).backgroundColor);
+  ok("...and it decides the time", window.TimeAnnouncer._parseTimes("6.45", "pm")[0] === "18:45");
+
+  click(am);
+  ok("clicking back to AM moves the highlight", am.classList.contains("on"));
+  ok("...and PM lets go", !pm.classList.contains("on"));
+
+  // The unselected button must not be painted like the panel it sits on,
+  // which is what a hardcoded #fff did on a dark surface.
+  const sheet = Array.prototype.map
+    .call(doc.querySelectorAll("style"), (s) => s.textContent).join("\n");
+  const base = (sheet.split(".ta-ampm button{")[1] || "").split("}")[0];
+  ok("the resting state comes from a token, not a literal white",
+     /background:var\(--color-bg/.test(base));
+}
+click(q("[data-ta-close]"));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
 })();

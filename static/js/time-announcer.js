@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v254";
+  var BUILD = "v255";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -1351,12 +1351,21 @@
       ".ta-timefld{display:flex;align-items:stretch;gap:4px;flex:0 0 auto;min-width:0}",
       ".ta-ampm{display:flex;border:1px solid var(--color-border,#e5e7eb);",
       "border-radius:8px;overflow:hidden;flex:0 0 auto}",
-      ".ta-ampm button{font:inherit;font-size:10.5px;font-weight:800;",
+      /* HARDCODED #fff HERE PAINTED A WHITE STRIP ACROSS A DARK PANEL,
+         and the unselected button was then near-white on near-white — the
+         pair read as "nothing is selected" whichever one was. Both states
+         come from tokens now, and the selected one carries weight and a
+         ring as well as colour so it does not depend on hue alone. */
+      ".ta-ampm button{font:inherit;font-size:10.5px;font-weight:700;",
       "letter-spacing:.03em;padding:0 8px;border:0;cursor:pointer;",
-      "background:#fff;color:#6b7280}",
-      ".ta-ampm button:hover{background:#eef2ff;color:#4338ca}",
+      "background:var(--color-bg,#f3f4f6);",
+      "color:var(--color-text-secondary,#6b7280);",
+      "transition:background .12s,color .12s}",
+      ".ta-ampm button:hover{background:color-mix(in srgb,#4338ca 14%,transparent);",
+      "color:var(--color-text,#111827)}",
       ".ta-ampm button + button{border-left:1px solid var(--color-border,#e5e7eb)}",
-      ".ta-ampm button.on{background:#4338ca;color:#fff}",
+      ".ta-ampm button.on{background:#4338ca;color:#fff;font-weight:800;",
+      "box-shadow:inset 0 0 0 1px #4338ca}",
       /* Dimmed when the typed text already settles it — clicking would do
          nothing, and a control that does nothing should look like it. */
       ".ta-ampm button.moot{opacity:.4}",
@@ -2335,7 +2344,12 @@
                allowed to enter start". There is deliberately NOT a second
                start field down there: one value with two inputs is how
                the recurrence rule ended up in two places. */
-            '<label class="ta-dt">Start' +
+            /* A <span>, NOT a <label>. A label must not contain
+               interactive content, and when it does the browser hands the
+               click to the labelled input instead of to the button — so
+               AM/PM took the tap and never lit up. The input keeps its own
+               aria-label, so nothing is lost by not being a real label. */
+            '<span class="ta-dt">Start' +
               '<span class="ta-timefld">' +
                 '<input type="text" data-ta-new-at placeholder="5.00" ' +
                   'aria-label="Start time">' +
@@ -2344,7 +2358,7 @@
                   '<button type="button" data-ta-mer="at" data-v="pm">PM</button>' +
                 '</span>' +
               '</span>' +
-            '</label>' +
+            '</span>' +
             '<select data-ta-new-repeat aria-label="How often">' +
               '<option value="daily">Every day</option>' +
               '<option value="once">Once</option>' +
@@ -2369,14 +2383,15 @@
             'aria-expanded="false">Repeat through the day, or set dates</button>' +
           '<div data-ta-advanced hidden>' +
             '<div class="ta-add-row">' +
-              '<label class="ta-dt">Until (from Start, above)' +
+              '<span class="ta-dt">Until (from Start, above)' +
                 '<span class="ta-timefld">' +
-                  '<input type="text" data-ta-new-until placeholder="8.00">' +
+                  '<input type="text" data-ta-new-until placeholder="8.00" ' +
+                    'aria-label="Repeat until">' +
                   '<span class="ta-ampm" role="group" aria-label="Morning or afternoon">' +
                     '<button type="button" data-ta-mer="until" data-v="am">AM</button>' +
                     '<button type="button" data-ta-mer="until" data-v="pm">PM</button>' +
                   '</span>' +
-                '</span></label>' +
+                '</span></span>' +
               '<label class="ta-dt">Every' +
                 '<input type="number" min="0" max="720" step="5" ' +
                 'data-ta-new-mins placeholder="60 min"></label>' +

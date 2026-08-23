@@ -5296,3 +5296,147 @@ def test_checklist_view_mode_does_not_swallow_a_tap_on_a_field():
     assert 'e.target.closest("button")' in handler
     # The tap has to reach the field it was aimed at, or it looks half fixed.
     assert ".focus()" in handler
+
+
+def _chain_stub(**over):
+    base = {"ok": True, "streak": 0, "best": 0, "today": 0, "bar": 5,
+            "met": False, "active": 0, "window": 30,
+            "days": [{"date": f"2026-08-{23 - n:02d}", "n": 0} for n in range(30)]}
+    base.update(over)
+    return base
+
+
+def test_day_board_appreciation_never_invents_praise():
+    """Asked for as "appreciate something about the person to motivate".
+
+    Every line has to be a fact the chain already computed. Generic praise
+    on a board that can see you did nothing for a week is worse than
+    silence: it tells you the app is not really looking, and after that
+    nothing it says counts for anything.
+    """
+    import routes.day_board as db
+
+    # Nothing done, never active — say so, and say what would change it.
+    line = db._appreciation(_chain_stub(), True)
+    assert "5 things starts a chain" in line
+    for word in ("great", "amazing", "well done", "proud", "crushing"):
+        assert word not in line.lower(), f"invented praise: {line}"
+
+    # Idle today but active before — that is a real fact, and a kinder one.
+    line = db._appreciation(_chain_stub(active=3), True)
+    assert "3 of the last 30 days" in line
+
+    # Part-way through: say how much is left, not how well it is going.
+    line = db._appreciation(_chain_stub(today=2), True)
+    assert "2 done so far" in line and "3 more" in line
+
+    # Cleared the bar.
+    line = db._appreciation(_chain_stub(today=6, met=True), True)
+    assert "Today is done" in line and "6 finished" in line
+
+    # A run, and a personal best is worth naming.
+    line = db._appreciation(_chain_stub(today=6, met=True, streak=4, best=4), True)
+    assert "4 days running" in line and "best run" in line
+
+    # A run that is NOT a best does not claim to be one.
+    line = db._appreciation(_chain_stub(today=6, met=True, streak=2, best=9), True)
+    assert "best run" not in line
+
+    # No data at all, and any day that is not today, stay quiet.
+    assert db._appreciation({"ok": False}, True) == ""
+    assert db._appreciation(_chain_stub(today=6, met=True), False) == ""
+
+
+def test_day_board_performance_reads_the_last_seven_days():
+    """"dayboard reporting should be there on how i am performing."
+
+    Built from the chain's own tally rather than a second query: it already
+    counts exactly what "done" means here, and a second definition of done
+    is how two screens end up disagreeing about the same day.
+    """
+    import routes.day_board as db
+    days = [{"date": "2026-08-23", "n": 6}, {"date": "2026-08-22", "n": 0},
+            {"date": "2026-08-21", "n": 5}, {"date": "2026-08-20", "n": 2},
+            {"date": "2026-08-19", "n": 0}, {"date": "2026-08-18", "n": 1},
+            {"date": "2026-08-17", "n": 0}]
+    perf = db._performance(_chain_stub(days=days, streak=1, best=3))
+
+    assert perf["total"] == 14
+    assert perf["hit"] == 2                     # only the 6 and the 5 clear 5
+    assert perf["peak"] == 6
+    assert perf["avg"] == 2.0
+    # Oldest first, so the chart reads left to right like a week does.
+    assert [d["n"] for d in perf["days"]] == [0, 1, 0, 2, 5, 0, 6]
+    assert perf["days"][-1]["met"] is True
+    # Heights are relative to the best day, so a quiet week still has shape
+    # instead of collapsing to a flat line.
+    assert perf["days"][-1]["pct"] == 100
+    assert perf["days"][3]["pct"] == 33
+
+    assert db._performance({"ok": False}) is None
+
+
+def test_day_board_greets_by_name_and_shows_the_report(auth_client, monkeypatch):
+    """Name, appreciation, animation and report are one overlay.
+
+    An overlay and not a panel because the board's contract is one screen
+    with no scrolling — a permanent report would have to come out of the
+    day itself.
+    """
+    import routes.day_board as db
+    monkeypatch.setattr(db, "_events_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_checklist_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_tasks_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_bucket_for", lambda u, d, t: [])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [
+        {"display_name": "Venghatesh Kumar", "email": "v@example.com"}])
+    monkeypatch.setattr(db.streak_service, "compute",
+                        lambda u, d, **k: _chain_stub(today=6, met=True, streak=3,
+                                                      best=3, active=9))
+    html = auth_client.get("/day-board").get_data(as_text=True)
+
+    # First name only — this is a greeting, not an address label.
+    assert "Venghatesh" in html and "Venghatesh Kumar" not in html
+    assert "3 days running" in html
+    assert 'id="welcome"' in html and 'id="howami"' in html
+    assert "wc-chart" in html
+
+    # It must NOT replay: the board reloads itself on a timer, so a welcome
+    # tied to page load would fire at the user all day.
+    assert "dp-board-welcome" in html
+    assert "seen !== today" in html
+
+    # An email address is never shown as a name.
+    monkeypatch.setattr(db, "get", lambda *a, **k: [
+        {"display_name": "", "email": "venghatesh@gmail.com"}])
+    html = auth_client.get("/day-board").get_data(as_text=True)
+    assert "venghatesh@gmail.com" not in html
+    assert "venghatesh" in html
+
+
+def test_finished_things_get_a_clap():
+    """"clap on items which are finished on the inteview prep pages and also
+    on dayboard."
+
+    One module, matched by SHAPE rather than by editing five templates: every
+    bank marks a topic studied with a checkbox inside a .q-card, .q-prac on
+    some pages and a bare box carrying data-title on others. A new bank gets
+    the clap for free, and there is one celebration instead of five that
+    drift apart.
+    """
+    js = open("static/js/celebrate.js", encoding="utf-8").read()
+    assert "window.dpClap" in js
+    assert '.closest(".q-card")' in js
+    assert 'classList.contains("q-prac")' in js and 'hasAttribute("data-title")' in js
+    # Unticking is a correction, not an achievement.
+    assert "!box.checked" in js
+    # A celebration is the first thing that should go quiet for someone who
+    # asked for less movement.
+    assert "prefers-reduced-motion" in js
+    # It must never block a click or break the thing it celebrates.
+    assert "pointer-events:none" in js
+
+    # Loaded where things get finished: the shared nav covers the banks and
+    # the checklist, /java and the board carry their own include.
+    for tpl in ("_top_nav.html", "java.html", "day_board.html"):
+        assert "celebrate.js" in open(f"templates/{tpl}", encoding="utf-8").read(), tpl

@@ -725,6 +725,111 @@ def _link_bucket(item, plan_date):
     return url_for("quick_bucket.quick_bucket_page", **_back_args(plan_date))
 
 
+def _display_name(user_id):
+    """The name to greet, or "" — never an exception and never an email.
+
+    Falls back to the part of the address before the @, because "Hello
+    venghatesh@gmail.com" is worse than no greeting at all.
+    """
+    try:
+        rows = get("users", params={
+            "id": f"eq.{user_id}", "select": "display_name,email", "limit": "1",
+        }) or []
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    name = (rows[0].get("display_name") or "").strip()
+    if not name:
+        name = (rows[0].get("email") or "").split("@", 1)[0].strip()
+    # First name only: this is a greeting, not an address label.
+    return name.split()[0][:24] if name else ""
+
+
+def _greeting_word(now):
+    h = now.hour
+    if h < 12:
+        return "Good morning"
+    if h < 17:
+        return "Good afternoon"
+    return "Good evening"
+
+
+def _appreciation(chain, is_today):
+    """One true sentence about how this person is actually doing.
+
+    DERIVED FROM THE DATA, NEVER INVENTED. Generic praise on a board that
+    can see you did nothing for a week is worse than silence — it tells you
+    the app is not really looking, and then nothing it says counts. Every
+    branch below is a fact the chain already computed, and the last one
+    admits there is nothing yet rather than dressing it up.
+    """
+    if not chain or not chain.get("ok"):
+        return ""
+    if not is_today:
+        return ""
+
+    streak = chain.get("streak") or 0
+    today_n = chain.get("today") or 0
+    best = chain.get("best") or 0
+    active = chain.get("active") or 0
+    window = chain.get("window") or 30
+    bar = chain.get("bar") or 5
+
+    if streak >= 2 and chain.get("met"):
+        line = f"{streak} days running, and today is already done."
+        if streak >= best and best > 1:
+            line += " That is your best run yet."
+        return line
+    if chain.get("met"):
+        return f"Today is done \u2014 {today_n} finished, past the bar of {bar}."
+    if streak >= 2:
+        return (f"{streak} days running. {bar - today_n} more today keeps it "
+                f"alive.")
+    if today_n > 0:
+        return (f"{today_n} done so far today. "
+                f"{bar - today_n} more and the day counts.")
+    if active > 0:
+        return (f"You showed up on {active} of the last {window} days. "
+                f"Today is one of them if you want it.")
+    return f"Nothing yet today. {bar} things starts a chain."
+
+
+def _performance(chain):
+    """The last seven days, as the board's own numbers.
+
+    Reuses the chain's tally rather than querying again — it already counts
+    exactly what "done" means here, and a second definition of done is how
+    two screens end up disagreeing about the same day.
+    """
+    if not chain or not chain.get("ok"):
+        return None
+    days = list(reversed((chain.get("days") or [])[:7]))   # oldest → newest
+    if not days:
+        return None
+    bar = chain.get("bar") or 5
+    counts = [d.get("n") or 0 for d in days]
+    total = sum(counts)
+    hit = sum(1 for n in counts if n >= bar)
+    peak = max(counts) if counts else 0
+    return {
+        "days": [{"date": d.get("date"), "n": d.get("n") or 0,
+                  "met": (d.get("n") or 0) >= bar,
+                  # Height as a percentage of the best day, so a quiet week
+                  # still reads as a shape rather than a flat line.
+                  "pct": int(round((d.get("n") or 0) * 100.0 / peak)) if peak else 0,
+                  "label": (d.get("date") or "")[-2:]}
+                 for d in days],
+        "total": total,
+        "hit": hit,
+        "peak": peak,
+        "avg": round(total / float(len(counts)), 1) if counts else 0,
+        "bar": bar,
+        "streak": chain.get("streak") or 0,
+        "best": chain.get("best") or 0,
+    }
+
+
 def _link_task(item, plan_date):
     """A task opens the Eisenhower matrix, which wants the date in parts."""
     return url_for("todo.todo", year=plan_date.year, month=plan_date.month,
@@ -860,6 +965,10 @@ def day_board():
         checklist=checklist, checklist_bands=checklist_bands, chain=chain,
         checklist_done=sum(1 for c in checklist if c["done"]),
         now_pct=now_pct,
+        greeting=_greeting_word(now),
+        display_name=_display_name(user_id),
+        appreciation=_appreciation(chain, is_today),
+        perf=_performance(chain),
         refresh=refresh,
         theme=(request.args.get("theme") or "dark").lower(),
     )

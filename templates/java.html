@@ -16,6 +16,7 @@
    POST without this token is rejected before it reaches the endpoint. #}
 <meta name="csrf-token" content="{{ csrf_token() }}">
 {% include "_pwa_head.html" %}
+<script src="/static/js/celebrate.js" defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
