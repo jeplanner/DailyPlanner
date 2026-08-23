@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v269";
+  var BUILD = "v270";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -761,6 +761,9 @@
             resolve(URL.createObjectURL(b));
           }
         }).then(function (url) {
+          // Kept as the warmed-and-decodable marker: what the element is
+          // actually given is the HTTP URL above. Holding the bytes still
+          // proves the render succeeded and the response was audio.
           sayCache[text] = url;
           sayState = "ready";
           if (text === nextWords) preloadSpeech(text);
@@ -782,10 +785,25 @@
   }
 
   /* Returns false when there is nothing cached to play. Whether it was
-     HEARD is reported through onFail. */
+     HEARD is reported through onFail.
+
+     ── IT PLAYS THE PLAIN HTTP URL, NOT THE CACHED BYTES ──────────────
+     Measured on a locked Android, 2026-08-24: the words were refused with
+     NotSupportedError from a blob: URL, then from a data: URL, and then —
+     decisively — from the SAME element that had played the chime one
+     second earlier. Same element, same instant, same locked screen: one
+     source worked and the other did not. The difference was never the
+     element or the autoplay permission. It was the URL scheme.
+
+     Android Chrome will not decode a blob:/data: source on a media
+     element. The chime works because it is an ordinary HTTP URL, so the
+     words use one too. The fetch is still worth doing — it warms the HTTP
+     and service-worker caches, so the source is local by the time it is
+     needed, which was the whole point of prefetching. What changes is
+     only what gets handed to the element. */
   function playSpeech(text, onFail) {
-    var url = sayCache[text];
-    if (!url) return false;
+    if (!sayCache[text]) return false;      // not warmed yet
+    var url = sayUrl(text);
     return playThrough(url, function () {
       if (lastFire) { lastFire.spoke = "played (audio)"; paint(); }
       nudgeKeepalive();
@@ -811,13 +829,12 @@
      like an autoplay block and is not one. Loading it in advance means the
      only thing left to do at fire time is press play. */
   function preloadSpeech(text) {
-    var url = text && sayCache[text];
-    if (!url) return;
+    if (!text || !sayCache[text]) return;
     try {
       var el = speechSound();
-      if (el.src === url || el.dataset.queued === text) return;
+      if (el.dataset.queued === text) return;
       el.dataset.queued = text;
-      el.src = url;
+      el.src = sayUrl(text);
       el.load();
     } catch (e) {}
   }
@@ -1209,7 +1226,7 @@
           triedChimeEl = true;
           lastFire.audio = "retrying on the chime's element";
           paint();
-          if (playThrough(sayCache[words], function () {
+          if (playThrough(sayUrl(words), function () {
                 lastFire.spoke = "played (audio, chime element)";
                 nudgeKeepalive();
                 paint();

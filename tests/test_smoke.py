@@ -6417,3 +6417,54 @@ def test_an_announcement_that_cannot_be_spoken_still_arrives():
 
     # And the log says so, or "you were told" looks like silence.
     assert "fell back to a notification" in js
+
+
+def test_the_words_play_from_a_plain_http_url():
+    """The decisive measurement, on a locked Android 2026-08-24:
+
+    the words were refused with NotSupportedError from a blob: URL, then
+    from a data: URL, and then from the SAME element that had played the
+    chime one second earlier. Same element, same instant, same locked
+    screen — one source played and the other did not.
+
+    So it was never the element, and never the autoplay permission. It was
+    the URL scheme: Android Chrome will not decode a blob:/data: source on
+    a media element. The chime works because it is an ordinary HTTP URL.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+
+    play = js.split("function playSpeech")[1].split("\n  }")[0]
+    assert "sayUrl(text)" in play, "the element is still handed cached bytes"
+    assert "createObjectURL" not in play and "data:" not in play
+
+    pre = js.split("function preloadSpeech")[1].split("\n  }")[0]
+    assert "sayUrl(text)" in pre
+
+    # The retry on the chime's element must use the same source, or it
+    # re-tests the thing that already failed.
+    fire = js.split("playChime(function () {")[1].split("\n    });")[0]
+    assert "playThrough(sayUrl(words)" in fire
+
+    # The fetch is still worth doing — it warms the caches so the source is
+    # local by the time it is needed.
+    assert "function fetchSpeech" in js
+    assert "sayCache[text]" in play, "nothing checks that it was warmed"
+
+
+def test_rendered_speech_is_cached_by_the_service_worker():
+    """It has to be playable on a phone that is locked, frozen and possibly
+    off the network — precisely when a request is least likely to succeed.
+
+    /api/announcer/say returns the same audio for the same words forever,
+    so it is cached by URL. It is deliberately the ONE exception above the
+    /api/ early-return; everything else under /api/ must stay live.
+    """
+    sw = open("static/service-worker.js", encoding="utf-8").read()
+    assert "async function cacheFirst" in sw
+    assert '"/api/announcer/say"' in sw
+
+    body = sw.split('addEventListener("fetch"')[1]
+    say_at = body.index('/api/announcer/say')
+    api_at = body.index('url.pathname.startsWith("/api/")')
+    assert say_at < api_at, \
+        "the /api/ early-return runs first, so the audio is never cached"

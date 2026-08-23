@@ -16,7 +16,7 @@
    route at /service-worker.js is served with no-cache (app.py), so a
    new version is picked up on the next page load. */
 
-const CACHE_VERSION = "v269-2026-08-23-clap-everywhere"
+const CACHE_VERSION = "v270-2026-08-24-http-url-speech"
 const STATIC_CACHE = `dp-static-${CACHE_VERSION}`;
 const PAGES_CACHE  = `dp-pages-${CACHE_VERSION}`;
 const OFFLINE_URL  = "/offline";
@@ -256,6 +256,20 @@ self.addEventListener("fetch", (event) => {
   // Range requests (audio/video) are not cache-friendly.
   if (req.headers.has("range")) return;
 
+  /* ── THE RENDERED ANNOUNCEMENT IS AN ASSET, NOT AN API CALL ────────
+     /api/announcer/say?text=… returns the same audio for the same words
+     forever, and it has to be playable on a phone that is locked, frozen
+     and possibly off the network — which is precisely when a request is
+     least likely to succeed. Cached by URL so the media element gets a
+     local hit.
+
+     It sits above the /api/ early-return deliberately: everything else
+     under /api/ must stay live, and this is the one exception. */
+  if (url.pathname === "/api/announcer/say") {
+    event.respondWith(cacheFirst(req, STATIC_CACHE));
+    return;
+  }
+
   // API endpoints, push subscription, auth callbacks — always live.
   if (
     url.pathname.startsWith("/api/") ||
@@ -311,6 +325,24 @@ async function staleWhileRevalidate(req, cacheName) {
     })
     .catch(() => null);
   return cached || (await network) || Response.error();
+}
+
+/* Cache first, then network — for responses that never change for a given
+   URL. A miss still goes to the network and stores the result. */
+async function cacheFirst(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  try {
+    const res = await fetch(req);
+    if (res && res.ok && res.type === "basic") {
+      cache.put(req, res.clone()).catch(() => {});
+      trimCache(cacheName);
+    }
+    return res;
+  } catch (_) {
+    return new Response("", { status: 503, statusText: "Offline" });
+  }
 }
 
 async function networkFirst(req, cacheName, revalidate) {
