@@ -369249,6 +369249,820 @@ front of the array answer the back.
 · COST — O(n) time, since each index is pushed once and popped at most once
   across both passes, and O(n) space."""
 
+_ANSWER_V2["Mixup"] = """Train on blends of two examples AND the same blend of their labels - the model
+learns that the space between classes behaves smoothly.
+
+· THE MECHANISM — draw λ from a Beta distribution, then train on
+  λ·x₁ + (1-λ)·x₂ with target λ·y₁ + (1-λ)·y₂. Both the input and the label
+  are mixed by the same amount.
+· MIXING THE LABEL IS THE WHOLE POINT. Blending two images and keeping one
+  label would just be noise. Blending both teaches the model that a 70/30 mix
+  of cat and dog should be predicted 70/30, which is a genuine constraint on
+  its behaviour between training points.
+· WHY IT HELPS — it encourages LINEAR behaviour between examples. Networks
+  otherwise behave erratically off the data manifold, which is where
+  overconfidence and adversarial fragility live.
+· IT IMPROVES CALIBRATION, and that is often the bigger practical win.
+  Networks trained with hard one-hot labels are systematically overconfident;
+  soft mixed targets pull that back.
+· THE IMAGES LOOK ABSURD to a human — two photos ghosted over each other. That
+  it works anyway is a useful reminder that the model is not doing what you
+  are.
+· THE HYPERPARAMETER is α in Beta(α, α). Around 0.2 gives mostly mild mixes;
+  1.0 makes λ uniform and mixes aggressively. Too high underfits.
+· CUTMIX is the sibling — paste a rectangular patch of one image into another
+  and mix the labels BY AREA. It keeps local structure intact, which suits
+  convolutional networks better, and it tends to beat mixup on image
+  classification.
+· WHERE IT DOES NOT TRANSFER CLEANLY — text. Interpolating token embeddings
+  does not produce a sentence, so text mixup operates in hidden space and is
+  far less standard.
+· WHEN TO REACH FOR IT — a small dataset, an overfitting model, or a need for
+  trustworthy probabilities. It costs nothing at inference and about one line
+  in the training loop."""
+
+_ANSWER_V2["Stratified sampling"] = """Sample within each group in proportion, so the sample has the same shape as the
+population rather than merely the same size.
+
+· THE PROBLEM — a plain random sample of a rare class can, by chance, contain
+  almost none of it. With 1% positives and a 1,000-row sample, getting 3
+  instead of 10 is entirely ordinary and it wrecks the estimate.
+· THE MECHANISM — split the population into strata (the classes, or any
+  grouping that matters), then sample within each stratum in proportion to its
+  size.
+· THE BENEFIT IS LOWER VARIANCE. Stratifying removes the between-group
+  variation from the sampling error, so an estimate from a stratified sample is
+  more precise than from a simple random one of the same size. That is the
+  statistical reason, not just a tidiness argument.
+· WHERE IT MATTERS MOST IN ML — the train/test split and cross-validation
+  folds. StratifiedKFold keeps the class balance in every fold; without it one
+  fold can end up with almost no positives and its score is noise you then
+  average in.
+· STRATIFY ON WHAT MATTERS, which is not always the label. If performance
+  varies by country, device or customer segment, stratify on that too, or your
+  test set can be missing a segment entirely.
+· FOR REGRESSION, bin the continuous target and stratify on the bins. Skewed
+  targets otherwise produce test sets with none of the extreme values, which
+  is precisely where models fail.
+· IT IS NOT OVERSAMPLING. Stratified sampling preserves the true proportions;
+  oversampling deliberately distorts them to help a model learn a rare class.
+  Confusing the two is common and they have opposite purposes.
+· IN SURVEYS AND EXPERIMENTS it is the same idea — sample proportionally
+  across age bands or regions so the result generalises, and stratify the
+  randomisation in an A/B test so the arms are balanced on the things you know
+  matter.
+· THE COST — you need to know the strata in advance, and with many strata the
+  per-stratum samples get small. Beyond a point, that is worse than not
+  stratifying at all."""
+
+_ANSWER_V2["Design a Churn Prediction system"] = """Defining churn and building leak-free point-in-time features is most of the
+work - the model is a gradient-boosted tree.
+
+· DEFINE CHURN FIRST, and it is a product decision, not a technical one.
+  Subscription churn is explicit (a cancellation). Usage churn needs a rule:
+  no activity for 30 days. Agree it before modelling, because it sets the
+  label, the horizon and the intervention.
+· FRAME THE PREDICTION PRECISELY — "will this customer churn in the next 30
+  days, given only what we knew on day 0?" Both windows must be explicit or
+  the training data is ambiguous.
+· THE LEAKAGE TRAP THAT RUINS THESE PROJECTS — features computed after the
+  prediction date. A "cancellation requested" flag predicts churn perfectly
+  and is worthless, because by then you already know. Build every feature from
+  a strict point-in-time snapshot.
+· THE FEATURES THAT WORK — recency, frequency and monetary value; TRENDS
+  rather than levels, since usage down 40% month on month beats absolute
+  usage; support ticket count and sentiment; engagement with the features that
+  create the habit; payment failures; and tenure.
+· THE IMBALANCE — churners are typically 2-10%. Use class weights, evaluate
+  with PR-AUC, and never report accuracy, which "nobody churns" wins.
+· THE MODEL — gradient boosting on tabular features is the right default: no
+  scaling, mixed types, strong out of the box. Keep logistic regression as an
+  interpretable baseline to beat.
+· THE THRESHOLD IS A BUSINESS DECISION — it follows from the cost of a
+  retention offer against the value of a saved customer. Present the
+  precision-recall curve and let the business choose the operating point.
+· THE PART THAT ACTUALLY MATTERS — a score nobody acts on is worthless. Pair
+  each prediction with REASONS (SHAP values give per-customer drivers) and a
+  specific intervention, then A/B test whether the intervention works. Many
+  churn models are accurate and change nothing, which is the failure to avoid.
+· WATCH FOR THE INTERVENTION LOOP — if you save the customers you predict,
+  your next model trains on data where the prediction was wrong by design.
+  Hold out a control group permanently."""
+
+_ANSWER_V2["Design a Customer Lifetime Value (LTV) prediction system"] = """Predict future value over a fixed horizon, not "forever" - and separate how
+often they will buy from how much they will spend.
+
+· PIN THE HORIZON FIRST. "Lifetime" is unmeasurable and untestable; 12-month
+  or 24-month value is both. Every downstream decision — acquisition spend,
+  segmentation, retention budget — works fine with a horizon and cannot be
+  validated without one.
+· THE TWO-PART STRUCTURE that makes it tractable — predict the NUMBER of future
+  transactions and the AVERAGE VALUE of a transaction separately, then
+  multiply. They are driven by different things and mixing them into one
+  regression loses that.
+· THE CLASSICAL MODELS — BG/NBD for purchase frequency and Gamma-Gamma for
+  monetary value. They are interpretable, work with little data, and are a
+  serious baseline rather than a historical footnote, especially in
+  non-contractual settings where you never observe churn.
+· THE ML VERSION — gradient boosting on RFM features plus tenure, category
+  mix, acquisition channel, discount sensitivity and early-life behaviour.
+  Usually wins with enough history.
+· THE TARGET IS EXTREMELY SKEWED — a few customers are worth orders of
+  magnitude more than the median. Predicting the mean with squared error
+  chases those outliers; consider log-transforming, or a Tweedie objective,
+  which handles the zero-inflated positive-skewed shape directly.
+· ZERO IS THE MOST COMMON ANSWER in most businesses — most customers never buy
+  again. A model that cannot predict zero well is wrong about the majority.
+· EVALUATE BY DECILE, not by overall error. The business use is ranking
+  customers into value bands, so what matters is whether the top decile really
+  is the top decile. Report the lift curve.
+· CONTRACTUAL VS NON-CONTRACTUAL changes everything. With subscriptions you
+  observe churn directly and LTV is margin × expected tenure. Without them you
+  never see a customer leave, only stop, which is why the probabilistic models
+  exist.
+· WHAT IT IS FOR — capping acquisition spend per channel, prioritising support,
+  and segmenting. Say which decision it drives, because the required accuracy
+  follows from that and not from a benchmark."""
+
+_ANSWER_V2["Basic Calculator (with parentheses)"] = """A stack for the state outside each bracket - push the running result and the
+sign when you descend, restore them when you come back out.
+
+· THE PROBLEM — evaluate a string like "(1+(4+5+2)-3)+(6+8)" with plus, minus,
+  parentheses and spaces. No multiplication in the basic version, which is
+  what lets a single pass work.
+· THE STATE you carry — `result` (the running total), `sign` (+1 or -1 for the
+  next number), and `num` (the number being read digit by digit).
+· ON A DIGIT — num = num * 10 + digit. Numbers can be multi-digit, and
+  treating each digit separately is the standard bug.
+· ON + OR - — add sign * num into result, reset num to 0, and set sign for the
+  next term.
+· ON '(' — push `result` and `sign` onto the stack, then RESET both. You are
+  starting a fresh sub-expression that knows nothing about what came before.
+· ON ')' — finish the current term, then result = popped_sign * result +
+  popped_result. The order matters: the sign that applied to the whole bracket
+  multiplies the bracket's value before it is added back.
+· THE FINAL TERM — after the loop, add sign * num once more. The string does
+  not end with an operator, so the last number is never flushed inside the
+  loop. This is the second standard bug.
+· THE HAND TRACE on "(1+(4+5))": at the inner ')' the result is 9, popped sign
+  +1 and popped result 1, giving 10. At the outer ')' the stack restores 0 and
+  +1, giving 10.
+· COST — O(n) time, O(depth) space for the stack.
+· THE HARDER VARIANTS — Basic Calculator II adds * and / with no parentheses,
+  solved by keeping a stack of terms and applying the higher-precedence
+  operators immediately. Calculator III combines both, and the clean answer
+  there is recursion on the bracket structure with the II logic inside."""
+
+_ANSWER_V2["Largest Number (custom sort)"] = """Sort by which ORDER of the pair makes a bigger string, not by the numbers
+themselves - compare a+b against b+a.
+
+· THE PROBLEM — arrange the numbers so their concatenation is the largest
+  possible. [3, 30, 34, 5, 9] gives "9534330".
+· WHY NUMERIC SORTING FAILS — descending numeric order gives 9, 5, 34, 30, 3 →
+  "9534303", which is smaller. 3 should come before 30 because "330" beats
+  "303", even though 3 is the smaller number.
+· THE COMPARATOR — for strings a and b, put a first if a+b > b+a. That single
+  rule is the whole solution.
+· WHY IT IS A VALID ORDERING, which is the part worth arguing: the comparison
+  is transitive (it can be proven, and you should say you know it needs
+  proving), so it defines a total order and a sort using it produces a
+  consistent arrangement.
+· THE IMPLEMENTATION — in Python, sort with functools.cmp_to_key(lambda a, b:
+  1 if a+b < b+a else -1). In Java, a Comparator returning
+  (b+a).compareTo(a+b).
+· THE ALL-ZEROS EDGE CASE — [0, 0] concatenates to "00", and the expected
+  answer is "0". Check whether the result starts with '0' and return "0" if
+  so. This is the case almost every wrong submission misses.
+· CONVERT TO STRINGS FIRST and compare as strings throughout. Doing arithmetic
+  on the concatenations risks overflow in fixed-width languages and is slower
+  everywhere.
+· COST — O(n log n) comparisons, each costing O(k) for k-digit strings, so
+  O(n·k·log n) overall.
+· THE TRANSFERABLE IDEA — when the natural ordering does not match the
+  objective, define a comparator directly from the objective. The same move
+  solves scheduling problems where you sort by a ratio rather than by either
+  quantity."""
+
+_ANSWER_V2["Why do ensembles (bagging, boosting) usually beat a single model?"] = """Because independent errors cancel when you average them - and the two families
+attack different halves of the error.
+
+· THE ERROR DECOMPOSITION is the frame: error = bias² + variance + noise.
+  Bagging attacks VARIANCE, boosting attacks BIAS. That is the cleanest
+  one-line distinction and the answer to "what is the difference".
+· BAGGING — train many high-variance, low-bias models on bootstrap samples and
+  AVERAGE them. Each overfits its own sample differently, so the
+  idiosyncratic errors cancel while the shared signal survives.
+· THE AVERAGING ARGUMENT — averaging k independent estimates with variance σ²
+  gives variance σ²/k. The catch is INDEPENDENCE: if the models make the same
+  mistakes, averaging changes nothing.
+· WHICH IS WHY RANDOM FORESTS SAMPLE FEATURES at each split, not just rows.
+  Without it, one dominant feature appears at the top of every tree and the
+  trees are near-identical. Decorrelating them is what makes the averaging
+  actually work, and it is the detail that distinguishes a real answer.
+· BOOSTING — train models SEQUENTIALLY, each one fitting the errors the
+  previous ones left behind. Start with something too simple (high bias) and
+  add corrections until it is not.
+· GRADIENT BOOSTING states that precisely: each new tree fits the negative
+  gradient of the loss with respect to the current predictions. That framing
+  is what lets it optimise any differentiable loss, not just squared error.
+· THE OPPOSITE FAILURE MODES follow from the mechanisms. Bagging is very hard
+  to overfit with more trees — extra trees just refine the average. Boosting
+  overfits readily with too many rounds, which is why it needs a learning rate,
+  early stopping and depth limits.
+· PARALLELISM — bagging trains all models independently, boosting cannot.
+  A practical difference that decides which fits your infrastructure.
+· STACKING is the third family: train diverse models and a meta-model on their
+  predictions, using out-of-fold predictions so the meta-model never sees a
+  base model's training data. It wins competitions and is a maintenance burden
+  in production, which is worth saying plainly."""
+
+_ANSWER_V2["Design an ETA Prediction system"] = """Predict travel time per road segment, sum along the route, and correct the sum
+with a model that has seen the whole trip.
+
+· WHY NOT ONE MODEL FOR THE WHOLE TRIP — routes are unique, so a per-trip model
+  cannot generalise. Segments repeat millions of times a day, so a per-segment
+  model has data.
+· THE PIPELINE — segment the road network, predict a traversal time per
+  segment for the departure time, sum along the chosen route, then apply a
+  whole-route correction for the things segments cannot see: turns,
+  intersections, the number of transitions, and systematic bias.
+· THE FEATURES — historical speed on this segment at this time of day and day
+  of week, LIVE speed from current traffic, road class, speed limit, weather,
+  events, and the driver or vehicle type.
+· LIVE DATA IS WHAT MAKES IT USEFUL — historical averages are fine at 3am and
+  useless in an incident. The system's real value is reacting to now, which
+  makes the streaming pipeline as important as the model.
+· PREDICT A DISTRIBUTION, NOT A NUMBER. Users need "12-16 minutes", and a
+  logistics business needs the 90th percentile to promise a delivery window.
+  Quantile regression gives both from the same model.
+· THE ASYMMETRIC COST — arriving early is mildly good and arriving late is
+  bad. Optimise a quantile above the median rather than the mean, and say why:
+  the metric should encode that asymmetry rather than being symmetric by
+  default.
+· THE FEEDBACK LOOP — a published ETA changes behaviour. Route everyone the
+  same way and you create the congestion you predicted. Real systems spread
+  traffic across near-equal routes for this reason.
+· EVALUATION — mean absolute error in minutes and, more usefully, the fraction
+  of trips within a tolerance band. Segment the error by trip length, because a
+  three-minute error on a ten-minute trip and on a two-hour trip are very
+  different failures.
+· SERVING — precompute historical segment profiles, keep live speeds in a fast
+  store, and hold the whole thing to a tight latency budget, since ETA is
+  computed for many candidate routes before one is shown."""
+
+_ANSWER_V2["Design an Anomaly Detection service"] = """You almost never have labels, so the model learns what NORMAL looks like and
+flags distance from it - and the threshold is the entire product.
+
+· ESTABLISH WHAT KIND OF ANOMALY — a POINT anomaly (one bad value), a
+  CONTEXTUAL one (fine in general, wrong for 3am), or a COLLECTIVE one (each
+  point normal, the sequence not). They need different methods and conflating
+  them is the common weakness.
+· WHY IT IS UNSUPERVISED — anomalies are rare, varied, and by definition
+  include kinds you have not seen. Training a classifier on known anomalies
+  finds more of those and misses the new ones, which are the ones that matter.
+· THE METHOD LADDER — start with statistical baselines (z-score, IQR,
+  seasonal decomposition with a residual threshold). They are interpretable,
+  cheap, and beat elaborate models more often than anyone expects.
+· THEN — isolation forests (anomalies are easier to isolate, so they sit at
+  shallower depth), local outlier factor for density-varying data,
+  autoencoders where high reconstruction error means the point is unlike
+  anything seen, and for time series, forecast-then-compare.
+· SEASONALITY IS THE COMMONEST FALSE-POSITIVE SOURCE. Traffic falling on
+  Sunday is not an anomaly. Decompose trend and seasonality and detect on the
+  RESIDUAL, or you will alert every weekend.
+· THE THRESHOLD IS THE PRODUCT. Too sensitive and people mute the alerts,
+  after which the system has negative value because it also silences the real
+  ones. Tune to an alert VOLUME the on-call rota can actually handle, and say
+  that out loud — it is a capacity decision, not a statistical one.
+· ALERTS NEED CONTEXT, not just a flag: what was expected, what happened,
+  which dimension is unusual, and what changed recently. An alert nobody can
+  act on is noise regardless of correctness.
+· FEEDBACK CLOSES THE LOOP — let people mark an alert as expected, and use
+  those labels to suppress recurring benign patterns. This is where a
+  supervised layer can legitimately be added on top.
+· EVALUATION WITHOUT LABELS — inject synthetic anomalies to measure detection
+  rate, and track precision from the feedback you collect. Report both, and be
+  honest that neither is a clean estimate."""
+
+_ANSWER_V2["Single Number II (appears once among triples)"] = """XOR cancels pairs, not triples - so count each bit position modulo 3 instead.
+
+· THE PROBLEM — every element appears exactly three times except one. Find it
+  in O(n) time and O(1) space.
+· WHY XOR FAILS HERE — x ^ x = 0 cancels PAIRS. Three copies leave one behind,
+  so the accumulator ends up holding the XOR of every distinct value, which is
+  not the answer.
+· THE BIT-COUNTING METHOD, which is the one to explain: for each of the 32 bit
+  positions, count how many numbers have that bit set. Every tripled value
+  contributes 0 or 3 to that count, so the count modulo 3 is exactly the
+  unique number's bit.
+· THE IMPLEMENTATION — loop over 32 positions, and for each, sum
+  ((num >> i) & 1) across the array, then set bit i of the answer if the sum %
+  3 is 1. O(32n), which is O(n).
+· THE NEGATIVE NUMBER TRAP — if bit 31 is set the reconstructed value is a
+  large positive rather than a negative. In Python, subtract 2**32 when bit 31
+  is set. In Java and C++ the natural int arithmetic handles it.
+· THE TWO-VARIABLE TRICK, for the follow-up: maintain `ones` and `twos` as bit
+  masks of values seen once and twice modulo 3. ones = (ones ^ x) & ~twos;
+  twos = (twos ^ x) & ~ones. After the pass, `ones` is the answer.
+· WHY THAT WORKS — the two masks together form a 2-bit counter per bit
+  position, cycling 00 → 01 → 10 → 00. Clever, hard to derive under pressure,
+  and worth knowing rather than deriving.
+· PRESENT THE COUNTING VERSION and mention the two-variable one. The counting
+  version generalises immediately: for k repetitions, count modulo k.
+· THE FAMILY — Single Number (pairs, use XOR), II (triples, count mod 3), III
+  (two uniques among pairs, XOR then split by a differing bit). Knowing which
+  tool each needs is the actual lesson."""
+
+_ANSWER_V2["Regret (online learning)"] = """How much worse you did than the best fixed choice in hindsight - the standard
+way to score a decision rule that had to act before it knew anything.
+
+· THE DEFINITION — regret after T rounds is (the reward of the best single arm
+  played every time) minus (the reward you actually got). It is measured
+  against hindsight, which is why it is a fair way to judge decisions made
+  without it.
+· WHY NOT JUST MEASURE REWARD — reward depends on the problem's difficulty.
+  Regret measures the cost of not knowing, which is the part the algorithm is
+  responsible for.
+· SUBLINEAR REGRET IS THE GOAL. If regret grows like T, you are losing a fixed
+  amount per round forever and never learning. If it grows like √T or log T,
+  the AVERAGE regret per round tends to zero — you converge on the right
+  choice.
+· THE BOUNDS worth quoting — UCB and Thompson sampling achieve O(log T) regret
+  for stochastic bandits, which is optimal. Pure greedy has LINEAR regret,
+  because it can lock onto a bad arm that looked good once and never explore
+  again.
+· THAT IS THE EXPLORE-EXPLOIT TRADE stated precisely: exploring costs regret
+  now and buys information that reduces regret later. Regret is the currency
+  both sides are priced in.
+· ε-GREEDY explores at a fixed rate, which gives linear regret unless ε decays.
+  Decaying it properly recovers a sublinear bound, and that detail is what
+  separates the toy version from the usable one.
+· WHERE IT APPLIES IN PRODUCTS — which recommendation to show, which layout to
+  serve, which price to test. Any repeated decision where you learn only the
+  outcome of the option you chose.
+· CONTEXTUAL BANDITS extend it — the best arm depends on features of the
+  situation, and regret is measured against the best POLICY rather than the
+  best fixed arm.
+· THE PRACTICAL FRAMING — bandits are the right tool when a full A/B test is
+  too slow or too costly, because they shift traffic toward the winner while
+  the test runs rather than waiting until the end."""
+
+_ANSWER_V2["Set Mismatch"] = """One number is duplicated and one is missing - find both by using the values as
+indices, since they are exactly 1..n.
+
+· THE PROBLEM — an array that should contain 1..n has one value replaced by
+  another, so one appears twice and one is absent. Return both.
+· THE KEY PROPERTY — the values ARE the index range. That is what makes O(1)
+  extra space possible at all, and it is the observation to state first.
+· THE SIGN-MARKING METHOD — for each value v, negate the element at index
+  |v|-1. If it is ALREADY negative, |v| is the duplicate. Afterwards, the one
+  index still holding a positive value identifies the missing number.
+· WHY IT WORKS — each value visits its own home index exactly once per
+  occurrence. The duplicate visits twice, and the missing number's home is
+  never visited.
+· TAKE ABSOLUTE VALUES when reading, since earlier iterations may have flipped
+  the sign of the entry you are about to use as an index. Forgetting this is
+  the standard bug and produces a wrong index rather than an obvious crash.
+· THE MATHS METHOD — the expected sum is n(n+1)/2 and the expected sum of
+  squares is n(n+1)(2n+1)/6. Two equations, two unknowns (duplicate minus
+  missing, and their squares), solved directly. Elegant, and it risks overflow
+  in fixed-width languages.
+· THE CYCLIC SORT METHOD — swap each value to its home index; the index that
+  ends up wrong reveals both answers. The same technique as First Missing
+  Positive.
+· THE OBVIOUS ANSWER, a counter or a set, is O(n) space and perfectly correct.
+  State it first, then improve on it — the improvement is the question.
+· COST — O(n) time and O(1) extra space, at the cost of mutating the input.
+  Say so, and offer to restore the signs afterwards if mutation is unwelcome."""
+
+_ANSWER_V2["Single Number III (two uniques)"] = """XOR everything to get a ^ b, then find any bit where they DIFFER and use it to
+split the array into two groups.
+
+· THE PROBLEM — every element appears twice except two, which appear once
+  each. Find both, in O(n) time and O(1) space.
+· STEP ONE — XOR the whole array. The pairs cancel, leaving a ^ b where a and
+  b are the two unique values.
+· THE INSIGHT — a and b are different, so a ^ b is non-zero, so at least one
+  bit is SET in it. A set bit means a and b differ at that position: one has
+  it, the other does not.
+· ISOLATING THAT BIT — x & -x gives the lowest set bit. It works because
+  two's-complement negation flips all bits and adds one, so the lowest set bit
+  is the only position where x and -x agree.
+· STEP TWO — partition the array by whether each element has that bit. a goes
+  in one group and b in the other, and every duplicated pair goes entirely
+  into one group or the other, since identical values agree on every bit.
+· STEP THREE — XOR each group separately. The pairs cancel within their group
+  and each group's leftover is one of the answers.
+· WHY THE PAIRS DO NOT CAUSE TROUBLE — a duplicate cannot be split across the
+  groups, which is the property that makes the partition safe. Being able to
+  say that is the point of the question.
+· THE HAND TRACE on [1,2,1,3,2,5]: XOR gives 3 ^ 5 = 6 (binary 110). The
+  lowest set bit is 2. Group with bit 2 set: {2, 3, 2} → 3. Group without:
+  {1, 1, 5} → 5.
+· COST — two passes, O(n) time, O(1) space. The family (Single Number I, II,
+  III) is worth learning together, because each needs a different tool for the
+  same shape of problem."""
+
+_ANSWER_V2["Majority Element II (> n/3)"] = """At most two elements can appear more than n/3 times, so run Boyer-Moore with
+TWO candidates - and then verify, because the algorithm does not guarantee
+they qualify.
+
+· THE COUNTING ARGUMENT FIRST — three elements each appearing more than n/3
+  times would need more than n elements. So there are at most two answers, and
+  that bound is what tells you how many candidates to track.
+· THE GENERALISATION — for "more than n/k", track k-1 candidates. This problem
+  is the k = 3 case, and saying so shows you understand the pattern rather
+  than a special case.
+· THE ALGORITHM — keep candidate1/count1 and candidate2/count2. For each
+  number: if it matches a candidate, increment that count. Else if a count is
+  zero, adopt the number there. Else decrement BOTH counts.
+· DECREMENTING BOTH is the step people get wrong. A number matching neither
+  candidate cancels one occurrence of each, which is what the pairing-off
+  intuition requires with two candidates instead of one.
+· THE ORDER OF THE CHECKS MATTERS — test "matches a candidate" for both
+  candidates BEFORE testing for a zero count. Otherwise a repeated value can be
+  adopted into both slots and the algorithm silently tracks one element twice.
+· THE SECOND PASS IS MANDATORY HERE, unlike the n/2 version where a majority is
+  promised to exist. The candidates that survive are only CANDIDATES; count
+  their real occurrences and keep the ones genuinely above n/3.
+· THE HAND TRACE on [1,1,1,3,3,2,2,2]: the candidates end as 1 and 2, and the
+  verification pass confirms both appear 3 times against a threshold of 8/3 ≈
+  2.67.
+· COST — O(n) time, O(1) space, two passes.
+· WHY NOT A HASH MAP — it is O(n) space and perfectly correct. Offer it first,
+  then give this. The constant-space requirement is the whole reason the
+  question exists."""
+
+_ANSWER_V2["Guardrail metric"] = """A metric that cannot improve, only veto - it exists to catch the damage your
+primary metric is blind to.
+
+· THE PURPOSE — an experiment optimising one number will happily wreck others.
+  Guardrails are the numbers you check to make sure a win is a real win rather
+  than a transfer of harm somewhere else.
+· THE ASYMMETRY IS THE DEFINITION. A guardrail moving in a good direction does
+  not make the change better; a guardrail moving badly can block it outright.
+  That one-sidedness is what distinguishes it from a secondary metric.
+· THE STANDARD SET — latency, error rate, crash rate, page weight, cost per
+  request, complaint and unsubscribe volume, and revenue.
+· THE CLASSIC CASE — a ranking change lifts click-through by 3% and doubles
+  serving cost, or a more aggressive email schedule lifts opens this week and
+  raises unsubscribes, which is borrowing engagement from next year.
+· SET THE THRESHOLD IN ADVANCE, as "ship unless latency p99 regresses by more
+  than 5%". Deciding afterwards means arguing about whether a regression
+  matters while looking at a result you want to ship.
+· THEY NEED LESS STATISTICAL POWER, and that is deliberate — you are checking
+  for harm, not proving improvement, so a wide interval that excludes serious
+  damage is enough.
+· COUNTERFACTUAL GUARDRAILS matter in ML systems — measure the long-term
+  effect on retention and satisfaction, not only the immediate metric, because
+  engagement optimisation degrades those slowly and invisibly.
+· AUTOMATE THEM. Every experiment gets the standard set without anyone
+  remembering to add them, and the platform refuses to show a result when one
+  is breached. A guardrail somebody has to opt into is not a guardrail.
+· THE RELATED IDEA — a sample ratio mismatch check, which is not about harm
+  but about validity: a 52/48 split on a 50/50 assignment means the experiment
+  is broken and no metric from it can be trusted."""
+
+_ANSWER_V2["Design a Lead Scoring system"] = """Rank leads by likelihood to convert so a finite sales team calls the right
+ones first - and the label is defined by the sales process, not by you.
+
+· THE PURPOSE IS PRIORITISATION, not prediction. A sales team can call fifty
+  people a day; the system's job is choosing which fifty. That framing makes
+  ranking quality the metric, not accuracy.
+· DEFINE CONVERSION WITH SALES — a booked meeting, a qualified opportunity, or
+  closed revenue? They are different labels with different horizons, and
+  optimising the wrong one produces a model that fills the calendar with
+  meetings that go nowhere.
+· THE HORIZON MATTERS — leads convert over weeks or months, so recent leads
+  have no label yet. Excluding them biases training toward fast converters;
+  handle it explicitly with a fixed observation window.
+· THE FEATURES, in two families. FIRMOGRAPHIC: company size, industry,
+  technology stack, region. BEHAVIOURAL: pages viewed, pricing page visits,
+  demo requests, email engagement, time since first touch. Behavioural signals
+  are usually far stronger and decay quickly, so recency-weight them.
+· THE NEGATIVE-LABEL PROBLEM — a lead nobody called is not a lead that would
+  not convert. Training on "did not convert" mixes genuine rejection with
+  never-attempted, and the model learns to predict who sales already
+  prioritised. Log the attempts and treat uncontacted leads as unlabelled.
+· THAT FEEDBACK LOOP IS THE MAIN RISK — the model ranks, sales calls the top,
+  only the top gets labels, and the model confirms itself. Keep a randomly
+  sampled control that gets called regardless of score.
+· CALIBRATION MATTERS MORE THAN USUAL, because the score is often multiplied
+  by deal size to prioritise by expected value. An uncalibrated 0.8 makes that
+  arithmetic meaningless.
+· EXPLAINABILITY IS A REQUIREMENT, not a nicety — a salesperson needs to know
+  WHY a lead is hot to open the call. SHAP values turned into two or three
+  reasons are the deliverable alongside the score.
+· MEASURE THE BUSINESS OUTCOME — conversion rate of contacted leads and
+  revenue per rep-hour, against a control. A model with better AUC that does
+  not move either is not working."""
+
+_ANSWER_V2["Why do databases use B-trees / LSM-trees instead of a hash index for most workloads?"] = """A hash index answers equality and nothing else - it destroys order, and most
+real queries need ranges, sorting or prefixes.
+
+· WHAT A HASH INDEX IS GOOD AT — exact lookup in O(1). Genuinely faster than a
+  B-tree for that one operation, which is why it exists at all.
+· WHAT IT CANNOT DO — anything involving ORDER. "WHERE created_at BETWEEN x
+  AND y", "ORDER BY price", "LIKE 'abc%'", MIN, MAX, or a range scan. Hashing
+  deliberately scatters, so adjacent keys land nowhere near each other.
+· THAT IS THE WHOLE ANSWER — most queries are not point lookups. Reporting,
+  pagination, time windows and sorted results are the everyday shape of
+  database work, and a hash index serves none of them.
+· THE SECOND REASON — a hash index must fit its structure in memory to be O(1).
+  Once it spills to disk, the random access pattern is exactly what disks and
+  page caches are worst at, while a B-tree's shallow, ordered layout is
+  designed for it.
+· WHY B-TREES ARE SHAPED THAT WAY — each node holds hundreds of keys, so a
+  million rows is about three levels deep. Each level is one page read, and
+  page reads are the only cost that matters. And because leaves are LINKED in
+  order, a range scan is a sequential walk.
+· LSM-TREES make a different trade, for write-heavy workloads. Writes go to an
+  in-memory table and are flushed as sorted immutable files, so writes are
+  sequential and fast; reads may have to check several files and use Bloom
+  filters to skip them. B-trees update in place, which is read-optimal and
+  makes writes random.
+· THE PRACTICAL SUMMARY — B-tree for read-heavy and mixed, LSM for
+  write-heavy, hash only where you know every query is an exact match on one
+  key. Which is why Postgres has hash indexes and almost nobody uses them.
+· WHERE HASHING DOES WIN — in-memory key-value stores like Redis, where the
+  whole point is exact-key lookup and there is no disk layout to respect.
+· THE COMPOSITE-INDEX COROLLARY — a B-tree on (a, b) serves queries on a, and
+  on a plus b, but not b alone, because it is sorted like a phone book. A hash
+  index has no such structure to exploit or to be limited by."""
+
+_ANSWER_V2["Why is exactly-once delivery essentially impossible, and how do systems fake it?"] = """Because the sender cannot tell a lost message from a lost acknowledgement, so
+it must choose between retrying and not - and systems fake exactly-once with
+idempotency.
+
+· THE IMPOSSIBILITY — a sender transmits and hears nothing back. Either the
+  message never arrived, or it arrived and the ACK was lost. Those two states
+  are indistinguishable from outside, and no number of extra messages resolves
+  it (that is the Two Generals problem).
+· SO YOU PICK ONE FAILURE. AT-MOST-ONCE: never retry, and lose messages.
+  AT-LEAST-ONCE: retry until acknowledged, and produce duplicates. Almost
+  everything real chooses at-least-once, because losing data is usually worse
+  than repeating it.
+· EXACTLY-ONCE DELIVERY IS THEREFORE A FICTION. What systems actually provide
+  is exactly-once PROCESSING: the message may arrive several times and the
+  EFFECT happens once.
+· IDEMPOTENCY IS THE MECHANISM. Design the operation so applying it twice
+  equals applying it once. "Set balance to 100" is naturally idempotent; "add
+  100 to balance" is not.
+· THE IDEMPOTENCY KEY is how you make a non-idempotent operation safe — the
+  client sends a unique id with the request, the server records it, and a
+  repeat with the same key returns the original result instead of acting
+  again. This is exactly what payment APIs do and it is the answer to give.
+· DEDUPLICATION WINDOWS are the weaker version — remember message ids for some
+  period and drop repeats. It works and it is bounded: a duplicate arriving
+  after the window is not caught, so it trades correctness for memory.
+· KAFKA'S EXACTLY-ONCE is real within its own boundary — a transactional
+  producer plus offsets committed atomically with the output means a consume-
+  transform-produce cycle happens once. It stops at the edge of Kafka, and a
+  side effect on an external system is not covered.
+· THE TRANSACTIONAL OUTBOX is the practical pattern for that edge: write the
+  business change and the outgoing message in ONE database transaction, and
+  publish from the outbox separately. It converts a distributed problem into a
+  local one.
+· THE INTERVIEW ANSWER — say that exactly-once delivery is impossible, name
+  the ACK ambiguity as the reason, then describe idempotency keys as how
+  exactly-once EFFECTS are achieved anyway. That arc is what is being asked
+  for."""
+
+_ANSWER_V2["Why report p99/tail latency instead of average latency?"] = """Because the average hides the slow requests, and the slow requests are the ones
+users notice and the ones that take systems down.
+
+· WHAT AN AVERAGE CONCEALS — 99 requests at 10ms and one at 5 seconds averages
+  60ms, which describes nothing that happened. Latency distributions are
+  heavily right-skewed, so the mean sits well below the experience of the
+  unlucky.
+· PERCENTILES DESCRIBE THE ACTUAL DISTRIBUTION. p50 is the typical request,
+  p95 and p99 the tail, p999 the pathological cases. Reporting p50 with p99
+  tells you both the normal case and how bad it gets.
+· THE FAN-OUT ARGUMENT is the one that surprises people. A page making 100
+  backend calls in parallel waits for the SLOWEST. With a p99 of 1 second,
+  roughly 63% of pages contain at least one slow call. A one-in-a-hundred
+  backend event becomes a majority-of-pages user experience.
+· THE TAIL AFFECTS YOUR MOST VALUABLE USERS — the customer with the most data,
+  the largest cart or the longest history is the one hitting the slow path,
+  systematically rather than randomly.
+· WHAT CAUSES TAILS — garbage collection pauses, cache misses, lock
+  contention, queueing behind a big request, retries, and a noisy neighbour on
+  shared hardware. None of them show in an average.
+· QUEUEING THEORY EXPLAINS THE SHAPE — as utilisation approaches 100%, latency
+  does not degrade gracefully, it explodes. That is why systems are run at
+  60-70% and why the tail is the first thing to move when load rises.
+· NEVER AVERAGE PERCENTILES ACROSS SERVERS OR TIME BUCKETS. The mean of two
+  p99s is not the p99 of the combined population. Aggregate the underlying
+  distribution (histograms, t-digests) and compute the percentile from that.
+· SET SLOs ON PERCENTILES — "p99 under 200ms" is a specification you can
+  alert on and hold a team to. "Average under 200ms" can be met while a
+  quarter of users have a bad time.
+· THE PRACTICAL HABIT — quote p50 and p99 together in any design discussion.
+  One number for latency is always the wrong number of numbers."""
+
+_ANSWER_V2["Why do we need consensus algorithms (Raft/Paxos) instead of a naive majority vote?"] = """Because a vote assumes everyone can hear each other and nobody crashes
+mid-vote - and in a distributed system neither holds.
+
+· WHAT MAKES IT HARD — messages are lost, delayed and reordered; nodes crash
+  and come back with stale state; and you cannot distinguish a crashed node
+  from a slow one. A naive vote has no answer for a node that crashes after
+  voting but before the result is known.
+· THE SPLIT-BRAIN PROBLEM — a network partition leaves two halves, each of
+  which may believe it has a majority if the rule is sloppy. Two leaders
+  accepting writes is data loss that no later reconciliation fully repairs.
+· WHAT CONSENSUS ACTUALLY GUARANTEES — all non-faulty nodes agree on the SAME
+  value, the value was proposed by someone (not invented), and the decision is
+  final. A vote gives none of these under failure.
+· THE MAJORITY QUORUM is the core mechanism, and the reason it works is that
+  any two majorities of an odd-sized cluster must OVERLAP by at least one node.
+  That shared node carries the previous decision forward, which is what makes
+  a new leader unable to contradict a committed write.
+· WHY CLUSTERS ARE ODD-SIZED — five nodes tolerate two failures, six also
+  tolerate only two. The extra node adds cost and no fault tolerance.
+· RAFT'S STRUCTURE, which is why it displaced Paxos in practice: elect ONE
+  leader per term, have the leader append entries to followers' logs, and
+  commit once a majority has acknowledged. Leader election, log replication
+  and safety are separated into three understandable parts.
+· THE TERM NUMBER is what makes stale leaders harmless — a partitioned old
+  leader has a lower term, its messages are rejected, and it steps down when
+  it hears a higher one.
+· FLP IMPOSSIBILITY is the theory worth naming: in a fully asynchronous system
+  with even one crash, no deterministic algorithm can guarantee consensus.
+  Real systems get around it with TIMEOUTS, which is why Raft has randomised
+  election timeouts and why a partition costs you availability.
+· WHERE IT IS USED — etcd, ZooKeeper, Consul, and the metadata layer of most
+  distributed databases. You rarely implement it, and knowing what it
+  guarantees decides whether your design is correct."""
+
+_ANSWER_V2["Why denormalize a database if normalization is the 'correct' design?"] = """Because normalisation optimises for WRITE correctness and denormalisation
+optimises for READ speed, and most systems read far more than they write.
+
+· WHAT NORMALISATION BUYS — every fact stored once, so it cannot be updated in
+  one place and stale in another. That is a correctness guarantee the database
+  enforces for you, and it is genuinely valuable.
+· WHAT IT COSTS — joins. A fully normalised schema answering "show this
+  order with its customer, items, product names and shipping status" may touch
+  six tables, and at scale those joins dominate the query.
+· THE ARITHMETIC THAT DECIDES IT — a typical application reads far more than
+  it writes. Paying a small consistency cost on the rare operation to save a
+  large cost on the common one is not a compromise, it is the correct trade.
+· WHAT DENORMALISATION LOOKS LIKE — duplicating a column (storing product_name
+  on the order line as well as on the product), precomputed aggregates (an
+  order_count on the customer), and materialised views.
+· THE COST YOU TAKE ON — you now own consistency in application code. Change a
+  product name and every copy must be updated, or your data disagrees with
+  itself. Say this explicitly; it is the half people leave out.
+· SOMETIMES THE DUPLICATE IS CORRECT, not a copy — the price on an order line
+  should be the price AT THE TIME OF THE ORDER, not the current price. That is
+  not denormalisation at all, it is a different fact that happens to look like
+  one, and confusing the two causes real bugs.
+· WHERE IT IS STANDARD PRACTICE — analytics. A star schema is deliberately
+  denormalised because it is read-only and rebuilt from the normalised source,
+  so the consistency problem does not exist.
+· THE DISCIPLINE — normalise first, measure, then denormalise the specific
+  thing that is slow, and document why. Starting denormalised means inventing
+  a consistency problem before you have a performance one.
+· THE MODERN CAVEAT — indexes, materialised views and caching often solve the
+  same problem without duplicating data in your schema. Reach for those before
+  changing the model."""
+
+_ANSWER_V2["Why do LSM/append-only stores delete with tombstones instead of removing the data?"] = """Because the files are IMMUTABLE - you cannot remove a row from a file you never
+rewrite, so a delete is recorded as another append.
+
+· THE STRUCTURE THAT FORCES IT — an LSM tree writes sorted immutable files
+  (SSTables). Once written, a file is never modified. That immutability is
+  what makes writes sequential and fast, which is the whole point.
+· SO A DELETE IS A WRITE. A TOMBSTONE is a marker saying "this key is deleted
+  as of this moment", appended like any other record.
+· HOW READS RESOLVE IT — a read checks the newest sources first, and the
+  tombstone shadows the older value. The old data is still on disk and is
+  simply never returned.
+· WHY THE TIMESTAMP MATTERS — without ordering, an old value found in an older
+  file could resurrect a deleted key. The tombstone must be newer than
+  anything it hides, and that is what makes the resolution correct.
+· COMPACTION IS WHERE SPACE IS ACTUALLY RECLAIMED — background merging of
+  files drops any value shadowed by a newer tombstone, and drops the tombstone
+  itself once it can no longer shadow anything anywhere.
+· THE DISTRIBUTED REASON, which matters as much as the storage one: with
+  replicas, a node that was offline during a delete would otherwise re-share
+  the old value when it returned. The tombstone is what propagates the
+  deletion, so removal alone would be actively wrong.
+· GC GRACE PERIOD — tombstones must be retained long enough for every replica
+  to have seen them. Compacting one away too early lets a stale replica
+  resurrect the data, which is the classic Cassandra failure and the reason
+  the grace period exists.
+· THE COSTS — deleted data occupies space until compaction, reads get slower
+  when many tombstones accumulate, and a workload that deletes heavily can end
+  up scanning mostly tombstones. This is a real production pathology, not a
+  theoretical one.
+· THE SAME IDEA ELSEWHERE — Postgres MVCC marks rows dead and VACUUM reclaims
+  them; Git never modifies objects; event-sourced systems append a deletion
+  event. Append-only plus later reclamation is a general pattern rather than
+  an LSM quirk."""
+
+_ANSWER_V2["Why is a columnar storage format faster for analytics than a row format?"] = """Because analytics reads a few columns of many rows, and columnar layout lets you
+read only those columns - plus it compresses far better.
+
+· THE ACCESS PATTERN IS THE WHOLE ARGUMENT. An analytical query is "average
+  revenue by region over two years": two columns out of fifty, across a
+  billion rows. A transactional query is "fetch this order": every column of
+  one row.
+· ROW STORAGE puts a whole row together, so reading two columns still pulls
+  all fifty off disk and through the page cache. Columnar stores each column
+  contiguously, so you read exactly what you asked for and nothing else.
+· THAT ALONE IS OFTEN A TENFOLD REDUCTION IN I/O, and I/O is what analytical
+  queries are bound by.
+· COMPRESSION IS THE SECOND WIN, and it is bigger than people expect. A column
+  holds values of ONE type with similar distribution, so run-length encoding,
+  dictionary encoding and delta encoding all work extremely well. A country
+  column with 200 distinct values across a billion rows compresses to almost
+  nothing.
+· COMPRESSION COMPOUNDS THE FIRST WIN — less data on disk means less to read,
+  and modern formats operate on the compressed representation directly for
+  some operations rather than decompressing first.
+· VECTORISED EXECUTION follows from the layout — a contiguous run of one type
+  is exactly what SIMD instructions and tight loops want. Row layout forces
+  the CPU to stride over irrelevant bytes.
+· PREDICATE PUSHDOWN AND STATISTICS — formats like Parquet store min/max per
+  chunk, so a query filtering on a date range skips entire chunks without
+  reading them. Row formats have no such natural granularity.
+· WHY OLTP STILL USES ROWS — inserting one row into a columnar store touches
+  every column file, and fetching a whole row means gathering from all of
+  them. Point reads and writes are exactly what columnar is worst at.
+· THE PRACTICAL LANDSCAPE — Parquet and ORC for files, ClickHouse, BigQuery,
+  Redshift and Snowflake for engines, and hybrid systems that keep a row store
+  for recent writes and compact into columns. Naming that hybrid is the
+  up-to-date answer."""
+
+_ANSWER_V2["Design a Dynamic Pricing system"] = """Estimate how demand responds to price, then choose the price that maximises the
+objective - and the hard parts are fairness, trust and the feedback loop.
+
+· START WITH THE OBJECTIVE, because it changes everything: revenue, margin,
+  utilisation, or market share. Surge pricing for a ride-hailing service is
+  about matching supply to demand; retail pricing is about margin. They are
+  different problems.
+· THE CORE QUANTITY IS PRICE ELASTICITY — how much does demand change when
+  price does? Everything else follows from being able to estimate it per
+  product, per segment and per moment.
+· ESTIMATING IT IS THE HARD PART, because you only observe the prices you
+  actually charged. Historical data is confounded: prices were high when
+  demand was high, so a naive fit says raising prices RAISES demand.
+· THE FIX IS DELIBERATE EXPERIMENTATION — randomised price tests, or a bandit
+  that explores the price space. Without some randomisation you are fitting
+  your own past pricing policy, not the demand curve.
+· THE FEATURES — time, day, season, inventory level, competitor prices,
+  weather and events, plus the customer segment where that is legitimate.
+· CONSTRAINTS ARE FIRST-CLASS, not an afterthought: floor and ceiling prices,
+  maximum change per period so customers are not whiplashed, legal limits, and
+  price-match commitments. The optimiser must respect them rather than be
+  corrected afterwards.
+· FAIRNESS AND TRUST WILL DECIDE WHETHER THIS SURVIVES. Personalised pricing
+  by individual willingness to pay is legally fraught and, when discovered,
+  commercially catastrophic. Pricing by supply and demand is understood and
+  accepted; pricing by what your browser says about you is not.
+· THE FEEDBACK LOOP — your prices change demand, which trains the next model.
+  Hold out a control group at a stable price so you retain an unconfounded
+  baseline.
+· EVALUATE ON THE BUSINESS METRIC through an A/B test, with guardrails on
+  customer complaints, conversion and long-term retention. A pricing model can
+  lift this quarter's revenue and lose customers for good, and only the
+  guardrails will show it."""
+
+_ANSWER_V2["Design a Real-Time Bidding (RTB) system"] = """Decide whether and how much to bid for one ad impression, in under 100
+milliseconds, millions of times a second.
+
+· THE LATENCY BUDGET IS THE ARCHITECTURE. The exchange gives you roughly
+  50-100ms end to end, including network. Miss it and your bid is discarded,
+  so every design decision is subordinate to that.
+· THE FLOW — the exchange sends a bid request (user, context, ad slot); you
+  decide to bid and at what price; the highest bid wins; the ad is served and
+  the impression is logged.
+· THE CORE EQUATION — bid = predicted CTR × predicted conversion rate × value
+  per conversion, scaled by the campaign's strategy. Two models, multiplied,
+  turned into money.
+· pCTR IS THE MOST IMPORTANT MODEL and must be both accurate and CALIBRATED.
+  A ranking-only model is useless here: the number is multiplied by money, so
+  a systematically inflated probability overbids on everything.
+· THE FEATURES — user segment and history, page context, ad creative,
+  placement, device, time. All must be fetched and scored inside the budget,
+  which is why user features live in a precomputed store keyed by id.
+· THE AUCTION MECHANICS matter to the bidding logic. Second-price auctions
+  make truthful bidding optimal; most exchanges moved to first-price, where
+  you must bid-shade — estimate the minimum needed to win rather than your
+  true value. Getting this wrong overpays on every impression.
+· PACING — a campaign with a daily budget must not spend it in the first
+  hour. Throttle by predicted volume across the day, and adapt as actual
+  volume differs.
+· THE DATA VOLUME is the other constraint: billions of events a day, and the
+  training pipeline has to keep up. Models are retrained frequently because
+  inventory and audiences shift quickly.
+· FRAUD AND BRAND SAFETY are not optional — bot traffic, stacked ads, and
+  placement next to unacceptable content. Filtering happens before bidding,
+  because the cheapest impressions are cheap for a reason.
+· MEASURE — win rate, effective cost per acquisition, and budget delivery.
+  A model that wins more impressions at a worse cost per acquisition is
+  losing, and win rate alone will not show it."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
