@@ -42,9 +42,15 @@ window.fetch = function (url, opts) {
   calls.push({ url: String(url), method: opts.method || "GET",
                headers: opts.headers || {},
                body: opts.body ? JSON.parse(opts.body) : null });
-  const json = String(url).indexOf("/api/announcer/state") === 0
-    ? { ok: true, every: 15, label: "", items: [] }      // empty server
-    : { ok: true };
+  let json = { ok: true };
+  if (String(url).indexOf("/api/announcer/state") === 0) {
+    json = { ok: true, every: 15, label: "", items: [] };   // empty server
+  } else if (String(url).indexOf("/api/checklist/mutes") === 0) {
+    json = { items: [
+      { id: "c1", name: "Take Vitamin Tablet", times: ["21:30"], muted: false },
+      { id: "c2", name: "Drink water", times: ["08:00", "11:00"], muted: true },
+    ] };
+  }
   return Promise.resolve({
     ok: true, status: 200,
     json: () => Promise.resolve(json),
@@ -67,6 +73,12 @@ const q = (s) => doc.querySelector(s);
 const click = (el) => el.dispatchEvent(
   new window.MouseEvent("click", { bubbles: true, cancelable: true }));
 
+// Flush pending promises. The mute list is fetched, so a synchronous
+// assertion after opening the panel races the microtask queue and sees an
+// empty list — which looks exactly like a broken feature.
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+(async () => {
 // ── server sync (2026-08-23) ─────────────────────────────────────────
 // Announcements moved off localStorage so they follow you between devices.
 ok("pulls the stored schedule on load", sent("GET", "/api/announcer/state").length === 1);
@@ -265,6 +277,77 @@ ok("row states the window",
 // the thing it is testing.
 click(q("[data-ta-close]"));
 
+// ── EDITING (2026-08-23) ─────────────────────────────────────────────
+// Previously an announcement could only be added, switched off or deleted.
+// Changing one meant deleting it and retyping every field.
+click(q(".ta-btn"));
+// Start from empty: the recurrence block above leaves rows behind, and a
+// count assertion that depends on a previous block fails for a reason
+// unrelated to what it is testing.
+while (doc.querySelector("[data-ta-del]")) click(doc.querySelector("[data-ta-del]"));
+q("[data-ta-new-at]").value = "7";
+q("[data-ta-new-text]").value = "Original";
+click(q("[data-ta-add]"));
+ok("one announcement to edit", doc.querySelectorAll(".ta-item").length === 1);
+ok("rows carry an edit control", !!q("[data-ta-edit]"));
+
+click(q("[data-ta-edit]"));
+ok("the form fills with the existing values",
+   q("[data-ta-new-at]").value === "07:00" &&
+   q("[data-ta-new-text]").value === "Original");
+ok("the button becomes Save", q("[data-ta-add]").textContent === "Save");
+ok("Cancel appears", q("[data-ta-cancel]").hidden === false);
+ok("the row shows it is being edited", !!q(".ta-item.editing"));
+
+// Cancel must not change anything.
+click(q("[data-ta-cancel]"));
+ok("cancel restores Add", q("[data-ta-add]").textContent === "Add");
+ok("cancel changes nothing", /7:00 AM/.test(q(".ta-when b").textContent));
+ok("still one row", doc.querySelectorAll(".ta-item").length === 1);
+
+// Saving replaces IN PLACE — one row, not two, and the id survives.
+click(q("[data-ta-edit]"));
+q("[data-ta-new-at]").value = "9.30";
+q("[data-ta-new-text]").value = "Edited";
+const idBefore = q(".ta-item").getAttribute("data-id");
+click(q("[data-ta-add]"));
+ok("still ONE row after saving", doc.querySelectorAll(".ta-item").length === 1);
+ok("the new time took", /9:30 AM/.test(q(".ta-when b").textContent));
+ok("the new text took", /Edited/.test(q(".ta-what").textContent));
+ok("the id is unchanged", q(".ta-item").getAttribute("data-id") === idBefore);
+ok("the edit was pushed to the server", (() => {
+  const p = sent("POST", "/api/announcer/items");
+  return p[p.length - 1].body.items[0].id === idBefore;
+})());
+ok("back to Add mode", q("[data-ta-add]").textContent === "Add");
+
+while (doc.querySelector("[data-ta-del]")) click(doc.querySelector("[data-ta-del]"));
+click(q("[data-ta-close]"));
+
+// ── editing the reminder NOTIFICATIONS ───────────────────────────────
+click(q(".ta-btn"));
+await tick();
+ok("reminder rows are listed", doc.querySelectorAll("[data-mute-id]").length === 2);
+ok("a muted one reads as muted",
+   /muted/.test(doc.querySelector('[data-mute-id="c2"]').textContent));
+ok("reminder rows carry an edit control", !!q("[data-ta-mute-edit]"));
+
+click(doc.querySelector('[data-mute-id="c1"] [data-ta-mute-edit]'));
+ok("the times become editable", q("[data-ta-mute-times]").value === "21:30");
+q("[data-ta-mute-times]").value = "6.30am, 9pm";
+click(q("[data-ta-mute-save]"));
+await tick();
+ok("the new times are shown",
+   /6:30 AM/.test(doc.querySelector('[data-mute-id="c1"]').textContent));
+ok("...through the existing checklist API",
+   sent("PATCH", "/api/checklist/items/c1").length === 1);
+ok("...as parsed 24-hour times", (() => {
+  const p = sent("PATCH", "/api/checklist/items/c1")[0];
+  return JSON.stringify(p.body.reminder_times) === '["06:30","21:00"]';
+})());
+ok("panel stays open throughout", q(".ta-pop").hidden === false);
+click(q("[data-ta-close]"));
+
 // ── the interval buttons highlight ───────────────────────────────────
 click(q(".ta-btn"));
 click(doc.querySelector('[data-ta-every="45"]'));
@@ -278,3 +361,4 @@ ok("panel stays open after choosing an interval", q(".ta-pop").hidden === false)
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
+})();

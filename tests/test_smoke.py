@@ -3704,8 +3704,11 @@ def test_announcer_supports_multiple_named_announcements_with_dates():
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
     # Each announcement is its own record, not a shared label over a time list.
     assert "state.items" in js and "function dueItems" in js
-    # An optional date, absent meaning "every day from today onwards".
-    assert "function isYMD" in js and "data-ta-new-date" in js
+    # A date window. The single optional-date field this originally checked
+    # for became a start/end pair when recurrence landed, so the assertion
+    # follows the feature rather than pinning a field name that moved.
+    assert "function isYMD" in js
+    assert "data-ta-new-start" in js and "data-ta-new-end" in js
     # Its own on/off switch, separate from the global stop.
     assert "data-ta-toggle" in js and "if (!it.on) continue" in js
     # An expired one-off is SHOWN as expired rather than silently kept —
@@ -3980,3 +3983,40 @@ def test_announcer_first_sync_does_not_wipe_existing_local_schedule():
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
     assert "if (!j.items.length && state.items.length)" in js, \
         "an upgrade will wipe the schedule already on the device"
+
+
+def test_announcements_and_reminders_can_be_edited():
+    """Asked 2026-08-23: "should be able to edit notifications."
+
+    Both lists in the dialog were add-only: changing an announcement meant
+    deleting it and retyping every field, and changing a reminder's times
+    meant leaving for the Checklist page. Behaviour is exercised in
+    tests/js/ta_panel.test.js; these pin the pieces.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+
+    # ONE form does both add and edit. A separate edit dialog would
+    # duplicate every field and every validation rule, and they would drift.
+    assert "var editingId = null;" in js
+    assert "function startEdit" in js and "function cancelEdit" in js
+    assert 'editingId ? "Save" : "Add"' in js, "the form does not say which job it is doing"
+
+    # Editing replaces IN PLACE, keeping the id — so the server sees an
+    # update rather than a delete plus an insert, and the on/off state
+    # (which is not part of the form) survives.
+    assert "x.id === editingId ? updated : x" in js
+    assert "on: was ? was.on : true" in js, "editing resets the on/off switch"
+    # Its slots have moved, so the already-said marks are about times that
+    # may no longer exist.
+    assert "delete state.said[editingId]" in js
+
+    # Reminder times are edited through the EXISTING checklist PATCH, which
+    # already diffs desired against stored, preserves ticks for times that
+    # survive, and keeps the legacy single-time column in step. A second
+    # implementation here would be a second source of truth.
+    assert "function saveMuteTimes" in js
+    assert '"/api/checklist/items/" + encodeURIComponent(id)' in js
+    assert '"PATCH"' in js
+    assert "reminder_times: times" in js
+    # An optimistic edit that fails must go back, not lie about saving.
+    assert "row.times = before;" in js

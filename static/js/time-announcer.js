@@ -847,6 +847,19 @@
       "color:var(--color-text-secondary,#6b7280)}",
       ".ta-what{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;",
       "white-space:nowrap}",
+      ".ta-mute-in{flex:1 1 auto;min-width:0;font:inherit;font-size:12px;",
+      "padding:3px 6px;border-radius:6px;",
+      "border:1px solid var(--color-border,#e5e7eb);",
+      "background:var(--color-surface,#fff);color:var(--color-text,#111827)}",
+      ".ta-edit{flex:0 0 auto;border:0;background:none;cursor:pointer;",
+      "font-size:12px;line-height:1;padding:2px 4px;",
+      "color:var(--color-text-secondary,#9ca3af)}",
+      ".ta-edit:hover{color:#4338ca}",
+      ".ta-item.editing{background:color-mix(in srgb,#4338ca 10%,transparent)}",
+      "[data-ta-cancel]{flex:0 0 auto;font:inherit;font-size:12px;",
+      "font-weight:700;padding:5px 10px;border-radius:8px;cursor:pointer;",
+      "border:1px solid var(--color-border,#e5e7eb);background:#fff;color:#374151}",
+      "[data-ta-cancel][hidden]{display:none}",
       ".ta-del{flex:0 0 auto;border:0;background:none;cursor:pointer;",
       "font-size:15px;line-height:1;padding:2px 4px;",
       "color:var(--color-text-secondary,#9ca3af)}",
@@ -956,6 +969,12 @@
     var warn = pop.querySelector(".ta-warn");
     if (warn) warn.hidden = !(state.mode === "on" && !armed);
 
+    // The one form does both jobs, so it must SAY which job it is doing.
+    var addBtn = pop.querySelector("[data-ta-add]");
+    var cancelBtn = pop.querySelector("[data-ta-cancel]");
+    if (addBtn) addBtn.textContent = editingId ? "Save" : "Add";
+    if (cancelBtn) cancelBtn.hidden = !editingId;
+
     var custom = INTERVALS.indexOf(state.every) === -1;
     var cbtn = pop.querySelector("[data-ta-custom]");
     if (cbtn) {
@@ -1049,7 +1068,9 @@
       var when = expired ? "finished \u00b7 " + repeatWords(it)
                          : repeatWords(it);
       return '<li class="ta-item' + (it.on ? "" : " off") +
-             (expired ? " expired" : "") + '" data-id="' + esc(it.id) + '">' +
+             (expired ? " expired" : "") +
+             (it.id === editingId ? " editing" : "") +
+             '" data-id="' + esc(it.id) + '">' +
              '<button type="button" class="ta-tog" data-ta-toggle ' +
                'aria-pressed="' + (it.on ? "true" : "false") + '" ' +
                'title="' + (it.on ? "Stop this one" : "Start this one") + '">' +
@@ -1058,6 +1079,8 @@
                '<i>' + esc(when) + '</i></span>' +
              '<span class="ta-what">' + esc(it.text || "(just the time)") +
              '</span>' +
+             '<button type="button" class="ta-edit" data-ta-edit ' +
+               'title="Edit">\u270E</button>' +
              '<button type="button" class="ta-del" data-ta-del ' +
                'title="Delete">&times;</button>' +
              '</li>';
@@ -1066,6 +1089,10 @@
 
   //: Days selected in the ADD form, before the announcement exists.
   var newDays = [];
+  //: The announcement being edited, or null when adding a new one. The form
+  //: is one form doing both jobs — a separate edit dialog would duplicate
+  //: every field and every validation rule, and they would drift.
+  var editingId = null;
   //: AM/PM chosen for each time field in the ADD form. Defaults to morning,
   //: which is what a bare "5" nearly always means when someone is setting a
   //: wake-up or a start-of-day reminder.
@@ -1247,7 +1274,7 @@
 
      Loaded only when the dialog opens. This file runs on every page and
      must not add a request to every page load. */
-  var mutes = null, mutesState = "idle";
+  var mutes = null, mutesState = "idle", editingMuteId = null;
 
   function loadMutes() {
     if (mutesState === "loading" || mutesState === "done") return;
@@ -1284,6 +1311,22 @@
       return;
     }
     ul.innerHTML = mutes.map(function (m) {
+      if (m.id === editingMuteId) {
+        // EDITING THE TIMES. A text field rather than a time picker,
+        // because an item can have several and the same forgiving parser
+        // already handles "8, 11.30, 6pm".
+        return '<li class="ta-item editing" data-mute-id="' + esc(m.id) + '">' +
+               '<span class="ta-what" style="flex:0 0 auto;max-width:38%">' +
+                 esc(m.name) + '</span>' +
+               '<input type="text" class="ta-mute-in" data-ta-mute-times ' +
+                 'value="' + esc(m.times.join(", ")) + '" ' +
+                 'aria-label="Reminder times for ' + esc(m.name) + '">' +
+               '<button type="button" class="ta-edit" data-ta-mute-save ' +
+                 'title="Save">\u2713</button>' +
+               '<button type="button" class="ta-del" data-ta-mute-cancel ' +
+                 'title="Cancel">&times;</button>' +
+               '</li>';
+      }
       return '<li class="ta-item' + (m.muted ? " off" : "") +
              '" data-mute-id="' + esc(m.id) + '">' +
              '<button type="button" class="ta-tog" data-ta-mute ' +
@@ -1295,8 +1338,50 @@
                esc(m.times.map(friendly).join(", ")) + '</b>' +
                '<i>' + (m.muted ? "muted" : "notifying") + '</i></span>' +
              '<span class="ta-what">' + esc(m.name) + '</span>' +
+             '<button type="button" class="ta-edit" data-ta-mute-edit ' +
+               'title="Edit the times">\u270E</button>' +
              '</li>';
     }).join("");
+  }
+
+  /* Save new reminder times for one checklist item.
+
+     Goes through the EXISTING PATCH /api/checklist/items/<id>, which already
+     diffs the desired times against the stored rows, preserves ticks for
+     times that survive, and keeps the legacy single-time column in step.
+     Reimplementing any of that here would be a second source of truth for
+     the same data, and the two would drift. */
+  function saveMuteTimes(id, raw) {
+    var row = null;
+    for (var i = 0; i < (mutes || []).length; i++) {
+      if (mutes[i].id === id) { row = mutes[i]; break; }
+    }
+    if (!row) return;
+
+    var times = parseTimes(raw);
+    if (!times.length) {
+      note(false, "I could not read \u201c" + raw + "\u201d as any times");
+      return;
+    }
+    var before = row.times.slice();
+    row.times = times;
+    editingMuteId = null;
+    paintMutes();
+    savedFlash();
+
+    fetch("/api/checklist/items/" + encodeURIComponent(id), {
+      method: "PATCH",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+      body: JSON.stringify({ reminder_times: times }),
+    }).then(function (r) {
+      if (r.ok) return;
+      throw new Error("save failed");
+    }).catch(function () {
+      row.times = before;          // put it back rather than lie
+      paintMutes();
+      note(false, "could not save those reminder times");
+    });
   }
 
   function toggleMute(id) {
@@ -1341,6 +1426,40 @@
       if (state.items[i].id === id) return state.items[i];
     }
     return null;
+  }
+
+  /* Load an existing announcement back into the form. */
+  function startEdit(id) {
+    var it = byId(id);
+    if (!it) return;
+    editingId = id;
+    newDays = (it.days || []).slice();
+    newMer = { at: "am", until: "am" };   // the stored times are 24-hour
+    pop.querySelector("[data-ta-new-at]").value = it.at;
+    pop.querySelector("[data-ta-new-until]").value = it.until || "";
+    pop.querySelector("[data-ta-new-mins]").value = it.mins || "";
+    pop.querySelector("[data-ta-new-repeat]").value = it.repeat || "daily";
+    pop.querySelector("[data-ta-new-start]").value = it.start || todayYMD();
+    pop.querySelector("[data-ta-new-end]").value = it.end || "";
+    pop.querySelector("[data-ta-new-text]").value = it.text || "";
+    paint();
+    var f = pop.querySelector("[data-ta-new-at]");
+    if (f) { f.focus(); f.select(); }
+  }
+
+  function cancelEdit() {
+    editingId = null;
+    newDays = [];
+    newMer = { at: "am", until: "am" };
+    ["at", "until", "mins", "text", "end"].forEach(function (k) {
+      var el = pop.querySelector("[data-ta-new-" + k + "]");
+      if (el) el.value = "";
+    });
+    var st = pop.querySelector("[data-ta-new-start]");
+    if (st) st.value = todayYMD();
+    var rp = pop.querySelector("[data-ta-new-repeat]");
+    if (rp) rp.value = "daily";
+    paint();
   }
 
   function addItem() {
@@ -1412,6 +1531,34 @@
     var text = (tEl.value || "").slice(0, 120);
     // A field accepting several times adds several announcements rather than
     // quietly keeping the first — the parser already returns a list.
+    if (editingId) {
+      // EDITING replaces one announcement in place, keeping its id so the
+      // server sees an update rather than a delete plus an insert — and
+      // keeping its on/off state, which is not part of this form.
+      var was = byId(editingId);
+      var updated = {
+        id: editingId, at: times[0], until: until, mins: stepMins,
+        repeat: repeat, days: newDays.slice(),
+        start: start, end: end, text: text,
+        on: was ? was.on : true,
+      };
+      state.items = state.items.map(function (x) {
+        return x.id === editingId ? updated : x;
+      });
+      // Its slots have moved, so yesterday's "already said" marks are about
+      // times that may no longer exist.
+      delete state.said[editingId];
+      editingId = null;
+      state.lastSlot = null;
+      save(); paint(); savedFlash();
+      pushItems([updated]);
+      atEl.value = ""; uEl.value = ""; mEl.value = ""; tEl.value = "";
+      newDays = [];
+      newMer = { at: "am", until: "am" };
+      paint();
+      return;
+    }
+
     times.forEach(function (t) {
       state.items.push({
         id: newId(), at: t, until: until, mins: stepMins,
@@ -1525,6 +1672,7 @@
           '<input type="text" data-ta-new-text maxlength="120" ' +
             'placeholder="What to say" aria-label="What to say">' +
           '<button type="button" data-ta-add>Add</button>' +
+          '<button type="button" data-ta-cancel hidden>Cancel</button>' +
         '</div>' +
       '</div>' +
       '<small class="ta-hint">Type the time and pick <b>AM</b> or <b>PM</b>. ' +
@@ -1622,6 +1770,13 @@
         }
         return;
       }
+      var edt = ev.target.closest("[data-ta-edit]");
+      if (edt) {
+        var erow = edt.closest("[data-id]");
+        if (erow) startEdit(erow.getAttribute("data-id"));
+        return;
+      }
+      if (ev.target.closest("[data-ta-cancel]")) { cancelEdit(); return; }
       var del = ev.target.closest("[data-ta-del]");
       if (del) {
         var li2 = del.closest("[data-id]");
@@ -1630,6 +1785,27 @@
         delete state.said[id];
         save(); paint(); savedFlash();
         if (id) pushDelete(id);
+        return;
+      }
+      var me = ev.target.closest("[data-ta-mute-edit]");
+      if (me) {
+        var mer0 = me.closest("[data-mute-id]");
+        editingMuteId = mer0 ? mer0.getAttribute("data-mute-id") : null;
+        paintMutes();
+        var f = pop.querySelector("[data-ta-mute-times]");
+        if (f) { f.focus(); f.select(); }
+        return;
+      }
+      if (ev.target.closest("[data-ta-mute-cancel]")) {
+        editingMuteId = null;
+        paintMutes();
+        return;
+      }
+      var ms = ev.target.closest("[data-ta-mute-save]");
+      if (ms) {
+        var msr = ms.closest("[data-mute-id]");
+        var fld = pop.querySelector("[data-ta-mute-times]");
+        if (msr && fld) saveMuteTimes(msr.getAttribute("data-mute-id"), fld.value);
         return;
       }
       var mu = ev.target.closest("[data-ta-mute]");
@@ -1668,7 +1844,14 @@
        setting that needs saving is a setting people forget to save. */
     pop.addEventListener("keydown", function (ev) {
       if (ev.key !== "Enter") return;
-      if (ev.target.closest("[data-ta-new-at],[data-ta-new-date],[data-ta-new-text]")) {
+      if (ev.target.closest("[data-ta-mute-times]")) {
+        ev.preventDefault();
+        var mr = ev.target.closest("[data-mute-id]");
+        if (mr) saveMuteTimes(mr.getAttribute("data-mute-id"), ev.target.value);
+        return;
+      }
+      if (ev.target.closest("[data-ta-new-at],[data-ta-new-until]," +
+                            "[data-ta-new-mins],[data-ta-new-text]")) {
         ev.preventDefault();
         addItem();
       }
