@@ -4872,3 +4872,34 @@ def test_bucket_page_stops_carrying_old_completions():
 def test_archive_is_reachable_from_the_menu():
     nav = open("templates/_top_nav.html", encoding="utf-8").read()
     assert 'href="/archive"' in nav, "a page nobody can find"
+
+
+def test_speech_audio_failure_is_visible_and_recoverable():
+    """Reported 2026-08-23: Android still silent when locked, iPhone fine.
+
+    iPhone works because it uses the speech API, which iOS permits on a
+    hidden page. Android does not permit it, so the ONLY way words reach a
+    locked Android is the rendered audio — which means whether that audio
+    is reachable IS the feature working or not.
+
+    It was being fetched silently and failing silently: a 503 from the
+    render endpoint, or a missed prefetch, produced exactly the same
+    outcome as everything working, which is nothing.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    # The failure reason is kept and shown rather than swallowed.
+    assert "var sayState" in js
+    assert '"server said " + r.status' in js
+    assert "data-ta-say" in js and "Spoken audio unavailable" in js
+
+    # AND IT RECOVERS. A missed prefetch used to fall through to
+    # speechSynthesis, which on a hidden Android page is silence. Fetching
+    # at fire time is a second late and heard, which beats on time and
+    # silent.
+    assert "function fetchSpeech" in js
+    fire = js.split("playChime(function () {")[1][:900]
+    assert "fetchSpeech(words)" in fire, \
+        "a missed prefetch still means silence on Android"
+    # The prefetch also runs when the panel opens, so the first slot after
+    # enabling is not automatically a miss.
+    assert "try { prefetchNext(new Date()); } catch (e) {}" in js

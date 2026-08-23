@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v249";
+  var BUILD = "v250";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -610,16 +610,37 @@
     return "/api/announcer/say?text=" + encodeURIComponent(text);
   }
 
+  //: Why the last render failed, if it did. Swallowing this is how the
+  //: words could be unavailable for hours with nothing anywhere saying so.
+  var sayState = "none";
+
+  function fetchSpeech(text) {
+    return fetch(sayUrl(text), { credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok) {
+          sayState = "server said " + r.status;
+          throw new Error(sayState);
+        }
+        return r.blob();
+      })
+      .then(function (b) {
+        var url = URL.createObjectURL(b);
+        sayCache[text] = url;
+        sayState = "ready";
+        paint();
+        return url;
+      });
+  }
+
   function prefetchSpeech(text) {
     if (!text || sayCache[text] || sayPending[text]) return;
     sayPending[text] = true;
-    fetch(sayUrl(text), { credentials: "same-origin" })
-      .then(function (r) { return r.ok ? r.blob() : null; })
-      .then(function (b) {
-        if (b) sayCache[text] = URL.createObjectURL(b);
-        delete sayPending[text];
+    fetchSpeech(text)
+      .catch(function (e) {
+        if (sayState === "none") sayState = "unreachable";
+        paint();
       })
-      .catch(function () { delete sayPending[text]; });
+      .then(function () { delete sayPending[text]; });
   }
 
   /* Returns false when there is nothing cached to play. Whether it was
@@ -833,7 +854,23 @@
     // Android. If the rendered audio is missing or refused, fall back to
     // the speech API, which still works on iOS in that state.
     playChime(function () {
-      if (!(lastFire && lastFire.hidden && playSpeech(words, sayIt))) sayIt();
+      var hidden = !!(lastFire && lastFire.hidden);
+      if (!hidden) { sayIt(); return; }
+
+      // Cached: play it immediately.
+      if (playSpeech(words, sayIt)) return;
+
+      // NOT CACHED. Fetch it NOW rather than giving up. A second late and
+      // heard beats on time and silent — and on a hidden Android page
+      // speechSynthesis is refused, so the fallback below is nothing at
+      // all. This is the path that runs when the prefetch missed, which
+      // it does whenever the announcement was created less than a tick
+      // ago or the network was down at the time.
+      fetchSpeech(words)
+        .then(function () {
+          if (!playSpeech(words, sayIt)) sayIt();
+        })
+        .catch(function () { sayIt(); });
     });
     paint();
   }
@@ -1386,6 +1423,27 @@
       nowEl.textContent = (state.mode === "on" ? "Saved & running: "
                            : state.mode === "paused" ? "Saved, paused: "
                            : "Saved, stopped: ") + what;
+    }
+
+    /* CAN THE WORDS BE PLAYED AT ALL?
+       On a locked Android the only way to hear them is rendered audio, so
+       whether that audio is reachable IS the feature working or not. It
+       was being fetched silently and failing silently. */
+    var say = pop.querySelector("[data-ta-say]");
+    if (say) {
+      var n = Object.keys(sayCache).length;
+      if (sayState === "ready" || n) {
+        say.className = "ta-health good";
+        say.textContent = "\u2713 Spoken audio ready (" + n + " cached)";
+      } else if (sayState === "none") {
+        say.className = "ta-health";
+        say.textContent = "Spoken audio: nothing fetched yet.";
+      } else {
+        say.className = "ta-health bad";
+        say.textContent = "\u26a0 Spoken audio unavailable \u2014 " +
+          sayState + ". On a locked Android the words cannot play without " +
+          "it; the chime and the notification still will.";
+      }
     }
 
     /* THE LAST ANNOUNCEMENT, AND WHAT EACH HALF OF IT DID. */
@@ -2271,6 +2329,7 @@
         '<summary>Diagnostics<b data-ta-build-sum></b></summary>' +
         '<p class="ta-health" data-ta-health></p>' +
         '<p class="ta-health" data-ta-hold></p>' +
+        '<p class="ta-health" data-ta-say></p>' +
         '<p class="ta-health" data-ta-fire></p>' +
         '<p class="ta-build" data-ta-build></p>' +
         '<p class="ta-auto">Everything saves as you type.</p>' +
@@ -2525,6 +2584,7 @@
     backdrop.hidden = false;
     pop.hidden = false;
     document.documentElement.classList.add("ta-locked");
+    try { prefetchNext(new Date()); } catch (e) {}
     showTab("items");
     paint();
     loadMutes();
