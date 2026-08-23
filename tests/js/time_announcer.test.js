@@ -284,6 +284,46 @@ ok("words: plain time",  TA._timeWords(W({}))==="8:00 AM");
 ok("words: window",      TA._timeWords(W({until:"20:00", mins:60}))
                           ==="8:00 AM\u20138:00 PM \u00b7 60m");
 
+// ── VOICE SELECTION (2026-08-23) ────────────────────────────────────
+// This is where announcements stopped working on a locked phone. The
+// original set NO voice and the platform used a LOCAL engine; picking
+// "first match by language" started selecting NETWORK voices, which need
+// a live request at the moment of speaking and do not get one from a
+// backgrounded page.
+const V = (o) => Object.assign({lang:"en-US", localService:true, default:false}, o);
+
+ok("prefers a LOCAL voice over a network one", (() => {
+  const v = TA._voiceFor([
+    V({name:"Cloud EN", localService:false}),
+    V({name:"Local EN", localService:true}),
+  ], "en-US");
+  return v && v.name === "Local EN";
+})());
+
+ok("never returns a network voice, even as the only match", (() => {
+  const v = TA._voiceFor([V({name:"Cloud EN", localService:false})], "en-US");
+  return v === null;     // null means "let the platform choose", which works
+})());
+
+ok("matches the language among local voices", (() => {
+  const v = TA._voiceFor([
+    V({name:"Local FR", lang:"fr-FR"}),
+    V({name:"Local EN", lang:"en-GB"}),
+  ], "en-US");
+  return v && v.name === "Local EN";
+})());
+
+ok("falls back to the local default when no language matches", (() => {
+  const v = TA._voiceFor([
+    V({name:"Local FR", lang:"fr-FR"}),
+    V({name:"Local DE", lang:"de-DE", default:true}),
+  ], "en-US");
+  return v && v.name === "Local DE";
+})());
+
+ok("no voices at all => null, not a crash", TA._voiceFor([], "en-US") === null);
+ok("undefined list => null", TA._voiceFor(undefined, "en-US") === null);
+
 // ── MIGRATION from the shapes already in people's browsers ──────────
 // _set bypasses load(), so the migration needs its own exercise. Anyone
 // upgrading has data in one of the two older shapes and must lose nothing.

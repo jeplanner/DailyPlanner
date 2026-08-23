@@ -2208,13 +2208,19 @@ def test_announcer_keepalive_is_opt_in_and_not_actually_silent():
     assert 'state.mode === "on"' in body and "state.keepalive" in body
     # The limits are stated to the USER, not buried in a source comment:
     # what it costs, and that a fully closed app cannot be rescued.
-    assert "battery" in js and "fully closed" in js
+    # Case-insensitive: the copy emphasises words in caps, and this
+    # assertion is about the CLAIM being present, not its typography.
+    assert "battery" in js.lower() and "fully closed" in js.lower()
     # ...and the panel must now also say what DOES survive that, because
     # "nothing works once closed" stopped being true when announcements
     # started firing as push notifications. Copy that is out of date with
     # the feature is worse than no copy.
     assert "also sent as" in js and "notification" in js, \
         "the panel still implies a closed app hears nothing at all"
+    # ...and it must not claim speech is IMPOSSIBLE when locked, which it
+    # is not — that is what used to work, and saying otherwise sent the
+    # reader looking for a workaround instead of a broken voice.
+    assert "but it does work" in js
     assert "best-effort" in js.lower(), (
         "the locked-phone case is presented as certain when it is not")
 
@@ -4358,3 +4364,28 @@ def test_announcement_chime_is_real_audio_and_on_by_default():
         seconds = w.getnframes() / float(w.getframerate())
     assert 0.2 < seconds < 3, f"chime is {seconds:.2f}s"
     assert os.path.getsize("static/audio-chime.wav") < 60000
+
+
+def test_announcer_never_picks_a_network_voice():
+    """Reported 2026-08-23: "i used to get announcement with my text message
+    also when the phone is locked. this is possible."
+
+    Correct, and it was my regression. The original speak() set NO voice,
+    so the platform used its own default — on Android a LOCAL, offline
+    engine. I added "pick the first voice matching the language", which on
+    Android is frequently a NETWORK voice. A network voice needs a live
+    request at the moment of speaking, and a backgrounded page on a locked
+    screen does not get one. It worked at the desk and silently stopped in
+    a pocket.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    body = js.split("function speak(text, isRetry)")[1].split("\n  function ")[0]
+    assert "localService" in body, "a network voice can be selected again"
+    # And when no LOCAL voice exists, none is set at all — letting the
+    # platform choose is precisely the behaviour that used to work.
+    assert "x.localService" in body
+    # One retry with no voice, because an unreachable voice is the likeliest
+    # cause of both a refusal and an accepted-but-silent utterance.
+    assert "noVoice = true" in body and "speak(text, true)" in body
+    # The utterance is held, or Chrome can collect it mid-sentence.
+    assert "speaking = u;" in body

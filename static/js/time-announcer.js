@@ -524,7 +524,14 @@
     } catch (e) { /* nothing to do; the notification still arrives */ }
   }
 
-  function speak(text) {
+  //: Held so the utterance is not garbage-collected mid-sentence, which is
+  //: a real Chrome bug: a speaking utterance with no live reference can be
+  //: collected and the speech simply stops partway through.
+  var speaking = null;
+  //: Set after a failure, so the retry asks for no particular voice at all.
+  var noVoice = false;
+
+  function speak(text, isRetry) {
     if (!supported()) {
       note(false, "this browser has no speech synthesis");
       return false;
@@ -539,23 +546,51 @@
         u.lang = (document.documentElement.lang || navigator.language ||
                   "en-US");
 
-        // Naming a voice explicitly. Left unset, some Android builds pick
-        // nothing at all and stay silent.
+        // ── VOICE SELECTION, AND WHY IT IS SO CAUTIOUS ────────────────
+        // This is where announcements stopped working on a locked phone.
+        //
+        // The original code set NO voice, so the platform used its own
+        // default — on Android a LOCAL, offline-capable engine. Then I
+        // added "pick the first voice matching the language", which on
+        // Android is frequently a NETWORK voice. A network voice needs a
+        // live request at the moment of speaking, and a backgrounded page
+        // on a locked screen does not get one. It worked at the desk and
+        // silently stopped in a pocket, which is the worst shape a
+        // regression can have.
+        //
+        // So: prefer a LOCAL voice, and if there is no local voice, set
+        // NONE and let the platform choose — which is exactly the
+        // behaviour that used to work.
         try {
           var vs = synth.getVoices() || [];
           var want = u.lang.slice(0, 2).toLowerCase();
-          var v = vs.filter(function (x) {
+          var local = vs.filter(function (x) { return x.localService; });
+          var v = local.filter(function (x) {
             return (x.lang || "").slice(0, 2).toLowerCase() === want;
-          })[0] || vs.filter(function (x) { return x.default; })[0] || vs[0];
-          if (v) u.voice = v;
+          })[0] || local.filter(function (x) { return x.default; })[0];
+          if (v && !noVoice) u.voice = v;
         } catch (_) {}
 
         var started = false, errored = false;
-        u.onstart = function () { started = true; note(true, "", text); };
+        u.onstart = function () {
+          started = true;
+          noVoice = false;              // whatever we chose, it worked
+          note(true, "", text);
+        };
+        u.onend = function () { speaking = null; };
         u.onerror = function (ev) {
           errored = true;
+          speaking = null;
           note(false, (ev && ev.error) || "the browser refused to speak");
+          // RETRY WITHOUT A VOICE. The commonest cause of a refusal is a
+          // voice that cannot be reached right now — a network voice on a
+          // locked phone. The platform default nearly always can be.
+          if (!isRetry && !noVoice) {
+            noVoice = true;
+            setTimeout(function () { speak(text, true); }, 200);
+          }
         };
+        speaking = u;
         synth.speak(u);
 
         // CHROME LEAVES THE QUEUE PAUSED after some page lifecycle events,
@@ -569,6 +604,12 @@
             note(false, armed
               ? "the browser accepted it but said nothing"
               : "blocked until you tap the page once");
+            // Accepted and silent is the other symptom of an unreachable
+            // voice, so it gets the same one retry.
+            if (!isRetry && !noVoice) {
+              noVoice = true;
+              speak(text, true);
+            }
           }
         }, SILENT_MS);
         return true;
@@ -1832,10 +1873,12 @@
         '<p class="ta-tip" hidden>You are running the installed app &mdash; ' +
         'turn this on, or the system will freeze it once the window is ' +
         'minimised and the announcements stop.</p>' +
-        '<p class="ta-note"><b>On a locked phone the VOICE is best-effort.</b> ' +
-        'Browsers suspend speech when the screen is off, and nothing is ' +
-        'spoken at all once the app is fully closed. No application can ' +
-        'change either &mdash; it is not a setting.</p>' +
+        '<p class="ta-note"><b>On a locked phone the voice is best-effort, ' +
+        'but it does work</b> &mdash; provided the box above is ticked, so ' +
+        'the app is still running, and the phone has an OFFLINE voice ' +
+        'installed. A cloud voice needs a live request at the moment it ' +
+        'speaks, and a locked phone will not make one. Nothing is spoken ' +
+        'once the app is fully CLOSED, which no setting changes.</p>' +
         '<p class="ta-note"><b>That is why each announcement is also sent as ' +
         'a notification.</b> A notification reaches a locked phone AND a ' +
         'closed app, which speech never can. Turn notifications on in ' +
@@ -2186,6 +2229,14 @@
     _friendly: friendly,
     _scheduleWords: scheduleWords,
     _health: function () { return health; },
+    _voiceFor: function (voices, lang) {
+      // Exposed so the selection rule can be tested without a speech engine.
+      var want = String(lang || "en").slice(0, 2).toLowerCase();
+      var local = (voices || []).filter(function (x) { return x.localService; });
+      return local.filter(function (x) {
+        return (x.lang || "").slice(0, 2).toLowerCase() === want;
+      })[0] || local.filter(function (x) { return x.default; })[0] || null;
+    },
     _set: function (patch) { Object.keys(patch).forEach(function (k) {
       state[k] = patch[k]; }); },
     _check: check,
