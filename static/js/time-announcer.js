@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v270";
+  var BUILD = "v271";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -729,6 +729,16 @@
       .then(function (r) {
         if (!r.ok) {
           sayState = "server said " + r.status;
+          throw new Error(sayState);
+        }
+        /* AND IT HAS TO BE AUDIO. The endpoint is behind @login_required,
+           which redirects an unauthenticated request to the login PAGE;
+           fetch() follows that, so a failed session arrives here as a
+           cheerful 200 of text/html. Treating it as ready is how the
+           announcement came to be "cached" and unplayable. */
+        var type = (r.headers && r.headers.get("content-type")) || "";
+        if (!/^audio\//i.test(type)) {
+          sayState = "not signed in (server sent " + (type || "no type") + ")";
           throw new Error(sayState);
         }
         return r.blob();

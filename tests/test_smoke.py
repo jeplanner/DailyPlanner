@@ -6468,3 +6468,47 @@ def test_rendered_speech_is_cached_by_the_service_worker():
     api_at = body.index('url.pathname.startsWith("/api/")')
     assert say_at < api_at, \
         "the /api/ early-return runs first, so the audio is never cached"
+
+
+def test_say_endpoint_never_answers_with_html(client):
+    # NOTE: deliberately does NOT request auth_client — that fixture seeds a
+    # session into this very client, so asking for both makes the "signed
+    # out" request signed in, and the test passes for the wrong reason.
+    """The announcement audio URL is the `src` of an <audio> element.
+
+    @login_required answers a signed-out request with a 302 to the login
+    PAGE, and fetch() follows redirects — so a lapsed session arrived at the
+    browser as a cheerful 200 of text/html. A media element cannot decode
+    that (NotSupportedError), and a cache will store it under the
+    announcement's URL forever, which makes one expired session a permanent
+    silence.
+
+    401, and no body a decoder could mistake for audio.
+    """
+    r = client.get("/api/announcer/say?text=hello")
+    assert r.status_code == 401, "a signed-out request is still redirected"
+    assert "text/html" not in (r.headers.get("Content-Type") or "")
+    assert b"<html" not in r.data.lower()
+
+    # And it still refuses to be an open text-to-speech proxy: no audio
+    # came back, whatever else happened.
+    assert not (r.headers.get("Content-Type") or "").startswith("audio/")
+
+
+def test_only_audio_is_ever_cached_as_an_announcement():
+    """Both ends check the CONTENT TYPE, not the status.
+
+    An `ok` response is not proof of audio — a followed redirect to the
+    login page is a 200 too. Caching that put the login page in the cache
+    under the announcement's URL, permanently.
+    """
+    sw = open("static/service-worker.js", encoding="utf-8").read()
+    cf = sw.split("async function cacheFirst")[1].split("\n}")[0]
+    assert 'get("content-type")' in cf
+    assert "audio" in cf, "the service worker caches whatever came back"
+
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    fetch_fn = js.split("function fetchSpeech")[1].split("\n  }")[0]
+    assert "content-type" in fetch_fn
+    assert "not signed in" in fetch_fn, \
+        "a signed-out render is still reported as ready"

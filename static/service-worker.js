@@ -16,7 +16,7 @@
    route at /service-worker.js is served with no-cache (app.py), so a
    new version is picked up on the next page load. */
 
-const CACHE_VERSION = "v270-2026-08-24-http-url-speech"
+const CACHE_VERSION = "v271-2026-08-24-audio-only-cache"
 const STATIC_CACHE = `dp-static-${CACHE_VERSION}`;
 const PAGES_CACHE  = `dp-pages-${CACHE_VERSION}`;
 const OFFLINE_URL  = "/offline";
@@ -335,7 +335,18 @@ async function cacheFirst(req, cacheName) {
   if (hit) return hit;
   try {
     const res = await fetch(req);
-    if (res && res.ok && res.type === "basic") {
+    /* ONLY CACHE IT IF IT IS ACTUALLY AUDIO.
+       /api/announcer/say is behind @login_required, which answers an
+       unauthenticated request with a 302 to the login PAGE — and fetch()
+       follows redirects, so what arrives is a perfectly "ok" 200 of
+       text/html. Storing that would put the login page in the cache under
+       the announcement's URL, permanently, and every future play would
+       hand HTML to a media element: NotSupportedError, for good.
+
+       An expired session at the wrong moment is enough to trigger it, so
+       the check is on the CONTENT TYPE rather than on the status. */
+    const type = res && res.headers && (res.headers.get("content-type") || "");
+    if (res && res.ok && res.type === "basic" && /^audio\//i.test(type)) {
       cache.put(req, res.clone()).catch(() => {});
       trimCache(cacheName);
     }

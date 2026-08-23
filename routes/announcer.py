@@ -198,8 +198,24 @@ _SAY_CACHE_MAX = 200
 
 
 @announcer_bp.route("/api/announcer/say", methods=["GET"])
-@login_required
 def say():
+    """AUTH CHECKED BY HAND, so a signed-out request gets 401 and not HTML.
+
+    @login_required answers with a 302 to the login PAGE. This URL is the
+    `src` of an <audio> element, and fetch() follows redirects — so a
+    lapsed session arrived at the browser as a cheerful 200 of text/html,
+    which a media element cannot decode (NotSupportedError) and which a
+    cache will happily store under the announcement's URL forever.
+
+    Still requires a session: this renders arbitrary text to speech and
+    must never be an open proxy.
+    """
+    if not session.get("user_id"):
+        return jsonify({"error": "not signed in"}), 401
+    return _say_audio()
+
+
+def _say_audio():
     """Return the announcement text as AUDIO.
 
     WHY THIS EXISTS. Android Chrome refuses speechSynthesis while the page
