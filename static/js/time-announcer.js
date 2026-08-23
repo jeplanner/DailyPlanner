@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v260";
+  var BUILD = "v261";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -991,6 +991,28 @@
       slotAt.setHours(Math.floor(slotMins / 60), slotMins % 60, 0, 0);
     }
     var words = wordsFor(slotAt, items);
+
+    /* ── A LATE ANNOUNCEMENT MUST SAY THAT IT IS LATE ─────────────────
+       Reported as "strange. In android, when i open the app, then a
+       announcement which was past the time gets fired and i hear the
+       sound." It is deliberate — a reminder the phone slept through is
+       worth hearing — but it was reading out the time of the SLOT, so at
+       8:10 it announced "It's 7:45 PM", which is simply untrue and is
+       most of why it felt wrong.
+
+       Said plainly instead. This deliberately does not reuse the cached
+       audio: a late fire happens the moment the app is opened, when the
+       page is awake, on screen and able to speak or fetch — the one
+       situation where the cache was never the thing keeping it working. */
+    var lateBy = 0;
+    items.forEach(function (d) {
+      if ((d.lateBy || 0) > lateBy) lateBy = d.lateBy || 0;
+    });
+    if (items.length && lateBy > GRACE_MS) {
+      words = items.map(function (it) {
+        return (it.text || "").replace(/[.!?]*$/, "") || "Reminder";
+      }).join(". ") + ". This was due at " + friendly(minsToHHMM(items[0].slot)) + ".";
+    }
 
     items.forEach(function (d) {
       state.said[d.id] = d.key;

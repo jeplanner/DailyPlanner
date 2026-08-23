@@ -456,5 +456,18 @@ delete store[KEY];
   ok("a 1-minute interval is capped, not 31 fetches", asked.length <= 12);
 }
 
+// ── A LATE ANNOUNCEMENT SAYS SO (2026-08-23) ────────────────────────
+// "strange. In android, when i open the app, then a announcement which was
+// past the time gets fired and i hear the sound."
+//
+// The catch-up is deliberate — a reminder the phone slept through is worth
+// hearing — but it spoke the SLOT's time, so at 8:10 it announced "It's
+// 7:45 PM", which is untrue and is most of why it felt wrong.
+ok("on time, it speaks the time as usual",
+   TA._wordsFor(at(19, 45), [{text: "Tell slokas", slot: 1185}])
+     === "Tell slokas. " + TA._phrase(at(19, 45)));
+// friendly() is what the late line reads the slot back through.
+ok("the slot reads back in 12-hour form", TA._friendly("19:45") === "7:45 PM");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

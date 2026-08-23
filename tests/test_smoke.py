@@ -6034,3 +6034,24 @@ def test_announcer_never_decides_by_visibility():
     assert "while visible" not in where, \
         "the diagnostics still call a locked screen 'visible'"
     assert "locked screen" in where, "the label does not warn about this"
+
+
+def test_a_late_announcement_says_it_is_late():
+    """Reported as "strange. In android, when i open the app, then a
+    announcement which was past the time gets fired and i hear the sound."
+
+    The catch-up is deliberate — a reminder the phone slept through is
+    worth hearing — but it read out the time of the SLOT, so at 8:10 it
+    announced "It's 7:45 PM". That is simply untrue, and is most of why it
+    felt wrong rather than helpful.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "This was due at " in js, "a late fire still claims the slot's time"
+
+    late = js.split("A LATE ANNOUNCEMENT MUST SAY THAT IT IS LATE")[1][:900]
+    # Only past the ordinary grace window — a fire 20 seconds late is not
+    # late, it is on time, and saying so would be noise on every slot.
+    assert "lateBy > GRACE_MS" in late
+    # And only for NAMED announcements: the repeating clock is not caught
+    # up at all, so it can never reach here.
+    assert "items.length" in late
