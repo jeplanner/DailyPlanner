@@ -269,6 +269,20 @@ def list_items():
     # possible without going hunting. Everything older lives at /archive,
     # which reads it in place — nothing is moved, so no count anywhere
     # else changes.
+    # ── DEADLINES FROM THE BACKLOG LAND HERE ──────────────────────────
+    # An item captured with "do within N days" moves into this list the day
+    # before it is due. Swept on page load rather than on a timer: a
+    # background job that quietly stops is the failure this app keeps
+    # hitting, and there is no point promoting into a list nobody is
+    # looking at. Imported inside the view to keep the two blueprints from
+    # importing each other at module load.
+    try:
+        from routes.backlog import promote_due
+        promote_due(session["user_id"], user_today())
+    except Exception:
+        logger.warning("quick_bucket: backlog promotion sweep failed",
+                       exc_info=True)
+
     _today_iso = user_today().isoformat()
     base_params = {
         "user_id": f"eq.{user_id}",

@@ -217,23 +217,27 @@
       <span class="bk-n">{{ future|length }}</span>
       <a class="bk-open" href="/quick-bucket">Open bucket →</a>
     </div>
-    <p class="bk-sec-note">Captured here, or deferred with no deadline and no alarm.</p>
+    <p class="bk-sec-note">Captured here, or deferred with no deadline. Anything
+      with a deadline moves itself into the Quick Bucket the day before it is
+      due.</p>
     <ul class="bk-list" data-bk-list-future>
       {% for it in future %}
         <li class="bk-item{% if it.overdue %} is-late{% endif %}"
             data-kind="bucket" data-id="{{ it.id }}" data-text="{{ it.text }}">
           <span class="t">{{ it.text }}</span>
           {% if it.planned_minutes %}
-            <span class="bk-mins">{{ it.planned_minutes }}m</span>
+            <span class="bk-mins">{{ it.planned_minutes }} min</span>
           {% endif %}
           {% if it.by %}
             <span class="bk-tag {% if it.overdue %}late{% elif it.due_in is not none and it.due_in <= 2 %}soon{% else %}due{% endif %}">
               {%- if it.overdue -%}
-                {{ -it.due_in }}d late
+                {{ -it.due_in }} day{{ '' if -it.due_in == 1 else 's' }} late
               {%- elif it.due_in == 0 -%}
-                today
+                due today
+              {%- elif it.due_in == 1 -%}
+                1 day left &middot; moves to Quick Bucket
               {%- else -%}
-                {{ it.due_in }}d &middot; {{ it.by }}
+                {{ it.due_in }} days left &middot; {{ it.by }}
               {%- endif -%}
             </span>
           {% endif %}

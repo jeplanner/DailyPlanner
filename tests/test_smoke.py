@@ -5456,9 +5456,19 @@ def test_finished_things_get_a_clap():
     assert 'classList.contains("q-prac")' in js and 'hasAttribute("data-title")' in js
     # Unticking is a correction, not an achievement.
     assert "!box.checked" in js
-    # A celebration is the first thing that should go quiet for someone who
-    # asked for less movement.
+    # ── REDUCED MOTION SILENCES THE MOVEMENT, NOT THE CELEBRATION ─────
+    # Returning early on prefers-reduced-motion meant a phone with Reduce
+    # Motion turned on — an ordinary setting, and the reason "in mobile
+    # completing the task is not showing claps and dancing" — got nothing
+    # at all. Someone asking for less movement has not asked to stop being
+    # told they finished something.
     assert "prefers-reduced-motion" in js
+    assert "if (!reduced()) burst(el)" in js, \
+        "reduced motion still swallows the whole celebration"
+    assert "dp-still" in js, "the card has no held-still variant"
+    body = js.split("window.dpClap = function")[1]
+    assert "if (reduced()) return" not in body.split("};")[0], \
+        "the celebration still returns early under reduced motion"
     # It must never block a click or break the thing it celebrates.
     assert "pointer-events:none" in js
 
@@ -5539,7 +5549,7 @@ def test_backlog_puts_missed_deadlines_first(auth_client, monkeypatch):
              ("Was due last week", "Due in two days", "Captured just now")]
     assert order == sorted(order), "the overdue item is not at the top"
 
-    assert "7d late" in html
+    assert "7 days late" in html
     # Count the class ON A ROW, not the string — the stylesheet declares
     # `.bk-item.is-late` too, and matching that made the count read 2.
     assert html.count('class="bk-item is-late"') == 1, \
@@ -5615,3 +5625,64 @@ def test_announcer_speaks_the_slot_not_the_moment_it_noticed():
     # And when it IS refused, say which refusal it was — NotAllowedError and
     # AbortError have opposite fixes.
     assert 'lastFire.spoke = "audio refused ("' in js
+
+
+def test_backlog_promotes_itself_before_the_deadline(monkeypatch):
+    """"it should move it in to quick bucket one day before the duration
+    expires automatically."
+
+    A deadline you have to notice yourself is a deadline you will miss —
+    which is the whole reason the backlog needed dates. This is the half
+    that makes capturing them worth anything.
+    """
+    from datetime import timedelta
+    import routes.backlog as bk
+    from utils.user_tz import user_today
+    today = user_today()
+
+    asked = {}
+    monkeypatch.setattr(bk, "get",
+                        lambda t, params=None, **k: asked.update(params or {})
+                        or [{"id": "b1"}, {"id": "b2"}])
+    moved = []
+    monkeypatch.setattr(bk, "update",
+                        lambda t, params, j, **k: moved.append((params, j)))
+
+    assert bk.promote_due("u1", today) == 2
+
+    # Only FUTURE, open, undeleted rows, and only those due within a day.
+    assert asked["time_bucket"] == "eq.future"
+    assert asked["is_done"] == "eq.false"
+    assert asked["is_deleted"] == "eq.false"
+    assert asked["backlog_due"] == "lte." + (today + timedelta(days=1)).isoformat()
+
+    # Promoted into the working list, and NOT given a due_at — this is a
+    # deadline, not a countdown, and writing one starts a calendar alarm
+    # nobody asked for. backlog_due is kept so the date still shows and
+    # still goes red if it is missed.
+    assert all(j == {"time_bucket": "now"} for _p, j in moved)
+
+    # The column arrives with the migration; until then this is a feature
+    # that does not exist yet, not an error that takes the page down.
+    def boom(*a, **k):
+        raise RuntimeError("column backlog_due does not exist")
+    monkeypatch.setattr(bk, "get", boom)
+    assert bk.promote_due("u1", today) == 0
+
+
+def test_backlog_shows_effort_and_time_remaining(auth_client, monkeypatch):
+    """"it should show duration and do it with in ... x days and it should
+    also show how many days are left based on when it was entered."
+    """
+    from datetime import timedelta
+    from utils.user_tz import user_today
+    today = user_today()
+
+    _backlog_stub(monkeypatch, bucket=[
+        {"id": "b1", "text": "Renew passport", "time_bucket": "future",
+         "due_at": None, "created_at": "2026-08-20", "planned_minutes": 45,
+         "backlog_due": (today + timedelta(days=5)).isoformat()},
+    ])
+    html = auth_client.get("/backlog").get_data(as_text=True)
+    assert "45 min" in html
+    assert "5 days left" in html

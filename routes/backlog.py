@@ -69,6 +69,63 @@ backlog_bp = Blueprint("backlog", __name__)
 _CLOSED = {"done", "skipped", "deleted", "not_required"}
 
 
+def promote_due(user_id, today, lead_days=1):
+    """Move backlog items into the Quick Bucket before their deadline bites.
+
+    "it should move it in to quick bucket one day before the duration
+    expires automatically."
+
+    A deadline you have to notice yourself is a deadline you will miss —
+    that is the whole reason the backlog needed dates. This is the half
+    that makes them worth capturing: the day before something is due, it
+    stops being backlog and joins the list you actually work from.
+
+    LAZY, NOT SCHEDULED. It runs when either page is opened rather than on
+    a timer, because a background job that quietly stops is exactly the
+    failure this app keeps hitting — and there is no point promoting an
+    item into a list nobody is looking at. Opening either page is also the
+    only moment the result can be seen.
+
+    Idempotent: an item already out of `future` is not matched again.
+    Returns the number moved, and never raises — a failure here must not
+    take the page down with it.
+    """
+    cutoff = (today + timedelta(days=lead_days)).isoformat()
+    try:
+        rows = get("quick_bucket", params={
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "is_done": "eq.false",
+            "time_bucket": "eq.future",
+            "backlog_due": f"lte.{cutoff}",
+            "select": "id",
+            "limit": "200",
+        }) or []
+    except Exception:
+        # The column arrives with MIGRATION_BACKLOG_ROUTING.sql. Until then
+        # this is a feature that does not exist yet, not an error.
+        logger.debug("backlog: backlog_due unavailable", exc_info=True)
+        return 0
+
+    moved = 0
+    for r in rows:
+        try:
+            update("quick_bucket",
+                   {"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
+                   # due_at stays NULL: this is a deadline, not a countdown,
+                   # and writing one would start a calendar alarm nobody
+                   # asked for. backlog_due is kept so the date still shows
+                   # and still goes red if it is missed.
+                   {"time_bucket": "now"})
+            moved += 1
+        except Exception:
+            logger.warning("backlog: could not promote %s", r.get("id"),
+                           exc_info=True)
+    if moved:
+        logger.info("backlog: promoted %s item(s) due by %s", moved, cutoff)
+    return moved
+
+
 class _neg_str:
     """Sort a string DESCENDING inside an otherwise ascending key."""
 
@@ -192,6 +249,14 @@ def _undated_project_tasks(user_id):
 def backlog_page():
     user_id = session["user_id"]
     today = user_today()
+
+    # Before reading the list, act on anything whose deadline is one day
+    # out — otherwise the page shows work as "not yet prioritised" that
+    # should already have moved.
+    try:
+        promote_due(user_id, today)
+    except Exception:
+        logger.warning("backlog: promotion sweep failed", exc_info=True)
 
     try:
         future = _future_bucket(user_id, today)

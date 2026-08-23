@@ -104,7 +104,8 @@
 
   /* ── THE LONG CELEBRATION ────────────────────────────────────────
      "claps should be for atleast 20 seconds... Along with clap dancing and
-     singing girl should be shown."
+     singing girl should be shown", then "make the clap and dance to 10
+     seconds please..20 seconds look too high."
 
      IT RESTARTS, IT DOES NOT STACK. Twenty seconds is a long time on a
      prep page where ten topics get ticked in a row — ten overlapping
@@ -113,7 +114,9 @@
 
      It sits in a corner, ignores the pointer, and can be dismissed by
      clicking it. Nothing about it blocks the work being celebrated. */
-  var HOLD_MS = 20000;
+  //: Ten seconds. Twenty was the first ask and "look too high" the second
+  //: — long enough to feel like applause, short enough not to outstay it.
+  var HOLD_MS = 10000;
   var party = null, partyEnds = 0, partyTimer = null;
 
   function endParty() {
@@ -130,7 +133,7 @@
       return party;
     }
     party = document.createElement("div");
-    party.className = "dp-party";
+    party.className = "dp-party" + (reduced() ? " dp-still" : "");
     party.setAttribute("aria-hidden", "true");
     party.innerHTML =
       '<div class="dp-party-cast">' +
@@ -177,7 +180,11 @@
       "@keyframes dp-note-up{0%{opacity:0;transform:translateY(0) scale(.7)}" +
         "20%{opacity:1}100%{opacity:0;transform:translateY(-40px) scale(1.1)}}" +
       "@media (max-width:520px){.dp-party{right:10px;bottom:10px;" +
-        "padding:9px 12px 8px}.dp-party-cast{font-size:28px}}";
+        "padding:9px 12px 8px}.dp-party-cast{font-size:28px}}" +
+      /* Held still, not hidden. The notes would otherwise sit stacked at
+         zero opacity, so they are dropped rather than frozen mid-flight. */
+      ".dp-still,.dp-still *{animation:none !important}" +
+      ".dp-still .dp-note{display:none}";
     var el = document.createElement("style");
     el.id = "dp-party-style";
     el.textContent = css;
@@ -207,6 +214,7 @@
   }
 
   function badge(el, message) {
+    if (reduced()) return;      // it is a flying label; the card carries the words
     var host = ensureLayer();
     var p = pointFor(el);
     var b = document.createElement("b");
@@ -218,10 +226,16 @@
   }
 
   window.dpClap = function (el, message, opts) {
-    if (reduced()) return;
     try {
       ensureStyle();
-      burst(el);
+      // REDUCED MOTION SILENCES THE MOVEMENT, NOT THE CELEBRATION.
+      // Returning early here meant a phone with Reduce Motion turned on —
+      // which is a very ordinary setting, and the reason "in mobile
+      // completing the task is not showing claps and dancing" — got
+      // nothing at all. Someone asking for less movement has not asked to
+      // stop being told they finished something. The flying confetti is
+      // dropped; the card, the dancers and the words stay, held still.
+      if (!reduced()) burst(el);
 
       // A short burst is enough for one checkbox. The full twenty seconds
       // is for finishing something — passed explicitly so ordinary ticks
@@ -237,7 +251,7 @@
       if (!partyTimer) {
         partyTimer = setInterval(function () {
           if (Date.now() >= partyEnds) { endParty(); return; }
-          burst(party);           // keep clapping for the whole twenty
+          if (!reduced()) burst(party);   // keep clapping for the ten
         }, 1400);
       }
     } catch (e) { /* a celebration must never break the thing it celebrates */ }
