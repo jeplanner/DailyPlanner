@@ -221,6 +221,14 @@ click(q("[data-ta-close]"));
 // so a real audio file is the only sound this app can make when locked.
 click(q(".ta-btn"));
 click(doc.querySelector('[data-ta-tab="device"]'));
+// Permission state must be STATED. The self-heal never prompts, so on a
+// device where permission was never granted it does nothing — correctly,
+// and silently. That silence is why a phone received nothing for a day
+// while everything else looked configured.
+ok("permission state is shown", !!q("[data-ta-perm]"));
+ok("...and names the state", /granted|default|denied|unsupported/
+   .test(q("[data-ta-perm]").className));
+
 ok("chime control exists", !!q("[data-ta-chime]"));
 ok("chime is ON by default", q("[data-ta-chime]").checked === true);
 {

@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from requests.exceptions import HTTPError
 
 from services import announcer_push
+from services import loud
 from services import push_service
 from supabase_client import get, post, update
 
@@ -310,13 +311,24 @@ def tick():
                     if not announcer_push.claim(user_id, cid, today, a_time):
                         continue
                     body, when = announcer_push.spoken_label(a_item, a_time)
-                    push_service.send_to_user(
+                    sent, failed = push_service.send_to_user(
                         user_id,
                         title=f"🔔 {when}",
                         body=body,
                         tag=f"announce-{cid}-{a_time.replace(':', '')}",
                         url="/day-board",
                     )
+                    # A FIRE THAT REACHED NOBODY IS THE "it did not go off"
+                    # REPORT. The claim row proves the scheduler ran; it
+                    # proves nothing about delivery, and treating the two as
+                    # the same is how "it fired" and "you heard it" got
+                    # confused. Say so where the user can see it.
+                    if not sent:
+                        loud.bailed(
+                            "announcement notification",
+                            "fired but reached no device — no active push "
+                            "subscription",
+                            at=a_time, failed=failed)
             except Exception:
                 logger.debug("announcement push skipped for %s", user_id,
                              exc_info=True)

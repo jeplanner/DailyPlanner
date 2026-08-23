@@ -4408,3 +4408,41 @@ def test_panel_warns_when_this_device_is_not_announcing():
     assert "this device is " in js
     # It must only appear when there is something that WOULD have spoken.
     assert "live > 0 && !willSpeak" in js
+
+
+def test_a_notification_that_reached_nobody_is_reported():
+    """Reported 2026-08-23: "2.50 pm srirenga did not fire."
+
+    It DID fire — the claim row was written at 14:50:05 IST. What it did
+    not do was reach anything, because the only active push subscription
+    was a Windows desktop and every Android one was dead.
+
+    The claim row proves the SCHEDULER ran. It proves nothing about
+    delivery, and I had been treating the two as the same thing: the send
+    result was discarded, so a fire that reached zero devices looked
+    exactly like one that worked. That is the silent-failure pattern this
+    codebase keeps relearning, and I reintroduced it.
+    """
+    src = open("services/push_scheduler.py", encoding="utf-8").read()
+    block = src.split("announcer_push.fires_for_user")[1].split("except Exception")[0]
+    assert "sent, failed = push_service.send_to_user" in block, \
+        "the send result is discarded again"
+    assert "if not sent:" in block
+    assert "loud.bailed" in block, "a delivery to nobody is not surfaced"
+
+
+def test_panel_states_the_notification_permission():
+    """The self-heal deliberately never prompts, so on a device where
+    permission was never granted it does nothing — correctly, and
+    silently. Nothing anywhere said which of the three states a device was
+    in, so a phone can receive nothing for a day while every other part of
+    the interface looks correctly configured."""
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "data-ta-perm" in js
+    for state in ("granted", "denied", "unsupported"):
+        assert '"' + state + '"' in js, f"the {state} state is not distinguished"
+    # 'denied' cannot be recovered by asking again, so it must say so
+    # rather than offering a button that does nothing.
+    assert "cannot ask again once blocked" in js
+    # And the un-granted state offers the one action that changes it.
+    assert "data-ta-perm-on" in js and "ClPush.subscribe" in js

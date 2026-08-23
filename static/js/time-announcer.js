@@ -915,6 +915,15 @@
       "background:#fdf1e3;color:#8a4b09 !important;",
       "border:1px solid #f0c98a}",
       ".ta-idle[hidden]{display:none}",
+      ".ta-perm{margin:0 0 10px !important;font-size:11px !important;",
+      "line-height:1.45;font-weight:700;padding:8px 10px;border-radius:8px}",
+      ".ta-perm.granted{background:#e6f4ef;color:#065f46 !important;",
+      "border:1px solid #a7d7c5}",
+      ".ta-perm.default,.ta-perm.denied{background:#fdf1e3;",
+      "color:#8a4b09 !important;border:1px solid #f0c98a}",
+      ".ta-perm button{display:block;margin-top:7px;font:inherit;",
+      "font-size:11.5px;font-weight:800;padding:6px 12px;border-radius:8px;",
+      "border:0;background:#4338ca;color:#fff;cursor:pointer}",
       ".ta-tabs{display:flex;gap:2px;margin:12px 0 0;",
       "border-bottom:1px solid var(--color-border,#e5e7eb)}",
       ".ta-tabs button{flex:1;font:inherit;font-size:11.5px;font-weight:700;",
@@ -1119,6 +1128,35 @@
       nowEl.textContent = (state.mode === "on" ? "Saved & running: "
                            : state.mode === "paused" ? "Saved, paused: "
                            : "Saved, stopped: ") + what;
+    }
+
+    /* NOTIFICATION PERMISSION, STATED PLAINLY.
+       The self-heal deliberately never prompts, so on a device where
+       permission was never granted it does nothing — correctly, and
+       SILENTLY. That silence is why a phone kept receiving nothing while
+       everything else looked configured. The panel now says which of the
+       three states this device is in, and offers the one action that
+       changes it. */
+    var perm = pop.querySelector("[data-ta-perm]");
+    if (perm) {
+      var st = (typeof Notification === "undefined")
+        ? "unsupported" : Notification.permission;
+      perm.className = "ta-perm " + st;
+      if (st === "granted") {
+        perm.innerHTML = "\u2713 Notifications are on for this device, so " +
+          "announcements reach you with the screen off.";
+      } else if (st === "denied") {
+        perm.innerHTML = "\u26a0 Notifications are <b>blocked</b> for this " +
+          "site in your browser. Nothing can reach a locked screen until " +
+          "you unblock them in the browser\u2019s site settings \u2014 " +
+          "this app cannot ask again once blocked.";
+      } else if (st === "unsupported") {
+        perm.innerHTML = "This browser does not support notifications.";
+      } else {
+        perm.innerHTML = "\u26a0 Notifications are <b>off</b> on this " +
+          "device, so nothing reaches you with the screen off. " +
+          "<button type=\"button\" data-ta-perm-on>Turn them on</button>";
+      }
     }
 
     /* NOT ANNOUNCING ON THIS DEVICE.
@@ -1887,6 +1925,7 @@
 
       /* ── DEVICE ─────────────────────────────────────────────────── */
       '<div class="ta-pane" data-ta-pane="device" hidden>' +
+        '<p class="ta-perm" data-ta-perm></p>' +
         '<label class="ta-keep"><input type="checkbox" data-ta-chime> ' +
           'Play a chime with every announcement</label>' +
         '<p class="ta-note">A real sound, which is the ONLY thing that can be ' +
@@ -1938,6 +1977,23 @@
         if (state.mode === "on") { armed = true; speak(phrase(new Date())); }
         applyMode();
         savedFlash();
+        return;
+      }
+      if (ev.target.closest("[data-ta-perm-on]")) {
+        // Goes through the app's own push module, so the subscription is
+        // registered exactly the way Settings does it.
+        try {
+          if (window.ClPush && window.ClPush.subscribe) {
+            window.ClPush.subscribe()
+              .then(function () { paint(); savedFlash(); })
+              .catch(function (e) {
+                note(false, (e && e.message) || "could not turn on notifications");
+                paint();
+              });
+          } else {
+            note(false, "the notifications module has not loaded");
+          }
+        } catch (e) { note(false, "could not turn on notifications"); }
         return;
       }
       var ch = ev.target.closest("[data-ta-chime]");
