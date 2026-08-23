@@ -300,11 +300,17 @@ def send():
             return jsonify({"error": "Not found"}), 404
 
         today = user_today().isoformat()
+        from routes.quick_bucket import BUCKET_SET, _due_at_for
+        bucket = (data.get("bucket") or "now").strip().lower()
+        if bucket not in BUCKET_SET or bucket == "future":
+            bucket = "now"
         try:
             res = post("quick_bucket", {
                 "user_id": user_id,
-                "text": (task.get("task_text") or "Task")[:2000],
-                "time_bucket": "now",
+                "text": ((data.get("text") or "").strip()
+                         or task.get("task_text") or "Task")[:2000],
+                "time_bucket": bucket,
+                "due_at": _due_at_for(bucket),
                 "is_done": False,
                 "is_deleted": False,
                 "source_task_id": task["task_id"],
@@ -337,10 +343,21 @@ def send():
     if dest == "quick":
         # Same table, same row — "prioritised" IS a bucket, so nothing is
         # copied and nothing can drift.
+        #
+        # WHICH bucket is the whole decision being made here. Sending
+        # everything to "now" would move the pile rather than prioritise
+        # it, which is the opposite of what the Quick Bucket is for.
+        from routes.quick_bucket import BUCKET_SET, _due_at_for
+        bucket = (data.get("bucket") or "now").strip().lower()
+        if bucket not in BUCKET_SET or bucket == "future":
+            bucket = "now"
+        patch = {"time_bucket": bucket, "due_at": _due_at_for(bucket)}
+        new_text = (data.get("text") or "").strip()
+        if new_text:
+            patch["text"] = new_text[:2000]
         update("quick_bucket",
-               {"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
-               {"time_bucket": "now", "due_at": None})
-        return jsonify({"status": "ok"})
+               {"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"}, patch)
+        return jsonify({"status": "ok", "time_bucket": bucket})
 
     if dest == "project":
         project_id = data.get("project_id")
@@ -354,16 +371,27 @@ def send():
         }) or []
         if not owns:
             return jsonify({"error": "Not found"}), 404
+        payload = {
+            "project_id": project_id,
+            "user_id": user_id,
+            "task_text": ((data.get("text") or "").strip() or text)[:2000],
+            # The project's own backlog status, so it lands as work to be
+            # planned rather than as work already underway.
+            "status": "backlog",
+            "start_date": user_today().isoformat(),
+        }
+        due = (data.get("due_date") or "").strip()
+        if due:
+            payload["due_date"] = due[:10]
+            # The parking filter reads revised_due_date, so an insert that
+            # sets only due_date is invisible to it — mirrored the way the
+            # projects page mirrors it.
+            payload["revised_due_date"] = due[:10]
+        pri = (data.get("priority") or "").strip().lower()
+        if pri in ("high", "medium", "low"):
+            payload["priority"] = pri
         try:
-            post("project_tasks", {
-                "project_id": project_id,
-                "user_id": user_id,
-                "task_text": text[:2000],
-                # The project's own backlog status, so it lands as work to
-                # be planned rather than as work already underway.
-                "status": "backlog",
-                "start_date": user_today().isoformat(),
-            })
+            post("project_tasks", payload)
         except Exception:
             logger.exception("backlog: creating the project task failed")
             return jsonify({"error": "Could not add to that project"}), 500
@@ -376,9 +404,9 @@ def send():
         try:
             post("scribble_notes", {
                 "user_id": user_id,
-                "title": text[:120],
-                "content": text,
-                "notebook": "Backlog",
+                "title": ((data.get("title") or "").strip() or text)[:120],
+                "content": (data.get("content") or "").strip() or text,
+                "notebook": (data.get("notebook") or "").strip() or "Backlog",
             })
         except Exception:
             logger.exception("backlog: creating the note failed")

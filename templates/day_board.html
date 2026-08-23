@@ -331,6 +331,18 @@ li.done .txt{text-decoration:line-through}
 .at{flex:0 0 auto; color:var(--dim); font-size:calc(var(--u) * .85);
     font-variant-numeric:tabular-nums}
 
+/* WHICH BANK a prep row came from. Carries the information the routing
+   prefix used to, in a fraction of the width, and it reads as a category
+   rather than as the first three words of every prep title. */
+.bank{
+  flex:0 0 auto; font-size:calc(var(--u) * .72); font-weight:700;
+  letter-spacing:.02em; color:var(--accent);
+  border:1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius:999px; padding:0 calc(var(--u) * .35);
+  white-space:nowrap;
+}
+li.done .bank{color:var(--dim); border-color:var(--line)}
+
 /* THE TIME TAG, EDITABLE IN PLACE.
    z-index above .hit, which is an absolutely positioned overlay covering
    the whole row — without this the row's link swallows every tap and the
@@ -552,6 +564,7 @@ li.done .when{color:var(--dim); font-weight:500}
                 {% if b.done %}<span class="tick">✓</span>
                 {% else %}<span class="dot"></span>{% endif %}
                 <span class="txt">{{ b.title }}</span>
+                {% if b.prep %}<span class="bank">{{ b.prep }}</span>{% endif %}
                 {% if b.at %}<span class="at">{{ b.at }}</span>{% endif %}
                 <a class="hit" href="{{ b.href }}"
                    aria-label="Open {{ b.title }} in the Quick Bucket"></a>

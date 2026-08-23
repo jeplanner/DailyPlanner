@@ -473,6 +473,86 @@ ok("...and 15m is no longer selected",
    !doc.querySelector('[data-ta-every="15"]').classList.contains("on"));
 ok("panel stays open after choosing an interval", q(".ta-pop").hidden === false);
 
+// ── ADDING AN ANNOUNCEMENT, END TO END (2026-08-23) ──────────────────
+// Reported as "your announcements addition not working". Everything that
+// guarded this before read the SOURCE for a string, which cannot tell the
+// difference between a form that saves and a form that looks like it does.
+// This drives the real controls and then checks the row reached the server.
+click(q(".ta-btn"));
+{
+  const before = window.TimeAnnouncer.state().items.length;
+  if (q("[data-ta-new")) { /* form may be behind the + New toggle */ }
+  const toggle = q("[data-ta-newbtn]") || q("[data-ta-toggle-form]");
+  if (toggle) click(toggle);
+
+  ok("the add form is reachable", !!q("[data-ta-new-at]"));
+  q("[data-ta-new-at]").value = "5.00";
+  q("[data-ta-new-text]").value = "Srirenga";
+  click(q("[data-ta-add]"));
+  await tick();
+
+  const items = window.TimeAnnouncer.state().items;
+  ok("the announcement is added", items.length === before + 1);
+  const made = items[items.length - 1] || {};
+  ok("...at the time typed", made.at === "05:00");
+  ok("...with the words typed", made.text === "Srirenga");
+  ok("...switched on", made.on === true);
+
+  // A schedule that exists on one device only is the problem the sync was
+  // built to remove, so the add MUST reach the server.
+  const pushed = sent("POST", "/api/announcer/items");
+  ok("...and pushed to the server", pushed.length >= 1);
+  ok("...carrying the new row", (() => {
+    const last = pushed[pushed.length - 1];
+    return !!(last && last.body && (last.body.items || []).some(
+      (i) => i.at === "05:00" && i.text === "Srirenga"));
+  })());
+
+  // It has to be VISIBLE afterwards. Saving a row that the list does not
+  // show is indistinguishable, from the outside, from not saving it.
+  ok("...and shown in the list", /Srirenga/.test(q("[data-ta-list]").textContent));
+}
+
+// ── the window reads as a pair (2026-08-23) ──────────────────────────
+// "Also like until, user should be allowed to enter start." The start time
+// IS the main field; unlabelled, it read as the only time on the form, so
+// "Until" looked like an end with no beginning.
+ok("the start time is labelled", /Start/.test(q("[data-ta-form]").textContent));
+ok("...and Until says what it runs from",
+   /Until \(from Start/.test(q("[data-ta-form]").textContent));
+// One value, one input: a second "start" box is how the recurrence rule
+// ended up in two places.
+ok("there is exactly one start-time input",
+   doc.querySelectorAll("[data-ta-new-at]").length === 1);
+
+// ── the way out of the modal is findable (2026-08-23) ────────────────
+// "announcement close cross on modal dialog is not very visible."
+{
+  const x = q("[data-ta-close]");
+  const cs = window.getComputedStyle(x);
+  // GEOMETRY IS THE HALF THAT MATTERS AND THE HALF jsdom CAN RESOLVE.
+  // It was a bare glyph in a ~24px box; the complaint was that it could
+  // not be seen or, on a phone, hit.
+  ok("the close control is a real target", parseInt(cs.width, 10) >= 30 &&
+                                           parseInt(cs.height, 10) >= 30);
+  ok("...and reads as a button, not a glyph", cs.borderRadius === "999px");
+
+  // Its surface and border are declared through design-system custom
+  // properties, and jsdom's CSS parser drops a var() inside a shorthand —
+  // it reports "medium none rgba(0,0,0,0)" for a border it cannot parse.
+  // So these two are read off the stylesheet the panel injects rather than
+  // off the computed style, which would assert nothing here.
+  const sheet = Array.prototype.map
+    .call(doc.querySelectorAll("style"), (s) => s.textContent).join("\n");
+  const rule = (sheet.split(".ta-x{")[1] || "").split("}")[0];
+  ok("...with its own background", /background:var\(--color-bg/.test(rule));
+  ok("...and a visible edge", /border:1px solid/.test(rule));
+  // A finger needs the full 44px.
+  ok("...enlarged for touch",
+     /@media \(pointer:coarse\)\{\.ta-x\{width:44px;height:44px/.test(sheet));
+}
+click(q("[data-ta-close]"));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
 })();

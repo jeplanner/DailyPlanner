@@ -5125,3 +5125,86 @@ def test_day_board_script_actually_parses(auth_client, monkeypatch):
 
     r = subprocess.run(["node", "--check", path], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_day_board_prep_bucket_row_opens_its_bank_not_the_bucket(auth_client,
+                                                                 monkeypatch):
+    """Reported: "todo when i click it goes to quick bucket instead of AISDE
+    Prep link etc. It should go to the place where details are there."
+
+    Every Quick Bucket row on the board linked to /quick-bucket. For a
+    scheduled prep topic that is a page showing the same one line that was
+    just clicked — the answer to "what is this" is in the bank. Events have
+    followed this rule since the click-through work; bucket rows were simply
+    never given it.
+    """
+    import routes.day_board as db
+    from routes.interview_prep import _BUCKET_SEP
+
+    monkeypatch.setattr(db, "_events_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_checklist_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_tasks_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_bucket_for", lambda u, d, t: [
+        {"id": "B1", "title": "AISDEPrep" + _BUCKET_SEP + "Two-pointer technique",
+         "at": None, "done": False},
+        {"id": "B2", "title": "SQLPrep" + _BUCKET_SEP + "Window functions",
+         "at": None, "done": False},
+        {"id": "B3", "title": "Buy milk", "at": None, "done": False},
+    ])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
+    html = auth_client.get("/day-board").get_data(as_text=True)
+
+    assert "/ai-sde?" in html and "topic=Two-pointer" in html.replace("+", " ")
+    assert "/sql?" in html and "Window" in html
+    # An ordinary line still goes where it always did.
+    assert "/quick-bucket" in html
+
+    # The routing prefix is not shown: it is repeated on every prep row and
+    # spends the width the actual topic needs on a one-screen board.
+    assert "AISDEPrep" not in html.split("<body")[1]
+    assert "Two-pointer technique" in html
+    # The bank survives as a chip, so which bank it is is still readable.
+    assert "AI/SDE prep" in html and "SQL prep" in html
+
+
+def test_backlog_page_router_runs_in_a_real_dom(auth_client, monkeypatch):
+    """The capture box and the Send → dialog, driven for real.
+
+    Renders the page through Flask and runs the actual static/js/backlog.js
+    against that HTML, so the TEMPLATE and the SCRIPT are checked together.
+    A selector only one of them knows about is exactly the break that
+    source-reading assertions cannot see — and this page is nothing but
+    selectors shared between the two.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
+                           capture_output=True, text=True)
+    if probe.returncode != 0:
+        pytest.skip("jsdom not installed")
+
+    _backlog_stub(
+        monkeypatch,
+        bucket=[{"id": "b1", "text": "Renew passport", "time_bucket": "future",
+                 "due_at": None, "created_at": "2026-08-01"}],
+        tasks=[{"task_id": "t1", "task_text": "Revise the BCP/DR documentation",
+                "status": "open", "project_id": "p1", "due_date": None,
+                "created_at": "2026-01-01", "plan_date": None,
+                "start_time": None}],
+        projects=[{"project_id": "p1", "name": "Office"}],
+    )
+    html = auth_client.get("/backlog").get_data(as_text=True)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False,
+                                     encoding="utf-8") as fh:
+        fh.write(html)
+        path = fh.name
+
+    r = subprocess.run(["node", "tests/js/backlog.test.js", path],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "0 failed" in r.stdout, r.stdout

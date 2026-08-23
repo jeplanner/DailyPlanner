@@ -95,6 +95,48 @@
     html.dark .bk-msg.err{background:#3f1d1d;color:#fca5a5}
     .bk-item.going{opacity:.4}
 
+    /* THE CAPTURE DIALOG.
+       Asked for as "when i send to quick bucket, projects, inbox etc it
+       should pop up box which would capture relevant information before
+       they are moved". Each destination wants different things — a bucket
+       wants WHEN, a project wants a due date and a priority, a link wants
+       tags — and guessing them is how a backlog turns into a pile of
+       untriaged rows somewhere else. */
+    .bk-back{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:70}
+    .bk-back[hidden]{display:none}
+    .bk-modal{
+      position:fixed;z-index:71;left:50%;top:50%;transform:translate(-50%,-50%);
+      width:min(430px,calc(100vw - 24px));max-height:calc(100dvh - 40px);
+      overflow-y:auto;background:var(--color-surface);
+      border:1px solid var(--color-border);border-radius:14px;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);padding:16px}
+    .bk-modal[hidden]{display:none}
+    .bk-modal h3{margin:0 0 3px;font-size:15.5px;font-weight:800}
+    .bk-modal .why{margin:0 0 13px;font-size:12px;line-height:1.5;
+      color:var(--color-text-secondary)}
+    .bk-fld{display:block;margin:0 0 11px}
+    .bk-fld > span{display:block;font-size:11.5px;font-weight:800;
+      text-transform:uppercase;letter-spacing:.04em;
+      color:var(--color-text-secondary);margin:0 0 4px}
+    .bk-fld input, .bk-fld select, .bk-fld textarea{
+      width:100%;box-sizing:border-box;font-family:inherit;font-size:14px;
+      padding:9px 10px;border-radius:8px;border:1px solid var(--color-border);
+      background:var(--color-bg);color:var(--color-text)}
+    .bk-fld textarea{min-height:78px;resize:vertical;line-height:1.5}
+    .bk-fld input:focus, .bk-fld select:focus, .bk-fld textarea:focus{
+      outline:2px solid var(--color-primary);outline-offset:-1px}
+    .bk-two{display:flex;gap:10px}
+    .bk-two > .bk-fld{flex:1;min-width:0}
+    .bk-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
+    .bk-modal .bk-err{margin:0 0 10px;font-size:12.5px;font-weight:600;
+      color:#991b1b;display:none}
+    .bk-modal .bk-err.show{display:block}
+    @media (pointer: coarse){
+      .bk-fld input, .bk-fld select, .bk-fld textarea{font-size:16px;
+        min-height:44px}   /* 16px stops iOS zooming the page on focus */
+      .bk-btn{min-height:44px}
+    }
+
     /* Fingers, not cursors. */
     @media (pointer: coarse){
       .bk-send{padding:7px 12px;font-size:12.5px}
@@ -194,6 +236,10 @@
 </div>
 
 <div class="bk-menu" data-bk-menu hidden role="menu" aria-label="Send to"></div>
+
+<div class="bk-back" data-bk-back hidden></div>
+<div class="bk-modal" data-bk-modal hidden role="dialog" aria-modal="true"
+     aria-labelledby="bk-modal-title"></div>
 
 <script type="application/json" data-bk-projects>
   {{ all_projects | tojson }}

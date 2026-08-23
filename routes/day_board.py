@@ -680,6 +680,51 @@ def _link_event(item, plan_date):
                    focus=focus, **_back_args(plan_date))
 
 
+def _parse_prep(text):
+    """(bank, topic) if this bucket line was written by a prep bank.
+
+    Imported lazily and never allowed to raise: routes.interview_prep pulls
+    in every question bank, and the board must render even if one of them
+    fails to import.
+    """
+    try:
+        from routes.interview_prep import parse_bucket_text
+        return parse_bucket_text(text)
+    except Exception:
+        logger.warning("day board: prep parse failed", exc_info=True)
+        return (None, None)
+
+
+def _prep_bank_spec(bank):
+    try:
+        from routes.interview_prep import PREP_BANKS
+        return PREP_BANKS.get(bank) or {}
+    except Exception:
+        return {}
+
+
+def _link_bucket(item, plan_date):
+    """A bucket row opens the Quick Bucket — unless a bank wrote it.
+
+    Reported as "todo when i click it goes to quick bucket instead of AISDE
+    Prep link etc. It should go to the place where details are there".
+
+    Every bucket row used to link to /quick-bucket. For a scheduled prep
+    topic that is a page showing the same one line that was just clicked;
+    the answer to "what is this and what do I do with it" is in the bank.
+    This is the rule events have followed since the click-through work —
+    bucket rows were simply never given it.
+    """
+    bank, topic = _parse_prep(item.get("title"))
+    page = _prep_bank_spec(bank).get("page") if bank else None
+    if page:
+        args = dict(_back_args(plan_date))
+        if topic:
+            args["topic"] = topic
+        return page + "?" + urlencode(args)
+    return url_for("quick_bucket.quick_bucket_page", **_back_args(plan_date))
+
+
 def _link_task(item, plan_date):
     """A task opens the Eisenhower matrix, which wants the date in parts."""
     return url_for("todo.todo", year=plan_date.year, month=plan_date.month,
@@ -774,7 +819,16 @@ def day_board():
                   if not (t.get("is_done") or t.get("status") == "done")]
     open_bucket = [b for b in bucket if not b["done"]]
     for _b in bucket:
-        _b["href"] = url_for("quick_bucket.quick_bucket_page", **_back_args(plan_date))
+        _b["href"] = _link_bucket(_b, plan_date)
+        # "AISDEPrep — Two-pointer technique" is a ROUTING prefix, and it is
+        # repeated on every prep row. On a board whose whole constraint is
+        # one screen, it spends the width that the actual topic needs. The
+        # bank is shown as a short chip instead, where it reads as a
+        # category rather than as part of the title.
+        _bank, _topic = _parse_prep(_b.get("title"))
+        if _bank and _topic:
+            _b["title"] = _topic
+            _b["prep"] = _prep_bank_spec(_bank).get("label") or ""
 
     # Attach the click-through target to every row. Done here rather than in
     # the template so the three date conventions stay in one place.

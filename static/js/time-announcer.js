@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v252";
+  var BUILD = "v253";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -1156,10 +1156,25 @@
       "@media (max-width:520px){.ta-pop{width:calc(100vw - 16px);",
       "max-height:92vh}}",
       ".ta-pop h4{margin:0 0 3px;font-size:13.5px;font-weight:800;padding-right:22px}",
-      ".ta-x{position:absolute;top:6px;right:7px;border:0;background:none;",
-      "cursor:pointer;font-size:19px;line-height:1;padding:2px 5px;border-radius:6px;",
-      "color:var(--color-text-secondary,#9ca3af)}",
-      ".ta-x:hover{background:var(--color-bg,#f3f4f6);color:var(--color-text,#111827)}",
+      /* THE WAY OUT OF A MODAL HAS TO LOOK LIKE ONE.
+         This was a bare grey glyph on no background in the corner, about
+         24px square — "not very visible for the user", and on a phone it
+         was also barely tappable. It is a real button now: its own
+         surface, its own border, and a 44px target where the pointer is
+         a finger. The panel is modal, so nothing outside it closes it and
+         this control is the only exit besides Escape. */
+      ".ta-x{position:absolute;top:8px;right:9px;",
+      "display:inline-flex;align-items:center;justify-content:center;",
+      "width:30px;height:30px;padding:0;",
+      "border:1px solid var(--color-border,#d1d5db);",
+      "background:var(--color-bg,#f3f4f6);",
+      "cursor:pointer;font-size:20px;line-height:1;border-radius:999px;",
+      "color:var(--color-text,#111827);font-weight:700}",
+      ".ta-x:hover{background:#ef4444;border-color:#ef4444;color:#fff}",
+      ".ta-x:focus-visible{outline:2px solid var(--color-primary,#4f46e5);",
+      "outline-offset:2px}",
+      "@media (pointer:coarse){.ta-x{width:44px;height:44px;font-size:24px;",
+      "top:6px;right:6px}}",
       ".ta-pop p{margin:0 0 10px;font-size:11.5px;line-height:1.45;",
       "color:var(--color-text-secondary,#6b7280)}",
       ".ta-row{display:flex;gap:6px;margin-bottom:8px}",
@@ -2267,14 +2282,23 @@
 
         '<div class="ta-add" data-ta-form hidden>' +
           '<div class="ta-add-row">' +
-            '<span class="ta-timefld">' +
-              '<input type="text" data-ta-new-at placeholder="5.00" ' +
-                'aria-label="Time">' +
-              '<span class="ta-ampm" role="group" aria-label="Morning or afternoon">' +
-                '<button type="button" data-ta-mer="at" data-v="am">AM</button>' +
-                '<button type="button" data-ta-mer="at" data-v="pm">PM</button>' +
+            /* LABELLED "Start", because it is the same value "Until" is
+               measured from. Unlabelled it read as the only time on the
+               form, so the window in the advanced pane looked like an end
+               with no beginning — reported as "like until, user should be
+               allowed to enter start". There is deliberately NOT a second
+               start field down there: one value with two inputs is how
+               the recurrence rule ended up in two places. */
+            '<label class="ta-dt">Start' +
+              '<span class="ta-timefld">' +
+                '<input type="text" data-ta-new-at placeholder="5.00" ' +
+                  'aria-label="Start time">' +
+                '<span class="ta-ampm" role="group" aria-label="Morning or afternoon">' +
+                  '<button type="button" data-ta-mer="at" data-v="am">AM</button>' +
+                  '<button type="button" data-ta-mer="at" data-v="pm">PM</button>' +
+                '</span>' +
               '</span>' +
-            '</span>' +
+            '</label>' +
             '<select data-ta-new-repeat aria-label="How often">' +
               '<option value="daily">Every day</option>' +
               '<option value="once">Once</option>' +
@@ -2299,7 +2323,7 @@
             'aria-expanded="false">Repeat through the day, or set dates</button>' +
           '<div data-ta-advanced hidden>' +
             '<div class="ta-add-row">' +
-              '<label class="ta-dt">Until' +
+              '<label class="ta-dt">Until (from Start, above)' +
                 '<span class="ta-timefld">' +
                   '<input type="text" data-ta-new-until placeholder="8.00">' +
                   '<span class="ta-ampm" role="group" aria-label="Morning or afternoon">' +
@@ -2312,9 +2336,9 @@
                 'data-ta-new-mins placeholder="60 min"></label>' +
             '</div>' +
             '<div class="ta-add-row">' +
-              '<label class="ta-dt">Starts' +
+              '<label class="ta-dt">First date' +
                 '<input type="date" data-ta-new-start></label>' +
-              '<label class="ta-dt">Ends' +
+              '<label class="ta-dt">Last date' +
                 '<input type="date" data-ta-new-end></label>' +
             '</div>' +
           '</div>' +
