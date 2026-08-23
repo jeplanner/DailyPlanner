@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v258";
+  var BUILD = "v260";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -635,6 +635,10 @@
             el.pause();
             el.volume = 1;
             el.dataset.unlocked = "1";
+            // The unlock plays two OTHER elements, which can take audio
+            // focus from the keep-alive that applyKeepalive() just started
+            // on this very gesture.
+            nudgeKeepalive();
             // Put back whatever was queued; the unlock must not throw away
             // a rendered announcement already loaded into the element.
             if (was && el.src !== was) el.src = was;
@@ -674,9 +678,11 @@
     if (!state.chime) { if (onDone) onDone(); return; }
     playThrough("/static/audio-chime.wav", function () {
       if (lastFire) { lastFire.chime = "played"; paint(); }
+      nudgeKeepalive();
       if (onDone) onDone();
     }, function (err) {
       if (lastFire) { lastFire.chime = "blocked"; paint(); }
+      nudgeKeepalive();
       note(false, "the chime was blocked (" +
                   ((err && err.name) || "autoplay policy") + ")");
       if (onDone) onDone();
@@ -735,7 +741,9 @@
     if (!url) return false;
     return playThrough(url, function () {
       if (lastFire) { lastFire.spoke = "played (audio)"; paint(); }
+      nudgeKeepalive();
     }, function (err) {
+      nudgeKeepalive();
       // NAME THE ERROR. "audio blocked" covered two completely different
       // faults — NotAllowedError is the autoplay policy, AbortError is a
       // play() cut short by a new load — and they have opposite fixes.
@@ -812,6 +820,7 @@
           started = true;
           noVoice = false;              // whatever we chose, it worked
           if (lastFire) { lastFire.spoke = "spoke"; paint(); }
+          nudgeKeepalive();
           note(true, "", text);
         };
         u.onend = function () { speaking = null; };
@@ -820,6 +829,7 @@
           speaking = null;
           if (lastFire && !lastFire.spoke) {
             lastFire.spoke = "refused: " + ((ev && ev.error) || "error");
+            nudgeKeepalive();
             paint();
           }
           note(false, (ev && ev.error) || "the browser refused to speak");
@@ -1030,10 +1040,26 @@
     // Android. If the rendered audio is missing or refused, fall back to
     // the speech API, which still works on iOS in that state.
     playChime(function () {
-      var hidden = !!(lastFire && lastFire.hidden);
-      if (!hidden) { sayIt(); return; }
+      /* ── VISIBILITY IS NOT A RELIABLE TEST, AND THIS IS THE BUG ──────
+         Measured on a locked Android, 2026-08-23:
 
-      // Cached: play it immediately.
+           "Last fired 21.00 while visible. Chime: played,
+            speech: refused, synthesis failed" — phone locked throughout.
+
+         A locked screen does NOT make the page hidden. Chrome keeps
+         visibilityState at "visible" when the display merely switches off,
+         so this branch chose speechSynthesis — which a locked Android
+         refuses — while the rendered audio that WOULD have played sat in
+         the cache untouched. That is also why an earlier reading said
+         "rendered audio: cached" next to a speech failure: it was there
+         and never reached.
+
+         So the rendered audio goes FIRST, always. It works in both states,
+         needs no network, and its refusal path still falls through to
+         speechSynthesis for anything it cannot cover. Guessing which state
+         the device is in was never necessary — trying the thing that works
+         everywhere is. `hidden` is still recorded, because it turned out
+         to be the diagnosis, but it no longer decides anything. */
       if (playSpeech(words, sayIt)) { lastFire.audio = "cached"; return; }
       lastFire.audio = "not cached, fetching";
 
@@ -1201,6 +1227,31 @@
     if (el && el.paused) keepaliveOn();
   }
   setInterval(keepaliveWatch, 20000);
+
+  /* ── PUT IT BACK NOW, NOT IN TWENTY SECONDS ────────────────────────
+     The watchdog above is a setInterval, and a frozen page has no
+     intervals — so it can only ever repair a keep-alive that stopped
+     while the page was still awake. Once Android has frozen the tab it is
+     already too late, and the twenty-second gap is exactly when freezing
+     happens: right after playback ended and the screen went dark.
+
+     Every announcement plays on OTHER elements, and starting them can
+     take audio focus from this one. So the keep-alive is put back the
+     instant an announcement finishes rather than at the next tick. The
+     repeats cover a pause that arrives slightly after the sound stops,
+     which is the common shape — the element goes quiet, then the OS
+     tidies up behind it.
+
+     Reported as "it used to work even when android phone was kept
+     locked", with the announcement finally arriving the moment the app
+     was opened — the signature of a page that had been frozen since the
+     last thing it played. */
+  function nudgeKeepalive() {
+    try { keepaliveWatch(); } catch (e) {}
+    [400, 1500, 4000].forEach(function (ms) {
+      setTimeout(function () { try { keepaliveWatch(); } catch (e) {} }, ms);
+    });
+  }
 
   /* Naming the session is what makes the lock-screen entry legible, and
      wiring its buttons is what makes it honest.
@@ -1662,8 +1713,14 @@
         fire.textContent = "No announcement has fired on this device yet.";
       } else {
         var when = lastFire.at.toTimeString().slice(0, 5);
+        // "while visible" read as "the screen was on", and it does not mean
+        // that: a locked phone keeps the page visible. Saying which flag
+        // this is stops the next reading being misdiagnosed the way the
+        // last one was.
         var where = lastFire.hidden === null ? "" :
-          lastFire.hidden ? " while HIDDEN" : " while visible";
+          lastFire.hidden ? " (page hidden)"
+                          : " (page not hidden \u2014 a locked screen counts " +
+                            "as not hidden)";
         var ch = lastFire.chime || "no result";
         var sp = lastFire.spoke || "no result";
         var ok = lastFire.spoke === "spoke" ||

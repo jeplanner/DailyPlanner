@@ -228,7 +228,8 @@
     <ul class="bk-list" data-bk-list-future>
       {% for it in future %}
         <li class="bk-item{% if it.overdue %} is-late{% endif %}"
-            data-kind="bucket" data-id="{{ it.id }}" data-text="{{ it.text }}">
+            data-kind="bucket" data-id="{{ it.id }}" data-text="{{ it.text }}"
+            data-mins="{{ it.planned_minutes or '' }}">
           <span class="t">{{ it.text }}</span>
           {% if it.announced %}
             <span class="bk-tag say" title="Spoken aloud {{ it.announced }}">

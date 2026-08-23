@@ -202,12 +202,20 @@
              "on \u201cNow\u201d just moves the pile.",
         build: function (form) {
           form.appendChild(fld("Task", input("text", text)));
-          form.appendChild(fld("When", select("bucket", BUCKETS, "now")));
+          form.appendChild(two(
+            fld("When", select("bucket", BUCKETS, "now")),
+            // Carried from the capture, and editable here — moving
+            // something into the list you work from is the moment you
+            // actually know how long it takes, and an item captured
+            // without an estimate would otherwise never get one.
+            fld("Takes (min)", input("minutes",
+                                     li.getAttribute("data-mins") || "",
+                                     "number"))));
         },
         submit: function (v) {
           return postJSON("/api/backlog/send", {
             kind: kind, id: li.getAttribute("data-id"), to: "quick",
-            text: v.text, bucket: v.bucket,
+            text: v.text, bucket: v.bucket, minutes: v.minutes,
           });
         },
         ok: function (v) {

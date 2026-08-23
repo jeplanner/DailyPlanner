@@ -424,6 +424,14 @@ li.done .txt{text-decoration:line-through}
 .at{flex:0 0 auto; color:var(--dim); font-size:calc(var(--u) * .85);
     font-variant-numeric:tabular-nums}
 
+/* PLANNED, AND SPENT. In brackets because it is a qualifier on the row,
+   not a fact about it — the task is the text; this is how big it is. */
+.eff{flex:0 0 auto;font-size:calc(var(--u) * .8);color:var(--dim);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.eff.over{color:var(--warn)}
+.panel h2 .eff{font-weight:600}
+li.done .eff{opacity:.6}
+
 /* WHICH BANK a prep row came from. Carries the information the routing
    prefix used to, in a fraction of the width, and it reads as a category
    rather than as the first three words of every prep title. */
@@ -630,7 +638,14 @@ li.done .when{color:var(--dim); font-weight:500}
 
       <!-- ── TASKS ──────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>To do <span class="n">{{ open_task_count + open_bucket_count }}</span></h2>
+        <h2>To do <span class="n">{{ open_task_count + open_bucket_count }}</span>
+          {%- if effort %}
+          <span class="eff{% if effort.over %} over{% endif %}"
+                title="Planned against time actually logged, for bucket items">
+            ({{ effort.plan or '—' }}{% if effort.spent %} · {{ effort.spent }} spent{% endif %})
+          </span>
+          {%- endif %}
+        </h2>
         <div class="body">
           <ul data-fit>
             {% for e in untimed %}
@@ -672,6 +687,11 @@ li.done .when{color:var(--dim); font-weight:500}
                 {% if b.done %}<span class="tick">✓</span>
                 {% else %}<span class="dot"></span>{% endif %}
                 <span class="txt">{{ b.title }}</span>
+                {% if b.plan_h or b.spent_h %}
+                  <span class="eff" title="Planned{% if b.spent_h %}, and logged so far{% endif %}">
+                    ({{ b.plan_h or '—' }}{% if b.spent_h %} · {{ b.spent_h }}{% endif %})
+                  </span>
+                {% endif %}
                 {% if b.prep %}<span class="bank">{{ b.prep }}</span>{% endif %}
                 {% if b.at %}<span class="at">{{ b.at }}</span>{% endif %}
                 <a class="hit" href="{{ b.href }}"

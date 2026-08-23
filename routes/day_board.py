@@ -221,7 +221,8 @@ def _bucket_for(user_id, plan_date, is_today):
     rows = get("quick_bucket", params={
         "user_id": f"eq.{user_id}",
         "is_deleted": "eq.false",
-        "select": "id,text,time_bucket,due_at,is_done,done_at,priority_label",
+        "select": "id,text,time_bucket,due_at,is_done,done_at,priority_label,"
+                  "planned_minutes,actual_minutes",
         "limit": "1000",
     }) or []
 
@@ -271,6 +272,8 @@ def _bucket_for(user_id, plan_date, is_today):
             "title": (r.get("text") or "").strip(),
             "at": when,
             "done": bool(r.get("is_done")),
+            "plan": r.get("planned_minutes") or 0,
+            "spent": r.get("actual_minutes") or 0,
         })
 
     # Timed first and in time order, then the undated "now" ones; done sinks,
@@ -772,6 +775,24 @@ def _quote_of_day(plan_date):
     return rows[plan_date.toordinal() % len(rows)]
 
 
+def _hm(mins):
+    """90 → "1h30", 45 → "45m", 120 → "2h".
+
+    Hours once it is worth saying in hours: "135m" is a number you have to
+    do arithmetic on, and this board is read at a glance from across a room.
+    """
+    try:
+        mins = int(mins or 0)
+    except (TypeError, ValueError):
+        return ""
+    if mins <= 0:
+        return ""
+    if mins < 60:
+        return "%dm" % mins
+    h, m = divmod(mins, 60)
+    return "%dh" % h if not m else "%dh%02d" % (h, m)
+
+
 def _display_name(user_id):
     """The name to greet, or "" — never an exception and never an email.
 
@@ -980,6 +1001,22 @@ def day_board():
     done_checks = sum(1 for c in checklist if c["done"])
     done_now = done_tasks + done_bucket + done_checks
     total_now = len(tasks) + len(bucket) + len(checklist)
+    # ── EFFORT, PLANNED AGAINST SPENT ─────────────────────────────────
+    # "in dayboard we should show the planned hours in bracket and how much
+    # we have spent etc." Only the bucket carries these figures; the
+    # Eisenhower rows have no effort columns at all, so the totals say what
+    # they cover rather than implying they cover the day.
+    plan_total = sum(b.get("plan") or 0 for b in bucket)
+    spent_total = sum(b.get("spent") or 0 for b in bucket)
+    for _b in bucket:
+        _b["plan_h"] = _hm(_b.get("plan"))
+        _b["spent_h"] = _hm(_b.get("spent"))
+    effort = {
+        "plan": _hm(plan_total),
+        "spent": _hm(spent_total),
+        "over": bool(plan_total and spent_total > plan_total),
+    } if (plan_total or spent_total) else None
+
     progress = {
         "done": done_now,
         "total": total_now,
@@ -1033,6 +1070,7 @@ def day_board():
         appreciation=_appreciation(chain, is_today),
         perf=_performance(chain),
         progress=progress,
+        effort=effort,
         quote=_quote_of_day(plan_date),
         refresh=refresh,
         theme=(request.args.get("theme") or "dark").lower(),

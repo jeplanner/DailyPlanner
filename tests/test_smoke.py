@@ -4518,7 +4518,10 @@ def test_announcement_chime_is_real_audio_and_on_by_default():
     # The words now follow the chime's `ended` event on the same element,
     # so the ordering is structural rather than two calls in sequence.
     assert "playChime(function () {" in js
-    fire = js.split("playChime(function () {")[1][:220]
+    # Sliced to the end of the callback, not to a character count: the
+    # explanation inside this branch has grown three times now, and each
+    # time a fixed window silently stopped covering the code it guards.
+    fire = js.split("playChime(function () {")[1].split("\n    });")[0]
     assert "playSpeech(words" in fire and "sayIt()" in fire, \
         "the words are not chained to the end of the chime"
 
@@ -4771,7 +4774,10 @@ def test_each_fire_records_visibility_chime_and_speech():
     assert 'lastFire.spoke = "spoke"' in js
     assert 'lastFire.spoke = "accepted but silent"' in js
     assert "data-ta-fire" in js
-    assert "while HIDDEN" in js
+    # The label changed deliberately: "while visible" read as "the screen
+    # was on", and a locked phone keeps the page visible — which is exactly
+    # how the locked-Android fault was misdiagnosed for days.
+    assert "page hidden" in js and "locked screen counts" in js
 
 
 def test_words_are_rendered_as_audio_for_a_hidden_page(auth_client, monkeypatch):
@@ -4995,7 +5001,10 @@ def test_speech_audio_failure_is_visible_and_recoverable():
     # at fire time is a second late and heard, which beats on time and
     # silent.
     assert "function fetchSpeech" in js
-    fire = js.split("playChime(function () {")[1][:900]
+    # Sliced to the end of the callback rather than a fixed character
+    # count — the explanation above this branch has grown twice now, and a
+    # window measured in characters silently stops covering the code.
+    fire = js.split("playChime(function () {")[1].split("\n    });")[0]
     assert "fetchSpeech(words)" in fire, \
         "a missed prefetch still means silence on Android"
     # The prefetch also runs when the panel opens, so the first slot after
@@ -5870,3 +5879,158 @@ def test_day_board_bucket_row_links_to_the_row_not_the_page(auth_client,
     assert "group.open = true" in reveal
     # Marked, then unmarked: this says "here", not "this row is special".
     assert 'classList.remove("is-focused")' in reveal
+
+
+def test_day_board_shows_planned_against_spent(auth_client, monkeypatch):
+    """"in dayboard we should show the planned hours in bracket and how much
+    we have spent etc."
+
+    Only the bucket carries these figures — the Eisenhower rows have no
+    effort columns at all — so the total says what it covers rather than
+    implying it covers the whole day.
+    """
+    import routes.day_board as db
+    for name in ("_events_for", "_checklist_for", "_tasks_for"):
+        monkeypatch.setattr(db, name, lambda u, d: [])
+    monkeypatch.setattr(db, "get", lambda t, params=None, **k: ([
+        {"id": "1", "text": "Long one", "time_bucket": "now", "is_done": False,
+         "due_at": None, "planned_minutes": 90, "actual_minutes": 25},
+        {"id": "2", "text": "Short one", "time_bucket": "now", "is_done": False,
+         "due_at": None, "planned_minutes": 45, "actual_minutes": 0},
+    ] if t == "quick_bucket" else []))
+
+    html = auth_client.get("/day-board").get_data(as_text=True)
+
+    # Hours once it is worth saying in hours — "135m" is a number you have
+    # to do arithmetic on, and this board is read from across a room.
+    assert "1h30" in html, "90 minutes is not shown as 1h30"
+    assert "45m" in html
+    assert "2h15" in html, "the planned total is wrong or missing"
+    assert "25m spent" in html
+
+
+def test_day_board_effort_formatter():
+    """The rounding rules, stated once."""
+    import routes.day_board as db
+    assert db._hm(45) == "45m"
+    assert db._hm(60) == "1h"
+    assert db._hm(90) == "1h30"
+    assert db._hm(125) == "2h05", "single-digit minutes must not read as 2h5"
+    # Nothing to say is said with nothing, not with "0m".
+    assert db._hm(0) == "" and db._hm(None) == "" and db._hm("x") == ""
+
+
+def test_moving_to_the_bucket_carries_the_estimate(auth_client, monkeypatch):
+    """"planned minutes in quick bucket should get the data from backlog
+    when it is moved from there."
+
+    It travels because it IS the same row — only the bucket changes — but
+    it is offered again on the move, because that is the moment you
+    actually know how long something takes, and an item captured without an
+    estimate would otherwise never get one.
+    """
+    import routes.backlog as bk
+    monkeypatch.setattr(bk, "get", lambda t, params=None, **k:
+                        [{"id": "b1", "text": "Renew passport",
+                          "time_bucket": "future", "is_deleted": False}])
+    saved = []
+    monkeypatch.setattr(bk, "update",
+                        lambda t, params, j, **k: saved.append(j))
+
+    r = auth_client.post("/api/backlog/send",
+                         json={"kind": "bucket", "id": "b1", "to": "quick",
+                               "bucket": "1h", "minutes": 45})
+    assert r.status_code == 200
+    assert saved[-1]["planned_minutes"] == 45
+    assert saved[-1]["time_bucket"] == "1h"
+
+    # Cleared explicitly, rather than stored as a meaningless zero.
+    saved.clear()
+    auth_client.post("/api/backlog/send",
+                     json={"kind": "bucket", "id": "b1", "to": "quick",
+                           "minutes": 0})
+    assert saved[-1]["planned_minutes"] is None
+
+    # Untouched when the client says nothing about it.
+    saved.clear()
+    auth_client.post("/api/backlog/send",
+                     json={"kind": "bucket", "id": "b1", "to": "quick"})
+    assert "planned_minutes" not in saved[-1]
+
+
+def test_keepalive_is_restored_the_moment_playback_ends():
+    """"it used to work even when android phone was kept locked", with the
+    8:45pm announcement finally arriving the moment the app was opened at
+    8:53 — the signature of a page frozen since the last thing it played.
+
+    The keep-alive track is what stops Android freezing the tab, and the
+    watchdog that repairs it is a setInterval — which a frozen page does
+    not run. So it can only ever fix a keep-alive that stopped while the
+    page was still awake, and the twenty-second gap is exactly when
+    freezing happens: right after playback ended and the screen went dark.
+
+    Every announcement plays on OTHER elements, and starting them can take
+    audio focus from this one. So it is put back the instant an
+    announcement finishes, not at the next tick.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "function nudgeKeepalive" in js
+
+    nudge = js.split("function nudgeKeepalive")[1].split("\n  }")[0]
+    # Immediately AND after — a pause often lands just after the sound
+    # stops, as the OS tidies up behind it.
+    assert "keepaliveWatch()" in nudge
+    assert "setTimeout" in nudge
+
+    # Every outcome of an announcement, not just the happy one: a blocked
+    # chime leaves the page just as freezable as a played one.
+    for marker in ('lastFire.chime = "played"',
+                   'lastFire.chime = "blocked"',
+                   'lastFire.spoke = "played (audio)"',
+                   'lastFire.spoke = "spoke"'):
+        seg = js.split(marker)[1][:300]
+        assert "nudgeKeepalive()" in seg, f"no nudge after {marker}"
+
+    # The unlock plays two other elements on the same gesture that started
+    # the keep-alive, so it has to put it back too.
+    unlock = js.split("function unlockAudio")[1].split("\n  }")[0]
+    assert "nudgeKeepalive()" in unlock
+
+
+def test_announcer_never_decides_by_visibility():
+    """The bug that kept a locked Android silent for days.
+
+    Measured 2026-08-23: "Last fired 21.00 while visible. Chime: played,
+    speech: refused, synthesis failed" — with the phone locked throughout.
+
+    A locked screen does NOT make a page hidden. Chrome keeps
+    visibilityState at "visible" when the display merely switches off, so
+    the fire path took the "visible" branch and called speechSynthesis,
+    which a locked Android refuses — while the rendered audio that would
+    have played sat in the cache untouched. An earlier reading said
+    "rendered audio: cached" right next to a speech failure for exactly
+    this reason: it was there and never reached.
+
+    The rendered audio now goes first in every case. It works in both
+    states and its refusal path still falls through to speechSynthesis.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    fire = js.split("playChime(function ()")[1].split("paint();")[0]
+
+    # The audio attempt must come before any speechSynthesis fallback, and
+    # must not sit behind a visibility test.
+    assert "playSpeech(words, sayIt)" in fire
+    assert "if (!hidden) { sayIt(); return; }" not in fire, \
+        "the fire path still decides by visibility"
+    assert fire.index("playSpeech(words, sayIt)") < fire.index("sayIt();"), \
+        "speechSynthesis is still tried before the rendered audio"
+
+    # The flag is still RECORDED — it turned out to be the diagnosis — but
+    # the label must not read as "the screen was on".
+    assert "lastFire" in js and "hidden:" in js
+    # Checked on the line the panel BUILDS, not on the file — the comment
+    # above the fix quotes the original report verbatim.
+    where = js.split("var where = lastFire.hidden")[1].split(";")[0]
+    assert "while visible" not in where, \
+        "the diagnostics still call a locked screen 'visible'"
+    assert "locked screen" in where, "the label does not warn about this"

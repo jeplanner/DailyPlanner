@@ -544,6 +544,17 @@ def send():
         new_text = (data.get("text") or "").strip()
         if new_text:
             patch["text"] = new_text[:2000]
+        # The estimate travels with the row because it IS the row — only
+        # the bucket changes. It is offered again here because moving
+        # something into the list you work from is the moment you actually
+        # know how long it will take, and an item captured without one
+        # would otherwise never get one.
+        if "minutes" in data:
+            try:
+                mins = int(data.get("minutes") or 0)
+            except (TypeError, ValueError):
+                mins = 0
+            patch["planned_minutes"] = max(0, min(600, mins)) or None
         update("quick_bucket",
                {"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"}, patch)
         return jsonify({"status": "ok", "time_bucket": bucket})
