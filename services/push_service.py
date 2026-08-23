@@ -149,14 +149,43 @@ def send_to_user(user_id, title, body, url="/checklist", tag=None, icon=None,
         except WebPushException as e:
             failed += 1
             status = getattr(e.response, "status_code", None)
+            ua = (sub.get("user_agent") or "")
+            device = ("Android" if "Android" in ua else
+                      "iPhone" if "iPhone" in ua else
+                      "iPad" if "iPad" in ua else
+                      "Windows" if "Windows" in ua else "device")
             if status in (404, 410):
                 # Subscription is gone (user uninstalled, cleared data, …).
                 _deactivate(sub["endpoint"])
-                logger.info("Push subscription %s deactivated (HTTP %s)", sub["endpoint"][:40], status)
+                logger.info("Push subscription %s deactivated (HTTP %s)",
+                            sub["endpoint"][:40], status)
+                # LOUD, because this is the failure that has cost this
+                # household months of missed reminders and was visible
+                # nowhere. A subscription dying is normal; a subscription
+                # dying REPEATEDLY on one device is a diagnosis, and it can
+                # only be spotted if each one is recorded where the user
+                # looks rather than in a log only the author reads.
+                loud.bailed("push delivery",
+                            f"{device} subscription rejected and deactivated",
+                            status=status, device=device)
             else:
-                logger.warning("Push send failed (HTTP %s) for %s", status, sub["endpoint"][:40])
-        except Exception:
+                logger.warning("Push send failed (HTTP %s) for %s",
+                               status, sub["endpoint"][:40])
+                # A non-410 failure does NOT deactivate, so without this it
+                # is invisible forever — the row stays active and simply
+                # never delivers.
+                body = ""
+                try:
+                    body = (e.response.text or "")[:120]
+                except Exception:
+                    pass
+                loud.bailed("push delivery",
+                            f"{device} send failed (HTTP {status})",
+                            status=status, device=device, detail=body)
+        except Exception as exc:
             failed += 1
             logger.exception("Push send raised unexpectedly")
+            loud.bailed("push delivery", "send raised unexpectedly",
+                        error=type(exc).__name__)
 
     return sent, failed

@@ -4567,3 +4567,29 @@ def test_settings_shows_server_and_device_build(auth_client):
     assert 'id="ver-warn"' in html
     # ...and there must be a way to act on it from the page.
     assert 'id="ver-update"' in html and "SKIP_WAITING" in html
+
+
+def test_push_delivery_failures_are_visible_not_just_logged():
+    """Measured on 2026-08-23: of this account's push subscriptions,
+    Android is 0 of 7 active while Windows is 1 of 1 — on the SAME FCM
+    host, which rules out a VAPID key problem and makes it specific to
+    that device.
+
+    None of that was visible anywhere. A subscription dying is normal; a
+    subscription dying repeatedly on ONE device is a diagnosis, and it can
+    only be spotted if each failure is recorded where the user looks rather
+    than in a log only the author reads. That is why this took a day to
+    find and why the same class of bug has now cost months of missed
+    reminders.
+    """
+    src = open("services/push_service.py", encoding="utf-8").read()
+    assert "from services import loud" in src
+    # A 410 deactivation is reported, WITH which device it was.
+    assert 'loud.bailed("push delivery"' in src
+    assert "subscription rejected and deactivated" in src
+    assert "device=device" in src, "the failure does not say which device"
+    # A non-410 failure does not deactivate, so without its own report it
+    # is invisible forever — the row stays active and never delivers.
+    assert "send failed (HTTP" in src
+    # And an unexpected exception is not swallowed either.
+    assert 'loud.bailed("push delivery", "send raised unexpectedly"' in src
