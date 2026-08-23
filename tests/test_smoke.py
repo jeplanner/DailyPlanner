@@ -4203,3 +4203,94 @@ def test_announcer_panel_is_tabbed_not_one_long_scroll():
     assert "data-ta-now" in head, "the status line got buried in a tab"
     # The four advanced inputs fold away by default.
     assert "data-ta-advanced" in js and "data-ta-more" in js
+
+
+def test_client_and_server_recurrence_rules_agree_exactly():
+    """The recurrence rules exist in TWO languages, and this is what makes
+    that safe.
+
+    The client decides when to SPEAK; the server decides when to PUSH. They
+    run independently — the client offline with no network, the server with
+    no browser — so neither can call the other. What they must never do is
+    DISAGREE: a reminder that speaks but never buzzes, or buzzes on the
+    wrong day, is worse than one that does neither, because you stop
+    trusting all of them.
+
+    So this generates a few thousand (announcement, date) combinations,
+    asks the JavaScript what it thinks, asks the Python, and fails on any
+    difference. It covers every rule, both clamps, the window bounds, the
+    Sun=0/Mon=0 weekday conversion, and month lengths across a leap year.
+    """
+    import datetime as dtm
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+    from services import announcer_push as ap
+
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+
+    # Dates chosen to hit the awkward edges: month ends, February in a leap
+    # and a common year, and a full week of weekdays.
+    dates = []
+    for iso in ("2026-01-31", "2026-02-27", "2026-02-28", "2026-03-01",
+                "2026-03-30", "2026-03-31", "2026-04-30", "2027-02-28",
+                "2028-02-28", "2028-02-29", "2028-03-01"):
+        dates.append(iso)
+    d0 = dtm.date(2026, 8, 17)          # a Monday
+    dates += [(d0 + dtm.timedelta(days=i)).isoformat() for i in range(14)]
+
+    starts = ["2026-01-29", "2026-01-30", "2026-01-31", "2024-02-29",
+              "2026-08-17", "2026-08-23", None]
+    rules = ["once", "daily", "weekly", "monthly", "yearly", "custom"]
+    day_sets = [[], [0], [1, 3], [0, 6], [0, 1, 2, 3, 4, 5, 6]]
+    ends = [None, "2026-08-20", "2028-01-01"]
+    windows = [(None, 0), ("12:00", 60), ("12:00", 90), ("06:00", 30),
+               ("23:59", 1)]
+
+    cases = []
+    for rule in rules:
+        for start in starts:
+            for days in (day_sets if rule == "custom" else [[]]):
+                for end in ends:
+                    for until, mins in windows:
+                        cases.append({
+                            "item": {
+                                "at": "08:00", "until": until, "mins": mins,
+                                "repeat": rule, "days": days,
+                                "start": start, "end": end,
+                            },
+                            "dates": dates,
+                        })
+
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(cases, f)
+        path = f.name
+    r = subprocess.run(["node", "tests/js/rules_dump.js", path],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    js_out = json.loads(r.stdout)
+
+    mismatches = []
+    for case, js in zip(cases, js_out):
+        it = case["item"]
+        py_item = {
+            "at_time": it["at"], "until_time": it["until"],
+            "every_mins": it["mins"], "repeat_rule": it["repeat"],
+            "days": it["days"], "start_date": it["start"],
+            "end_date": it["end"],
+        }
+        py_slots = ap.slots_for(py_item)
+        if py_slots != js["slots"]:
+            mismatches.append(f"slots {it} -> py={py_slots} js={js['slots']}")
+        for iso, js_m in zip(case["dates"], js["matches"]):
+            py_m = ap.matches_on(py_item, dtm.date.fromisoformat(iso))
+            if py_m != js_m:
+                mismatches.append(f"{iso} {it} -> py={py_m} js={js_m}")
+
+    checked = len(cases) * len(dates)
+    assert not mismatches, (
+        f"{len(mismatches)} of {checked} disagreed:\n" +
+        "\n".join(mismatches[:15]))
+    assert checked > 2000, f"only {checked} combinations checked"
