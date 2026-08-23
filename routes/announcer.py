@@ -29,6 +29,7 @@ from flask import Blueprint, current_app, jsonify, request, session
 
 from auth import login_required
 from services import loud
+from services import announcer_calendar_service as announcer_calendar
 from supabase_client import get, post, update
 
 logger = logging.getLogger("daily_plan")
@@ -155,6 +156,18 @@ def save_items():
     if not rows:
         return jsonify({"ok": True, "saved": 0})
 
+    # What the calendar mirror already knows about, so an update replaces
+    # its event instead of leaving a second one behind.
+    known = {}
+    try:
+        for r in get("announcer_items", params={
+                "user_id": f"eq.{user_id}",
+                "select": "client_id,google_event_id",
+                "limit": "200"}) or []:
+            known[r.get("client_id")] = r.get("google_event_id")
+    except Exception:
+        known = {}       # column arrives with MIGRATION_ANNOUNCER_DELIVERY.sql
+
     try:
         post("announcer_items?on_conflict=user_id,client_id", rows,
              prefer="resolution=merge-duplicates,return=minimal")
@@ -165,6 +178,22 @@ def save_items():
             "error": "Could not save. If this is new, "
                      "MIGRATION_ANNOUNCER_SYNC.sql may not have been run yet.",
         }), 500
+    # ── AND MIRROR EACH ONE INTO GOOGLE CALENDAR ──────────────────────
+    # A calendar popup is the only alert on Android that is not deferred
+    # by Doze — see services/announcer_calendar_service. Off the request
+    # thread: saving must never wait on Google, and a household that never
+    # linked Calendar must not notice this exists.
+    for c in rows:
+        cid = c.get("client_id")
+        try:
+            announcer_calendar.sync_async(
+                user_id, cid, {**c, "google_event_id": known.get(cid)},
+                old_event_id=known.get(cid),
+                remove=(c.get("is_on") is False))
+        except Exception:
+            logger.debug("announcer: calendar mirror not started for %s", cid,
+                         exc_info=True)
+
     return jsonify({"ok": True, "saved": len(rows)})
 
 
@@ -174,6 +203,22 @@ def delete_item(client_id):
     """SOFT delete, like everything else here — it stops speaking and stays
     recoverable."""
     user_id = session["user_id"]
+
+    # Read the mirror's id BEFORE the soft delete, or the calendar keeps
+    # ringing for an announcement the user has removed — which is the
+    # worst possible way for a mirror to fail.
+    old_event = None
+    try:
+        rows = get("announcer_items", params={
+            "user_id": f"eq.{user_id}",
+            "client_id": f"eq.{client_id}",
+            "select": "google_event_id",
+            "limit": "1",
+        }) or []
+        old_event = (rows[0] or {}).get("google_event_id") if rows else None
+    except Exception:
+        old_event = None
+
     try:
         # update(table, FILTERS, PAYLOAD) — filters first. Getting this
         # round the wrong way raises a ValueError that the except below
@@ -185,6 +230,14 @@ def delete_item(client_id):
     except Exception:
         logger.warning("announcer delete failed for %s", client_id,
                        exc_info=True)
+
+    if old_event:
+        try:
+            announcer_calendar.sync_async(user_id, client_id, {},
+                                          old_event_id=old_event, remove=True)
+        except Exception:
+            logger.debug("announcer: calendar removal not started for %s",
+                         client_id, exc_info=True)
         return jsonify({"ok": False}), 500
     return jsonify({"ok": True})
 

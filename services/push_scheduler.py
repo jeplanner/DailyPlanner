@@ -323,6 +323,10 @@ def tick():
                     # proves nothing about delivery, and treating the two as
                     # the same is how "it fired" and "you heard it" got
                     # confused. Say so where the user can see it.
+                    # The claim proves the scheduler ran; this is the only
+                    # record of whether anything received it.
+                    announcer_push.record_delivery(
+                        user_id, cid, today, a_time, sent, failed)
                     if not sent:
                         loud.bailed(
                             "announcement notification",

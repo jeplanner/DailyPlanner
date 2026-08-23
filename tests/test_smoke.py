@@ -6512,3 +6512,103 @@ def test_only_audio_is_ever_cached_as_an_announcement():
     assert "content-type" in fetch_fn
     assert "not signed in" in fetch_fn, \
         "a signed-out render is still reported as ready"
+
+
+def test_the_fire_log_records_whether_anything_received_it(monkeypatch):
+    """A claim row proves the SCHEDULER ran. It proves nothing about
+    delivery, and treating the two as the same has cost several nights of
+    testing: there is a claim for every slot, including the ones where no
+    device made a sound and no notification appeared.
+
+    The send outcome was recorded only through services/loud.py, which is
+    in memory and lost on every restart — so by the time anyone looked at a
+    silent announcement, the one fact that mattered was gone.
+    """
+    from services import announcer_push as ap
+
+    wrote = []
+    monkeypatch.setattr(ap, "update",
+                        lambda t, params, json, **k: wrote.append((t, params, json)))
+    ap.record_delivery("u1", "i1-9", "2026-08-24", "01:05", 2, 1)
+
+    table, params, body = wrote[0]
+    assert table == "announcer_fire_log"
+    # Keyed on the whole claim, or it would stamp the wrong row.
+    assert params["client_id"] == "eq.i1-9"
+    assert params["fire_date"] == "eq.2026-08-24"
+    assert params["fire_time"] == "eq.01:05"
+    assert body == {"sent": 2, "failed": 1}
+
+    # NEVER RAISES. The announcement has already gone out or not; failing
+    # to write a note about it must not become an error.
+    def boom(*a, **k):
+        raise RuntimeError("column sent does not exist")
+    monkeypatch.setattr(ap, "update", boom)
+    ap.record_delivery("u1", "i1-9", "2026-08-24", "01:05", 0, 0)
+
+    # And the scheduler actually calls it.
+    sched = open("services/push_scheduler.py", encoding="utf-8").read()
+    assert "announcer_push.record_delivery(" in sched
+
+
+def test_announcements_are_mirrored_into_google_calendar():
+    """"can you not make it as system notification since calendar
+    notification in android did not work. i had to create it in samsung
+    calender or google calendar to make it work."
+
+    Right, and this codebase already had the evidence — the checklist
+    mirror's own docstring says Samsung and most Android OEMs suppress
+    heads-up banners from generic Web Push while Google Calendar popups are
+    treated as first-class by the OS. Measured here: a push scheduled for
+    01:05 arrived when the screen was next unlocked. A calendar popup goes
+    through the exact-alarm path and is not deferred by Doze.
+    """
+    from services import announcer_calendar_service as acs
+
+    # T-0 popup is the whole point; anything earlier is a different
+    # announcement from the one that was asked for.
+    body = acs._event_body(
+        {"at_time": "07:45", "say_text": "Tell slokas",
+         "repeat_rule": "daily", "start_date": "2026-08-24"}, "Asia/Kolkata")
+    assert body["reminders"]["overrides"] == [{"method": "popup", "minutes": 0}]
+    assert body["reminders"]["useDefault"] is False
+    assert body["start"]["dateTime"].endswith("T07:45:00")
+    assert body["start"]["timeZone"] == "Asia/Kolkata"
+    assert body["recurrence"] == ["RRULE:FREQ=DAILY"]
+
+    # A one-off must NOT recur, and must anchor on its own date.
+    once = acs._event_body(
+        {"at_time": "21:08", "say_text": "x", "repeat_rule": "once",
+         "start_date": "2026-08-24"}, "UTC")
+    assert "recurrence" not in once
+    assert once["start"]["dateTime"].startswith("2026-08-24")
+
+    # Sunday is 0 in this app and SU in Google's vocabulary; getting the
+    # offset wrong moves every reminder by a day.
+    custom = acs._rrule({"repeat_rule": "custom", "days": [0, 6]})
+    assert custom == "RRULE:FREQ=WEEKLY;BYDAY=SU,SA"
+    # "Chosen days" with nothing chosen fires never, so it must not become
+    # a weekly event on an arbitrary day.
+    assert acs._rrule({"repeat_rule": "custom", "days": []}) is None
+
+    assert acs._rrule({"repeat_rule": "once"}) is None
+    assert "UNTIL=20261231" in acs._rrule(
+        {"repeat_rule": "daily", "end_date": "2026-12-31"})
+
+
+def test_the_calendar_mirror_is_removed_with_the_announcement():
+    """A mirror that keeps ringing for a deleted announcement is the worst
+    way for one to fail — so the event id is read BEFORE the soft delete,
+    while the row still has it."""
+    src = open("routes/announcer.py", encoding="utf-8").read()
+    delete_fn = src.split("def delete_item")[1].split("\ndef ")[0]
+    assert "google_event_id" in delete_fn
+    assert delete_fn.index("google_event_id") < delete_fn.index('"is_deleted": True'), \
+        "the id is read after the row is already flagged deleted"
+    assert "remove=True" in delete_fn
+
+    # Switching one OFF must also silence the calendar, not just the voice.
+    save_fn = src.split("def save_items")[1].split("\ndef ")[0]
+    assert 'remove=(c.get("is_on") is False)' in save_fn
+    # Off the request thread: saving must never wait on Google.
+    assert "sync_async" in save_fn

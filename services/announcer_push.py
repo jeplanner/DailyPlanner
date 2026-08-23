@@ -23,7 +23,7 @@ check them against the same cases the JavaScript harness uses.
 import logging
 from datetime import date, datetime, timedelta
 
-from supabase_client import get, post
+from supabase_client import get, post, update
 
 logger = logging.getLogger("daily_plan")
 
@@ -183,3 +183,28 @@ def fires_for_user(user_id, now_local):
         logger.debug("announcer_items unavailable", exc_info=True)
         return []
     return due_now(items, now_local)
+
+
+def record_delivery(user_id, client_id, fire_date, fire_time, sent, failed):
+    """Write what the send actually achieved back onto the claim row.
+
+    The claim proves the scheduler ran and nothing more. Delivery was
+    reported only through services/loud.py, which is in memory and lost on
+    every restart — so by the time anyone looked at a silent announcement,
+    the one fact that mattered was gone, and "it fired" kept being read as
+    "you heard it".
+
+    Best-effort and never raises: the announcement has already gone out (or
+    not), and failing to write a note about it must not turn into an error.
+    The columns arrive with MIGRATION_ANNOUNCER_DELIVERY.sql; before that
+    this quietly does nothing.
+    """
+    try:
+        update("announcer_fire_log",
+               params={"user_id": f"eq.{user_id}",
+                       "client_id": f"eq.{client_id}",
+                       "fire_date": f"eq.{fire_date}",
+                       "fire_time": f"eq.{fire_time}"},
+               json={"sent": int(sent or 0), "failed": int(failed or 0)})
+    except Exception:
+        logger.debug("announcer: could not record delivery", exc_info=True)
