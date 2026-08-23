@@ -16,7 +16,7 @@
    route at /service-worker.js is served with no-cache (app.py), so a
    new version is picked up on the next page load. */
 
-const CACHE_VERSION = "v265-2026-08-23-data-url-speech"
+const CACHE_VERSION = "v267-2026-08-23-unlock-on-keepalive"
 const STATIC_CACHE = `dp-static-${CACHE_VERSION}`;
 const PAGES_CACHE  = `dp-pages-${CACHE_VERSION}`;
 const OFFLINE_URL  = "/offline";
@@ -283,7 +283,7 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.startsWith("/static/") || url.pathname === "/manifest.json") {
     const isCode = /\.(?:js|css)$/i.test(url.pathname) ||
                    url.pathname === "/manifest.json";
-    event.respondWith(isCode ? networkFirst(req, STATIC_CACHE)
+    event.respondWith(isCode ? networkFirst(req, STATIC_CACHE, true)
                              : staleWhileRevalidate(req, STATIC_CACHE));
     return;
   }
@@ -313,10 +313,26 @@ async function staleWhileRevalidate(req, cacheName) {
   return cached || (await network) || Response.error();
 }
 
-async function networkFirst(req, cacheName) {
+async function networkFirst(req, cacheName, revalidate) {
   const cache = await caches.open(cacheName);
   try {
-    const res = await fetch(req);
+    /* ── "NETWORK FIRST" WAS NOT REACHING THE NETWORK ──────────────────
+       Flask serves /static with SEND_FILE_MAX_AGE_DEFAULT = 30 days, so
+       every script and stylesheet carries `max-age=2592000`. A plain
+       fetch() consults the browser's HTTP cache before the network, finds
+       a fresh entry and returns it — no request is made at all. So the
+       switch to network-first changed nothing for the files it was added
+       for, and a phone stayed on a build for as long as its HTTP cache
+       held: reported as a device still showing v262 while the server was
+       serving v265.
+
+       `cache: "no-cache"` does not mean "do not cache". It means always
+       revalidate with the server, which sends If-None-Match and usually
+       gets back a 304 — the cheap request that was never being made.
+       Media keeps the plain path: those are big, unchanging, and being a
+       version behind on an icon costs nothing. */
+    const res = await fetch(revalidate ? new Request(req, { cache: "no-cache" })
+                                       : req);
     if (res && res.ok && res.type === "basic") {
       cache.put(req, res.clone()).catch(() => {});
       trimCache(cacheName);

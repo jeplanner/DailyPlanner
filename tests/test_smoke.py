@@ -5260,7 +5260,10 @@ def test_app_code_is_served_network_first():
     stale-while-revalidate: big, unchanging, and harmless a version behind.
     """
     sw = open("static/service-worker.js", encoding="utf-8").read()
-    assert "networkFirst(req, STATIC_CACHE)" in sw, \
+    # The third argument turns on revalidation — without it "network
+    # first" never reaches the network, because Flask's 30-day max-age
+    # means the browser answers from its own HTTP cache.
+    assert "networkFirst(req, STATIC_CACHE, true)" in sw, \
         "app code is still served from cache first"
     assert "staleWhileRevalidate(req, STATIC_CACHE)" in sw, \
         "images and audio should stay stale-while-revalidate"
@@ -6250,3 +6253,113 @@ def test_rendered_speech_is_cached_as_a_self_contained_url():
     # Exactly once per fire, or a source that never decodes loops until the
     # slot has passed.
     assert "if (retried) { sayIt(); return; }" in fire
+
+
+def test_a_revoked_subscription_is_replaced_not_resent():
+    """Diagnosed 2026-08-23 by /api/push/diagnose: one phone reported 410,
+    "the subscription was revoked by the browser or device", while the
+    other two devices delivered normally. Seven of that phone's
+    registrations had accumulated and died the same way.
+
+    getSubscription() keeps handing back a subscription the push service
+    has already revoked, so the heal re-posted it, the server marked it
+    active again, the next send got another 410 and retired it again. Only
+    unsubscribe() then subscribe() produces a fresh endpoint — and the
+    server is the only party that ever sees the 410, so it has to be asked.
+    """
+    js = open("static/js/push.js", encoding="utf-8").read()
+    heal = js.split("async function healSubscription")[1].split("\n  }")[0]
+
+    assert "/api/push/status" in heal, "the heal never asks whether it is dead"
+    assert "sub.unsubscribe()" in heal, "a revoked subscription is still re-sent"
+    assert "st.known && !st.active" in heal
+
+    # NEVER PROMPTS: the permission check comes first, so a page load
+    # cannot produce a permission dialog nobody asked for.
+    assert heal.index('Notification.permission !== "granted"') < \
+           heal.index("/api/push/status")
+
+    # And this case is deliberately not throttled — waiting up to twelve
+    # hours to retry means twelve hours of silence.
+    assert "throttled = false" in heal
+
+
+def test_code_is_fetched_past_the_browsers_own_cache():
+    """Reported: a phone still showing v262 while the server served v265.
+
+    /static is sent with SEND_FILE_MAX_AGE_DEFAULT = 30 days, so every
+    script carries max-age=2592000. A plain fetch() consults the browser's
+    HTTP cache before the network, finds a fresh entry and returns it — no
+    request is made at all. So switching these files to network-first
+    changed nothing for the files it was added for, and a device stayed on
+    a build for as long as its HTTP cache held it.
+
+    cache: "no-cache" does not mean "do not cache" — it means always
+    revalidate, which sends If-None-Match and usually gets a 304 back.
+    """
+    sw = open("static/service-worker.js", encoding="utf-8").read()
+    nf = sw.split("async function networkFirst")[1].split("\n}")[0]
+    assert 'cache: "no-cache"' in nf, \
+        "network-first still asks the HTTP cache first"
+    assert "new Request(req," in nf
+
+    # Only for code. Media is big, unchanging, and being a version behind
+    # on an icon costs nothing.
+    assert "networkFirst(req, STATIC_CACHE, true)" in sw
+    assert "staleWhileRevalidate(req, STATIC_CACHE)" in sw
+
+    # The 30-day header this works around is real; if it ever goes away
+    # this test should be revisited rather than silently kept.
+    app = open("app.py", encoding="utf-8").read()
+    assert "SEND_FILE_MAX_AGE_DEFAULT" in app
+
+
+def test_speech_element_is_unlocked_without_waiting_for_a_tap():
+    """Measured on a locked Android at v265:
+
+        "keep-alive: holding, speech audio: NEVER UNLOCKED"
+
+    unlockAudio() was wired to the first pointerdown only, and the app had
+    been opened and locked without the screen being touched — while the
+    keep-alive started anyway, because Chrome permits autoplay on a site it
+    considers engaged. So the page was wide awake, holding audio focus,
+    with the one element the words needed still locked.
+
+    The keep-alive playing IS the proof that audio is permitted, so that is
+    where the unlock now also happens.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+
+    playing = js.split('el.addEventListener("playing"')[1].split("});")[0]
+    assert "unlockAudio()" in playing, \
+        "the keep-alive starting does not unlock the announcement elements"
+
+    start = js.split("function start() {")[1].split("\n  }")[0]
+    assert "unlockAudio()" in start
+
+    # It must stay retryable: marking it done on a FAILED attempt would
+    # make one bad moment permanent for the whole page load.
+    unlock = js.split("function unlockAudio")[1].split("\n  }")[0]
+    body = unlock.split("var settle")[1]
+    assert 'dataset.unlocked = "1"' in body.split("catch")[0], \
+        "the unlock is marked done outside the success path"
+
+
+def test_the_words_retry_on_the_element_that_just_worked():
+    """The chime had played a second earlier through the OTHER audio
+    element, on the same locked phone, in the same instant.
+
+    That is not a theory about what Android permits — it is a
+    demonstration. So a refused announcement tries the element that has
+    just proved itself before re-rendering anything.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    fire = js.split("playChime(function () {")[1].split("\n    });")[0]
+
+    assert "triedChimeEl" in fire
+    assert "sound())" in fire, "the retry does not target the chime's element"
+    # Once only, or a source that never decodes ping-pongs between the two
+    # elements until the slot has passed.
+    assert "if (!triedChimeEl" in fire
+    # And it is tried BEFORE spending a network round trip re-rendering.
+    assert fire.index("triedChimeEl = true") < fire.index("retried = true")

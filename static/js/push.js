@@ -195,14 +195,54 @@
     if (typeof Notification === "undefined" ||
         Notification.permission !== "granted") return;
 
+    let throttled = false;
     try {
       const last = parseInt(localStorage.getItem(HEAL_KEY) || "0", 10);
-      if (Date.now() - last < HEAL_EVERY_MS) return;
+      throttled = Date.now() - last < HEAL_EVERY_MS;
     } catch (_) { /* private mode: heal every load, which is harmless */ }
 
     try {
       const reg = await navigator.serviceWorker.ready;
       let sub = await reg.pushManager.getSubscription();
+
+      /* ── A REVOKED SUBSCRIPTION MUST BE REPLACED, NOT RE-SENT ────────
+         Diagnosed 2026-08-23: one phone reported 410 — "the subscription
+         was revoked by the browser or device" — while the other two
+         devices delivered normally. Seven of that phone's registrations
+         had accumulated and died the same way.
+
+         This is why. getSubscription() keeps handing back a subscription
+         the push service has already revoked, so the heal below re-posted
+         it, the server marked it active again, the next send got another
+         410 and retired it again. Round and round, and every so often a
+         genuinely new endpoint would appear and join the pile.
+
+         Only unsubscribe() followed by subscribe() produces a fresh
+         endpoint. The server is the one that knows the old one is dead —
+         it is the only party that ever sees the 410 — so it is asked.
+
+         Deliberately NOT throttled: this is the case where waiting up to
+         twelve hours to try again means twelve hours of silence, and it
+         costs one small request per load. */
+      if (sub) {
+        try {
+          const r = await fetch("/api/push/status", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+          });
+          const st = r.ok ? await r.json() : null;
+          if (st && st.known && !st.active) {
+            try { await sub.unsubscribe(); } catch (_) { /* already gone */ }
+            sub = null;                 // fall through and make a new one
+            throttled = false;          // and send it up straight away
+          }
+        } catch (_) { /* offline — leave it for the next load */ }
+      }
+
+      if (throttled && sub) return;
+
       if (!sub) {
         // Permission granted but no subscription: the browser dropped it.
         // Re-creating one shows no dialog, because permission is granted.

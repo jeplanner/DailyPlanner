@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v265";
+  var BUILD = "v267";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -1041,6 +1041,8 @@
     //: One re-render per fire. Without this a source that never decodes
     //: would loop fetching and failing until the slot passed.
     var retried = false;
+    //: And one attempt on the chime's element, for the same reason.
+    var triedChimeEl = false;
 
     /* ── A LATE ANNOUNCEMENT MUST SAY THAT IT IS LATE ─────────────────
        Reported as "strange. In android, when i open the app, then a
@@ -1150,13 +1152,33 @@
          API — which, on the locked phone this whole path exists for, is
          refused anyway. */
       var recover = function () {
+        /* ── FALL BACK TO THE ELEMENT THAT JUST WORKED ─────────────────
+           The chime had played a second earlier through the OTHER audio
+           element, on the same locked phone, in the same instant. That is
+           not a theory about what Android permits — it is a demonstration.
+           So before re-rendering anything, try the words on the element
+           that has just proved itself.
+
+           Two elements exist because swapping a source out from under a
+           playing stream failed; that is only a problem while the chime is
+           still going, and by here it has finished. */
+        if (!triedChimeEl && sayCache[words]) {
+          triedChimeEl = true;
+          lastFire.audio = "retrying on the chime's element";
+          paint();
+          if (playThrough(sayCache[words], function () {
+                lastFire.spoke = "played (audio, chime element)";
+                nudgeKeepalive();
+                paint();
+              }, recover, sound())) return;
+        }
         if (retried) { sayIt(); return; }
         retried = true;
         delete sayCache[words];
         lastFire.audio = "cached copy would not play, re-fetching";
         paint();
         fetchSpeech(words)
-          .then(function () { if (!playSpeech(words, sayIt)) sayIt(); })
+          .then(function () { if (!playSpeech(words, recover)) sayIt(); })
           .catch(function () { sayIt(); });
       };
       if (playSpeech(words, recover)) { lastFire.audio = "cached"; return; }
@@ -1195,6 +1217,9 @@
   var lastFire = null;
 
   function start() {
+    // Cheap: unlockAudio() returns immediately once it has succeeded, and
+    // before that every extra attempt is another chance to succeed.
+    try { unlockAudio(); } catch (e) {}
     stopTimer();
     timer = setInterval(function () { check(); }, TICK_MS);
     check();
@@ -1284,6 +1309,17 @@
       // The flag follows REALITY, not intent.
       el.addEventListener("playing", function () {
         keepCtx = { el: el };
+        /* THIS ELEMENT PLAYING IS PROOF THAT AUDIO IS PERMITTED, so the
+           announcement's elements can be unlocked now.
+
+           Measured on a locked Android at v265: "keep-alive: holding,
+           speech audio: NEVER UNLOCKED". unlockAudio() was wired to the
+           first pointerdown only, and the app had been opened and locked
+           without the screen being touched — while the keep-alive started
+           anyway, because Chrome permits autoplay on a site it considers
+           engaged. So the page was wide awake, holding audio focus, with
+           the one element the words needed still locked. */
+        try { unlockAudio(); } catch (e) {}
         setMediaSession();
         // Clear the "blocked until you tap the page" warning: it is true
         // on every fresh load and stops being true the moment this fires,
