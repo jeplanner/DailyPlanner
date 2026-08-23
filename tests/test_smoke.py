@@ -4362,8 +4362,13 @@ def test_announcement_chime_is_real_audio_and_on_by_default():
 
     with wave.open("static/audio-chime.wav", "rb") as w:
         seconds = w.getnframes() / float(w.getframerate())
+        rate = w.getframerate()
     assert 0.2 < seconds < 3, f"chime is {seconds:.2f}s"
-    assert os.path.getsize("static/audio-chime.wav") < 60000
+    # Asked for the aeroplane seatbelt chime, which is a descending two-tone
+    # with a long bell decay — it needs a real sample rate to sound like one
+    # rather than like a beep, so the size bound accommodates that.
+    assert rate >= 16000, "too low a sample rate for a bell tone"
+    assert os.path.getsize("static/audio-chime.wav") < 80000
 
 
 def test_announcer_never_picks_a_network_voice():
