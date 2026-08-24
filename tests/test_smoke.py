@@ -6612,3 +6612,55 @@ def test_the_calendar_mirror_is_removed_with_the_announcement():
     assert 'remove=(c.get("is_on") is False)' in save_fn
     # Off the request thread: saving must never wait on Google.
     assert "sync_async" in save_fn
+
+
+def test_p3_glossary_batches_are_all_attached():
+    """A mis-keyed title in an _EX_* dict is a SILENT no-op — the entry keeps
+    its empty examples list and the only symptom is a number that never
+    moves. The file's own comments warn about it twice, so it is pinned.
+
+    Also pins the shape the rewrite promised: at least five worked examples,
+    a plain-English opening before any jargon, and a closing section that
+    walks the code back to the trace.
+    """
+    import ai_sde_bank as bank
+
+    by_title = {e["title"]: e for e in bank.ENTRIES}
+    # Discovered, not listed. A hardcoded list silently stops covering the
+    # batch someone adds next, which is the same class of silent gap the
+    # test exists to catch.
+    names = sorted(n for n in dir(bank)
+                   if n.startswith("_EX_P3") and isinstance(getattr(bank, n), dict))
+    assert len(names) >= 4, f"only found {names}"
+    for name in names:
+        d = getattr(bank, name)
+        assert d, f"{name} is empty"
+        for title, examples in d.items():
+            entry = by_title.get(title)
+            assert entry is not None, f"{name} key matches no entry: {title!r}"
+            assert len(examples) >= 5, f"{title!r} has only {len(examples)}"
+            assert entry["examples"] is examples, \
+                f"{title!r} declared but never attached"
+
+            # The agreed shape: everyday example first, jargon after.
+            first = examples[0]
+            assert "THE GOAL" in first, f"{title!r} does not open with the goal"
+            assert "plain English" in first or "plain english" in first.lower()
+            # And a closing walkthrough with the mistakes named.
+            last = examples[-1]
+            assert "TAKEAWAY" in last, f"{title!r} has no takeaway"
+            assert "MISTAKE" in last, f"{title!r} names no common mistake"
+
+
+def test_p3_progress_is_reported_honestly():
+    """Two numbers rather than one, for the same reason ANSWERS_REWRITTEN
+    and ANSWERS_DECLARED are pinned equal: a count computed from the dicts
+    would keep rising even if nothing attached."""
+    import ai_sde_bank as bank
+
+    p3 = [e for e in bank.ENTRIES if e.get("priority") == "P3"]
+    done = [e for e in p3 if len(e.get("examples") or []) >= 5]
+    # Ratchet: this only ever goes up. If a change drops it, that change
+    # detached something.
+    assert len(done) >= 76, f"P3 completed fell to {len(done)}"
+    assert len(p3) == 336
