@@ -60,9 +60,16 @@ DUPES = {
     "Design a YouTube-style Video Recommendation System": (
         "Design a Video Recommendation system (YouTube-style)",
         "Both deep, but the shadow's answer is a 150-char stub against 1067."),
-    "Imputation": (
-        "Imputation strategies",
-        "Neither has a deep dive; canonical answer 345 vs 277."),
+    # FLIPPED 2026-08-24. The note below used to read "neither has a deep
+    # dive; canonical answer 345 vs 277" — a 68-character margin, which was
+    # the only thing separating them. "Imputation" now HAS the deep dive
+    # (ten worked examples covering MCAR/MAR/MNAR, the missingness
+    # indicator, the leakage trap and sentinel values), so the rule's first
+    # clause applies and points the other way.
+    "Imputation strategies": (
+        "Imputation",
+        "Canonical has the deep dive (10 examples); shadow is a 345-char "
+        "stub. The pair was the other way round until the dive was written."),
     "Health check (liveness vs readiness)": (
         "Liveness vs readiness probes",
         "Neither deep; canonical answer 548 vs 364."),
