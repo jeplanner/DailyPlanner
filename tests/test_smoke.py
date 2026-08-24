@@ -6662,5 +6662,5 @@ def test_p3_progress_is_reported_honestly():
     done = [e for e in p3 if len(e.get("examples") or []) >= 5]
     # Ratchet: this only ever goes up. If a change drops it, that change
     # detached something.
-    assert len(done) >= 98, f"P3 completed fell to {len(done)}"
+    assert len(done) >= 100, f"P3 completed fell to {len(done)}"
     assert len(p3) == 336
