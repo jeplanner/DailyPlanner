@@ -13,8 +13,8 @@
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <style>
-:root{--em-bg:#f7f8fa;--em-surface:#fff;--em-text:#1a1a2e;--em-text2:#6b7280;--em-text3:#9ca3af;
-  --em-border:#e5e7eb;--em-shadow:0 1px 3px rgba(0,0,0,.06);
+:root{--em-bg:#f7f8fa;--em-surface: var(--color-surface, #fff);--em-text:#1a1a2e;--em-text2:#6b7280;--em-text3:#9ca3af;
+  --em-border: var(--color-border, #e5e7eb);--em-shadow:0 1px 3px rgba(0,0,0,.06);
   --q-do:#dc2626;--q-do-bg:#fef2f2;--q-do-border:#fecaca;
   --q-schedule:#2563eb;--q-schedule-bg:#eff6ff;--q-schedule-border:#bfdbfe;
   --q-delegate:#d97706;--q-delegate-bg:#fffbeb;--q-delegate-border:#fde68a;

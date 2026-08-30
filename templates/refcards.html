@@ -20,19 +20,19 @@
    ══════════════════════════════════════════════════════════════════ */
 :root {
   --rc-bg: #f6f7fb;
-  --rc-surface: #ffffff;
+  --rc-surface: var(--color-surface, #ffffff);
   --rc-surface-alt: #fafbfc;
-  --rc-text: #0f172a;
-  --rc-text2: #475569;
+  --rc-text: var(--color-text, #0f172a);
+  --rc-text2: var(--color-text-secondary, #475569);
   --rc-text3: #94a3b8;
   --rc-border: #e2e8f0;
   --rc-border-strong: #cbd5e1;
-  --rc-primary: #2563eb;
-  --rc-primary-light: #eff6ff;
+  --rc-primary: var(--color-primary, #2563eb);
+  --rc-primary-light: var(--color-primary-light, #eff6ff);
   --rc-primary-ring: rgba(37, 99, 235, .15);
   --rc-success: #059669;
   --rc-warning: #d97706;
-  --rc-danger: #dc2626;
+  --rc-danger: var(--color-danger, #dc2626);
   --rc-shadow: 0 1px 3px rgba(15,23,42,.06), 0 4px 12px rgba(15,23,42,.04);
   --rc-shadow-lg: 0 12px 40px rgba(15,23,42,.14);
 }

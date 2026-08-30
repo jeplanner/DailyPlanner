@@ -13,9 +13,9 @@
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <style>
 :root{
-  --rc-bg:#f7f8fa;--rc-surface:#fff;--rc-text:#1a1a2e;--rc-text2:#6b7280;
-  --rc-text3:#9ca3af;--rc-border:#e5e7eb;--rc-primary:#2563eb;
-  --rc-primary-light:#eff6ff;--rc-success:#10b981;--rc-warning:#f59e0b;
+  --rc-bg:#f7f8fa;--rc-surface: var(--color-surface, #fff);--rc-text:#1a1a2e;--rc-text2:#6b7280;
+  --rc-text3:#9ca3af;--rc-border: var(--color-border, #e5e7eb);--rc-primary: var(--color-primary, #2563eb);
+  --rc-primary-light: var(--color-primary-light, #eff6ff);--rc-success:#10b981;--rc-warning:#f59e0b;
   --rc-danger:#ef4444;--rc-shadow:0 1px 3px rgba(0,0,0,0.06);
 }
 html.dark{

@@ -11,13 +11,40 @@
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <style>
+  /* ── PALETTE ────────────────────────────────────────────────────
+     Aliased to design-system.css ONLY where the shared token holds the
+     identical value, so this consolidation cannot change a pixel. The
+     rest stay literal on purpose and are listed below with the reason —
+     an alias that quietly restyles a page is not a cleanup, it is a
+     regression with a tidy commit message.
+
+     Kept local, with the distance from the shared token:
+       --pl-bg       #f7f8fa vs --color-bg #f5f6f8            (imperceptible, but not identical)
+       --pl-text     #1a1a2e vs --color-text #0f172a          (slightly warmer black)
+       --pl-text2    #6b7280 vs --color-text-secondary #475569 (shared is much darker)
+       --pl-text3    #9ca3af vs --color-text-muted #6b7280     (shared is much darker)
+       --pl-success  #059669 vs --color-success #15803d        (emerald vs forest)
+       --pl-warning  #f59e0b vs --color-warning #b45309        (amber vs burnt)
+       --pl-shadow   one black layer vs --shadow-sm's two slate ones
+     Unifying those is a design DECISION about the whole app, not a
+     side-effect of tidying one page, and the shared values are the
+     higher-contrast ones — so it belongs in a change made deliberately
+     across every page at once.
+
+     The dark block below is untouched for the same reason: the shared
+     dark surface and secondary text differ from this page's, so letting
+     the shared token flip would restyle dark mode silently. */
   :root {
-    --pl-bg: #f7f8fa; --pl-surface: #fff; --pl-text: #1a1a2e;
-    --pl-text2: #6b7280; --pl-text3: #9ca3af; --pl-border: #e5e7eb;
-    --pl-primary: #2563eb; --pl-primary-light: #eff6ff;
+    --pl-bg: #f7f8fa;
+    --pl-surface: var(--color-surface, #fff);
+    --pl-text: #1a1a2e;
+    --pl-text2: #6b7280; --pl-text3: #9ca3af;
+    --pl-border: var(--color-border, #e5e7eb);
+    --pl-primary: var(--color-primary, #2563eb);
+    --pl-primary-light: var(--color-primary-light, #eff6ff);
     --pl-success: #059669; --pl-success-light: #ecfdf5;
     --pl-warning: #f59e0b;
-    --pl-danger: #dc2626; --pl-danger-light: #fef2f2;
+    --pl-danger: var(--color-danger, #dc2626); --pl-danger-light: #fef2f2;
     --pl-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
   html.dark {

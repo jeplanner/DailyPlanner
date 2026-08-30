@@ -13,7 +13,7 @@
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <style>
-:root{--pf-bg:#f7f8fa;--pf-surface:#fff;--pf-text:#1a1a2e;--pf-text2:#6b7280;--pf-text3:#9ca3af;--pf-border:#e5e7eb;--pf-primary:#2563eb;--pf-primary-light:#eff6ff;--pf-success:#10b981;--pf-danger:#ef4444;--pf-shadow:0 1px 3px rgba(0,0,0,.06);}
+:root{--pf-bg:#f7f8fa;--pf-surface: var(--color-surface, #fff);--pf-text:#1a1a2e;--pf-text2:#6b7280;--pf-text3:#9ca3af;--pf-border: var(--color-border, #e5e7eb);--pf-primary: var(--color-primary, #2563eb);--pf-primary-light: var(--color-primary-light, #eff6ff);--pf-success:#10b981;--pf-danger:#ef4444;--pf-shadow:0 1px 3px rgba(0,0,0,.06);}
 html.dark{--pf-bg:#0f172a;--pf-surface:#1e293b;--pf-text:#f1f5f9;--pf-text2:#94a3b8;--pf-text3:#64748b;--pf-border:#334155;--pf-primary-light:#1e3a5f;--pf-shadow:0 1px 3px rgba(0,0,0,.2);}
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Inter',system-ui,sans-serif;background:var(--pf-bg);color:var(--pf-text);min-height:100vh;}

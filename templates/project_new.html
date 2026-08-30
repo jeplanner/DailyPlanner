@@ -13,14 +13,14 @@
 <style>
   :root {
     --np-bg: #f7f8fa;
-    --np-surface: #ffffff;
+    --np-surface: var(--color-surface, #ffffff);
     --np-text: #1a1a2e;
     --np-text2: #6b7280;
     --np-text3: #9ca3af;
-    --np-border: #e5e7eb;
-    --np-primary: #2563eb;
+    --np-border: var(--color-border, #e5e7eb);
+    --np-primary: var(--color-primary, #2563eb);
     --np-primary-hover: #1d4ed8;
-    --np-primary-light: #eff6ff;
+    --np-primary-light: var(--color-primary-light, #eff6ff);
     --np-shadow: 0 4px 24px rgba(0,0,0,0.08);
   }
   html.dark {
