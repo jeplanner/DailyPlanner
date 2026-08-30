@@ -79,6 +79,52 @@
     outline: none; border-color: var(--pl-primary);
     box-shadow: 0 0 0 3px var(--pl-primary-light);
   }
+  /* Quick add. Creating a project was: click New Project → wait for a
+     page → type → submit → wait for a redirect back. It is a name; it
+     should cost a name. The full form is still one click away for the
+     description and colour. */
+  .quick-add { display: none; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .quick-add.open { display: flex; }
+  #quick-add-name {
+    flex: 1; min-width: 220px; font: inherit; font-size: 14px;
+    color: var(--pl-text); background: var(--pl-surface);
+    border: 1px solid var(--pl-primary); border-radius: 10px; padding: 10px 12px;
+  }
+  #quick-add-name:focus { outline: none; box-shadow: 0 0 0 3px var(--pl-primary-light); }
+  .quick-add .hint { font-size: 12px; color: var(--pl-text2); align-self: center; }
+  .quick-add .hint a { color: var(--pl-primary); }
+
+  /* The action was a ⋮ that opened a popover containing exactly ONE
+     item. A menu you open to reveal a single action is a click spent on
+     nothing, so the action is the button now. */
+  .card-act {
+    position: absolute; top: 8px; right: 8px; z-index: 2;
+    width: 28px; height: 28px; border-radius: 7px;
+    border: 1px solid transparent; background: transparent;
+    color: var(--pl-text3); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card-act:hover { background: var(--pl-border); color: var(--pl-text); }
+  .card-act svg { width: 15px; height: 15px; }
+
+  /* Undo instead of confirm. A confirmation costs a click every time to
+     protect against the once you were wrong; undo costs a click only on
+     the once. */
+  .undo-bar {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 12px; z-index: 1000;
+    background: #111827; color: #fff; padding: 11px 14px 11px 18px;
+    border-radius: 12px; font-size: 13.5px; box-shadow: 0 12px 32px rgba(0,0,0,.25);
+  }
+  .undo-bar button {
+    font: inherit; font-weight: 700; font-size: 13px; color: #93c5fd;
+    background: transparent; border: 0; cursor: pointer; padding: 2px 6px;
+    border-radius: 6px;
+  }
+  .undo-bar button:hover { background: rgba(255,255,255,.12); }
+  .card-chip-link { cursor: pointer; }
+  .card-chip-link:hover { filter: brightness(0.94); text-decoration: underline; }
+
   .no-match { display: none; padding: 40px 8px; text-align: center; color: var(--pl-text2); font-size: 14px; }
 
   /* Status chip — the card's headline. One glance has to separate "late"
@@ -229,10 +275,18 @@
                onchange="window.location.search = this.checked ? '?include_archived=1' : '';">
         Show archived
       </label>
-      <a href="/projects/new" class="btn-new">
+      <button type="button" class="btn-new" id="quick-add-open">
         <i data-feather="plus"></i> New Project
-      </a>
+      </button>
     </div>
+  </div>
+
+  <div class="quick-add" id="quick-add">
+    <input id="quick-add-name" type="text" maxlength="100" autocomplete="off"
+           placeholder="Project name — press Enter to create"
+           aria-label="New project name">
+    <span class="hint">Enter to create · Esc to cancel ·
+      <a href="/projects/new">add a description or colour</a></span>
   </div>
 
   {% if projects %}
@@ -284,7 +338,14 @@
           </div>
           {# ONE chip, and it says the most important true thing. #}
           {% if late %}
-            <span class="chip chip-late" style="margin-right:28px;">{{ late }} overdue</span>
+            {# The chip is the shortcut. Seeing "29 overdue" and then
+               having to open the project and filter it yourself is the
+               page telling you where the fire is and handing you no
+               hose. /tasks already understands ?overdue_only=1. #}
+            <span class="chip chip-late card-chip-link" style="margin-right:28px;"
+                  role="link" tabindex="0"
+                  data-goto="/projects/{{ p.project_id }}/tasks?overdue_only=1"
+                  title="Show only the {{ late }} overdue tasks">{{ late }} overdue</span>
           {% elif not p.task_count %}
             <span class="chip chip-empty" style="margin-right:28px;">No tasks</span>
           {% elif pct == 100 %}
@@ -324,30 +385,21 @@
         </div>
       </a>
 
-      <!-- Action menu -->
-      <div class="card-menu-wrap">
-        <button type="button" class="card-menu-btn"
-                title="Actions for {{ p.name }}" aria-label="Actions for {{ p.name }}"
-                aria-haspopup="true" aria-expanded="false"
-                aria-controls="menu-{{ p.project_id }}"
-                onclick="toggleProjectMenu(event, '{{ p.project_id }}')">
-          <i data-feather="more-vertical"></i>
-        </button>
-        <div class="card-menu" id="menu-{{ p.project_id }}">
-          {% if p.is_archived %}
-            <button type="button" onclick="restoreProject(event, '{{ p.project_id }}')">
-              <i data-feather="rotate-ccw"></i> Restore
-            </button>
-          {% else %}
-            {# It ARCHIVES. Calling it Delete while the handler posts to
-               /archive is the interface lying about what it does, and
-               this project's rule is soft-delete only. #}
-            <button type="button" onclick="archiveProject(event, '{{ p.project_id }}')">
-              <i data-feather="archive"></i> Archive
-            </button>
-          {% endif %}
-        </div>
-      </div>
+      {# ONE button, not a menu wrapping one button. It archives — the
+         rule here is soft-delete only — and it is undoable, so it asks
+         nothing before acting. #}
+      {% if p.is_archived %}
+      <button type="button" class="card-act" data-restore="{{ p.project_id }}"
+              title="Restore {{ p.name }}" aria-label="Restore {{ p.name }}">
+        <i data-feather="rotate-ccw"></i>
+      </button>
+      {% else %}
+      <button type="button" class="card-act" data-archive="{{ p.project_id }}"
+              data-name="{{ p.name }}"
+              title="Archive {{ p.name }}" aria-label="Archive {{ p.name }}">
+        <i data-feather="archive"></i>
+      </button>
+      {% endif %}
     </div>
     {% endfor %}
   </div>
@@ -446,75 +498,161 @@ if (window.feather) feather.replace();
   apply();
 })();
 
-// ─── Project action menu (Archive / Restore / Delete) ─────────────────
+/* ─── ACTIONS, WITHOUT THE CEREMONY ────────────────────────────────
+   Archiving used to be: open the ⋮ menu, pick the one item in it,
+   confirm, then wait for a full page reload. Four beats to put a
+   project away. It is one now, and it is undoable, which is the safety
+   the confirmation was pretending to be — a confirm costs a click every
+   time to guard against the once you were wrong.
+
+   Nothing reloads. The card leaves, the totals above it move, and if
+   the list empties the empty state appears. */
 function _csrf() {
   return document.querySelector('meta[name="csrf-token"]')?.content || "";
 }
 
-async function _postJSON(url) {
+async function _postJSON(url, body) {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+    body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
 
-function _syncMenuState() {
-  document.querySelectorAll(".card-menu-btn").forEach((b) => {
-    const menu = document.getElementById(b.getAttribute("aria-controls"));
-    b.setAttribute("aria-expanded", menu?.classList.contains("open") ? "true" : "false");
+let _undoTimer = null;
+function showUndo(message, onUndo) {
+  document.querySelector(".undo-bar")?.remove();
+  clearTimeout(_undoTimer);
+  const bar = document.createElement("div");
+  bar.className = "undo-bar";
+  bar.innerHTML = '<span></span><button type="button">Undo</button>';
+  bar.querySelector("span").textContent = message;
+  bar.querySelector("button").addEventListener("click", async () => {
+    bar.remove();
+    clearTimeout(_undoTimer);
+    try { await onUndo(); } catch (err) { alert("Could not undo: " + err.message); }
   });
+  document.body.appendChild(bar);
+  _undoTimer = setTimeout(() => bar.remove(), 7000);
 }
 
-function _closeMenus() {
-  document.querySelectorAll(".card-menu.open").forEach(m => m.classList.remove("open"));
-  _syncMenuState();
+/* The totals in the bar are computed from the cards still on screen, so
+   they cannot drift from what you are looking at. */
+function refreshTotals() {
+  const live = [...document.querySelectorAll(".project-card-wrap")]
+    .filter((c) => !c.dataset.gone);
+  const sum = (k) => live.reduce((n, c) => n + (parseInt(c.dataset[k] || "0", 10)), 0);
+  const bar = document.querySelector(".stats-bar");
+  if (!bar) return;
+  const set = (i, n, word) => {
+    const el = bar.children[i];
+    if (el) el.innerHTML = el.innerHTML.replace(/<b>\d+<\/b>/, `<b>${n}</b>`);
+  };
+  set(0, live.length);
+  set(1, sum("open"));
+  const lateEl = bar.querySelector(".is-late");
+  const late = sum("late");
+  if (lateEl) lateEl.hidden = !late;
+  if (lateEl && late) lateEl.innerHTML = lateEl.innerHTML.replace(/<b>\d+<\/b>/, `<b>${late}</b>`);
+  if (!live.length) document.querySelector(".project-grid")?.classList.add("is-empty");
 }
 
-function toggleProjectMenu(ev, projectId) {
-  ev.preventDefault();
-  ev.stopPropagation();
-  const menu = document.getElementById(`menu-${projectId}`);
-  // Close any other open menus
-  document.querySelectorAll(".card-menu.open").forEach(m => {
-    if (m !== menu) m.classList.remove("open");
-  });
-  menu?.classList.toggle("open");
-  _syncMenuState();
-}
-
-// Close on an outside click or Escape. A popover you can only dismiss by
-// finding its own button again is a trap on a touchscreen.
-document.addEventListener("click", (e) => {
-  if (e.target.closest(".card-menu-wrap")) return;
-  _closeMenus();
-});
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") _closeMenus(); });
-
-async function archiveProject(ev, projectId) {
-  ev.preventDefault();
-  ev.stopPropagation();
-  if (!confirm("Archive this project? It disappears from this list but keeps every task, and 'Show archived' brings it back.")) return;
+async function archiveProject(projectId, name) {
+  const card = document.querySelector(`[data-archive="${projectId}"]`)?.closest(".project-card-wrap");
+  if (card) { card.hidden = true; card.dataset.gone = "1"; refreshTotals(); }
   try {
     await _postJSON(`/projects/${projectId}/archive`);
-    location.reload();
+    showUndo(`Archived “${name}”`, async () => {
+      await _postJSON(`/projects/${projectId}/restore`);
+      if (card) { card.hidden = false; delete card.dataset.gone; refreshTotals(); }
+    });
   } catch (err) {
+    // Put it back: the card left the screen optimistically, so a failure
+    // has to undo that or the list is lying about what exists.
+    if (card) { card.hidden = false; delete card.dataset.gone; refreshTotals(); }
     alert("Could not archive it: " + err.message);
   }
 }
 
-async function restoreProject(ev, projectId) {
-  ev.preventDefault();
-  ev.stopPropagation();
+async function restoreProject(projectId) {
   try {
     await _postJSON(`/projects/${projectId}/restore`);
-    location.reload();
+    location.reload();   // it re-enters a list this view is filtering out
   } catch (err) {
-    alert("Restore failed: " + err.message);
+    alert("Could not restore it: " + err.message);
   }
 }
+
+document.addEventListener("click", (e) => {
+  const arch = e.target.closest("[data-archive]");
+  if (arch) {
+    e.preventDefault();
+    archiveProject(arch.dataset.archive, arch.dataset.name || "project");
+    return;
+  }
+  const rest = e.target.closest("[data-restore]");
+  if (rest) { e.preventDefault(); restoreProject(rest.dataset.restore); return; }
+  const chip = e.target.closest("[data-goto]");
+  if (chip) { e.preventDefault(); window.location.href = chip.dataset.goto; }
+});
+document.addEventListener("keydown", (e) => {
+  const chip = e.target.closest?.("[data-goto]");
+  if (chip && (e.key === "Enter" || e.key === " ")) {
+    e.preventDefault();
+    window.location.href = chip.dataset.goto;
+  }
+});
+
+/* ─── CREATE WITHOUT LEAVING ───────────────────────────────────────
+   A project is a name. Asking for a page load, a form and a redirect to
+   collect one is three waits for one word. The full form is still there
+   for a description and a colour. */
+(function () {
+  const open = document.getElementById("quick-add-open");
+  const wrap = document.getElementById("quick-add");
+  const input = document.getElementById("quick-add-name");
+  const grid = document.querySelector(".project-grid");
+  if (!open || !wrap || !input) return;
+
+  const show = (on) => {
+    wrap.classList.toggle("open", on);
+    if (on) input.focus();
+    else input.value = "";
+  };
+  open.addEventListener("click", () => show(!wrap.classList.contains("open")));
+
+  input.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") { show(false); return; }
+    if (e.key !== "Enter") return;
+    const name = input.value.trim();
+    if (!name) return;
+    input.disabled = true;
+    try {
+      const { project } = await _postJSON("/projects/new", { name });
+      // Straight to the new project's task list: you did not name a
+      // project in order to look at a card of it.
+      window.location.href = `/projects/${project.project_id}/tasks`;
+    } catch (err) {
+      input.disabled = false;
+      alert("Could not create it: " + err.message);
+      input.focus();
+    }
+  });
+})();
+
+/* ─── KEYBOARD ─────────────────────────────────────────────────────
+   "/" to search and "n" for a new project, the two things this page is
+   for. Ignored while typing, so they never eat a keystroke. */
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  if (e.key === "/") { e.preventDefault(); document.getElementById("project-search")?.focus(); }
+  if (e.key === "n") { e.preventDefault(); document.getElementById("quick-add-open")?.click(); }
+});
 </script>
 </body>
 </html>

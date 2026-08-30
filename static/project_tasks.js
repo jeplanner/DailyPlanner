@@ -74,6 +74,42 @@ function initAddTask() {
   }
 }
 
+/* Put a freshly-added row into the table without a reload.
+
+   `groupName` is the section the SERVER decided this task belongs in,
+   using the same grouper the page used to draw the sections. Guessing
+   client-side is how a task sits under "Today" until you refresh and
+   discover it was "Later" all along.
+
+   Returns false when it cannot place the row — no matching section on
+   screen (the group is empty and so was never rendered), or no HTML —
+   and the caller falls back to a reload. */
+function insertTaskRow(html, groupName) {
+  if (!html) return false;
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html.trim();
+  const row = tpl.content.querySelector("tr.task-row");
+  if (!row) return false;
+
+  // The last row already in that group, so the new one lands at the
+  // bottom of its own section rather than at the top of the table.
+  const peers = document.querySelectorAll(
+    `tr.task-row[data-group="${(groupName || "").replace(/"/g, '\\"')}"]`);
+  const anchorRow = peers[peers.length - 1];
+  if (!anchorRow || !anchorRow.parentNode) return false;
+  anchorRow.parentNode.insertBefore(row, anchorRow.nextSibling);
+
+  if (window.feather) feather.replace();
+  // A row that appears silently in a long table is a row you do not see.
+  row.style.transition = "background-color .9s ease";
+  row.style.backgroundColor = "rgba(37,99,235,.12)";
+  setTimeout(() => { row.style.backgroundColor = ""; }, 900);
+  // Guarded: scrollIntoView is a nicety, and a missing implementation
+  // must not cost the row that was just added.
+  try { row.scrollIntoView?.({ block: "nearest", behavior: "smooth" }); } catch (_) {}
+  return true;
+}
+
 async function addTask() {
   const input = _id("add-task-input");
   const dateInput = _id("add-task-date");
@@ -110,6 +146,7 @@ async function addTask() {
     });
 
     if (!res.ok) throw new Error("Add failed");
+    const data = await res.json().catch(() => ({}));
 
     input.value = "";
     // Remember the initiative + epic + sprint picks so rapid adds inherit them.
@@ -123,7 +160,21 @@ async function addTask() {
             : "Task added",
       "success",
     );
-    location.reload();
+
+    /* ── NO RELOAD ────────────────────────────────────────────────
+       This used to end with location.reload(), so adding five tasks
+       meant five full page loads of a page that issues a dozen queries.
+       The server already renders the row — the SAME partial the list
+       renders (_project_task_row.html) — and tells us which group it
+       belongs in, so the row can simply be placed.
+
+       Falls back to the reload if anything is missing: a row that never
+       appears is worse than a slow page. */
+    const placed = insertTaskRow(data.html, data.group);
+    if (!placed) { location.reload(); return; }
+    // Focus stays in the box: adding tasks is something people do in
+    // runs of five, not once.
+    try { input.focus(); } catch (_) {}
   } catch (err) {
     console.error(err);
     showToast("Failed to add task", "error");

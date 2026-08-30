@@ -1,0 +1,65 @@
+{# ONE task row, rendered in two places.
+
+   The list on /projects/<id>/tasks renders it in a loop; the async add
+   (/projects/<id>/tasks/add-ajax) renders this same file for the row it
+   just created, so a new task can be dropped straight into the table
+   instead of the page reloading itself.
+
+   Before this, add-ajax returned _project_task_card.html — a CARD, for a
+   page built out of table ROWS — so the client had nothing it could use
+   and called location.reload() after every single task. Adding five
+   tasks meant five full page loads.
+
+   Needs only `t` and `group_name`; `group_name` is "" when rendered on
+   its own, and the client places the row using the group the server
+   sends alongside the HTML. #}
+{% set group_name = group_name|default("") %}
+          <tr class="task-row prio-{{ t.priority }} {{ 'done' if t.done }} {{ 'overdue' if t.due_label and 'overdue' in t.due_label }}"
+              data-id="{{ t.task_id }}"
+              data-status="{{ t.status }}"
+              data-priority="{{ t.priority }}"
+              data-pinned="{{ t.is_pinned|int }}"
+              data-group="{{ group_name }}"
+              data-objective-id="{{ t.objective_id or '' }}"
+              data-kr-id="{{ t.key_result_id or '' }}"
+              data-initiative-id="{{ t.initiative_id or '' }}"
+              data-epic-id="{{ t.epic_id or '' }}"
+              data-sprint-id="{{ t.sprint_id or '' }}">
+
+            <!-- Checkbox -->
+            <td class="col-check">
+              <span class="pt-sel-check" aria-hidden="true"></span>
+              <input type="checkbox" class="task-check"
+                     {{ 'checked' if t.done }}
+                     onchange="toggleTaskDone(this, '{{ t.task_id }}', '{{ t.occurrence_date }}')">
+            </td>
+
+            <!-- Title (click = open details) -->
+            <td class="col-name" onclick="openTaskDetail('{{ t.task_id }}')">
+              <div class="task-name-cell">
+                <span class="task-text" title="{{ t.task_text }}">{{ t.task_text }}</span>
+              </div>
+            </td>
+
+            <!-- Due chip (relative label served by backend) -->
+            <td class="col-due" onclick="openTaskDetail('{{ t.task_id }}')">
+              {% if t.due_label %}
+                <span class="due-chip {{ 'overdue-label' if 'overdue' in t.due_label }}"
+                      {% if t.due_date %}title="Due {{ t.due_date }}"{% endif %}>{{ t.due_label }}</span>
+              {% endif %}
+            </td>
+
+            <!-- Single details affordance -->
+            <td class="col-actions">
+              <button type="button" class="row-action-btn row-details-btn"
+                      onclick="event.stopPropagation(); openTaskDetail('{{ t.task_id }}')"
+                      title="Task details" aria-label="Task details">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9"/>
+                  <line x1="12" y1="11.5" x2="12" y2="16.5"/>
+                  <circle cx="12" cy="8" r="0.9" fill="currentColor" stroke="none"/>
+                </svg>
+              </button>
+            </td>
+          </tr>

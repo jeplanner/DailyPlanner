@@ -24,7 +24,17 @@ function boot() {
     // The nav calls feather.replace() unguarded and the CDN never loads
     // here. Stub it before parsing so the console stays readable — the
     // icons are not what this test is about.
-    beforeParse(w) { w.feather = { replace() {} }; },
+    beforeParse(w) {
+      w.feather = { replace() {} };
+      // The page now talks to the server instead of reloading, so the
+      // calls it makes are part of what is being tested.
+      w.__calls = [];
+      w.fetch = (url, opts = {}) => {
+        w.__calls.push({ url: String(url), method: opts.method || "GET" });
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+      };
+      w.alert = (m) => { w.__alert = m; };
+    },
   });
   const { window } = dom;
   return { window, doc: window.document };
@@ -124,20 +134,76 @@ const { window, doc } = boot();
      JSON.parse(window.localStorage.getItem("projects-view-v1")).sort === "progress");
 }
 
-// ── the menu tells the truth about what it does ─────────────────────
+// ── the overdue chip is the shortcut to the overdue tasks ───────────
 {
-  const btn = doc.querySelector(".card-menu-btn");
-  ok("the action button starts closed", btn.getAttribute("aria-expanded") === "false");
-  btn.click();
-  ok("...and reports itself open", btn.getAttribute("aria-expanded") === "true");
-  doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  ok("Escape closes it", btn.getAttribute("aria-expanded") === "false");
-
-  const labels = [...doc.querySelectorAll(".card-menu button")].map((b) => b.textContent.trim());
-  ok("nothing is labelled Delete, because nothing deletes",
-     !labels.some((l) => /delete/i.test(l)));
-  ok("it is called Archive", labels.some((l) => /archive/i.test(l)));
+  const chip = cardFor(doc, "cloudera architect certification").querySelector(".chip");
+  ok("the overdue chip links somewhere",
+     (chip.dataset.goto || "").includes("overdue_only=1"));
+  ok("...to that project's own task list",
+     chip.dataset.goto.startsWith("/projects/p1/tasks"));
+  ok("...and it is reachable by keyboard", chip.getAttribute("tabindex") === "0");
 }
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+// ── creating a project asks for a name and nothing else ─────────────
+{
+  const openBtn = doc.getElementById("quick-add-open");
+  ok("New Project no longer navigates to a form page", openBtn.tagName === "BUTTON");
+  openBtn.click();
+  ok("it opens a field in place", doc.getElementById("quick-add").classList.contains("open"));
+  ok("...focused, so you can just type",
+     doc.activeElement === doc.getElementById("quick-add-name"));
+
+  const field = doc.getElementById("quick-add-name");
+  field.value = "New Thing";
+  field.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  ok("Enter posts it as JSON to the one create endpoint",
+     window.__calls.some((c) => c.url === "/projects/new" && c.method === "POST"));
+
+  field.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  ok("Escape puts the field away",
+     !doc.getElementById("quick-add").classList.contains("open"));
+}
+
+// ── one click to archive, and it is undoable ────────────────────────
+{
+  const card = cardFor(doc, "office");
+  // The button lives INSIDE the wrap, beside the card link. Reaching
+  // through parentElement grabbed the first button in the whole grid and
+  // archived somebody else's project.
+  const btn = card.querySelector("[data-archive]");
+  ok("the action is a button, not a menu hiding one button", !!btn);
+  ok("there is no popover left to open",
+     doc.querySelector(".card-menu-btn") === null);
+  ok("it says what it does", /archive/i.test(btn.getAttribute("aria-label")));
+  // Controls only: the page's own stylesheet and script legitimately
+  // contain the word (a CSS comment, a `delete obj.key`), and matching
+  // those told us nothing about what the interface says.
+  const controlText = [...doc.querySelectorAll("button, a, [role=link]")]
+    .map((el) => (el.textContent + " " + (el.getAttribute("aria-label") || "")))
+    .join(" ");
+  ok("no control on the page is labelled Delete", !/\bdelete\b/i.test(controlText));
+
+  const before = names(doc).length;
+  btn.click();
+  ok("the card leaves immediately, with no confirm to click through",
+     names(doc).length === before - 1);
+
+  // Let the stubbed POST settle, then the undo bar should be offered.
+  return new Promise((r) => setTimeout(r, 0)).then(() => {
+    const bar = doc.querySelector(".undo-bar");
+    ok("undo is offered instead of a confirmation", !!bar);
+    ok("...and it names what went", /office/i.test(bar.textContent));
+    ok("the totals follow the card out",
+       /3 projects/.test(doc.querySelector(".stats-bar").textContent.replace(/\s+/g, " ")));
+
+    bar.querySelector("button").click();
+    return new Promise((r2) => setTimeout(r2, 0));
+  }).then(() => {
+    ok("undo puts it back", names(doc).includes("office"));
+    finish();
+  });
+}
+function finish() {
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+}

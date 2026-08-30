@@ -5547,6 +5547,60 @@ def test_the_projects_list_finds_and_orders_in_a_real_dom(auth_client, monkeypat
     _node_dom_test("tests/js/projects_list.test.js", html)
 
 
+def test_adding_a_task_no_longer_reloads_the_project_page():
+    """Asked 2026-08-30: "what about creation of tasks in project".
+
+    The add bar was already one field and Enter. The cost was afterwards:
+    addTask() ended with location.reload(), so five tasks meant five full
+    page loads of a page that issues a dozen queries — while the server
+    was already rendering the new row and the client threw it away.
+
+    It threw it away for a reason: add-ajax rendered
+    _project_task_card.html, a CARD, for a page built out of table ROWS.
+    Both now render _project_task_row.html, so the added row is by
+    construction the row a refresh would draw.
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
+                           capture_output=True, text=True, cwd="tests/js")
+    if probe.returncode != 0:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run(["node", "tests/js/project_add_task.test.js"],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "0 failed" in r.stdout, r.stdout
+
+
+def test_the_added_row_is_the_same_row_the_list_draws(auth_client, monkeypatch):
+    """One partial, two callers. A lookalike row would drift from the real
+    one silently — the add path is the one nobody looks at twice."""
+    import routes.projects as pr
+
+    made = [{"task_id": "t9", "task_text": "Write the brief", "status": "open",
+             "priority": "high", "start_date": "2026-08-30", "project_id": "p1",
+             "order_index": 1, "is_pinned": False}]
+    monkeypatch.setattr(pr, "get", lambda t, params=None, **k:
+                        [{"project_id": "p1", "name": "X"}] if t == "projects" else [])
+    monkeypatch.setattr(pr, "post", lambda t, p, **k: made)
+    monkeypatch.setattr(pr, "_default_epic_id", lambda *a, **k: None)
+
+    r = auth_client.post("/projects/p1/tasks/add-ajax",
+                         json={"task_text": "Write the brief"})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["html"].lstrip().startswith("<tr"), \
+        "the add path returns markup the task table cannot use"
+    assert 'class="task-row' in body["html"]
+    # The section is decided by the SAME grouper the page uses; letting the
+    # client guess is how a task sits under Today until you refresh.
+    assert body["group"], "no group, so the client cannot place the row"
+    assert f'data-group="{body["group"]}"' in body["html"]
+
+
 def test_the_sidebar_collapses_in_a_real_dom(auth_client, monkeypatch):
     """Asked 2026-08-30: "the left side bar menu collapsable. it is too
     much scrolling."

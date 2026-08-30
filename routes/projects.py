@@ -1120,10 +1120,23 @@ def all_sprints():
 @login_required
 def create_project():
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        description = request.form.get("description", "").strip()
+        # ONE ENDPOINT, TWO CALLERS. The full form still posts a form and
+        # still gets a redirect; the list page's inline quick-add posts
+        # JSON and gets the new row back so it can drop a card in without
+        # a round trip to a separate page. A second create endpoint would
+        # be a second place for the default-OKR-trio provisioning below
+        # to be forgotten.
+        data = request.get_json(silent=True) or {}
+        wants_json = bool(data)
+        name = (data.get("name") if wants_json
+                else request.form.get("name", "")).strip()
+        description = (data.get("description") if wants_json
+                       else request.form.get("description", "")) or ""
+        description = description.strip()
 
         if not name:
+            if wants_json:
+                return jsonify({"error": "Give the project a name first"}), 400
             return "Project name is required", 400
 
         user_id = session.get("user_id")
@@ -1140,6 +1153,20 @@ def create_project():
         new_project_id = (rows or [{}])[0].get("project_id") if rows else None
         if new_project_id:
             _ensure_default_okr_trio(user_id, new_project_id)
+
+        if wants_json:
+            row = (rows or [{}])[0] if rows else {}
+            # Shaped exactly like the cards the list renders, so the
+            # client has nothing to invent: a brand-new project has no
+            # tasks, so every count is zero by definition.
+            return jsonify({"project": {
+                "project_id": new_project_id,
+                "name": row.get("name") or name,
+                "description": row.get("description"),
+                "is_archived": False,
+                "task_count": 0, "done_count": 0, "open_count": 0,
+                "overdue_count": 0, "next_due": None, "completion_pct": 0,
+            }})
 
         return redirect("/projects")
 
@@ -1878,12 +1905,30 @@ def add_project_task_ajax(project_id):
     project_stub = {"name": ""}
     task = _build_task_dict(raw, project_stub, today)
 
+    # THE SAME ROW THE LIST RENDERS, not a lookalike. This used to return
+    # _project_task_card.html — a card — while the page is a table of
+    # rows, so the client could not use it and reloaded the whole page
+    # after every task. Rendering the list's own partial means the added
+    # row is, by construction, identical to the one a refresh would draw.
+    # group_tasks_smart returns EVERY bucket, empty ones included, so the
+    # first key is always "Today" whatever the task's date. Take the
+    # bucket that actually holds it.
+    _grouped = group_tasks_smart([task])
+    group = next((k for k, v in _grouped.items() if v), "")
     html = render_template(
-        "_project_task_card.html",
-        task=task,
+        "_project_task_row.html",
+        t=task,
+        group_name=group,
         today=today.isoformat(),
     )
-    return jsonify({"html": html, "task_id": raw["task_id"]})
+    return jsonify({
+        "html": html,
+        "task_id": raw["task_id"],
+        # Which section it belongs in, decided by the SAME grouper the
+        # page uses. Letting the client guess is how a task ends up under
+        # "Today" until you refresh and find it under "Later".
+        "group": group,
+    })
 
 
 def compute_due_date(start_date, duration_days):
