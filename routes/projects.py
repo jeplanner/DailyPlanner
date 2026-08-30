@@ -175,15 +175,36 @@ def projects():
             # project's completion percentage counts tasks the user has
             # explicitly put in the bin.
             "status": _NOT_LIVE_FILTER,
-            "select": "project_id,status",
+            # Dates come along so the card can say WHEN, not just how
+            # much. Measured 2026-08-30: 55 of 103 live tasks were
+            # overdue and this page could not say so — two projects sat
+            # at "3% · 29 remaining" in the same yellow as a project
+            # started yesterday.
+            "select": "project_id,status,due_date,revised_due_date",
         }) or []
 
+        today_iso = user_today().isoformat()
         task_counts, done_counts = {}, {}
+        overdue_counts, next_due = {}, {}
         for t in all_tasks:
             pid = t["project_id"]
             task_counts[pid] = task_counts.get(pid, 0) + 1
             if t["status"] == "done":
                 done_counts[pid] = done_counts.get(pid, 0) + 1
+                continue
+            # EFFECTIVE DUE DATE — copied from agenda_service, not
+            # reinvented: revised_due_date is the user's current intent
+            # and due_date is the original. Three different answers to
+            # "what is overdue" is exactly the bug this codebase has
+            # already paid for once.
+            eff = t.get("revised_due_date") or t.get("due_date")
+            if not eff:
+                continue
+            eff = str(eff)[:10]
+            if eff < today_iso:
+                overdue_counts[pid] = overdue_counts.get(pid, 0) + 1
+            elif pid not in next_due or eff < next_due[pid]:
+                next_due[pid] = eff
 
         for p in projects:
             pid = p["project_id"]
@@ -191,6 +212,9 @@ def projects():
             done = done_counts.get(pid, 0)
             p["task_count"] = total
             p["done_count"] = done
+            p["open_count"] = total - done
+            p["overdue_count"] = overdue_counts.get(pid, 0)
+            p["next_due"] = next_due.get(pid)
             p["completion_pct"] = round(done / total * 100) if total else 0
 
     return render_template(

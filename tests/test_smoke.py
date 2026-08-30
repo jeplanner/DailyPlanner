@@ -3649,15 +3649,31 @@ def test_a_trashed_project_task_is_not_also_in_the_live_list(auth_client, monkey
     assert "skipped" in captured["params"]["status"]
 
 
-def test_project_progress_excludes_binned_work():
+def test_project_progress_excludes_binned_work(auth_client, monkeypatch):
     """A completion percentage that counts tasks the user has explicitly put
-    in the bin is reporting on work that no longer exists."""
-    import inspect
+    in the bin is reporting on work that no longer exists.
+
+    Driven through the route rather than by reading the source for a
+    literal: the select string it used to grep for changed the moment the
+    card started showing due dates, and the test failed while the
+    behaviour it guards was untouched.
+    """
     import routes.projects as pr
-    src = inspect.getsource(pr.projects_page) if hasattr(pr, "projects_page") else \
-        open("routes/projects.py", encoding="utf-8").read()
-    block = src.split('"select": "project_id,status"')[0][-500:]
-    assert "_NOT_LIVE_FILTER" in block, "the denominator still counts binned tasks"
+    captured = {}
+
+    def fake_get(table, params=None, **k):
+        if table == "projects":
+            return [{"project_id": "p1", "name": "Office", "user_id": "u"}]
+        if table == "project_tasks":
+            captured["params"] = params or {}
+        return []
+
+    monkeypatch.setattr(pr, "get", fake_get)
+    assert auth_client.get("/projects").status_code == 200
+    status = captured.get("params", {}).get("status", "")
+    assert status, "the count query has no status filter at all"
+    for binned in pr._PT_TRASHED_STATUSES:
+        assert binned in status, f"{binned} work still counts in the denominator"
 
 
 def test_day_board_shows_quick_bucket_items_for_that_day(auth_client, monkeypatch):
@@ -5473,6 +5489,62 @@ def test_the_reader_dialog_runs_in_a_real_dom(auth_client, monkeypatch):
     monkeypatch.setattr(qb, "get", lambda *a, **k: [])
     _node_dom_test("tests/js/quick_bucket_read.test.js",
                    auth_client.get("/quick-bucket").get_data(as_text=True))
+
+
+def test_the_projects_list_finds_and_orders_in_a_real_dom(auth_client, monkeypatch):
+    """Asked 2026-08-30: "make it more user friendly. UX also clean."
+
+    Measured first: 23 projects, 15 of them with no tasks at all, ordered
+    by creation date forever, with no search — and 55 overdue tasks the
+    page could not mention. A project at 3% because it is a month late
+    looked exactly like one that started yesterday.
+
+    Sorting and filtering are DOM reordering, so this drives the page's
+    own script over rows shaped like the real ones.
+    """
+    import routes.projects as pr
+
+    tasks = (
+        # 30 tasks, 1 done, 29 long overdue — the real shape of the worst
+        # project on the page.
+        [{"project_id": "p1", "status": "done", "due_date": "2026-01-01",
+          "revised_due_date": None}]
+        + [{"project_id": "p1", "status": "open", "due_date": "2026-01-05",
+            "revised_due_date": None} for _ in range(29)]
+        # Office: 18 tasks, 11 done, 7 open, none late, one due soon.
+        + [{"project_id": "p2", "status": "done", "due_date": None,
+            "revised_due_date": None} for _ in range(11)]
+        + [{"project_id": "p2", "status": "open", "due_date": None,
+            "revised_due_date": "2099-01-01"} for _ in range(7)]
+        # Shipped thing: everything done.
+        + [{"project_id": "p3", "status": "done", "due_date": None,
+            "revised_due_date": None} for _ in range(4)]
+        # p4 has no tasks at all.
+        # A revised date in the future must RESCUE an original in the past,
+        # or "I moved it" means nothing.
+        + [{"project_id": "p2", "status": "open", "due_date": "2020-01-01",
+            "revised_due_date": "2099-06-01"}]
+    )
+
+    def fake_get(table, params=None, **k):
+        if table == "projects":
+            return [
+                {"project_id": "p1", "name": "Cloudera Architect Certification",
+                 "description": "", "is_archived": False},
+                {"project_id": "p2", "name": "Office", "description": "",
+                 "is_archived": False},
+                {"project_id": "p3", "name": "Shipped Thing", "description": "",
+                 "is_archived": False},
+                {"project_id": "p4", "name": "Brand New Idea", "description": "",
+                 "is_archived": False},
+            ]
+        if table == "project_tasks":
+            return tasks
+        return []
+
+    monkeypatch.setattr(pr, "get", fake_get)
+    html = auth_client.get("/projects").get_data(as_text=True)
+    _node_dom_test("tests/js/projects_list.test.js", html)
 
 
 def test_the_sidebar_collapses_in_a_real_dom(auth_client, monkeypatch):

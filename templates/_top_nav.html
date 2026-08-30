@@ -808,6 +808,57 @@ html.dark .section-title{color:#f1f5f9;}
 
   <nav class="sidebar-nav">
 
+    <!-- ══ WORK ═══════════════════════════════════
+         FIRST BY REQUEST (2026-08-30): "review the projects menu item
+         and move it to the top of the menu." Projects leads the group
+         and the group leads the menu, so it is the first thing in the
+         drawer without breaking the grouping around it — Today is one
+         heading below, and with the groups collapsible that costs a
+         glance, not a scroll.
+
+         Projects and the structures over them — the ladder runs
+         Project → Objective → Key Result → Initiative → Task. -->
+    <div class="nav-group">
+      <div class="nav-group-title">Work</div>
+
+      <a href="/projects" data-match="^/projects(/|$|\?)" title="All projects with task counts and progress">
+        <i data-feather="briefcase"></i>
+        Projects
+      </a>
+
+      <a href="/projects/timeline" data-match="^/projects/timeline" title="Roadmap — every project on one shared timeline">
+        <i data-feather="git-branch"></i>
+        Roadmap
+      </a>
+
+      <a href="/sprints" data-match="^/sprints(/|$|\?)" title="Sprints — active and upcoming time-boxes across every project">
+        <i data-feather="flag"></i>
+        Sprints
+      </a>
+
+      <a href="/goals" data-match="^/goals$" title="OKRs — Project → Objective → Key Result → Initiative → Task">
+        <i data-feather="target"></i>
+        OKRs
+      </a>
+
+      <a href="/goal-planner" data-match="^/goal-planner" title="Goal countdowns — deadline, pace vs plan, and whether the time budget actually works">
+        <i data-feather="clock"></i>
+        Goal Planner
+      </a>
+
+      <a href="/programs" data-match="^/programs" title="IT program reviews — RAG scorecard, workstreams, risks, decisions">
+        <i data-feather="layers"></i>
+        Programs
+      </a>
+
+      <a href="/meetings" data-match="^/meetings" title="Meeting prep sheets — BLUF, SCQA, anticipated Q&A, retro">
+        <i data-feather="users"></i>
+        Meetings
+      </a>
+
+    </div>
+
+
     <!-- ══ TODAY ═══════════════════════════════════
          The cockpit. Everything here answers "what is happening today" —
          four ways of looking at the same day, plus the two lists you
@@ -890,49 +941,6 @@ html.dark .section-title{color:#f1f5f9;}
       <a href="/archive" data-match="^/archive" title="Archive — everything you have finished, grouped by the day you finished it">
         <i data-feather="archive"></i>
         Archive
-      </a>
-
-    </div>
-
-    <!-- ══ WORK ═══════════════════════════════════
-         Projects and the structures over them — the ladder runs
-         Project → Objective → Key Result → Initiative → Task. -->
-    <div class="nav-group">
-      <div class="nav-group-title">Work</div>
-
-      <a href="/projects" data-match="^/projects(/|$|\?)" title="All projects with task counts and progress">
-        <i data-feather="briefcase"></i>
-        Projects
-      </a>
-
-      <a href="/projects/timeline" data-match="^/projects/timeline" title="Roadmap — every project on one shared timeline">
-        <i data-feather="git-branch"></i>
-        Roadmap
-      </a>
-
-      <a href="/sprints" data-match="^/sprints(/|$|\?)" title="Sprints — active and upcoming time-boxes across every project">
-        <i data-feather="flag"></i>
-        Sprints
-      </a>
-
-      <a href="/goals" data-match="^/goals$" title="OKRs — Project → Objective → Key Result → Initiative → Task">
-        <i data-feather="target"></i>
-        OKRs
-      </a>
-
-      <a href="/goal-planner" data-match="^/goal-planner" title="Goal countdowns — deadline, pace vs plan, and whether the time budget actually works">
-        <i data-feather="clock"></i>
-        Goal Planner
-      </a>
-
-      <a href="/programs" data-match="^/programs" title="IT program reviews — RAG scorecard, workstreams, risks, decisions">
-        <i data-feather="layers"></i>
-        Programs
-      </a>
-
-      <a href="/meetings" data-match="^/meetings" title="Meeting prep sheets — BLUF, SCQA, anticipated Q&A, retro">
-        <i data-feather="users"></i>
-        Meetings
       </a>
 
     </div>

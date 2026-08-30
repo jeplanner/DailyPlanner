@@ -15,13 +15,18 @@
     --pl-bg: #f7f8fa; --pl-surface: #fff; --pl-text: #1a1a2e;
     --pl-text2: #6b7280; --pl-text3: #9ca3af; --pl-border: #e5e7eb;
     --pl-primary: #2563eb; --pl-primary-light: #eff6ff;
-    --pl-success: #10b981; --pl-warning: #f59e0b;
+    --pl-success: #059669; --pl-success-light: #ecfdf5;
+    --pl-warning: #f59e0b;
+    --pl-danger: #dc2626; --pl-danger-light: #fef2f2;
     --pl-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
   html.dark {
     --pl-bg: #0f172a; --pl-surface: #1e293b; --pl-text: #f1f5f9;
     --pl-text2: #94a3b8; --pl-text3: #64748b; --pl-border: #334155;
-    --pl-primary-light: #1e3a5f; --pl-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    --pl-primary-light: #1e3a5f;
+    --pl-success: #34d399; --pl-success-light: #06281f;
+    --pl-danger: #f87171; --pl-danger-light: #331617;
+    --pl-shadow: 0 1px 3px rgba(0,0,0,0.2);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Inter', system-ui, sans-serif; background: var(--pl-bg); color: var(--pl-text); min-height: 100vh; }
@@ -45,11 +50,51 @@
   .btn-new:hover { opacity: 0.9; }
   .btn-new svg { width: 18px; height: 18px; }
 
-  /* Stats bar */
+  /* Stats bar — the numbers that decide what you open next. Overdue
+     leads because it is the only one that is ever urgent. */
   .stats-bar {
-    display: flex; gap: 16px; margin-bottom: 20px; font-size: 13px; color: var(--pl-text2);
+    display: flex; gap: 8px 18px; margin-bottom: 14px; flex-wrap: wrap;
+    font-size: 13px; color: var(--pl-text2);
   }
-  .stats-bar span { display: flex; align-items: center; gap: 4px; }
+  .stats-bar span { display: flex; align-items: center; gap: 5px; }
+  .stats-bar b { font-weight: 700; color: var(--pl-text); font-variant-numeric: tabular-nums; }
+  .stats-bar .is-late, .stats-bar .is-late b { color: var(--pl-danger); }
+
+  /* Search + sort. 23 projects with no way to find one by name, in a
+     grid ordered by creation date forever, is a filing cabinet with the
+     drawers welded shut. */
+  .controls { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+  .search-wrap { position: relative; flex: 1; min-width: 200px; }
+  .search-wrap svg {
+    position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+    width: 15px; height: 15px; color: var(--pl-text3); pointer-events: none;
+  }
+  #project-search, #project-sort {
+    font: inherit; font-size: 13.5px; color: var(--pl-text);
+    background: var(--pl-surface); border: 1px solid var(--pl-border);
+    border-radius: 10px; padding: 9px 12px;
+  }
+  #project-search { width: 100%; padding-left: 33px; }
+  #project-search:focus, #project-sort:focus {
+    outline: none; border-color: var(--pl-primary);
+    box-shadow: 0 0 0 3px var(--pl-primary-light);
+  }
+  .no-match { display: none; padding: 40px 8px; text-align: center; color: var(--pl-text2); font-size: 14px; }
+
+  /* Status chip — the card's headline. One glance has to separate "late"
+     from "not started", which a percentage alone never does: a project
+     at 3% because it is late and one at 3% because it began yesterday
+     looked identical. */
+  .chip {
+    font-size: 11px; font-weight: 700; letter-spacing: .02em;
+    padding: 3px 9px; border-radius: 999px; white-space: nowrap; flex-shrink: 0;
+  }
+  .chip-late    { background: var(--pl-danger-light); color: var(--pl-danger); }
+  .chip-live    { background: var(--pl-primary-light); color: var(--pl-primary); }
+  .chip-done    { background: var(--pl-success-light); color: var(--pl-success); }
+  .chip-empty   { background: var(--pl-border); color: var(--pl-text2); }
+  .card-due { font-size: 12px; color: var(--pl-text3); display: flex; align-items: center; gap: 5px; }
+  .card-due.is-late { color: var(--pl-danger); font-weight: 600; }
 
   /* Grid */
   .project-grid {
@@ -139,9 +184,13 @@
   .progress-fill {
     height: 100%; border-radius: 3px; transition: width 0.4s ease;
   }
+  /* COLOUR ENCODES RISK, NOT PROGRESS. It used to be yellow under 40%,
+     which painted every brand-new project as a warning and every late
+     one as merely early. Late is red; finished is green; everything
+     else is simply progress. */
   .progress-fill.green { background: var(--pl-success); }
   .progress-fill.blue { background: var(--pl-primary); }
-  .progress-fill.yellow { background: var(--pl-warning); }
+  .progress-fill.red { background: var(--pl-danger); }
   .progress-pct {
     font-size: 13px; font-weight: 700; color: var(--pl-text); min-width: 36px; text-align: right;
   }
@@ -187,25 +236,62 @@
   </div>
 
   {% if projects %}
+  {% set open_total = projects|sum(attribute='open_count') %}
+  {% set late_total = projects|sum(attribute='overdue_count') %}
   <div class="stats-bar">
-    <span><i data-feather="folder" style="width:14px;height:14px"></i> {{ projects|length }} projects</span>
+    <span><i data-feather="folder" style="width:14px;height:14px"></i>
+      <b>{{ projects|length }}</b> projects</span>
+    <span><i data-feather="circle" style="width:14px;height:14px"></i>
+      <b>{{ open_total }}</b> tasks open</span>
+    {% if late_total %}
+    <span class="is-late"><i data-feather="alert-circle" style="width:14px;height:14px"></i>
+      <b>{{ late_total }}</b> overdue</span>
+    {% endif %}
     <span><i data-feather="check-circle" style="width:14px;height:14px"></i>
-      {{ projects|selectattr('completion_pct', 'equalto', 100)|list|length }} completed
-    </span>
+      <b>{{ projects|selectattr('completion_pct', 'equalto', 100)|list|length }}</b> finished</span>
+  </div>
+
+  <div class="controls">
+    <label class="search-wrap">
+      <i data-feather="search"></i>
+      <input id="project-search" type="search" placeholder="Find a project…"
+             autocomplete="off" aria-label="Filter projects by name">
+    </label>
+    <select id="project-sort" aria-label="Sort projects">
+      <option value="attention">Needs attention</option>
+      <option value="recent">Newest first</option>
+      <option value="oldest">Oldest first</option>
+      <option value="name">Name (A–Z)</option>
+      <option value="progress">Most complete</option>
+    </select>
   </div>
 
   <div class="project-grid">
     {% for p in projects %}
-    <div class="project-card-wrap" style="position:relative;">
+    {% set pct = p.completion_pct %}
+    {% set late = p.overdue_count or 0 %}
+    <div class="project-card-wrap" style="position:relative;"
+         data-name="{{ p.name|lower }}" data-late="{{ late }}" data-open="{{ p.open_count or 0 }}"
+         data-pct="{{ pct }}" data-tasks="{{ p.task_count or 0 }}" data-idx="{{ loop.index0 }}">
       <a href="/projects/{{ p.project_id }}/tasks" class="project-card" data-project-id="{{ p.project_id }}">
-        <div class="card-color-bar"></div>
+        <div class="card-color-bar"
+             style="{% if late %}background:var(--pl-danger){% elif pct == 100 and p.task_count %}background:var(--pl-success){% endif %}"></div>
 
         <div class="card-header">
           <div class="card-name">
             {{ p.name }}
             {% if p.is_archived %}<span class="archived-badge">Archived</span>{% endif %}
           </div>
-          <span class="task-pill" style="margin-right:28px;">{{ p.task_count }} tasks</span>
+          {# ONE chip, and it says the most important true thing. #}
+          {% if late %}
+            <span class="chip chip-late" style="margin-right:28px;">{{ late }} overdue</span>
+          {% elif not p.task_count %}
+            <span class="chip chip-empty" style="margin-right:28px;">No tasks</span>
+          {% elif pct == 100 %}
+            <span class="chip chip-done" style="margin-right:28px;">Finished</span>
+          {% else %}
+            <span class="chip chip-live" style="margin-right:28px;">{{ p.open_count }} open</span>
+          {% endif %}
         </div>
 
         {% if p.description %}
@@ -213,24 +299,37 @@
         {% endif %}
 
         <div class="card-footer">
+          {% if p.task_count %}
           <div class="progress-row">
             <div class="progress-bar">
-              {% set pct = p.completion_pct %}
-              <div class="progress-fill {{ 'green' if pct >= 75 else ('blue' if pct >= 40 else 'yellow') }}"
+              <div class="progress-fill {{ 'red' if late else ('green' if pct == 100 else 'blue') }}"
                    style="width:{{ pct }}%"></div>
             </div>
             <span class="progress-pct">{{ pct }}%</span>
           </div>
           <div class="card-stats">
             <span>{{ p.done_count }} done</span>
-            <span>{{ p.task_count - p.done_count }} remaining</span>
+            <span>{{ p.open_count }} remaining</span>
           </div>
+          {% if p.next_due and not late %}
+            <div class="card-due"><i data-feather="calendar" style="width:12px;height:12px"></i>
+              next due {{ p.next_due }}</div>
+          {% elif late %}
+            <div class="card-due is-late"><i data-feather="alert-circle" style="width:12px;height:12px"></i>
+              oldest {{ late }} past their date</div>
+          {% endif %}
+          {% else %}
+          <div class="card-due">Nothing planned yet — open it to add the first task.</div>
+          {% endif %}
         </div>
       </a>
 
       <!-- Action menu -->
       <div class="card-menu-wrap">
-        <button type="button" class="card-menu-btn" title="Actions"
+        <button type="button" class="card-menu-btn"
+                title="Actions for {{ p.name }}" aria-label="Actions for {{ p.name }}"
+                aria-haspopup="true" aria-expanded="false"
+                aria-controls="menu-{{ p.project_id }}"
                 onclick="toggleProjectMenu(event, '{{ p.project_id }}')">
           <i data-feather="more-vertical"></i>
         </button>
@@ -240,8 +339,11 @@
               <i data-feather="rotate-ccw"></i> Restore
             </button>
           {% else %}
-            <button type="button" class="danger" onclick="archiveProject(event, '{{ p.project_id }}')">
-              <i data-feather="trash-2"></i> Delete
+            {# It ARCHIVES. Calling it Delete while the handler posts to
+               /archive is the interface lying about what it does, and
+               this project's rule is soft-delete only. #}
+            <button type="button" onclick="archiveProject(event, '{{ p.project_id }}')">
+              <i data-feather="archive"></i> Archive
             </button>
           {% endif %}
         </div>
@@ -249,6 +351,7 @@
     </div>
     {% endfor %}
   </div>
+  <p class="no-match" id="no-match">No project matches that name.</p>
 
   {% else %}
   <div class="empty-state">
@@ -265,6 +368,84 @@
 <script>
 if (window.feather) feather.replace();
 
+/* ── FIND AND ORDER ────────────────────────────────────────────────
+   The list was ordered by creation date, forever, with no search. That
+   is fine for three projects and useless for twenty-three — and the
+   ones you need are never the ones you made first.
+
+   "Needs attention" is the default because it is the only ordering that
+   answers the question you actually open this page with: late work
+   first, then live work, then things not started, then finished. All
+   client-side: the rows are already on the page, so filtering is
+   instant and needs no round trip. */
+(function () {
+  const grid = document.querySelector(".project-grid");
+  if (!grid) return;
+  const cards = [...grid.querySelectorAll(".project-card-wrap")];
+  const search = document.getElementById("project-search");
+  const sort = document.getElementById("project-sort");
+  const noMatch = document.getElementById("no-match");
+  const KEY = "projects-view-v1";
+
+  const num = (el, k) => parseInt(el.dataset[k] || "0", 10);
+  const rank = (el) => {
+    if (num(el, "late")) return 0;                       // late
+    if (num(el, "open")) return 1;                       // live
+    if (!num(el, "tasks")) return 2;                     // not started
+    return 3;                                            // finished
+  };
+
+  const SORTS = {
+    attention: (a, b) => rank(a) - rank(b)
+                      || num(b, "late") - num(a, "late")
+                      || num(b, "open") - num(a, "open"),
+    recent:   (a, b) => num(b, "idx") - num(a, "idx"),
+    oldest:   (a, b) => num(a, "idx") - num(b, "idx"),
+    name:     (a, b) => a.dataset.name.localeCompare(b.dataset.name),
+    progress: (a, b) => num(b, "pct") - num(a, "pct"),
+  };
+
+  let state = { q: "", sort: "attention" };
+  try { Object.assign(state, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (_) {}
+  const remember = () => {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) {}
+  };
+
+  function apply() {
+    const q = state.q.trim().toLowerCase();
+    let shown = 0;
+    cards.forEach((c) => {
+      const hit = !q || c.dataset.name.includes(q);
+      c.hidden = !hit;
+      if (hit) shown++;
+    });
+    [...cards].sort(SORTS[state.sort] || SORTS.attention)
+              .forEach((c) => grid.appendChild(c));
+    if (noMatch) noMatch.style.display = shown ? "none" : "block";
+  }
+
+  if (search) {
+    search.value = state.q;
+    search.addEventListener("input", () => {
+      state.q = search.value; remember(); apply();
+    });
+    // Escape clears the filter rather than leaving you looking at a
+    // filtered list you have forgotten you filtered.
+    search.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && search.value) {
+        search.value = ""; state.q = ""; remember(); apply();
+      }
+    });
+  }
+  if (sort) {
+    sort.value = state.sort;
+    sort.addEventListener("change", () => {
+      state.sort = sort.value; remember(); apply();
+    });
+  }
+  apply();
+})();
+
 // ─── Project action menu (Archive / Restore / Delete) ─────────────────
 function _csrf() {
   return document.querySelector('meta[name="csrf-token"]')?.content || "";
@@ -280,6 +461,18 @@ async function _postJSON(url) {
   return data;
 }
 
+function _syncMenuState() {
+  document.querySelectorAll(".card-menu-btn").forEach((b) => {
+    const menu = document.getElementById(b.getAttribute("aria-controls"));
+    b.setAttribute("aria-expanded", menu?.classList.contains("open") ? "true" : "false");
+  });
+}
+
+function _closeMenus() {
+  document.querySelectorAll(".card-menu.open").forEach(m => m.classList.remove("open"));
+  _syncMenuState();
+}
+
 function toggleProjectMenu(ev, projectId) {
   ev.preventDefault();
   ev.stopPropagation();
@@ -289,23 +482,26 @@ function toggleProjectMenu(ev, projectId) {
     if (m !== menu) m.classList.remove("open");
   });
   menu?.classList.toggle("open");
+  _syncMenuState();
 }
 
-// Close menu on outside click
+// Close on an outside click or Escape. A popover you can only dismiss by
+// finding its own button again is a trap on a touchscreen.
 document.addEventListener("click", (e) => {
   if (e.target.closest(".card-menu-wrap")) return;
-  document.querySelectorAll(".card-menu.open").forEach(m => m.classList.remove("open"));
+  _closeMenus();
 });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") _closeMenus(); });
 
 async function archiveProject(ev, projectId) {
   ev.preventDefault();
   ev.stopPropagation();
-  if (!confirm("Delete this project? It will be archived and can be restored from 'Show archived'.")) return;
+  if (!confirm("Archive this project? It disappears from this list but keeps every task, and 'Show archived' brings it back.")) return;
   try {
     await _postJSON(`/projects/${projectId}/archive`);
     location.reload();
   } catch (err) {
-    alert("Delete failed: " + err.message);
+    alert("Could not archive it: " + err.message);
   }
 }
 
