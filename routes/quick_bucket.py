@@ -9,6 +9,7 @@ Endpoints:
     GET  /quick-bucket                  page render
     GET  /api/quick-bucket               list active items
     POST /api/quick-bucket               add new item
+    POST /api/quick-bucket/interpret     read a paragraph into candidates
     POST /api/quick-bucket/<id>/cycle    next time bucket
     POST /api/quick-bucket/<id>/update   edit text / set bucket directly
     POST /api/quick-bucket/<id>/done     mark complete
@@ -24,10 +25,11 @@ from datetime import date, datetime, timedelta, timezone
 from flask import Blueprint, jsonify, render_template, request, session
 
 from auth import login_required
+from services import brain_dump_service
 from services import quick_bucket_calendar_service as cal_sync
 from supabase_client import get, post, update
 from utils.quick_time import parse_at_schedule
-from utils.user_tz import user_today
+from utils.user_tz import user_now, user_today
 
 logger = logging.getLogger("daily_plan")
 quick_bucket_bp = Blueprint("quick_bucket", __name__)
@@ -138,6 +140,30 @@ def _due_at_for(bucket):
     if bucket in _HOUR_BUCKETS:
         return (now + timedelta(hours=_HOUR_BUCKETS[bucket])).isoformat()
     return None
+
+
+def _iso_instant(raw):
+    """A client-supplied UTC timestamp, or None. Never trusted blind: an
+    unparseable due_at that reached the column would render as an alarm
+    at an unknown time, which is worse than no alarm."""
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def _iso_date(raw):
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        return date.fromisoformat(raw[:10]).isoformat()
+    except ValueError:
+        return None
 
 
 def _fetch_event_id(user_id, item_id):
@@ -338,6 +364,15 @@ def add_item():
             logger.exception("quick_bucket @time parse failed; ignoring token")
             scheduled_due = None
 
+    # A CANDIDATE FROM THE PARAGRAPH READER ARRIVES ALREADY DECIDED.
+    # /api/quick-bucket/interpret worked out its time when it built the
+    # preview and the user confirmed or corrected it on screen. Parsing
+    # the title again here would be a second opinion about the same
+    # sentence, and the one the user actually saw would lose.
+    pinned = _iso_instant(data.get("due_at")) if not is_done else None
+    if pinned:
+        scheduled_due = pinned
+
     bucket = (data.get("time_bucket") or "now").strip().lower()
     if scheduled_due:
         bucket = "at"
@@ -362,6 +397,16 @@ def add_item():
         "is_done": is_done,
         "is_deleted": False,
     }
+    # Optional extras, both from the paragraph reader's preview: how long
+    # it takes and the day it is wanted by. backlog_due is a DATE and
+    # deliberately not an alarm — see utils/brain_dump.extract_day_deadline.
+    backlog_due = _iso_date(data.get("backlog_due"))
+    if backlog_due:
+        payload["backlog_due"] = backlog_due
+    mins, mins_ok = _parse_minutes(data.get("planned_minutes"))
+    if mins_ok and mins:
+        payload["planned_minutes"] = mins
+
     # Optional client-supplied priority badge (1..N). Falls back to
     # NULL when missing; the front-end computes max+1 client-side so
     # the round badge is set the moment the row appears.
@@ -394,9 +439,11 @@ def add_item():
         # If priority_label triggered the failure (column missing on
         # un-migrated environments), retry the insert without it so the
         # add still succeeds. Same fallback shape as the GET above.
-        if "priority_label" in payload:
-            logger.warning("quick_bucket insert retry without priority_label: %s", e)
-            retry = {k: v for k, v in payload.items() if k != "priority_label"}
+        optional = {"priority_label", "backlog_due", "planned_minutes"}
+        if optional & payload.keys():
+            logger.warning("quick_bucket insert retry without %s: %s",
+                           sorted(optional & payload.keys()), e)
+            retry = {k: v for k, v in payload.items() if k not in optional}
             try:
                 rows = _do_insert(retry)
             except Exception as e2:
@@ -413,6 +460,48 @@ def add_item():
         cal_sync.sync_async(user_id, new_row["id"], new_row)
 
     return jsonify({"ok": True, "item": new_row})
+
+
+# ─────────── read a paragraph ────────────────────────────────
+
+@quick_bucket_bp.route("/api/quick-bucket/interpret", methods=["POST"])
+@login_required
+def interpret():
+    """Type a paragraph, get back the tasks hiding in it. WRITES NOTHING.
+
+    Asked for as: "Is there a way i can type something like a paragraph.
+    Code can decipher and create tasks on quickbucket."
+
+    The parse is a guess, so it is returned as a PREVIEW and every
+    candidate carries `why` — the words that produced its bucket and its
+    time. Nothing reaches the table until the user presses Add on the
+    preview, at which point each confirmed row goes through the ordinary
+    POST /api/quick-bucket path like anything else typed by hand.
+
+    `use_ai` is opt-in per request. Without it this is pure local
+    parsing: no key, no network, no cost, and the same answer every time.
+    """
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Nothing to read"}), 400
+
+    try:
+        items, used_ai, note = brain_dump_service.interpret(
+            text, use_ai=bool(data.get("use_ai")), now=user_now(),
+        )
+    except Exception:
+        logger.exception("quick_bucket interpret failed")
+        return jsonify({"error": "Couldn't read that — try again."}), 500
+
+    return jsonify({
+        "items": items,
+        "used_ai": used_ai,
+        "note": note,
+        # Said plainly so a dump that produced one item does not look
+        # like a bug: it usually means the text had no seams to find.
+        "count": len(items),
+    })
 
 
 # ─────────── cycle bucket ────────────────────────────────────

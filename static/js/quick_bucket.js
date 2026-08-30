@@ -1754,13 +1754,21 @@
     const clientId = (crypto.randomUUID && crypto.randomUUID()) ||
                      String(Date.now()) + "-" + Math.random().toString(16).slice(2);
     try {
+      // Extras only ever arrive from the paragraph reader's preview,
+      // where the server resolved the time and the user confirmed it on
+      // screen. Absent for everything typed by hand, which is why they
+      // are spread in rather than always sent as nulls.
+      const extra = {};
+      if (opts.due_at) extra.due_at = opts.due_at;
+      if (opts.backlog_due) extra.backlog_due = opts.backlog_due;
+      if (opts.planned_minutes) extra.planned_minutes = opts.planned_minutes;
       const r = await apiFetch("/api/quick-bucket", {
         method: "POST",
         headers: { "X-Client-Id": clientId },
-        body: JSON.stringify({
+        body: JSON.stringify(Object.assign({
           text, time_bucket: bucket, client_id: clientId,
           priority_label: priorityLabel,
-        }),
+        }, extra)),
       });
       if (r.item) {
         items.unshift(r.item);
@@ -2387,11 +2395,224 @@
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const v = input.value;
+      /* ONE LONG SENTENCE IS THE CASE THAT WAS BROKEN.
+         A pasted LIST already works — one row per line — and a short
+         line is a task, so both go straight in. What used to produce a
+         bucket row with a paragraph inside it is the single long line,
+         so that one is read first. If the reader finds only the one
+         task, nothing was gained by asking and it is added exactly as
+         typed: no preview, no extra click. */
+      const oneLine = !/\n/.test(v.trim());
+      if (oneLine && v.trim().split(/\s+/).length > 12) {
+        if (await offerToRead(v.trim())) return;   // preview is on screen
+      }
       input.value = "";
       autosizeInput();
       if (wantsKeyboardRefocus) input.focus();
       else input.blur();
       await addLines(v);
+    });
+
+    /* ── READ A PARAGRAPH ────────────────────────────────────────────
+       "Is there a way i can type something like a paragraph. Code can
+       decipher and create tasks on quickbucket."
+
+       The server does the deciphering (/api/quick-bucket/interpret,
+       utils/brain_dump.py) and writes NOTHING. What comes back is a
+       preview: one editable row per task it thinks it found, each one
+       carrying the words that produced its bucket and its time. Adding
+       goes through the ordinary addItem path, so a confirmed row is
+       indistinguishable from one typed by hand.
+
+       This is also what makes dictation useful. Speech arrives as one
+       unpunctuated paragraph, which is precisely the shape the old
+       capture was worst at. */
+    const READ_BUCKETS = ["now", "5m", "15m", "30m", "45m",
+                          "1h", "2h", "3h", "4h", "5h", "6h", "7h", "8h",
+                          "future"];
+    const readPanel = $("#qb-read");
+    const readList = $("#qb-read-list");
+    const readBtn = $("#qb-read-btn");
+    let readItems = [];
+
+    const whenLabel = (it) => {
+      if (it.due_at) {
+        const d = new Date(it.due_at);
+        if (!Number.isNaN(d.getTime())) {
+          return "⏰ " + d.toLocaleString([], {
+            weekday: "short", hour: "numeric", minute: "2-digit",
+          });
+        }
+      }
+      if (it.backlog_due) return "📅 by " + it.backlog_due;
+      return "";
+    };
+
+    const readRowHTML = (it, i) => {
+      const opts = READ_BUCKETS.map((b) =>
+        `<option value="${b}"${b === it.time_bucket ? " selected" : ""}>${b}</option>`
+      ).join("");
+      const atOpt = it.due_at
+        ? `<option value="at" selected>at a set time</option>` : "";
+      return `
+        <li class="qb-read-row${it.use ? "" : " is-off"}" data-i="${i}">
+          <input type="checkbox" data-read-use ${it.use ? "checked" : ""}
+                 aria-label="Add this one">
+          <input class="qb-read-text" data-read-text
+                 value="${escapeHTML(it.text)}" aria-label="Task">
+          <span class="qb-read-controls">
+            <select data-read-bucket aria-label="When">${atOpt}${opts}</select>
+            <input class="qb-read-mins" data-read-mins type="number" min="0"
+                   step="5" placeholder="mins" aria-label="Minutes of effort"
+                   value="${it.planned_minutes || ""}">
+          </span>
+          <p class="qb-read-why">
+            ${it.due_at || it.backlog_due
+              ? `<span class="qb-read-when">${escapeHTML(whenLabel(it))}</span> · ` : ""}
+            ${escapeHTML((it.why || []).join(" · "))}
+          </p>
+        </li>`;
+    };
+
+    const readCount = () => readItems.filter((it) => it.use).length;
+
+    const paintReadFoot = () => {
+      const n = readCount();
+      const addBtn = $("#qb-read-add");
+      addBtn.textContent = n ? `Add ${n} task${n === 1 ? "" : "s"}` : "Nothing ticked";
+      addBtn.disabled = !n;
+    };
+
+    const renderRead = (payload) => {
+      readItems = payload.items || [];
+      $("#qb-read-title").textContent = readItems.length
+        ? `Found ${readItems.length} task${readItems.length === 1 ? "" : "s"}`
+        : "Nothing that looks like a task";
+      // WHERE THE READING CAME FROM, ALWAYS. "Used AI" and "fell back to
+      // the rules because the key is dead" produce the same list on a
+      // good day and very different ones on a bad day.
+      const bits = [];
+      if (payload.used_ai) bits.push("split by AI, timings by the built-in rules");
+      else bits.push("read by the built-in rules");
+      if (payload.note) bits.push(payload.note);
+      bits.push("nothing is saved until you press Add");
+      $("#qb-read-note").textContent = bits.join(" — ");
+      readList.innerHTML = readItems.map(readRowHTML).join("");
+      readPanel.hidden = false;
+      paintReadFoot();
+      refreshFeather();
+    };
+
+    const runRead = async () => {
+      const text = input.value.trim();
+      if (!text) { toast("Write or paste something first", "info"); return; }
+      readBtn.disabled = true;
+      const original = readBtn.innerHTML;
+      readBtn.textContent = "Reading…";
+      try {
+        const payload = await apiFetch("/api/quick-bucket/interpret", {
+          method: "POST",
+          body: JSON.stringify({ text, use_ai: $("#qb-read-ai").checked }),
+        });
+        renderRead(payload);
+      } catch (err) {
+        toast(err.message || "Couldn't read that", "error");
+      } finally {
+        readBtn.disabled = false;
+        readBtn.innerHTML = original;
+        refreshFeather();
+      }
+    };
+
+    /* Returns true when a preview is now on screen and the caller should
+       stop. Anything that goes wrong — offline, a 500, a single task
+       found — returns false, and the ordinary add runs. The text is
+       never consumed by a failed read. */
+    const offerToRead = async (text) => {
+      try {
+        const payload = await apiFetch("/api/quick-bucket/interpret", {
+          method: "POST",
+          body: JSON.stringify({ text, use_ai: $("#qb-read-ai").checked }),
+        });
+        if (!payload || (payload.items || []).length < 2) return false;
+        renderRead(payload);
+        readPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        return true;
+      } catch (_) {
+        return false;
+      }
+    };
+
+    // The AI toggle is a per-device preference, not a per-dump decision:
+    // whoever wants the model wants it every time, and re-ticking a box
+    // before every read is the kind of friction that gets a feature
+    // quietly abandoned.
+    const AI_KEY = "qb-read-ai-v1";
+    const aiBox = $("#qb-read-ai");
+    try { if (localStorage.getItem(AI_KEY) === "1") aiBox.checked = true; }
+    catch (_) { /* private mode: default off, which is the safe default */ }
+    aiBox?.addEventListener("change", () => {
+      try { localStorage.setItem(AI_KEY, aiBox.checked ? "1" : "0"); }
+      catch (_) {}
+    });
+
+    readBtn?.addEventListener("click", runRead);
+    $("#qb-read-again")?.addEventListener("click", runRead);
+    $("#qb-read-close")?.addEventListener("click", () => {
+      readPanel.hidden = true;
+      readItems = [];
+    });
+
+    // Edits go back into the model, so what is added is what is on
+    // screen — not what the parser first guessed.
+    readList?.addEventListener("input", (e) => {
+      const row = e.target.closest("[data-i]");
+      if (!row) return;
+      const it = readItems[+row.dataset.i];
+      if (!it) return;
+      if (e.target.matches("[data-read-text]")) it.text = e.target.value;
+      if (e.target.matches("[data-read-mins]")) {
+        const v = parseInt(e.target.value, 10);
+        it.planned_minutes = Number.isFinite(v) && v > 0 ? v : null;
+      }
+      if (e.target.matches("[data-read-bucket]")) {
+        it.time_bucket = e.target.value;
+        // Choosing a relative bucket by hand means the pinned time is no
+        // longer what you want; leaving due_at set would ignore the
+        // choice and ring at the old time anyway.
+        if (it.time_bucket !== "at") it.due_at = null;
+      }
+      if (e.target.matches("[data-read-use]")) {
+        it.use = e.target.checked;
+        row.classList.toggle("is-off", !it.use);
+        paintReadFoot();
+      }
+    });
+
+    $("#qb-read-add")?.addEventListener("click", async () => {
+      const chosen = readItems.filter((it) => it.use && (it.text || "").trim());
+      if (!chosen.length) return;
+      const btn = $("#qb-read-add");
+      btn.disabled = true;
+      let added = 0;
+      for (const it of chosen) {
+        // Sequential, like addLines: the priority badge is computed from
+        // the rows already present, so a parallel burst hands several
+        // items the same number.
+        await addItem(it.text, {
+          quiet: true,
+          bucket: it.time_bucket,
+          due_at: it.due_at || null,
+          backlog_due: it.backlog_due || null,
+          planned_minutes: it.planned_minutes || null,
+        });
+        added++;
+      }
+      readPanel.hidden = true;
+      readItems = [];
+      input.value = "";
+      autosizeInput();
+      toast(`Added ${added} task${added === 1 ? "" : "s"}`, "success");
     });
 
     // ── Mic: dictate one task at a time (Web Speech API) ──
@@ -2463,6 +2684,19 @@
           const text = stripTrigger(transcript);
           if (!text) return;
           input.value = text;
+          autosizeInput();
+          // A LONG DICTATION IS A PARAGRAPH, NOT A TASK.
+          // Nobody speaks in bullet points: hold the button for twenty
+          // seconds and what arrives is three jobs in one unpunctuated
+          // sentence, which used to become one bucket row containing all
+          // three. Past a dozen words, send it to the reader instead and
+          // let the preview show what it found — the text stays in the
+          // box either way, so nothing is lost if the split is wrong.
+          if (text.split(/\s+/).length > 12) {
+            toast("Long dictation — reading it into tasks", "info");
+            runRead();
+            return;
+          }
           addItem(text);
           toast(`Added: ${text}`, "success");
           setTimeout(() => { if (input.value === text) input.value = ""; }, 800);

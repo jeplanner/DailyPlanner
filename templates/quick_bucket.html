@@ -144,6 +144,76 @@
     box-shadow: 0 1px 3px rgba(15,23,42,.04);
   }
 
+  /* The paragraph reader's preview. Tokens only, never a literal light
+     background: a hard-coded panel colour is what made per-page panels
+     vanish in dark mode on the phone. */
+  .qb-read {
+    margin: 0 0 18px; padding: 14px;
+    border: 1px solid var(--color-border); border-radius: 14px;
+    background: var(--color-surface);
+    box-shadow: 0 6px 20px rgba(15, 23, 42, .06);
+  }
+  .qb-read-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .qb-read-head h2 {
+    margin: 0; font-size: 15px; font-weight: 800; letter-spacing: -.01em;
+  }
+  .qb-read-note { font-size: 12px; color: var(--color-text-secondary); flex: 1; min-width: 0; }
+  .qb-read-x {
+    background: none; border: 0; color: var(--color-text-secondary);
+    cursor: pointer; padding: 4px; line-height: 0; border-radius: 8px;
+  }
+  .qb-read-x:hover { background: var(--color-surface-secondary, rgba(148,163,184,.16)); }
+  .qb-read-x svg { width: 16px; height: 16px; }
+  .qb-read-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+  .qb-read-row {
+    display: grid; gap: 6px 10px; padding: 10px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    border: 1px solid var(--color-border); border-radius: 10px;
+    background: var(--color-surface);
+  }
+  .qb-read-row.is-off { opacity: .5; }
+  .qb-read-row input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--color-primary, #4f46e5); }
+  .qb-read-text {
+    font: inherit; font-size: 14px; font-weight: 600;
+    padding: 6px 8px; min-width: 0; width: 100%;
+    color: var(--color-text); background: transparent;
+    border: 1px solid transparent; border-radius: 8px;
+  }
+  .qb-read-text:focus {
+    border-color: var(--color-primary, #4f46e5); background: var(--color-surface);
+    outline: none;
+  }
+  .qb-read-controls { display: flex; align-items: center; gap: 6px; }
+  .qb-read-row select, .qb-read-row .qb-read-mins {
+    font: inherit; font-size: 12px; font-weight: 700;
+    padding: 5px 6px; border-radius: 8px;
+    color: var(--color-text); background: var(--color-surface);
+    border: 1px solid var(--color-border);
+  }
+  .qb-read-mins { width: 74px; }
+  .qb-read-why {
+    grid-column: 2 / -1; margin: 0;
+    font-size: 11.5px; line-height: 1.45; color: var(--color-text-secondary);
+  }
+  .qb-read-why b { font-weight: 700; color: var(--color-text); }
+  .qb-read-when { font-size: 11.5px; font-weight: 700; color: #4338ca; }
+  .qb-read-foot {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .qb-read-spacer { flex: 1; }
+  .qb-read-ai {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12.5px; font-weight: 600; color: var(--color-text-secondary);
+  }
+  @media (max-width: 560px) {
+    .qb-read-row { grid-template-columns: auto minmax(0, 1fr); }
+    .qb-read-controls { grid-column: 1 / -1; justify-content: flex-start; }
+    .qb-read-why { grid-column: 1 / -1; }
+    .qb-read-foot .qb-btn { flex: 1; justify-content: center; }
+  }
+
   /* Today's Top 5 panel — sits next to the add form. Drag tasks here
      to pin them for today; reorder by dragging within. Closed pinned
      items stay crossed-out in their slot for the rest of the day. */
@@ -1050,16 +1120,20 @@
          list at about eight lines, which is the opposite of what a bucket
          is for. The server still trims each individual item to 500. #}
       <textarea id="qb-add-input"
-                placeholder="What needs doing? Paste a list — one item per line. @5m / @1h for a timer, or @1pm today to schedule + alarm. Enter adds."
+                placeholder="What needs doing? Paste a list — one item per line. Or write it as a paragraph and press “Read it”. @5m / @1h for a timer, @1pm today to schedule + alarm. Enter adds."
                 maxlength="20000" rows="2"></textarea>
       <div class="qb-add-actions">
-        <span class="qb-add-hint">↵ add · ⇧↵ newline · @5m @1h timer · @1pm today schedule</span>
+        <span class="qb-add-hint">↵ add · ⇧↵ newline · @5m @1h timer · @1pm today schedule · <b>Read it</b> for a paragraph</span>
         <button id="qb-mic-btn" class="qb-btn" type="button" title="Dictate a task">
           <i data-feather="mic"></i>
         </button>
         <button id="qb-handsfree-btn" class="qb-btn" type="button"
                 title="Hands-free — say &quot;Hello&quot; to dictate, &quot;Bye&quot; to stop">
           <i data-feather="radio"></i>
+        </button>
+        <button id="qb-read-btn" class="qb-btn" type="button"
+                title="Type or dictate a paragraph — this finds the tasks in it">
+          <i data-feather="cpu"></i> Read it
         </button>
         <button id="qb-add-btn" class="qb-btn qb-btn-primary" type="submit">
           <i data-feather="plus"></i> Add
@@ -1087,6 +1161,31 @@
       <p class="qb-top5-hint" id="qb-top5-hint">Drag tasks here. Reorder by dragging within. Drop back into the list to remove.</p>
     </section>
   </div>
+
+  <!-- THE PARAGRAPH READER'S PREVIEW.
+       Nothing here has been saved. Every row is editable and every row
+       says WHY it was read the way it was, because a parser that guesses
+       is only safe when it guesses in front of you. Untick a row to leave
+       it out; correct a title or a bucket and the correction is what gets
+       added. -->
+  <section class="qb-read" id="qb-read" hidden aria-label="Tasks found in what you wrote">
+    <div class="qb-read-head">
+      <h2 id="qb-read-title">Tasks found</h2>
+      <span class="qb-read-note" id="qb-read-note"></span>
+      <button type="button" class="qb-read-x" id="qb-read-close" title="Discard these">
+        <i data-feather="x"></i>
+      </button>
+    </div>
+    <ul class="qb-read-list" id="qb-read-list"></ul>
+    <div class="qb-read-foot">
+      <label class="qb-read-ai" title="Only the splitting. Times and buckets are always worked out here, not by the model.">
+        <input type="checkbox" id="qb-read-ai"> Use AI to split it
+      </label>
+      <span class="qb-read-spacer"></span>
+      <button type="button" class="qb-btn" id="qb-read-again">Read again</button>
+      <button type="button" class="qb-btn qb-btn-primary" id="qb-read-add">Add tasks</button>
+    </div>
+  </section>
 
   <!-- Bulk select -> one calendar slot. Off by default and out of the way:
        the everyday use of this page is typing one line and cycling a bucket,

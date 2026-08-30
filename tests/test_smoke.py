@@ -14,6 +14,8 @@ seconds, catches the regressions users actually hit:
 Run with:  python -m pytest tests/test_smoke.py -v
 """
 import inspect
+import re
+
 import pytest
 
 
@@ -1740,6 +1742,84 @@ def test_bulk_selection_becomes_one_slot_with_the_items_in_the_description(auth_
     assert "• Book flights" in ev["description"] and "• Call the bank" in ev["description"]
     # The order the user selected, not whatever the database returned.
     assert ev["description"].index("Book flights") < ev["description"].index("Call the bank")
+
+
+def test_a_paragraph_is_read_into_candidates_and_nothing_is_written(auth_client, monkeypatch):
+    """Asked 2026-08-30: "Is there a way i can type something like a
+    paragraph. Code can decipher and create tasks on quickbucket."
+
+    The preview endpoint must be READ-ONLY. A parse is a guess, and a
+    guess that writes rows before you have seen it is how a bucket fills
+    up with half-sentences nobody can undo.
+    """
+    sent = _qb_stub(monkeypatch, [])
+    r = auth_client.post("/api/quick-bucket/interpret", json={
+        "text": "I need to call the plumber tomorrow at 9am and pay the "
+                "electricity bill before Friday. Book the flight, urgent.",
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    titles = " ".join(i["text"].lower() for i in body["items"])
+    assert "plumber" in titles and "electricity" in titles and "flight" in titles
+    assert body["used_ai"] is False, "the model must be opt-in per request"
+    assert sent["posted"] == [] and sent["updated"] == [], \
+        "the preview wrote to the database"
+    # Every candidate has to be able to justify itself on screen.
+    for it in body["items"]:
+        assert it["why"], it
+
+
+def test_the_reader_is_actually_wired_to_the_page(auth_client):
+    """Eight source-string guards once passed for a week while the time
+    announcer was mute, so this checks the two halves AGREE rather than
+    that either contains a word: every #qb-read-* the script reaches for
+    has to exist in the template, and vice versa."""
+    import re as _re
+    html = auth_client.get("/quick-bucket").get_data(as_text=True)
+    js = open("static/js/quick_bucket.js", encoding="utf-8").read()
+    in_page = set(_re.findall(r'id="(qb-read[^"]*)"', html))
+    in_js = set(_re.findall(r'\$\("#(qb-read[^"]*)"\)', js))
+    assert in_js, "the paragraph reader is gone from quick_bucket.js"
+    assert in_js - in_page == set(), f"script reaches for missing ids: {in_js - in_page}"
+    assert in_page - in_js == set(), f"page has dead reader markup: {in_page - in_js}"
+    assert "/api/quick-bucket/interpret" in js
+
+
+def test_an_empty_dump_is_a_400_not_an_empty_bucket(auth_client, monkeypatch):
+    _qb_stub(monkeypatch, [])
+    assert auth_client.post("/api/quick-bucket/interpret",
+                            json={"text": "   "}).status_code == 400
+
+
+def test_a_confirmed_candidate_keeps_the_time_it_was_shown_with(auth_client, monkeypatch):
+    """The preview resolved the time and the user saw it. Re-parsing the
+    title on the way in would be a second opinion about the same
+    sentence, and the one on screen would lose."""
+    sent = _qb_stub(monkeypatch, [])
+    r = auth_client.post("/api/quick-bucket", json={
+        "text": "Drop Shreya at school",
+        "time_bucket": "at",
+        "due_at": "2026-09-01T02:30:00+00:00",
+        "planned_minutes": 30,
+        "backlog_due": "2026-09-04",
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    row = [p for t, p in sent["posted"] if t == "quick_bucket"][0]
+    assert row["due_at"].startswith("2026-09-01T02:30")
+    assert row["time_bucket"] == "at"
+    assert row["planned_minutes"] == 30
+    assert row["backlog_due"] == "2026-09-04"
+
+
+def test_an_unparseable_due_at_is_refused_not_stored(auth_client, monkeypatch):
+    """A junk timestamp in the column renders as an alarm at an unknown
+    time, which is worse than no alarm at all."""
+    sent = _qb_stub(monkeypatch, [])
+    auth_client.post("/api/quick-bucket",
+                     json={"text": "Pay rent", "due_at": "next tuesday-ish"})
+    row = [p for t, p in sent["posted"] if t == "quick_bucket"][0]
+    assert row["due_at"] is None
+    assert row["time_bucket"] == "now"
 
 
 def test_scheduling_neither_deletes_the_items_nor_marks_them_done(auth_client, monkeypatch):
@@ -5006,7 +5086,11 @@ def test_bucket_page_stops_carrying_old_completions():
     """
     src = open("routes/quick_bucket.py", encoding="utf-8").read()
     assert '"or": f"(is_done.eq.false,done_at.gte.{_today_iso})"' in src
-    assert "from utils.user_tz import user_today" in src
+    # Pinned as a REGEX, not a literal line: the point is that "today"
+    # comes from the user's timezone and never from the server's clock,
+    # and that survives another name joining the same import.
+    assert re.search(r"from utils\.user_tz import [\w,\s]*\buser_today\b", src), \
+        "quick_bucket stopped importing user_today"
 
 
 def test_archive_is_reachable_from_the_menu():
