@@ -149,11 +149,24 @@
     ".prep-panel label input{flex:1}.prep-panel .prep-go{width:100%}}",
   ].join("");
 
+  var SHARE_CSS =
+    ".prep-share-btn{font:inherit;font-size:11.5px;font-weight:700;cursor:pointer;" +
+    "display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:3px 9px;" +
+    "border-radius:999px;border:1px solid var(--color-border,#e5e7eb);" +
+    "background:var(--color-surface,#fff);color:var(--color-text-secondary,#6b7280);}" +
+    ".prep-share-btn:hover{border-color:var(--color-primary,#2563eb);" +
+    "color:var(--color-primary,#2563eb);}" +
+    ".prep-share-btn.is-on{border-color:var(--color-primary,#2563eb);" +
+    "color:var(--color-primary,#2563eb);font-weight:800;}" +
+    ".prep-share-people{display:flex;flex-wrap:wrap;gap:4px 14px;width:100%;" +
+    "font-size:13px;margin-bottom:2px;}" +
+    ".prep-person{display:inline-flex;align-items:center;gap:6px;cursor:pointer;}";
+
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
     var el = document.createElement("style");
     el.id = STYLE_ID;
-    el.textContent = CSS;
+    el.textContent = CSS + SHARE_CSS;
     document.head.appendChild(el);
   }
 
@@ -190,6 +203,17 @@
       '</div>';
   }
 
+  function sharePanelHTML() {
+    return '<div class="prep-panel prep-share-panel" hidden>' +
+      '<div class="prep-share-people">Loading people…</div>' +
+      '<label>Day <input type="date" class="prep-date"></label>' +
+      '<label>Time <input type="time" class="prep-time"></label>' +
+      '<button class="prep-go" type="button" data-prep-share-go>Share it</button>' +
+      '<span class="prep-msg">They see it in the chat Calendar with the day ' +
+      'and time, and can tick it off there.</span>' +
+      '</div>';
+  }
+
   /* The panel goes directly after the card header, so it is the first
      thing under the title rather than below however much body the card
      turns out to have — on /ai-sde that body is a ten-section deep dive
@@ -206,6 +230,99 @@
     if (head && head.nextSibling) card.insertBefore(panel, head.nextSibling);
     else card.appendChild(panel);
     return panel;
+  }
+
+  /* People are fetched once per page: the list changes when an account
+     is added, which is not during a study session. */
+  var peopleCache = null;
+  async function loadPeople() {
+    if (peopleCache) return peopleCache;
+    try {
+      var r = await fetch("/api/people", { credentials: "same-origin" });
+      peopleCache = (await r.json()).people || [];
+    } catch (_) { peopleCache = []; }
+    return peopleCache;
+  }
+
+  function sharePanelFor(btn) {
+    var card = btn.closest(".q-card") || btn.parentElement;
+    if (!card) return null;
+    var existing = card.querySelector(":scope > .prep-share-panel");
+    if (existing) return existing;
+    var head = card.querySelector(":scope > .q-head");
+    var tmp = document.createElement("div");
+    tmp.innerHTML = sharePanelHTML();
+    var panel = tmp.firstChild;
+    if (head && head.nextSibling) card.insertBefore(panel, head.nextSibling);
+    else card.appendChild(panel);
+    return panel;
+  }
+
+  async function fillSharePanel(btn, panel) {
+    var box = panel.querySelector(".prep-share-people");
+    var people = await loadPeople();
+    if (!people.length) {
+      box.textContent = "Nobody else has an account on this planner yet.";
+      return;
+    }
+    var title = btn.getAttribute("data-title") || "";
+    var picked = [];
+    try {
+      var r = await fetch("/api/shared/grants?kind=prep&item_ref=" +
+                          encodeURIComponent(title), { credentials: "same-origin" });
+      var g = await r.json();
+      picked = (g.grants || []).map(function (x) { return x.shared_with; });
+      // Somebody already finished it — say so rather than showing an
+      // empty tick box next to their name.
+      var done = (g.grants || []).filter(function (x) { return x.completed_at; });
+      if (done.length) {
+        panel.querySelector(".prep-msg").textContent =
+          done.map(function (x) {
+            return x.name + " finished it on " + String(x.completed_at).slice(0, 10);
+          }).join(" · ");
+      }
+    } catch (_) {}
+    box.innerHTML = people.map(function (p) {
+      return '<label class="prep-person"><input type="checkbox" value="' +
+        esc(p.user_id) + '"' + (picked.indexOf(p.user_id) >= 0 ? " checked" : "") +
+        '> ' + esc(p.name) + '</label>';
+    }).join("");
+  }
+
+  async function submitShare(btn, panel) {
+    var msg = panel.querySelector(".prep-msg");
+    var go = panel.querySelector("[data-prep-share-go]");
+    var ids = [].slice.call(panel.querySelectorAll(".prep-share-people input:checked"))
+                .map(function (i) { return i.value; });
+    go.disabled = true;
+    msg.textContent = "Sharing…";
+    try {
+      var r = await fetch("/api/shared/share", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+        body: JSON.stringify({
+          kind: "prep",
+          item_ref: btn.getAttribute("data-title") || "",
+          title: btn.getAttribute("data-title") || "",
+          bank: btn.getAttribute("data-bank") || "",
+          user_ids: ids,
+          due_date: panel.querySelector(".prep-date").value,
+          due_time: panel.querySelector(".prep-time").value,
+        }),
+      });
+      var data = await r.json();
+      if (!r.ok) throw new Error(data.error || "could not share");
+      msg.textContent = data.count
+        ? "Shared with " + data.count + (data.count === 1 ? " person" : " people") +
+          " — it is in their chat Calendar."
+        : "Not shared with anyone now.";
+      btn.classList.toggle("is-on", data.count > 0);
+    } catch (e) {
+      msg.textContent = e.message || "Could not share it.";
+    } finally {
+      go.disabled = false;
+    }
   }
 
   async function submit(btn, panel) {
@@ -974,7 +1091,17 @@
         (prepMinutes > 0 ? ' data-minutes="' + esc(prepMinutes) + '"' : "") +
         (entryId ? ' data-entry-id="' + esc(entryId) + '"' : "") +
         ' title="Put this topic on a day" aria-label="Schedule this topic">' +
-        '📅<span>Plan</span></button>';
+        '📅<span>Plan</span></button>' +
+        /* SHARE SITS BESIDE PLAN and comes from the same factory, so all
+           four bank pages get it without touching four templates — the
+           reason this module exists at all. Same data attributes: the
+           TITLE identifies the topic, because bank entry ids are
+           positional and shift whenever a bank is edited. */
+        '<button class="prep-share-btn" type="button" data-prep-share' +
+        ' data-bank="' + esc(bank) + '"' +
+        ' data-title="' + esc(title) + '"' +
+        ' title="Share this topic with someone" aria-label="Share this topic">' +
+        '↗<span>Share</span></button>';
     },
 
     /* Wire one list container. Safe to call more than once — a second
@@ -1021,6 +1148,32 @@
           ev.preventDefault();
           var panel = panelFor(btn);
           if (panel) show(btn, panel, panel.hasAttribute("hidden"));
+          return;
+        }
+
+        /* Share, in the same capture-phase handler and for the same
+           reason as Plan: the button lives in the card header, which
+           every host page has wired to fold the card. */
+        var sbtn = ev.target.closest("[data-prep-share]");
+        if (sbtn && root.contains(sbtn)) {
+          ev.stopPropagation();
+          ev.preventDefault();
+          var spanel = sharePanelFor(sbtn);
+          if (spanel) {
+            var opening = spanel.hasAttribute("hidden");
+            show(sbtn, spanel, opening);
+            if (opening) fillSharePanel(sbtn, spanel);
+          }
+          return;
+        }
+        var sgo = ev.target.closest("[data-prep-share-go]");
+        if (sgo && root.contains(sgo)) {
+          ev.stopPropagation();
+          ev.preventDefault();
+          var sp = sgo.closest(".prep-share-panel");
+          var owner2 = sp && sp.parentElement
+            ? sp.parentElement.querySelector("[data-prep-share]") : null;
+          if (sp && owner2) submitShare(owner2, sp);
           return;
         }
         var go = ev.target.closest("[data-prep-go]");

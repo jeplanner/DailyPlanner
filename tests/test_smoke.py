@@ -5547,6 +5547,282 @@ def test_the_projects_list_finds_and_orders_in_a_real_dom(auth_client, monkeypat
     _node_dom_test("tests/js/projects_list.test.js", html)
 
 
+def _node_only_test(script, timeout=120):
+    """Run a tests/js suite that needs no rendered page."""
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
+                           capture_output=True, text=True, cwd="tests/js")
+    if probe.returncode != 0:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run(["node", script], capture_output=True, text=True,
+                       timeout=timeout)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "0 failed" in r.stdout, r.stdout
+
+
+def _inbox_share_stub(monkeypatch, shares=None, item_owner="test-user-id"):
+    import routes.inbox as ix
+    store = {"shares": list(shares or []), "deleted": []}
+    users = [
+        {"id": "test-user-id", "email": "me@x.com", "display_name": "Me", "is_active": True},
+        {"id": "u2", "email": "shreya@x.com", "display_name": "Shreya", "is_active": True},
+        {"id": "u3", "email": "gone@x.com", "display_name": "Gone", "is_active": False},
+    ]
+
+    def fake_get(table, params=None, **k):
+        params = params or {}
+        if table == "users":
+            return users
+        if table == "shared_items":
+            rows = list(store["shares"])
+            if params.get("shared_with"):
+                rows = [s for s in rows if s["shared_with"] == params["shared_with"][3:]]
+            if params.get("owner_id"):
+                rows = [s for s in rows if s["owner_id"] == params["owner_id"][3:]]
+            if params.get("item_ref"):
+                rows = [s for s in rows if s["item_ref"] == params["item_ref"][3:]]
+            return rows
+        if table == "inbox_links":
+            if params.get("id", "").startswith("in."):
+                return [{"id": "shared1", "url": "https://x/a", "title": "Theirs",
+                         "user_id": "owner9", "status": "Unread", "labels": [],
+                         "created_at": "2026-08-01"}]
+            if params.get("user_id") == "eq.test-user-id":
+                return ([{"id": "mine1", "url": "https://x/b", "title": "Mine",
+                          "status": "Unread", "labels": [], "created_at": "2026-08-02"}]
+                        if item_owner == "test-user-id" else [])
+            return []
+        return []
+
+    # Three modules read the same tables now — the inbox page, the share
+    # blueprint's ownership check, and the shared-items service. Patching
+    # only the first is how the first run of this test 404'd on an item
+    # the stub was quite sure existed.
+    import routes.shared as sh
+    import services.shared_items_service as svc
+    for mod in (ix, sh, svc):
+        if hasattr(mod, "get"):
+            monkeypatch.setattr(mod, "get", fake_get)
+        if hasattr(mod, "post"):
+            # The real table assigns an id on insert and the service
+            # reads it back to update or revoke a grant. A stub that
+            # skips it fails with a KeyError two calls later.
+            def _post(t, d, _s=store, **k):
+                row = dict(d, id=f"g{len(_s['shares']) + 1}")
+                _s["shares"].append(row)
+                return [row]
+            monkeypatch.setattr(mod, "post", _post)
+        if hasattr(mod, "update"):
+            monkeypatch.setattr(mod, "update", lambda *a, **k: None)
+        if hasattr(mod, "delete"):
+            monkeypatch.setattr(mod, "delete",
+                                lambda t, p: store["deleted"].append(p))
+    return store
+
+
+def test_shared_inbox_items_appear_for_the_recipient(auth_client, monkeypatch):
+    """Asked 2026-08-30: "make specific inbox items to be shared with
+    multiple users. when they log in it should appear there also."
+
+    One row, many viewers — not a copy each, or the moment the owner
+    fixes a title the two disagree and nothing can say which is real.
+    """
+    _inbox_share_stub(monkeypatch, shares=[
+        {"id": "g1", "kind": "inbox", "item_ref": "shared1", "owner_id": "owner9",
+         "shared_with": "test-user-id"},
+    ])
+    rows = auth_client.get("/api/inbox").get_json()
+    ids = [r["id"] for r in rows]
+    assert "mine1" in ids and "shared1" in ids
+    got = [r for r in rows if r["id"] == "shared1"][0]
+    assert got["shared_by"], "the card cannot say who sent it"
+    assert got["can_edit"] is False
+    assert "user_id" not in got, "another user's id leaked to the client"
+
+
+def test_a_recipient_cannot_edit_or_delete_what_was_shared(auth_client, monkeypatch):
+    """The write filters already matched nothing for a non-owner, which is
+    correct and silent: it answered {"success": true} to an edit that
+    changed no rows. Being told is the difference between a read-only
+    item and a broken one."""
+    _inbox_share_stub(monkeypatch, item_owner="someone-else")
+    r = auth_client.patch("/api/inbox/shared1", json={"title": "hijacked"})
+    assert r.status_code == 403, r.get_data(as_text=True)
+    assert "owner" in r.get_json()["error"].lower()
+    d = auth_client.delete("/api/inbox/shared1")
+    assert d.status_code == 403
+
+
+def test_only_the_owner_can_share_an_item(auth_client, monkeypatch):
+    """Without this check anyone who knew an id could share someone
+    else's item with themselves and read it. The whole feature turns on
+    it."""
+    _inbox_share_stub(monkeypatch, item_owner="someone-else")
+    r = auth_client.post("/api/shared/share", json={
+        "kind": "inbox", "item_ref": "notmine", "user_ids": ["u2"]})
+    assert r.status_code == 404
+
+
+def test_sharing_takes_the_whole_set_and_ignores_strangers(auth_client, monkeypatch):
+    """The full list is sent, not a delta, so a retry or a replayed
+    offline write cannot double-share. Ids that are not accounts on this
+    instance are dropped rather than stored."""
+    store = _inbox_share_stub(monkeypatch)
+    r = auth_client.post("/api/shared/share", json={
+        "kind": "inbox", "item_ref": "mine1",
+        "user_ids": ["u2", "u3", "nobody-at-all"]})
+    assert r.status_code == 200
+    # u3 is inactive and "nobody-at-all" does not exist.
+    assert r.get_json()["user_ids"] == ["u2"]
+    assert [s["shared_with"] for s in store["shares"]] == ["u2"]
+
+    r2 = auth_client.post("/api/shared/share", json={
+        "kind": "inbox", "item_ref": "mine1", "user_ids": ["u2"]})
+    assert r2.get_json()["count"] == 1
+    assert len(store["shares"]) == 1, "re-sharing the same person duplicated the grant"
+
+
+def test_the_people_picker_never_lists_you_or_your_email(auth_client, monkeypatch):
+    """Picking a person needs a name. The rest is somebody's personal
+    data and does not belong in a page payload."""
+    _inbox_share_stub(monkeypatch)
+    people = auth_client.get("/api/people").get_json()["people"]
+    names = [p["name"] for p in people]
+    assert "Shreya" in names
+    assert "Me" not in names, "you can share with yourself"
+    assert "Gone" not in names, "an inactive account is offered"
+    assert not any("@" in str(v) for p in people for v in p.values())
+
+
+def test_a_shared_item_carries_its_day_and_time_and_can_be_ticked(auth_client, monkeypatch):
+    """Asked 2026-08-30: "It should appear in chat space under a section
+    called calendar where they know which item has been tagged them to
+    read at what day and time. They should be able to mark it as
+    completed ... It should tell me who has completed it and the date in
+    which it was completed."
+    """
+    store = _inbox_share_stub(monkeypatch)
+
+    r = auth_client.post("/api/shared/share", json={
+        "kind": "prep", "item_ref": "Two-pointer technique",
+        "title": "Two-pointer technique", "bank": "ai-sde",
+        "user_ids": ["u2"], "due_date": "2026-09-02", "due_time": "07:00",
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    row = store["shares"][0]
+    assert row["due_date"] == "2026-09-02" and row["due_time"] == "07:00"
+    assert row["kind"] == "prep" and row["bank"] == "ai-sde"
+    # A prep topic is identified by TITLE — bank entry ids are positional
+    # and shift whenever a bank is edited.
+    assert row["item_ref"] == "Two-pointer technique"
+
+
+def test_a_half_typed_time_is_dropped_not_stored(auth_client, monkeypatch):
+    """A time nobody can parse, sitting in a calendar, is worse than no
+    time — it reads as a commitment that was never made."""
+    store = _inbox_share_stub(monkeypatch)
+    auth_client.post("/api/shared/share", json={
+        "kind": "prep", "item_ref": "T", "user_ids": ["u2"],
+        "due_date": "not-a-date", "due_time": "25:99",
+    })
+    assert store["shares"][0]["due_date"] is None
+    assert store["shares"][0]["due_time"] is None
+
+
+def test_only_the_person_it_was_shared_with_can_tick_it(auth_client, monkeypatch):
+    _inbox_share_stub(monkeypatch, shares=[
+        {"id": "g9", "kind": "prep", "item_ref": "T", "owner_id": "owner9",
+         "shared_with": "somebody-else"},
+    ])
+    r = auth_client.post("/api/shared/g9/complete", json={"done": True})
+    assert r.status_code == 403
+    assert "shared with you" in r.get_json()["error"].lower()
+
+
+def test_the_calendar_lists_what_was_shared_with_me(auth_client, monkeypatch):
+    _inbox_share_stub(monkeypatch, shares=[
+        {"id": "g1", "kind": "prep", "item_ref": "Two-pointer technique",
+         "bank": "ai-sde", "item_title": "Two-pointer technique",
+         "owner_id": "owner9", "shared_with": "test-user-id",
+         "due_date": "2026-09-02", "due_time": "07:00", "completed_at": None},
+    ])
+    items = auth_client.get("/api/shared/mine").get_json()["items"]
+    assert len(items) == 1
+    it = items[0]
+    assert it["item_title"] == "Two-pointer technique"
+    assert it["due_date"] == "2026-09-02" and it["due_time"] == "07:00"
+    assert it["from_name"], "the calendar cannot say who sent it"
+    assert "owner_id" not in it, "another user's id leaked to the client"
+
+
+def test_the_sender_sees_who_finished_and_when(auth_client, monkeypatch):
+    """One row per (item, person), so completion is naturally per person —
+    two people given the same article finish it on different days."""
+    _inbox_share_stub(monkeypatch, shares=[
+        {"id": "g1", "kind": "inbox", "item_ref": "mine1", "item_title": "A link",
+         "owner_id": "test-user-id", "shared_with": "u2",
+         "completed_at": "2026-08-29T10:00:00+00:00", "created_at": "2026-08-01"},
+        {"id": "g2", "kind": "inbox", "item_ref": "mine1", "item_title": "A link",
+         "owner_id": "test-user-id", "shared_with": "u3",
+         "completed_at": None, "created_at": "2026-08-01"},
+    ])
+    items = auth_client.get("/api/shared/sent").get_json()["items"]
+    assert len(items) == 1, "two grants for one item should read as one line"
+    it = items[0]
+    assert it["total"] == 2 and it["done_count"] == 1
+    done = [p for p in it["people"] if p["completed_at"]]
+    assert done and done[0]["completed_at"].startswith("2026-08-29")
+    assert done[0]["name"], "cannot say WHO finished it"
+
+
+def test_resharing_does_not_unfinish_what_someone_already_did(auth_client, monkeypatch):
+    """Adding a second person, or moving the day, must not quietly wipe
+    the first person's completion."""
+    store = _inbox_share_stub(monkeypatch, shares=[
+        {"id": "g1", "kind": "prep", "item_ref": "T", "owner_id": "test-user-id",
+         "shared_with": "u2", "completed_at": "2026-08-29T10:00:00+00:00"},
+    ])
+    auth_client.post("/api/shared/share", json={
+        "kind": "prep", "item_ref": "T", "user_ids": ["u2"],
+        "due_date": "2026-09-09",
+    })
+    assert store["shares"][0]["completed_at"] == "2026-08-29T10:00:00+00:00"
+
+
+def test_chat_messages_carry_a_date_not_only_a_time():
+    """Asked 2026-08-30: "chats tag it with dates and time. not only time."
+
+    The formatter's own comment promised weekday and date forms and the
+    body returned toLocaleTimeString alone. Which day a message belonged
+    to came only from the day-separator chips — and those are hidden
+    under any filter, so a filtered room was a wall of bare clock times.
+    """
+    _node_only_test("tests/js/chat_timestamps.test.js")
+
+
+def test_read_aloud_speaks_and_can_be_stopped():
+    """Asked 2026-08-30: "implement read-aloud feature for the entire
+    planner. Please put in areas where there is textual content."
+
+    Speech synthesis fails SILENTLY — five days of wrong diagnoses on the
+    time announcer are the evidence — so the rules borrowed from it are
+    asserted rather than trusted: a local voice over a network one,
+    resume() after speak(), never cancel-and-speak in the same task, and
+    long text chunked so the browser cannot cut it off part-way.
+    """
+    _node_only_test("tests/js/read_aloud.test.js")
+
+
+def test_read_aloud_is_loaded_everywhere_the_nav_is():
+    """It is a select-anything-and-hear-it feature, so it cannot live on
+    one page. The nav is the one thing every page includes."""
+    nav = open("templates/_top_nav.html", encoding="utf-8").read()
+    assert "read-aloud.js" in nav
+
+
 def test_adding_a_task_no_longer_reloads_the_project_page():
     """Asked 2026-08-30: "what about creation of tasks in project".
 

@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests as http_requests
 from flask import Blueprint, request, jsonify, session, render_template, redirect, url_for, flash
 from supabase_client import get, post, update, delete
+from services import shared_items_service
 from services.login_service import login_required
 from services.inbox_service import (
     detect_type, fetch_meta, auto_categorize, auto_label, KNOWN_LABELS,
@@ -300,6 +301,67 @@ def get_inbox():
         params["category"] = f"eq.{category_filter}"
 
     rows = get("inbox_links", params=params) or []
+
+    # ── ITEMS OTHER PEOPLE SHARED WITH ME ────────────────────────────
+    # Appended rather than merged into the query above, because the two
+    # are authorised differently: mine are "user_id is me", theirs are
+    # "there is a grant addressed to me". The id list that lifts the
+    # user_id filter comes ONLY from those grants — that list IS the
+    # authorisation, and nothing else may widen it.
+    try:
+        shares = get("shared_items", params={
+            "shared_with": f"eq.{user_id}",
+            "kind": "eq.inbox",
+            "select": "item_ref,owner_id",
+        }) or []
+    except Exception:
+        shares = []                      # table not migrated yet: own items only
+
+    if shares:
+        owner_of = {s["item_ref"]: s.get("owner_id") for s in shares if s.get("item_ref")}
+        ids = ",".join(owner_of.keys())
+        shared_params = {
+            "id": f"in.({ids})",
+            "order": "created_at.desc",
+            "select": params["select"] + ",user_id",
+        }
+        if status_filter:
+            shared_params["status"] = f"eq.{status_filter}"
+        if category_filter:
+            shared_params["category"] = f"eq.{category_filter}"
+        shared_rows = get("inbox_links", params=shared_params) or []
+        names = shared_items_service.display_names(
+            [r.get("user_id") for r in shared_rows])
+        mine = {r["id"] for r in rows}
+        for r in shared_rows:
+            if r["id"] in mine:
+                continue                 # shared back to me; my own copy wins
+            r.pop("user_id", None)
+            # Says on the card who sent it, and that it is not yours to
+            # edit — the writes below would silently no-op otherwise.
+            r["shared_by"] = names.get(owner_of.get(r["id"]), "someone")
+            r["can_edit"] = False
+            rows.append(r)
+        rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+
+    # How many people each of MY items is shared with, for the chip on
+    # the card. One query for the page, not one per card.
+    if rows:
+        try:
+            out = get("shared_items", params={
+                "owner_id": f"eq.{user_id}",
+                "kind": "eq.inbox",
+                "select": "item_ref,shared_with",
+            }) or []
+        except Exception:
+            out = []
+        counts = {}
+        for sh in out:
+            counts[sh["item_ref"]] = counts.get(sh["item_ref"], 0) + 1
+        for r in rows:
+            if not r.get("shared_by"):
+                r["shared_with_count"] = counts.get(r["id"], 0)
+
     return jsonify(rows)
 
 
@@ -348,6 +410,21 @@ def update_inbox(item_id):
                 "client": allowed,
             }), 409
 
+    # OWNERSHIP IS THE FILTER, and it has to be SAID. The update below
+    # matches nothing when the item belongs to someone else — which is
+    # correct — but replying {"success": true} to a write that changed
+    # no rows tells a recipient of a shared item that their edit stuck.
+    # It did not. Shared items are read-only for the recipient.
+    owned = get("inbox_links", params={
+        "id": f"eq.{item_id}", "user_id": f"eq.{user_id}",
+        "select": "id", "limit": "1",
+    }) or []
+    if not owned:
+        return jsonify({
+            "error": "This item belongs to someone else — you can read it, "
+                     "but only its owner can change it.",
+        }), 403
+
     update("inbox_links", params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"}, json=allowed)
     return jsonify({"success": True})
 
@@ -375,6 +452,18 @@ def favorite(item_id):
 @login_required
 def delete_inbox(item_id):
     user_id = session["user_id"]
+    # Same reason as the PATCH above: a recipient deleting a shared item
+    # must be told it is not theirs, not shown a success for a delete
+    # that removed nothing and a card that reappears on refresh.
+    owned = get("inbox_links", params={
+        "id": f"eq.{item_id}", "user_id": f"eq.{user_id}",
+        "select": "id", "limit": "1",
+    }) or []
+    if not owned:
+        return jsonify({
+            "error": "This item belongs to someone else — only its owner "
+                     "can remove it.",
+        }), 403
     delete("inbox_links", params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"})
     return jsonify({"success": True})
 

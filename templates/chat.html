@@ -585,6 +585,48 @@
     border: none; background: transparent; cursor: pointer; border-radius: 9px;
   }
   .msg-emoji-panel button:hover { background: var(--color-surface-secondary, #f1f5f9); }
+
+  /* ── Shared-with-you calendar ─────────────────────────────────── */
+  .share-cal {
+    margin: 0 0 10px; border: 1px solid var(--color-border, #e5e7eb);
+    border-radius: 12px; background: var(--color-surface, #fff);
+    overflow: hidden;
+  }
+  .share-cal[hidden] { display: none; }
+  .share-cal-head {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 10px 12px; font: inherit; text-align: left; cursor: pointer;
+    background: none; border: 0; color: var(--color-text, #111827);
+  }
+  .share-cal-head h2 { margin: 0; font-size: 14px; font-weight: 700; }
+  .share-cal-chev {
+    width: 0; height: 0; flex: none;
+    border-left: 5px solid currentColor;
+    border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+    transition: transform .18s ease; transform: rotate(90deg);
+  }
+  .share-cal.is-shut .share-cal-chev { transform: rotate(0); }
+  .share-cal.is-shut .share-cal-list { display: none; }
+  .share-cal-count {
+    margin-left: auto; font-size: 11.5px; font-weight: 700;
+    color: var(--color-text-secondary, #6b7280);
+    font-variant-numeric: tabular-nums;
+  }
+  .share-cal-list { list-style: none; margin: 0; padding: 0 8px 8px; display: grid; gap: 6px; }
+  .share-cal-row {
+    display: flex; align-items: flex-start; gap: 10px; padding: 9px 10px;
+    border-radius: 9px; background: var(--color-surface-secondary, #f8fafc);
+  }
+  .share-cal-row.is-done { opacity: .55; }
+  .share-cal-row.is-late .share-cal-when { color: var(--color-danger, #dc2626); font-weight: 700; }
+  .share-cal-row input[type="checkbox"] { width: 17px; height: 17px; margin-top: 2px; flex: none; }
+  .share-cal-main { min-width: 0; flex: 1; }
+  .share-cal-title { font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+  .share-cal-row.is-done .share-cal-title { text-decoration: line-through; }
+  .share-cal-meta {
+    font-size: 11.5px; color: var(--color-text-secondary, #6b7280); margin-top: 2px;
+  }
+  .share-cal-when { font-variant-numeric: tabular-nums; }
 </style>
 {% include "_pwa_head.html" %}
 </head>
@@ -642,6 +684,24 @@
     <div class="drive-search-hint">Searches files shared with this app (chat uploads &amp; knowledge base PDFs).</div>
     <div class="drive-results" id="drive-results"></div>
   </div>
+
+  <!-- ══ CALENDAR ══════════════════════════════════════════════════
+       Things other people have tagged you to read, with the day and
+       time they picked, and a tick to say you have done it.
+
+       It lives in chat rather than on its own page because that is
+       where it was asked for, and because it is the same idea as the
+       room: what someone wants you to see. Collapsed when there is
+       nothing waiting, so it costs no space on a normal day. -->
+  <section class="share-cal" id="share-cal" hidden aria-label="Shared with you">
+    <button type="button" class="share-cal-head" id="share-cal-toggle"
+            aria-expanded="true" aria-controls="share-cal-list">
+      <span class="share-cal-chev" aria-hidden="true"></span>
+      <h2>📅 Calendar</h2>
+      <span class="share-cal-count" id="share-cal-count"></span>
+    </button>
+    <ul class="share-cal-list" id="share-cal-list"></ul>
+  </section>
 
   <div class="chat-filter" role="tablist">
     <button type="button" class="chat-filter-chip is-active" data-filter="all">All</button>
@@ -865,12 +925,45 @@
       </a>`;
   }
 
-  // Format a timestamp to "h:mm AM/PM" within today, "Mon h:mm AM" within
-  // the week, "MMM D, h:mm AM" otherwise. Cheap heuristic for chat UX.
+  /* Format a timestamp to "3:45 PM" within today, "Yesterday 3:45 PM",
+     "Mon 3:45 PM" within the week, "12 Aug, 3:45 PM" this year, and
+     "12 Aug 2025, 3:45 PM" beyond it.
+
+     THE COMMENT HERE ALREADY PROMISED THIS AND THE CODE ONLY EVER
+     RETURNED THE TIME. Which day a message belongs to came entirely
+     from the day-separator chips — and those are hidden under any
+     filter (see .chat-stream:not([data-filter="all"]) .day-sep above),
+     so the moment you filtered the room every message was a bare clock
+     time with nothing to date it.
+
+     The rule is now readable in one line: no date shown means today.
+     Anything else says which day it was. */
   const fmtTime = (iso) => {
     if (!iso) return "";
     const d = new Date(iso);
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (Number.isNaN(d.getTime())) return "";
+    const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+    const now = new Date();
+    const midnight = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+    const days = Math.round((midnight(now) - midnight(d)) / 86400000);
+
+    if (days === 0) return time;
+    if (days === 1) return `Yesterday ${time}`;
+    if (days > 1 && days < 7) {
+      return `${d.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+    }
+    const opts = { day: "numeric", month: "short" };
+    if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+    return `${d.toLocaleDateString(undefined, opts)}, ${time}`;
+  };
+
+  // The exact stamp, for the hover title — the line above is deliberately
+  // short, and sometimes you want the whole thing.
+  const fmtTimeFull = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
   };
 
   // Day key (yyyy-mm-dd in local time) for separator placement.
@@ -942,7 +1035,7 @@
       ${showBody ? `<div class="msg-body">${renderBody(m.body)}</div>` : ""}
       ${renderAttachment(att)}
       <div class="msg-meta">
-        <span>${esc(fmtTime(m.created_at))}</span>
+        <span title="${esc(fmtTimeFull(m.created_at))}">${esc(fmtTime(m.created_at))}</span>
         ${m.edited ? `<span class="edited-tag">(edited)</span>` : ""}
         ${canEdit ? `<button type="button" class="msg-del" data-act="edit">edit</button>` : ""}
         ${m.is_mine ? `<button type="button" class="msg-del" data-act="del">delete</button>` : ""}
@@ -2224,6 +2317,136 @@
     await loadInitial();
     if (window.feather) feather.replace();
     startRoomRefresh();
+  })();
+})();
+
+/* ══════════════════════════════════════════════════════════════════
+   CALENDAR — what other people tagged you to read
+   ══════════════════════════════════════════════════════════════════
+   "It should appear in chat space under a section called calendar where
+   they know which item has been tagged them to read at what day and
+   time. They should be able to mark it as completed." (2026-08-30)
+
+   Read-only about the ITEM and writable about YOUR progress: the tick
+   sets completed_at on your own grant row, so two people given the same
+   article finish it on their own days and the sender sees both.
+
+   Hidden entirely when nothing is waiting — an empty panel above the
+   messages every day would be worse than no panel. */
+(function () {
+  var box = document.getElementById("share-cal");
+  var list = document.getElementById("share-cal-list");
+  if (!box || !list) return;
+
+  var COLLAPSE_KEY = "chat-calendar-shut-v1";
+  var items = [];
+
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  /* "Tue 2 Sep, 7:00 AM" — the day is the point, so it always shows,
+     unlike the message stamps where a bare time means today. */
+  function whenText(it) {
+    if (!it.due_date) return "no date set";
+    var d = new Date(it.due_date + "T" + (it.due_time || "00:00"));
+    if (isNaN(d.getTime())) return it.due_date;
+    var day = d.toLocaleDateString(undefined,
+      { weekday: "short", day: "numeric", month: "short" });
+    if (!it.due_time) return day;
+    return day + ", " + d.toLocaleTimeString(undefined,
+      { hour: "numeric", minute: "2-digit" });
+  }
+
+  function isLate(it) {
+    if (it.completed_at || !it.due_date) return false;
+    var d = new Date(it.due_date + "T" + (it.due_time || "23:59"));
+    return !isNaN(d.getTime()) && d < new Date();
+  }
+
+  function render() {
+    var waiting = items.filter(function (i) { return !i.completed_at; }).length;
+    box.hidden = items.length === 0;
+    document.getElementById("share-cal-count").textContent =
+      waiting ? waiting + " to do" : (items.length ? "all done" : "");
+    list.innerHTML = items.map(function (it) {
+      var title = it.item_title || it.item_ref || "an item";
+      var link = it.item_url
+        ? '<a href="' + esc(it.item_url) + '" target="_blank" rel="noopener">' + esc(title) + "</a>"
+        : (it.kind === "prep"
+            ? '<a href="/' + esc(it.bank === "interview" ? "interview-prep" : (it.bank || "ai-sde")) +
+              "?topic=" + encodeURIComponent(it.item_ref) + '">' + esc(title) + "</a>"
+            : esc(title));
+      return '<li class="share-cal-row' + (it.completed_at ? " is-done" : "") +
+        (isLate(it) ? " is-late" : "") + '" data-id="' + esc(it.id) + '">' +
+        '<input type="checkbox" ' + (it.completed_at ? "checked" : "") +
+        ' aria-label="Mark ' + esc(title) + ' done">' +
+        '<span class="share-cal-main">' +
+          '<span class="share-cal-title">' + link + "</span>" +
+          '<span class="share-cal-meta">from ' + esc(it.from_name) + " · " +
+            '<span class="share-cal-when">' + esc(whenText(it)) + "</span>" +
+            (it.completed_at
+              ? " · done " + esc(String(it.completed_at).slice(0, 10))
+              : "") +
+          "</span>" +
+        "</span></li>";
+    }).join("");
+  }
+
+  list.addEventListener("change", async function (e) {
+    var cb = e.target.closest('input[type="checkbox"]');
+    if (!cb) return;
+    var row = cb.closest(".share-cal-row");
+    var it = items.find(function (x) { return String(x.id) === row.dataset.id; });
+    if (!it) return;
+    var want = cb.checked;
+    // Optimistic: the tick is the whole interaction, so it must not wait
+    // for a round trip to look like it worked.
+    it.completed_at = want ? new Date().toISOString() : null;
+    render();
+    try {
+      var r = await fetch("/api/shared/" + encodeURIComponent(it.id) + "/complete", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": document.querySelector('meta[name="csrf-token"]')?.content || "",
+        },
+        body: JSON.stringify({ done: want }),
+      });
+      var data = await r.json();
+      if (!r.ok) throw new Error(data.error || "could not save");
+      it.completed_at = data.completed_at || null;
+      render();
+    } catch (err) {
+      it.completed_at = want ? null : new Date().toISOString();
+      render();
+      if (window.showToast) showToast(err.message || "Could not save that", "error");
+    }
+  });
+
+  document.getElementById("share-cal-toggle").addEventListener("click", function () {
+    var shut = !box.classList.contains("is-shut");
+    box.classList.toggle("is-shut", shut);
+    this.setAttribute("aria-expanded", shut ? "false" : "true");
+    try { localStorage.setItem(COLLAPSE_KEY, shut ? "1" : "0"); } catch (_) {}
+  });
+  try {
+    if (localStorage.getItem(COLLAPSE_KEY) === "1") {
+      box.classList.add("is-shut");
+      document.getElementById("share-cal-toggle").setAttribute("aria-expanded", "false");
+    }
+  } catch (_) {}
+
+  (async function load() {
+    try {
+      var r = await fetch("/api/shared/mine", { credentials: "same-origin" });
+      var data = await r.json();
+      items = data.items || [];
+    } catch (_) { items = []; }
+    render();
   })();
 })();
 </script>

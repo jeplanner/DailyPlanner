@@ -429,6 +429,93 @@ html.dark .sr-error{background:#3b1111;border-color:#7f1d1d;color:#fca5a5;}
   .card-favicon{display:none;}
   .sr-thumb{width:64px;height:36px;}
 }
+
+  /* ── Rename, custom labels, sharing ─────────────────────────────── */
+  .card-title { display: flex; align-items: baseline; gap: 6px; }
+  .title-edit {
+    flex: none; border: 0; background: none; cursor: pointer; padding: 0 2px;
+    font-size: 12px; line-height: 1; color: var(--color-text-muted, #9ca3af);
+    opacity: 0; transition: opacity .12s;
+  }
+  .inbox-card:hover .title-edit,
+  .title-edit:focus-visible { opacity: 1; }
+  .title-input {
+    font: inherit; font-size: 15px; font-weight: 600; width: 100%;
+    padding: 3px 6px; border-radius: 6px;
+    color: var(--color-text, #111827);
+    background: var(--color-surface, #fff);
+    border: 1px solid var(--color-primary, #2563eb);
+  }
+  .title-input:focus { outline: none; }
+  .lbl-new {
+    font: inherit; font-size: 11.5px; width: 96px; padding: 2px 7px;
+    border-radius: 999px; color: var(--color-text, #111827);
+    background: var(--color-surface, #fff);
+    border: 1px dashed var(--color-border, #d1d5db);
+  }
+  .lbl-new:focus { outline: none; border-color: var(--color-primary, #2563eb); }
+  .lbl-share { cursor: pointer; }
+  .lbl-share.is-on { font-weight: 700; }
+  .tag-shared {
+    background: var(--color-info-light, #eff6ff);
+    color: var(--color-info-strong, #1d4ed8);
+  }
+
+  .share-modal {
+    position: fixed; inset: 0; z-index: 1200; display: flex;
+    align-items: center; justify-content: center; padding: 16px;
+    background: rgba(15, 23, 42, .55);
+  }
+  .share-modal[hidden] { display: none !important; }
+  .share-box {
+    width: min(420px, 100%); padding: 18px; border-radius: 14px;
+    background: var(--color-surface, #fff);
+    border: 1px solid var(--color-border, #e5e7eb);
+    box-shadow: 0 24px 60px rgba(15,23,42,.35);
+  }
+  .share-box h3 { margin: 0 0 4px; font-size: 16px; }
+  .share-title {
+    margin: 0 0 12px; font-size: 13px; line-height: 1.4;
+    color: var(--color-text-secondary, #6b7280);
+    overflow-wrap: anywhere;
+  }
+  .share-people { display: grid; gap: 2px; margin-bottom: 12px; }
+  .share-person {
+    display: flex; align-items: center; gap: 9px; padding: 8px 6px;
+    border-radius: 8px; cursor: pointer; font-size: 14px;
+  }
+  .share-person:hover { background: var(--color-surface-secondary, #f3f4f6); }
+  .share-person input { width: 16px; height: 16px; }
+  .share-note {
+    margin: 0 0 14px; font-size: 12px; line-height: 1.45;
+    color: var(--color-text-muted, #9ca3af);
+  }
+  .share-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .share-actions button {
+    font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
+    padding: 8px 14px; border-radius: 9px;
+    border: 1px solid var(--color-border, #e5e7eb);
+    background: var(--color-surface, #fff); color: var(--color-text, #111827);
+  }
+  .share-actions .share-save {
+    background: var(--color-primary, #2563eb); color: #fff; border-color: transparent;
+  }
+
+  .share-when { display: flex; gap: 10px; margin: 0 0 10px; flex-wrap: wrap; }
+  .share-when label {
+    display: flex; align-items: center; gap: 6px; font-size: 12.5px;
+    color: var(--color-text-secondary, #6b7280);
+  }
+  .share-when input {
+    font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 8px;
+    color: var(--color-text, #111827); background: var(--color-surface, #fff);
+    border: 1px solid var(--color-border, #e5e7eb);
+  }
+  .share-done {
+    margin: 0 0 10px; font-size: 12px; font-weight: 600;
+    color: var(--color-success-strong, #166534);
+  }
+  .share-done[hidden] { display: none; }
 </style>
 {% include "_pwa_head.html" %}
 </head>
@@ -1088,6 +1175,28 @@ function renderLabelChips(item) {
   }).join("");
 }
 
+/* Labels the user has actually used, so a label invented on one card is
+   offered on the next. The five presets below were the whole vocabulary
+   before this — you could tick them and nothing else, while the server
+   has always accepted any word. */
+function usedLabels() {
+  const seen = new Map(KNOWN_LABELS.map(l => [l.id, l.label]));
+  (allItems || []).forEach(it => (it.labels || []).forEach(l => {
+    if (!seen.has(l)) seen.set(l, l);
+  }));
+  return [...seen].map(([id, label]) => ({ id, label }));
+}
+
+async function addCustomLabel(itemId, input) {
+  const raw = (input.value || "").trim().toLowerCase();
+  if (!raw) return;
+  const item = allItems.find(x => x.id === itemId);
+  if (!item) return;
+  if ((item.labels || []).includes(raw)) { input.value = ""; return; }
+  input.value = "";
+  await toggleLabel(itemId, raw);
+}
+
 function toggleLabelPicker(itemId) {
   const slot = document.getElementById("picker-" + itemId);
   if (!slot) return;
@@ -1100,13 +1209,160 @@ function toggleLabelPicker(itemId) {
   const cur = new Set(item.labels || []);
   slot.innerHTML = `
     <div class="lbl-picker">
-      ${KNOWN_LABELS.map(l => {
+      ${usedLabels().map(l => {
         const on = cur.has(l.id);
         return `<span class="lbl lbl-${l.id}${on ? "" : " is-off"}"
-                       onclick="toggleLabel('${itemId}','${l.id}')">${l.label}</span>`;
+                       onclick="toggleLabel('${itemId}','${esc(l.id)}')">${esc(l.label)}</span>`;
       }).join("")}
+      <input class="lbl-new" maxlength="24" placeholder="new label…"
+             aria-label="Add a label of your own"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomLabel('${itemId}',this);}
+                        if(event.key==='Escape'){toggleLabelPicker('${itemId}');}">
     </div>`;
+  slot.querySelector(".lbl-new")?.focus();
 }
+
+/* ── RENAME IN PLACE ───────────────────────────────────────────────
+   The API has accepted a title since it was written; the page never
+   offered a way to send one, so every card was stuck with whatever the
+   page it came from called itself — usually the site's SEO headline
+   rather than what the thing is. Enter saves, Escape abandons, and the
+   old title comes back if the save fails. */
+async function editTitle(itemId) {
+  const item = allItems.find(x => x.id === itemId);
+  const card = document.getElementById("card-" + itemId);
+  if (!item || !card) return;
+  const holder = card.querySelector(".card-title");
+  if (!holder || holder.querySelector("input")) return;
+
+  const before = item.title || item.url || "";
+  holder.innerHTML = `<input class="title-input" value="${esc(before)}"
+                             maxlength="300" aria-label="Title">`;
+  const input = holder.querySelector("input");
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const next = (input.value || "").trim();
+    if (!save || !next || next === before) { renderCards(); return; }
+    item.title = next;                       // optimistic
+    renderCards();
+    try {
+      const r = await fetch(`/api/inbox/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: next }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "save failed");
+    } catch (e) {
+      item.title = before;
+      renderCards();
+      if (window.showToast) showToast(e.message || "Couldn't rename it", "error");
+    }
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
+/* ── SHARE WITH SOMEONE ────────────────────────────────────────────
+   The full set is sent, not a delta, so pressing Save twice cannot
+   double-share. The people list comes from the server, which also
+   re-checks every id — the picker is a convenience, not the guard. */
+let _sharePeople = null;
+
+async function openShare(itemId) {
+  const item = allItems.find(x => x.id === itemId);
+  if (!item) return;
+  if (!_sharePeople) {
+    try {
+      _sharePeople = (await (await fetch("/api/people")).json()).people || [];
+    } catch (_) { _sharePeople = []; }
+  }
+  if (!_sharePeople.length) {
+    if (window.showToast) showToast("Nobody else has an account on this planner yet", "info");
+    return;
+  }
+  let current = [];
+  try {
+    const g = await (await fetch(
+      `/api/shared/grants?kind=inbox&item_ref=${encodeURIComponent(itemId)}`)).json();
+    current = (g.grants || []).map(x => x.shared_with);
+    // Who has already finished it, and when — the other half of "tell me
+    // who has completed it and the date".
+    const done = (g.grants || []).filter(x => x.completed_at);
+    const note = document.querySelector("#share-modal .share-done");
+    if (note) {
+      note.textContent = done.length
+        ? done.map(x => `${x.name} finished it on ${String(x.completed_at).slice(0, 10)}`).join(" · ")
+        : "";
+      note.hidden = !done.length;
+    }
+    // Carry the day and time already set, so re-opening does not wipe them.
+    const g0 = (g.grants || [])[0] || {};
+    document.getElementById("share-date").value = g0.due_date || "";
+    document.getElementById("share-time").value = (g0.due_time || "").slice(0, 5);
+  } catch (_) {}
+
+  const box = document.getElementById("share-modal");
+  box.dataset.item = itemId;
+  box.querySelector(".share-title").textContent = item.title || item.url || "this item";
+  box.querySelector(".share-people").innerHTML = _sharePeople.map(p => `
+    <label class="share-person">
+      <input type="checkbox" value="${esc(p.user_id)}" ${current.includes(p.user_id) ? "checked" : ""}>
+      <span>${esc(p.name)}</span>
+    </label>`).join("");
+  box.hidden = false;
+}
+
+function closeShare() {
+  const box = document.getElementById("share-modal");
+  if (box) box.hidden = true;
+}
+
+async function saveShare() {
+  const box = document.getElementById("share-modal");
+  const itemId = box.dataset.item;
+  const ids = [...box.querySelectorAll(".share-people input:checked")].map(i => i.value);
+  const btn = box.querySelector(".share-save");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/shared/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "inbox",
+        item_ref: itemId,
+        user_ids: ids,
+        due_date: document.getElementById("share-date").value,
+        due_time: document.getElementById("share-time").value,
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "could not share");
+    const item = allItems.find(x => x.id === itemId);
+    if (item) item.shared_with_count = data.count;
+    renderCards();
+    closeShare();
+    if (window.showToast) {
+      showToast(data.count ? `Shared with ${data.count} ${data.count === 1 ? "person" : "people"}`
+                           : "Not shared with anyone now", "success");
+    }
+  } catch (e) {
+    if (window.showToast) showToast(e.message || "Could not share", "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeShare();
+});
 
 async function runBackfill(btn) {
   if (btn.dataset.busy === "1") return;
@@ -1242,14 +1498,24 @@ function renderCards() {
     <div class="inbox-card ${x.status === 'Done' ? 'done' : ''} ${x.is_favorite ? 'fav' : ''}" id="card-${x.id}">
       <div class="card-favicon"><img src="${favicon}" alt="" onerror="this.style.display='none'"></div>
       <div class="card-body">
-        <div class="card-title"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></div>
+        <div class="card-title">
+          <a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a>
+          ${x.shared_by ? "" : `<button class="title-edit" title="Rename this"
+                   aria-label="Rename ${esc(x.title || x.url)}"
+                   onclick="editTitle('${x.id}')">✎</button>`}
+        </div>
         <div class="card-domain">${esc(domain)} · added ${ago}${pub ? ` · published ${pub}` : ""}</div>
         ${x.description ? `<div class="card-desc">${esc(x.description)}</div>` : ""}
         <div class="card-tags" id="tags-${x.id}">
           ${x.content_type ? `<span class="tag tag-type">${esc(x.content_type)}</span>` : ""}
           ${x.category ? `<span class="tag tag-cat">${esc(x.category)}</span>` : ""}
           ${renderLabelChips(x)}
-          <span class="lbl lbl-add" onclick="toggleLabelPicker('${x.id}')" title="Edit labels">+ label</span>
+          ${x.shared_by
+            ? `<span class="tag tag-shared" title="Shared with you — only ${esc(x.shared_by)} can change it">↗ from ${esc(x.shared_by)}</span>`
+            : `<span class="lbl lbl-add" onclick="toggleLabelPicker('${x.id}')" title="Edit labels">+ label</span>
+               <span class="lbl lbl-share${x.shared_with_count ? " is-on" : ""}"
+                     onclick="openShare('${x.id}')"
+                     title="Share this with someone">↗ ${x.shared_with_count ? `shared with ${x.shared_with_count}` : "share"}</span>`}
         </div>
         <div class="lbl-picker-slot" id="picker-${x.id}"></div>
       </div>
@@ -1826,5 +2092,29 @@ document.getElementById("inp-url").addEventListener("keydown", e => {
 load();
 if (typeof feather !== "undefined") feather.replace();
 </script>
+
+<!-- Share an item with the other people on this planner. Hidden until
+     asked for; the list of people is fetched once per page. -->
+<div class="share-modal" id="share-modal" hidden role="dialog" aria-modal="true"
+     aria-labelledby="share-heading">
+  <div class="share-box">
+    <h3 id="share-heading">Share with</h3>
+    <p class="share-title"></p>
+    <div class="share-people"></div>
+    <div class="share-when">
+      <label>Day <input type="date" id="share-date"></label>
+      <label>Time <input type="time" id="share-time"></label>
+    </div>
+    <p class="share-done" hidden></p>
+    <p class="share-note">They see it in their own inbox and in the chat
+      Calendar, with the day and time, and can tick it off there. Only you
+      can edit or remove the item itself.</p>
+    <div class="share-actions">
+      <button type="button" onclick="closeShare()">Cancel</button>
+      <button type="button" class="share-save" onclick="saveShare()">Save</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
