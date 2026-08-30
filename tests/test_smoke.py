@@ -4459,6 +4459,42 @@ def test_push_subscription_repairs_itself_on_load():
     assert ".then(healSubscription)" in js
 
 
+def test_a_rotated_subscription_is_re_registered_without_a_page_load():
+    """Asked 2026-08-30: "this was enabled and it became disabled
+    automatically after sometime \u2014 why?", with the announcer panel
+    showing "this device is not registered with the server".
+
+    The browser replaces a push subscription whenever it likes. Until now
+    the ONLY thing that told the server about the new endpoint was
+    push.js::healSubscription, which runs on page LOAD \u2014 so an app left
+    open (a PWA, a pinned tab) drifted into "not registered" and stayed
+    there. `pushsubscriptionchange` is the event that fires at the moment
+    it happens, and there was no handler for it.
+    """
+    sw = open("static/service-worker.js", encoding="utf-8").read()
+    assert 'addEventListener("pushsubscriptionchange"' in sw, \
+        "a browser-rotated subscription reaches the server only on a page load"
+    handler = sw.split('addEventListener("pushsubscriptionchange"')[1] \
+                .split("\n});")[0]
+    # It must REGISTER the replacement, nested the way the server reads it.
+    assert "/api/push/subscribe" in handler
+    assert "subscription: sub.toJSON()" in handler
+    # ...and retire the endpoint it replaced, or the dead rows pile up
+    # exactly as they did on the phone.
+    assert "/api/push/unsubscribe" in handler
+    assert "oldSubscription" in handler
+
+    # The panel must repair itself too, and must not claim notifications
+    # are ON before the server has answered \u2014 that flip, green tick to
+    # orange warning a second later, is what read as "it turned itself off".
+    ta = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "repairPush" in ta and "healSubscription" in ta
+    granted = ta.split('if (st === "granted")')[1].split("} else if (st ===")[0]
+    tick = granted.index("Notifications are on for this device")
+    ok = granted.index('pushReach === "ok"')
+    assert ok < tick, "the tick is shown before the reach is known"
+
+
 def test_announcement_chime_is_real_audio_and_on_by_default():
     """Reported 2026-08-23: "audio notifications are not working".
 

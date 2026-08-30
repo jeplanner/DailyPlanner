@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v274";
+  var BUILD = "v275";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -2018,10 +2018,18 @@
             "this device is <b>not registered</b> with the server, so " +
             "nothing can arrive while the app is closed. " +
             "<button type=\"button\" data-ta-perm-on>Register</button>";
-        } else {
+        } else if (pushReach === "ok") {
           perm.innerHTML = "\u2713 Notifications are on for this device, so " +
-            "announcements reach you with the screen off." +
-            (pushReach === "ok" ? " The server has it registered." : "");
+            "announcements reach you with the screen off. The server has " +
+            "it registered.";
+        } else {
+          // NOT "on" YET — nobody has answered. Saying "notifications
+          // are on" here and flipping to the orange warning a second later,
+          // when /api/push/status replies, reads as the setting switching
+          // itself off. It never was on; this panel had not asked.
+          perm.className = "ta-perm";
+          perm.innerHTML = "The browser allows notifications. Checking " +
+            "whether the server can still reach this device\u2026";
         }
       } else if (st === "denied") {
         perm.innerHTML = "\u26a0 Notifications are <b>blocked</b> for this " +
@@ -2340,6 +2348,7 @@
      registered). Asked once per panel open — it is a cheap lookup and the
      answer changes only when a send fails. */
   var pushReach = "unknown";
+  var pushRepairTried = false;
 
   function checkPushReach() {
     try {
@@ -2347,16 +2356,43 @@
       navigator.serviceWorker.ready.then(function (reg) {
         return reg.pushManager.getSubscription();
       }).then(function (sub) {
-        if (!sub) { pushReach = "missing"; paint(); return; }
-        return apiPost("/api/push/status", { endpoint: sub.endpoint })
-          .then(function (r) {
-            pushReach = !r ? "unknown"
-                      : r.active ? "ok"
-                      : r.known ? "dead" : "missing";
-            paint();
-          });
+        if (!sub) return null;          // null = the browser holds nothing
+        return apiPost("/api/push/status", { endpoint: sub.endpoint });
+      }).then(function (r) {
+        pushReach = r === null ? "missing"
+                  : !r ? "unknown"
+                  : r.active ? "ok"
+                  : r.known ? "dead" : "missing";
+        paint();
+        if (pushReach !== "ok" && pushReach !== "unknown") repairPush();
       }).catch(function () { /* leave it unknown rather than guess */ });
     } catch (e) { /* no service worker here */ }
+  }
+
+  /* A STALE REGISTRATION NOW REPAIRS ITSELF INSTEAD OF ACCUSING THE DEVICE.
+     The browser can replace or revoke a push subscription whenever it
+     likes, and until the service worker learned to say so
+     (`pushsubscriptionchange`) the server only found out on the next full
+     page LOAD. An app left open for a day therefore drifted into "this
+     device is not registered" and stayed there, with a button as the only
+     way out — for something the page can simply fix.
+
+     Never prompts: healSubscription() acts only on an already granted
+     permission, so on a device that has not been asked this does nothing,
+     and the panel keeps offering the button that does ask. Once per page,
+     because if the repair itself does not take, repeating it every time
+     the panel opens just hides the failure. */
+  function repairPush() {
+    if (pushRepairTried) return;
+    pushRepairTried = true;
+    if (typeof Notification === "undefined" ||
+        Notification.permission !== "granted") return;
+    if (!window.ClPush || !window.ClPush.healSubscription) return;
+    try {
+      var h = window.ClPush.healSubscription();
+      if (h && h.then) h.then(function () { checkPushReach(); })
+                        .catch(function () {});
+    } catch (e) { /* nothing to lose: the button is still there */ }
   }
 
   /* ── REMINDER NOTIFICATIONS ─────────────────────────────────────────

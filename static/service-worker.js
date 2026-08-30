@@ -16,7 +16,7 @@
    route at /service-worker.js is served with no-cache (app.py), so a
    new version is picked up on the next page load. */
 
-const CACHE_VERSION = "v274-2026-08-24-calendar-mirror"
+const CACHE_VERSION = "v275-2026-08-30-push-resubscribe"
 const STATIC_CACHE = `dp-static-${CACHE_VERSION}`;
 const PAGES_CACHE  = `dp-pages-${CACHE_VERSION}`;
 const OFFLINE_URL  = "/offline";
@@ -413,6 +413,69 @@ function trimCache(cacheName) {
 }
 
 /* ───── push notifications (unchanged behavior) ───────────────── */
+
+/* ───── THE BROWSER CAN REPLACE A SUBSCRIPTION ON ITS OWN ──────────
+   And when it does, the endpoint the server has stops existing. Chrome
+   rotates or revokes a push subscription for its own reasons — a push
+   service re-registration, a browser update, a long gap between visits —
+   and fires `pushsubscriptionchange` to say so. Without a handler here
+   the new endpoint reached the server only on the next full page LOAD
+   (push.js::healSubscription), so an app left open — a PWA, a pinned
+   tab — kept a registration the server had never heard of and quietly
+   received nothing. The panel then said "this device is not registered",
+   correctly, with no way to explain when it had happened.
+
+   The old endpoint is retired explicitly too, so the dead rows stop
+   piling up the way they did on the phone (seven of them by 2026-08-23). */
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil((async () => {
+    const old = event.oldSubscription || null;
+    try {
+      let sub = event.newSubscription || null;
+      if (!sub) {
+        // The browser did not hand us a replacement, so make one. No
+        // prompt is possible or needed: permission is already granted,
+        // or this event would not have fired.
+        const res = await fetch("/api/push/vapid-public-key", { credentials: "same-origin" });
+        const { key } = await res.json();
+        sub = await self.registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: b64ToBytes(key),
+        });
+      }
+      await fetch("/api/push/subscribe", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        // NESTED under `subscription` — the server reads data["subscription"].
+        body: JSON.stringify({ subscription: sub.toJSON() }),
+      });
+    } catch (_) {
+      // Offline, or the subscribe was refused. The next page load runs
+      // healSubscription(), which repairs the same thing.
+    }
+    if (old && old.endpoint) {
+      try {
+        await fetch("/api/push/unsubscribe", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: old.endpoint }),
+        });
+      } catch (_) { /* it is already undeliverable; the 410 will retire it */ }
+    }
+  })());
+});
+
+function b64ToBytes(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
 
 self.addEventListener("push", (event) => {
   let payload = {};
