@@ -49,6 +49,15 @@ const groupsOf = (doc) =>
 const byName = (doc, name) =>
   groupsOf(doc).find((g) => g.dataset.navName === name);
 
+// DERIVED, NOT HARD-CODED. Which group holds Quick Bucket is a product
+// decision that changed once already (Today → Capture, when the menu was
+// regrouped). A test that pins the name fails on a reshuffle and teaches
+// you nothing; what must hold is that the group CONTAINING the current
+// page behaves correctly, whatever it is called.
+const groupHolding = (doc, href) =>
+  groupsOf(doc).find((g) => g.querySelector(`a[href="${href}"]`));
+const nameHolding = (doc, href) => groupHolding(doc, href).dataset.navName;
+
 // ── it actually rewires the markup ──────────────────────────────────
 {
   const { doc } = boot();
@@ -96,12 +105,14 @@ const byName = (doc, name) =>
 // ── the group you are in is never hidden ────────────────────────────
 {
   // Saved state says Today is shut. You are on a Today page.
+  const probe = boot({ activeHref: "/quick-bucket" });
+  const mine = nameHolding(probe.doc, "/quick-bucket");
   const { doc } = boot({ activeHref: "/quick-bucket",
-                         storage: { Today: false, Work: true } });
-  const today = byName(doc, "Today");
+                         storage: { [mine]: false, Work: true } });
+  const here = groupHolding(doc, "/quick-bucket");
   ok("a saved 'collapsed' cannot hide the page you are on",
-     today.dataset.open === "1");
-  ok("...and it is flagged as the one you are in", today.dataset.here === "1");
+     here.dataset.open === "1");
+  ok("...and it is flagged as the one you are in", here.dataset.here === "1");
   ok("an unrelated group keeps what you saved",
      byName(doc, "Work").dataset.open === "1");
 }
@@ -137,7 +148,7 @@ const byName = (doc, name) =>
   if (all.textContent === "Collapse all") all.click();
   ok("collapse all leaves only the group you are in",
      groups.filter((g) => g.dataset.open === "1").length === 1);
-  ok("...which is that group", byName(doc, "Today").dataset.open === "1");
+  ok("...which is that group", groupHolding(doc, "/quick-bucket").dataset.open === "1");
   // A control that cannot undo itself is a broken control: after putting
   // everything away, the next press must bring it back.
   ok("...and the button now offers to bring it all back",

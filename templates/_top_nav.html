@@ -808,7 +808,11 @@ html.dark .section-title{color:#f1f5f9;}
 
   <nav class="sidebar-nav">
 
-    <!-- ══ TODAY — the cockpit. Morning lands here. ══════
+    <!-- ══ TODAY ═══════════════════════════════════
+         The cockpit. Everything here answers "what is happening today" —
+         four ways of looking at the same day, plus the two lists you
+         work THROUGH rather than capture into.
+
          Quick Pomodoro is intentionally NOT here — it lives in the top
          bar (clock icon) and is reachable from any page with one tap. -->
     <div class="nav-group">
@@ -828,6 +832,41 @@ html.dark .section-title{color:#f1f5f9;}
         Day Board
       </a>
 
+      <!-- The mobile day view. A LIST of the day, not the 24-hour grid:
+           on a phone the grid's chips become slivers and anything before
+           its initial scroll position is off-screen. Reflection is at the
+           bottom of the same scroll, because reviewing the day is part of
+           the day. -->
+      <a href="/day" data-match="^/day" title="Day — one scrollable page for one day: everything scheduled, everything without a time, habits, and the reflection at the bottom">
+        <i data-feather="sun"></i>
+        Day
+      </a>
+
+      <a href="/calendar" data-match="^/calendar" title="Calendar — day and week view">
+        <i data-feather="calendar"></i>
+        Calendar
+      </a>
+
+      <a href="/checklist" data-match="^/checklist" title="Daily checklist — recurring items with optional push reminders">
+        <i data-feather="check-square"></i>
+        Checklist
+      </a>
+
+      <a href="/todo" data-match="^/todo" title="Priorities — Eisenhower matrix, what to do first">
+        <i data-feather="grid"></i>
+        Priorities
+      </a>
+
+    </div>
+
+    <!-- ══ CAPTURE ═══════════════════════════════════
+         Where a thought lands before it has a home. Split out of Today
+         because capturing and DOING are different moods: Backlog catches
+         anything, Quick Bucket holds what is actually prioritised, and
+         Archive is where finished things go to be found again. -->
+    <div class="nav-group">
+      <div class="nav-group-title">Capture</div>
+
       <a href="/quick-bucket" data-match="^/quick-bucket" title="Quick Bucket — quick capture by time bucket (now / 5m–8h / future) with Top-5 panel">
         <i data-feather="zap"></i>
         Quick Bucket
@@ -838,9 +877,14 @@ html.dark .section-title{color:#f1f5f9;}
         Backlog
       </a>
 
-      <a href="/todo" data-match="^/todo" title="Priorities — Eisenhower matrix, what to do first">
-        <i data-feather="grid"></i>
-        Priorities
+      <a href="/inbox" data-match="^/inbox" title="Inbox — capture first, triage later">
+        <i data-feather="inbox"></i>
+        Inbox
+      </a>
+
+      <a href="/notes/scribble" data-match="^/notes" title="Notes — freeform writing for quick capture, with @-tag → task conversion. Use Study for structured Cornell/Feynman notes.">
+        <i data-feather="edit-3"></i>
+        Notes
       </a>
 
       <a href="/archive" data-match="^/archive" title="Archive — everything you have finished, grouped by the day you finished it">
@@ -848,37 +892,11 @@ html.dark .section-title{color:#f1f5f9;}
         Archive
       </a>
 
-      <a href="/expenses" data-match="^/expenses" title="Expenses — log money spent each day">
-        <i data-feather="dollar-sign"></i>
-        Expenses
-      </a>
-
-      {% if admin_enabled %}
-      <a href="/admin/usage" data-match="^/admin" title="Usage, backup &amp; restore (admin)">
-        <i data-feather="database"></i>
-        Usage &amp; Backup
-      </a>
-      {% endif %}
-
-      <a href="/calendar" data-match="^/calendar" title="Calendar — day and week view">
-        <i data-feather="calendar"></i>
-        Calendar
-      </a>
-
-      <a href="/inbox" data-match="^/inbox" title="Inbox — capture first, triage later">
-        <i data-feather="inbox"></i>
-        Inbox
-      </a>
-
-      <a href="/checklist" data-match="^/checklist" title="Daily checklist — recurring items with optional push reminders">
-        <i data-feather="check-square"></i>
-        Checklist
-      </a>
     </div>
 
-    <!-- ══ WORK — projects, goals & professional artifacts ═
-         Meetings and Programs moved here (from Knowledge) because they
-         are deliverables tied to ongoing work, not reference material. -->
+    <!-- ══ WORK ═══════════════════════════════════
+         Projects and the structures over them — the ladder runs
+         Project → Objective → Key Result → Initiative → Task. -->
     <div class="nav-group">
       <div class="nav-group-title">Work</div>
 
@@ -907,70 +925,38 @@ html.dark .section-title{color:#f1f5f9;}
         Goal Planner
       </a>
 
+      <a href="/programs" data-match="^/programs" title="IT program reviews — RAG scorecard, workstreams, risks, decisions">
+        <i data-feather="layers"></i>
+        Programs
+      </a>
+
       <a href="/meetings" data-match="^/meetings" title="Meeting prep sheets — BLUF, SCQA, anticipated Q&A, retro">
         <i data-feather="users"></i>
         Meetings
       </a>
 
-      <a href="/programs" data-match="^/programs" title="IT program reviews — RAG scorecard, workstreams, risks, decisions">
-        <i data-feather="layers"></i>
-        Programs
-      </a>
     </div>
 
-    <!-- ══ REVIEW — metrics & reflection ═════════════════
-         Was 6 items pointing at /summary?view=… and a hash anchor; now
-         a single "Reviews" entry — the page itself has tabs for
-         Daily / Weekly / Monthly / Yearly so we don't need 4 nav rows. -->
+    <!-- ══ INTERVIEW PREP ═══════════════════════════════════
+         Its own group, not a corner of Knowledge. Five banks that share one
+         study loop — notes, timers and scheduling all work the same way
+         across them, and they are the thing being worked on daily. -->
     <div class="nav-group">
-      <div class="nav-group-title">Review</div>
-
-      <a href="/reports" data-match="^/reports" title="Reports — productivity, habits, financial, overview">
-        <i data-feather="pie-chart"></i>
-        Reports
-      </a>
-
-      <a href="/summary?view=weekly" data-match="^/summary(?!.*view=daily)" title="Reviews — switch between Daily / Weekly / Monthly / Yearly with the tabs at the top of the page">
-        <i data-feather="bar-chart-2"></i>
-        Reviews
-      </a>
-
-      <a href="/focus-log" data-match="^/focus-log" title="Focus Log — where your Pomodoro time went, grouped by activity">
-        <i data-feather="clock"></i>
-        Focus Log
-      </a>
-    </div>
-
-    <!-- ══ KNOWLEDGE — capture, study, read ══════════════
-         Photos moved to Life (memories, not reference). Quotes stays
-         here as inspirational reading material. Meetings and Programs
-         moved to Work. -->
-    <div class="nav-group">
-      <div class="nav-group-title">Knowledge</div>
+      <div class="nav-group-title">Interview prep</div>
 
       <a href="/interview-prep" data-match="^/interview-prep(?!/guides)" title="Interview Prep Coach — readiness score, syllabus, STAR stories, system design bank, daily streak &amp; a coach that keeps you on track">
         <i data-feather="target"></i>
         Interview Prep
       </a>
 
-      <a href="/tpm-rounds" data-match="^/tpm-rounds" title="TPM Case Rounds — product thinking &amp; program management: the framework, a worked answer, strong-vs-weak, and the interviewer's follow-up probes for each case">
-        <i data-feather="layers"></i>
-        TPM Case Rounds
-      </a>
-
-      <!-- The mobile day view. A LIST of the day, not the 24-hour grid:
-           on a phone the grid's chips become slivers and anything before
-           its initial scroll position is off-screen. Reflection is at the
-           bottom of the same scroll, because reviewing the day is part of
-           the day. -->
-      <a href="/day" data-match="^/day" title="Day — one scrollable page for one day: everything scheduled, everything without a time, habits, and the reflection at the bottom">
-        <i data-feather="sun"></i>
-        Day
-      </a>
-
       <a href="/ai-sde" data-match="^/(ai-sde|interview-prep/guides)" title="AI SDE Prep (Amazon/Google) — interactive bank: DSA, ML concepts, coding, ML system design &amp; behavioral, each explained in depth; plus the full 16-week plan">
         <i data-feather="cpu"></i>
         AI SDE Prep
+      </a>
+
+      <a href="/tpm-rounds" data-match="^/tpm-rounds" title="TPM Case Rounds — product thinking &amp; program management: the framework, a worked answer, strong-vs-weak, and the interviewer's follow-up probes for each case">
+        <i data-feather="layers"></i>
+        TPM Case Rounds
       </a>
 
       <!-- Sits with the other prep banks. Separate from AI SDE because it is
@@ -990,6 +976,15 @@ html.dark .section-title{color:#f1f5f9;}
         SQL
       </a>
 
+    </div>
+
+    <!-- ══ LEARN & READ ═══════════════════════════════════
+         Reference material, not practice. The distinction that matters:
+         these are things you CONSULT, the prep group above is things you
+         DRILL. -->
+    <div class="nav-group">
+      <div class="nav-group-title">Learn &amp; read</div>
+
       <a href="/knowledge-base" data-match="^/knowledge-base" title="Knowledge Base — PDFs in your Google Drive knowledgebase2026 folder">
         <i data-feather="book-open"></i>
         Knowledge Base
@@ -998,11 +993,6 @@ html.dark .section-title{color:#f1f5f9;}
       <a href="/references" data-match="^/references" title="References — permanent library of saved articles + AI search across them. Use TravelReads for a working queue you'll process and archive.">
         <i data-feather="bookmark"></i>
         References
-      </a>
-
-      <a href="/notes/scribble" data-match="^/notes" title="Notes — freeform writing for quick capture, with @-tag → task conversion. Use Study for structured Cornell/Feynman notes.">
-        <i data-feather="edit-3"></i>
-        Notes
       </a>
 
       <a href="/study" data-match="^/study" title="Study — structured Cornell + Feynman notes with spaced review. Use Notes for freeform writing.">
@@ -1019,22 +1009,69 @@ html.dark .section-title{color:#f1f5f9;}
         <i data-feather="message-square"></i>
         Quotes
       </a>
+
     </div>
 
-    <!-- ══ LIFE — wellbeing, home, family ═══════════════
-         Split out of "Life & Finance"; money lives in its own group
-         because it has a separate security model (vault password). -->
+    <!-- ══ REVIEW ═══════════════════════════════════
+         Looking back rather than forward. -->
     <div class="nav-group">
-      <div class="nav-group-title">Life</div>
+      <div class="nav-group-title">Review</div>
+
+      <a href="/reports" data-match="^/reports" title="Reports — productivity, habits, financial, overview">
+        <i data-feather="pie-chart"></i>
+        Reports
+      </a>
+
+      <a href="/summary?view=weekly" data-match="^/summary(?!.*view=daily)" title="Reviews — switch between Daily / Weekly / Monthly / Yearly with the tabs at the top of the page">
+        <i data-feather="bar-chart-2"></i>
+        Reviews
+      </a>
+
+      <a href="/focus-log" data-match="^/focus-log" title="Focus Log — where your Pomodoro time went, grouped by activity">
+        <i data-feather="clock"></i>
+        Focus Log
+      </a>
+
+    </div>
+
+    <!-- ══ MONEY ═══════════════════════════════════
+         Expenses moved here from Today — it is a ledger you write to daily,
+         but it belongs beside the other money pages, not beside the
+         calendar. -->
+    <div class="nav-group">
+      <div class="nav-group-title">Money</div>
+
+      <a href="/portfolio" data-match="^/portfolio" title="Investments — stocks, mutual funds, bonds, gold">
+        <i data-feather="trending-up"></i>
+        Investments
+      </a>
+
+      <a href="/investments" data-match="^/investments" title="Net Worth — add each investment and its total value, summed into a grand total">
+        <i data-feather="dollar-sign"></i>
+        Net Worth
+      </a>
+
+      <a href="/expenses" data-match="^/expenses" title="Expenses — log money spent each day">
+        <i data-feather="dollar-sign"></i>
+        Expenses
+      </a>
+
+      <a href="/refcards" data-match="^/refcards" title="Password-locked vault — bank accounts, cards, documents, ESOPs">
+        <i data-feather="shield"></i>
+        Vault
+      </a>
+
+    </div>
+
+    <!-- ══ PERSONAL ═══════════════════════════════════
+         Home and health. Chat and Family Tasks share one feature flag and
+         so stay adjacent. -->
+    <div class="nav-group">
+      <div class="nav-group-title">Personal</div>
 
       <a href="/health" data-match="^/health" title="Habits, sleep, exercise, daily wellness markers">
         <i data-feather="heart"></i>
         Health
-      </a>
-
-      <a href="/relationships" data-match="^/relationships" title="Stay in touch with the people who matter">
-        <i data-feather="users"></i>
-        Relationships
       </a>
 
       {% if chat_enabled %}
@@ -1042,6 +1079,7 @@ html.dark .section-title{color:#f1f5f9;}
         <i data-feather="message-circle"></i>
         Chat
       </a>
+
       <a href="/family-tasks" data-match="^/family-tasks" title="Family Tasks — create and assign tasks to family members">
         <i data-feather="check-square"></i>
         Family Tasks
@@ -1057,6 +1095,19 @@ html.dark .section-title{color:#f1f5f9;}
         <i data-feather="image"></i>
         Photos
       </a>
+
+      <a href="/relationships" data-match="^/relationships" title="Stay in touch with the people who matter">
+        <i data-feather="users"></i>
+        Relationships
+      </a>
+
+    </div>
+
+    <!-- ══ FAITH & STORIES ═══════════════════════════════════
+         A real cluster rather than a leftovers drawer: the three pages that
+         are read aloud or read at a fixed time of day. -->
+    <div class="nav-group">
+      <div class="nav-group-title">Faith &amp; stories</div>
 
       <a href="/prayer" data-match="^/prayer" title="A quiet moment of devotion">
         <i data-feather="sun"></i>
@@ -1074,32 +1125,17 @@ html.dark .section-title{color:#f1f5f9;}
         Bedtime Stories
       </a>
       {% endif %}
-    </div>
 
-    <!-- ══ MONEY — assets, bills, sensitive documents ═══
-         Separate group because the vault uses its own password and
-         every page here moves real ₹/$. Distinct from Life. -->
-    <div class="nav-group">
-      <div class="nav-group-title">Money</div>
-
-      <a href="/portfolio" data-match="^/portfolio" title="Investments — stocks, mutual funds, bonds, gold">
-        <i data-feather="trending-up"></i>
-        Investments
-      </a>
-
-      <a href="/investments" data-match="^/investments" title="Net Worth — add each investment and its total value, summed into a grand total">
-        <i data-feather="dollar-sign"></i>
-        Net Worth
-      </a>
-
-      <a href="/refcards" data-match="^/refcards" title="Password-locked vault — bank accounts, cards, documents, ESOPs">
-        <i data-feather="shield"></i>
-        Vault
-      </a>
     </div>
 
     <!-- ══ FOOTER ════════════════════════════════════════ -->
     <div class="nav-group nav-footer">
+      {% if admin_enabled %}
+      <a href="/admin/usage" data-match="^/admin" title="Usage, backup &amp; restore (admin)">
+        <i data-feather="database"></i>
+        Usage &amp; Backup
+      </a>
+      {% endif %}
       <a href="javascript:void(0)" onclick="openHelpModal(); closeSidebar();">
         <i data-feather="help-circle"></i>
         Help &amp; shortcuts

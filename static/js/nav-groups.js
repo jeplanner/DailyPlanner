@@ -68,9 +68,14 @@
     g.dataset.navName = name;
     const here = !!items.querySelector('a.active, a.match');
     if (here) g.dataset.here = '1';
+    // ON A FRESH DEVICE, ONLY THE GROUP YOU ARE IN OPENS. An earlier
+    // version also opened the first group, which meant two open at once
+    // and half the point lost — and after the menu was regrouped, the
+    // first group was rarely the one you were standing in. A page that
+    // matches no group falls back to opening the first, below.
     const open = here || (Object.prototype.hasOwnProperty.call(saved, name)
       ? !!saved[name]
-      : i === 0);                      // first group open on a fresh device
+      : false);
     setOpen(g, open);
     anyOpen = anyOpen || open;
 
