@@ -32,6 +32,10 @@
 <script src="/static/js/sync-queue.js"></script>
 <script src="/static/js/push.js"></script>
 <script src="/static/js/pwa.js" defer></script>
+<!-- Collapsible sidebar groups. `defer` on purpose: it runs after the
+     inline highlightActiveNav() below has marked the current page, and
+     which group opens by default depends on that mark. -->
+<script src="/static/js/nav-groups.js" defer></script>
 
 <style>
 /* ═══════════════════════════════════════════════════════════
@@ -586,15 +590,70 @@ html.dark .sidebar-close:hover{background:#334155;color:#f1f5f9;}
   gap:2px;
   margin-bottom:10px;
 }
+/* THE GROUP HEADING IS A SWITCH.
+   Reported 2026-08-30: "it is too much scrolling, group it by categories
+   and i could expand or collapse". The groups already existed; every one
+   of them was always open, so the drawer was ~45 links long and finding
+   Money meant scrolling past Knowledge every time. */
 .nav-group-title{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  font-family:inherit;
   font-size:10px;
   font-weight:800;
   text-transform:uppercase;
   letter-spacing:1px;
   color:#9ca3af;
-  padding:6px 10px 4px;
+  padding:8px 10px 6px;
+  background:none;
+  border:0;
+  text-align:left;
+  cursor:pointer;
+  border-radius:8px;
 }
+button.nav-group-title:hover{background:#f3f4f6;color:#4b5563;}
+html.dark button.nav-group-title:hover{background:#334155;color:#cbd5e1;}
 html.dark .nav-group-title{color:#64748b;}
+.nav-group-chev{
+  flex:none;
+  width:0;height:0;
+  border-left:5px solid currentColor;
+  border-top:4px solid transparent;
+  border-bottom:4px solid transparent;
+  transition:transform .18s ease;
+}
+.nav-group[data-open="1"] .nav-group-chev{transform:rotate(90deg);}
+.nav-group-count{
+  margin-left:auto;
+  font-size:9.5px;
+  font-weight:700;
+  letter-spacing:0;
+  opacity:.75;
+  font-variant-numeric:tabular-nums;
+}
+.nav-group-items{display:flex;flex-direction:column;gap:2px;}
+.nav-group[data-open="0"] .nav-group-items{display:none;}
+/* The group you are IN never hides itself — a menu that cannot show you
+   where you are is worse than one that scrolls. */
+.nav-group[data-here="1"] .nav-group-count::after{content:" •";}
+.nav-allbtn{
+  align-self:flex-end;
+  margin:-4px 4px 2px;
+  padding:4px 8px;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+  color:#9ca3af;
+  background:none;
+  border:0;
+  cursor:pointer;
+  border-radius:6px;
+}
+.nav-allbtn:hover{background:#f3f4f6;color:#4b5563;}
+html.dark .nav-allbtn:hover{background:#334155;color:#cbd5e1;}
 .nav-footer{margin-top:auto;padding-top:10px;border-top:1px solid #f1f3f5;}
 html.dark .nav-footer{border-top-color:#334155;}
 
@@ -691,7 +750,8 @@ html.dark .section-title{color:#f1f5f9;}
 
   .nav-group-title{
     font-size:11px;
-    padding:10px 12px 6px;
+    padding:12px 12px 10px;
+    min-height:44px;              /* a real tap target on a phone */
   }
   .sidebar-nav a{
     font-size:15px;
@@ -2243,7 +2303,6 @@ setInterval(updateDateTime, 1000);
   // Strongest match wins the bold "active" treatment.
   if (bestMatch) bestMatch.classList.add('active');
 })();
-
 /* ═══════════════════════════════════════════════════════════
    CONTEXTUAL HELP MODAL — content keyed by URL path
    ═══════════════════════════════════════════════════════════ */

@@ -13,3 +13,10 @@ venv/
 # fpdf2 is a real runtime dep and lives in requirements.txt; this directory
 # is just how it gets satisfied on a dev box where pip is PEP-668 blocked.
 pdflib/
+
+# jsdom, installed locally so tests/js/*.test.js can run a real DOM. The
+# pytest wrappers skip themselves when it is absent, so it is deliberately
+# not a committed dependency.
+tests/js/node_modules/
+tests/js/package.json
+tests/js/package-lock.json

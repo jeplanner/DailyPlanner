@@ -3984,7 +3984,7 @@ def test_announcer_panel_survives_its_own_delete():
     if not shutil.which("node"):
         pytest.skip("node not installed")
     probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, cwd="tests/js")
     if probe.returncode != 0:
         pytest.skip("jsdom not installed")
     r = subprocess.run(["node", "tests/js/ta_panel.test.js"],
@@ -5338,7 +5338,7 @@ def test_backlog_page_router_runs_in_a_real_dom(auth_client, monkeypatch):
     if not shutil.which("node"):
         pytest.skip("node not installed")
     probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, cwd="tests/js")
     if probe.returncode != 0:
         pytest.skip("jsdom not installed")
 
@@ -5363,6 +5363,73 @@ def test_backlog_page_router_runs_in_a_real_dom(auth_client, monkeypatch):
                        capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "0 failed" in r.stdout, r.stdout
+
+
+def _node_dom_test(script, html, *, timeout=180):
+    """Run one tests/js/*.test.js against a page Flask actually rendered.
+
+    Skips rather than fails where node or jsdom is absent, which is the
+    same bargain the backlog harness above makes: these check the
+    TEMPLATE and the SCRIPT agree, and a machine without node can still
+    run everything else.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    # PROBE FROM tests/js, NOT FROM THE REPO ROOT. jsdom is installed
+    # beside the test scripts (node resolves it by walking up from the
+    # FILE, so the scripts themselves are fine) — probing with `node -e`
+    # from the root looks in the wrong place and skipped every DOM test
+    # on a machine that had jsdom the whole time.
+    probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
+                           capture_output=True, text=True, cwd="tests/js")
+    if probe.returncode != 0:
+        pytest.skip("jsdom not installed (cd tests/js && npm install jsdom)")
+
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False,
+                                     encoding="utf-8") as fh:
+        fh.write(html)
+        path = fh.name
+    r = subprocess.run(["node", script, path],
+                       capture_output=True, text=True, timeout=timeout)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "0 failed" in r.stdout, r.stdout
+    return r.stdout
+
+
+def test_the_reader_dialog_runs_in_a_real_dom(auth_client, monkeypatch):
+    """Asked 2026-08-30: "hope once i press the add, it pops up and i am
+    able to correct it if needed before saving to quick bucket."
+
+    That is a behaviour and not a string. Press Add on a paragraph and a
+    dialog has to appear; correct a row and the CORRECTION has to be what
+    is saved; close it and the paragraph has to still be in the box so it
+    can be fixed by hand. All of that lives in the template and the script
+    together, which is where source-reading tests are blind.
+    """
+    import routes.quick_bucket as qb
+    monkeypatch.setattr(qb, "get", lambda *a, **k: [])
+    _node_dom_test("tests/js/quick_bucket_read.test.js",
+                   auth_client.get("/quick-bucket").get_data(as_text=True))
+
+
+def test_the_sidebar_collapses_in_a_real_dom(auth_client, monkeypatch):
+    """Asked 2026-08-30: "the left side bar menu collapsable. it is too
+    much scrolling."
+
+    nav-groups.js does nothing but move real nodes — it replaces every
+    heading and re-parents every link — so the only way to know it worked
+    is to run it and count the links afterwards. It also has one rule
+    that matters more than the rest: the group holding the page you are
+    on never hides, whatever was saved.
+    """
+    import routes.quick_bucket as qb
+    monkeypatch.setattr(qb, "get", lambda *a, **k: [])
+    _node_dom_test("tests/js/nav_groups.test.js",
+                   auth_client.get("/quick-bucket").get_data(as_text=True))
 
 
 def test_app_code_is_served_network_first():

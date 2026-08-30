@@ -2395,16 +2395,21 @@
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const v = input.value;
-      /* ONE LONG SENTENCE IS THE CASE THAT WAS BROKEN.
-         A pasted LIST already works — one row per line — and a short
-         line is a task, so both go straight in. What used to produce a
-         bucket row with a paragraph inside it is the single long line,
-         so that one is read first. If the reader finds only the one
-         task, nothing was gained by asking and it is added exactly as
-         typed: no preview, no extra click. */
-      const oneLine = !/\n/.test(v.trim());
-      if (oneLine && v.trim().split(/\s+/).length > 12) {
-        if (await offerToRead(v.trim())) return;   // preview is on screen
+      /* ADD SHOWS YOU WHAT IT UNDERSTOOD, unless there is nothing to
+         understand. "call mum" is a task and a dialog asking you to
+         confirm it is an insult; anything with a comma, a number, a
+         second line or real length has been INTERPRETED, and an
+         interpretation you cannot see before it is saved is the thing
+         this feature exists to avoid.
+
+         Nothing is consumed by the check: if the reader is unreachable
+         or finds nothing worth confirming, the ordinary add runs on the
+         same keystroke and the text is still in the box either way. */
+      const t = v.trim();
+      const plainOneLiner =
+        !/[\n,;.]/.test(t) && !/\d/.test(t) && t.split(/\s+/).length <= 12;
+      if (t && !plainOneLiner) {
+        if (await offerToRead(t)) return;          // the dialog is up
       }
       input.value = "";
       autosizeInput();
@@ -2483,6 +2488,30 @@
       addBtn.disabled = !n;
     };
 
+    /* OPEN AND CLOSE AS A DIALOG.
+       Closing NEVER clears the box: if the split is wrong, what you
+       typed has to still be there to fix by hand. Escape and a click on
+       the backdrop both close, because a modal with only an X is a trap
+       on a phone. */
+    // Escape is bound locally rather than through ptOnEscape: this page
+    // does not load pt-shared.js, and a dialog whose only exit is a
+    // 16px X in the corner is a trap.
+    const onReadKey = (e) => { if (e.key === "Escape") closeRead(); };
+    const openRead = () => {
+      readPanel.hidden = false;
+      document.body.classList.add("qb-read-open");
+      document.addEventListener("keydown", onReadKey);
+      const first = readPanel.querySelector("[data-read-text]");
+      if (first) { try { first.focus(); } catch (_) {} }
+    };
+    const closeRead = () => {
+      readPanel.hidden = true;
+      document.body.classList.remove("qb-read-open");
+      readItems = [];
+      document.removeEventListener("keydown", onReadKey);
+      try { input.focus(); } catch (_) {}
+    };
+
     const renderRead = (payload) => {
       readItems = payload.items || [];
       $("#qb-read-title").textContent = readItems.length
@@ -2498,7 +2527,7 @@
       bits.push("nothing is saved until you press Add");
       $("#qb-read-note").textContent = bits.join(" — ");
       readList.innerHTML = readItems.map(readRowHTML).join("");
-      readPanel.hidden = false;
+      openRead();
       paintReadFoot();
       refreshFeather();
     };
@@ -2528,15 +2557,29 @@
        stop. Anything that goes wrong — offline, a 500, a single task
        found — returns false, and the ordinary add runs. The text is
        never consumed by a failed read. */
+    /* Is there anything on this candidate a person would want to check
+       before it is saved? A renamed title, a bucket that is not the
+       default, an alarm, a date, an estimate — any of those is a
+       decision the parser made on your behalf. */
+    const norm = (t) => (t || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const worthConfirming = (it, raw) =>
+      !!(it.due_at || it.backlog_due || it.planned_minutes ||
+         (it.time_bucket && it.time_bucket !== "now") ||
+         norm(it.text) !== norm(raw));
+
     const offerToRead = async (text) => {
       try {
         const payload = await apiFetch("/api/quick-bucket/interpret", {
           method: "POST",
           body: JSON.stringify({ text, use_ai: $("#qb-read-ai").checked }),
         });
-        if (!payload || (payload.items || []).length < 2) return false;
+        const items = (payload && payload.items) || [];
+        if (!items.length) return false;
+        // ONE item that the reader neither renamed nor timed has nothing
+        // to correct, so showing a dialog for it would be ceremony. Two
+        // or more, or anything with a time on it, gets confirmed.
+        if (items.length === 1 && !worthConfirming(items[0], text)) return false;
         renderRead(payload);
-        readPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
         return true;
       } catch (_) {
         return false;
@@ -2558,9 +2601,9 @@
 
     readBtn?.addEventListener("click", runRead);
     $("#qb-read-again")?.addEventListener("click", runRead);
-    $("#qb-read-close")?.addEventListener("click", () => {
-      readPanel.hidden = true;
-      readItems = [];
+    $("#qb-read-close")?.addEventListener("click", closeRead);
+    readPanel?.addEventListener("mousedown", (e) => {
+      if (e.target === readPanel) closeRead();      // the backdrop itself
     });
 
     // Edits go back into the model, so what is added is what is on
@@ -2608,9 +2651,8 @@
         });
         added++;
       }
-      readPanel.hidden = true;
-      readItems = [];
-      input.value = "";
+      closeRead();
+      input.value = "";               // consumed: these are real rows now
       autosizeInput();
       toast(`Added ${added} task${added === 1 ? "" : "s"}`, "success");
     });
