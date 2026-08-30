@@ -77,10 +77,17 @@ _retry = Retry(
     allowed_methods=frozenset(["GET", "HEAD", "OPTIONS", "PUT", "DELETE", "PATCH"]),
     raise_on_status=False,
 )
+# Sized for the FAN-OUT, not for one call at a time. The morning
+# dashboard now issues its ten reads concurrently
+# (services/agenda_service.build_dashboard), and gunicorn runs 2 threads
+# per worker, so a single worker can legitimately want ~20 sockets at
+# once. At pool_maxsize=20 that sat exactly on the limit and urllib3
+# starts discarding and re-opening connections past it — which spends
+# the handshake the pool exists to avoid.
 _adapter = HTTPAdapter(
     max_retries=_retry,
-    pool_connections=10,
-    pool_maxsize=20,
+    pool_connections=16,
+    pool_maxsize=32,
 )
 _session.mount("https://", _adapter)
 _session.mount("http://", _adapter)

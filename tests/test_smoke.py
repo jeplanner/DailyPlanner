@@ -123,6 +123,65 @@ def test_agenda_service_build_dashboard_shape():
     assert set(d["counts"].keys()) >= {"meetings", "tasks", "habits", "habits_done", "overdue"}
 
 
+def test_the_dashboard_reads_run_concurrently_not_one_after_another():
+    """Reported 2026-08-30: "clicking todays plan is very slow".
+
+    Measured: sixteen Supabase round trips, one after another, with every
+    table EMPTY — so the page cost the sum of them before Jinja saw a
+    byte. None of the ten fetchers depends on another, so the sum was
+    never necessary: the page only ever needed the slowest one.
+
+    This drives real threads against a stubbed client that sleeps, and
+    fails if the total ever creeps back towards the serial sum. It is a
+    timing test, so the margin is deliberately wide — it is there to
+    catch a `for` loop reappearing, not to measure milliseconds.
+    """
+    import time
+    from datetime import date
+    from unittest.mock import patch
+    import services.agenda_service as a
+
+    DELAY = 0.05
+    calls = []
+
+    def _slow_get(table, params=None):
+        calls.append(table)
+        time.sleep(DELAY)
+        return []
+
+    with patch.object(a, "get", _slow_get):
+        t0 = time.perf_counter()
+        d = a.build_dashboard("test-user", date(2026, 4, 18))
+        elapsed = time.perf_counter() - t0
+
+    assert d["today_items"] == []
+    serial = len(calls) * DELAY
+    assert elapsed < serial / 2, (
+        f"{len(calls)} reads took {elapsed:.2f}s; serial would be "
+        f"{serial:.2f}s — the fan-out is gone")
+
+
+def test_one_broken_table_cannot_take_the_dashboard_down():
+    """The fetchers were guarded individually before the fan-out; running
+    them in threads must not lose that. A future that raises has to come
+    back as an empty section, not a 500 on the morning page."""
+    from datetime import date
+    from unittest.mock import patch
+    import services.agenda_service as a
+
+    def _broken_get(table, params=None):
+        if table == "todo_matrix":
+            raise RuntimeError("PostgREST is having a day")
+        return []
+
+    with patch.object(a, "get", _broken_get):
+        d = a.build_dashboard("test-user", date(2026, 4, 18))
+
+    assert d["today_items"] == []
+    assert d["counts"]["tasks"] == 0
+    assert set(d.keys()) >= {"today_items", "overdue", "habits", "counts"}
+
+
 def test_agenda_habits_template_contract():
     """Regression: Today's Plan (summary.html) reads `h.name`, `h.value`,
     `h.goal`, `h.unit`, `h.habit_type`, `h.progress_pct` directly. If the

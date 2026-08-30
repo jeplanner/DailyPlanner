@@ -1,4 +1,5 @@
 import calendar
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 import re
 from flask import Blueprint, jsonify, redirect, render_template, render_template_string, request, session, url_for
@@ -850,8 +851,19 @@ def summary():
     # =========================
     # DAILY VIEW  — morning dashboard
     # =========================
-    data = get_daily_summary(plan_date, planner_mode)
-    dashboard = get_morning_dashboard(plan_date, session["user_id"])
+    # THE TWO HALVES OF THIS PAGE DO NOT NEED EACH OTHER, so they do not
+    # wait for each other either. The dashboard is a dozen Supabase round
+    # trips (now fanned out inside build_dashboard) and the summary is
+    # three more; run serially, this page paid for all of them end to
+    # end. Reported 2026-08-30: "clicking todays plan is very slow."
+    #
+    # get_daily_summary stays on THIS thread on purpose: it reads
+    # session["user_id"], and a worker thread has no request context.
+    user_id = session["user_id"]
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        dash_future = pool.submit(get_morning_dashboard, plan_date, user_id)
+        data = get_daily_summary(plan_date, planner_mode)
+        dashboard = dash_future.result()
 
     # Today flag (used by template to show a "TODAY" pill)
     is_today = (plan_date == user_today())

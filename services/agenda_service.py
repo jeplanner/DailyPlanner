@@ -58,6 +58,7 @@ Item shape
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from typing import Iterable, Optional
 
@@ -835,20 +836,66 @@ def build_dashboard(user_id: str, plan_date) -> dict:
 
     Returns the same shape `get_morning_dashboard` did, so callers don't
     need to change. Under the hood it fans out to the fetchers above.
+
+    ── WHY THIS FANS OUT ACROSS THREADS ──────────────────────────────
+    Reported 2026-08-30: "clicking todays plan is very slow". Measured:
+    the page made SIXTEEN Supabase round trips one after another, and
+    that was with every table empty — a populated account adds the
+    project-name, key-result and recurrence lookups on top. Every one of
+    those is a full internet round trip from the app host, so the page
+    cost the SUM of them: latency times twenty, before Jinja saw a byte.
+
+    None of these ten depend on each other — they are ten independent
+    reads that get stapled together at the end — so the sum was never
+    necessary; the page only ever needed the slowest one. The work is
+    pure network waiting, which releases the GIL, so threads give close
+    to the full speed-up.
+
+    SAFE TO THREAD because nothing in this module touches Flask's
+    request context: every fetcher takes user_id and plan_date as plain
+    arguments and supabase_client.get() is a bare `requests` call. If a
+    fetcher ever needs `session`, read it in the caller and pass it in —
+    a thread has no request context and would fail at import of the
+    first `session[...]`.
     """
-    # Fetch the four pillars in parallel conceptually; supabase-py is
-    # synchronous so they serialize, but each is guarded and failures
-    # degrade gracefully rather than blowing up the whole dashboard.
-    events = fetch_events(user_id, plan_date)
-    matrix_items = fetch_matrix_items(user_id, plan_date)
-    project_due_today = fetch_project_items(user_id, due_on=_to_iso(plan_date))
-    habits = fetch_habits(user_id, plan_date)
-    overdue_all = fetch_overdue(user_id, plan_date)
-    done_today = fetch_done_today(user_id, plan_date)
-    intent = _fetch_daily_intent(user_id, plan_date)
-    inbox_health = fetch_inbox_health(user_id, plan_date)
-    bucket_active, bucket_done = fetch_bucket_items(user_id, plan_date)
-    upcoming = fetch_upcoming(user_id, plan_date)
+    def _run(label, fn, fallback):
+        # One failing table must not take the dashboard with it — the
+        # same bargain _safe_get makes, extended to the fetchers that do
+        # their own compositing.
+        try:
+            return fn()
+        except Exception as e:
+            logger.warning("agenda_service: %s failed: %s", label, e)
+            return fallback
+
+    jobs = {
+        "events":       (lambda: fetch_events(user_id, plan_date), []),
+        "matrix":       (lambda: fetch_matrix_items(user_id, plan_date), []),
+        "project":      (lambda: fetch_project_items(user_id, due_on=_to_iso(plan_date)), []),
+        "habits":       (lambda: fetch_habits(user_id, plan_date), []),
+        "overdue":      (lambda: fetch_overdue(user_id, plan_date), []),
+        "done_today":   (lambda: fetch_done_today(user_id, plan_date), []),
+        "intent":       (lambda: _fetch_daily_intent(user_id, plan_date), {}),
+        "inbox_health": (lambda: fetch_inbox_health(user_id, plan_date), None),
+        "bucket":       (lambda: fetch_bucket_items(user_id, plan_date), ([], [])),
+        "upcoming":     (lambda: fetch_upcoming(user_id, plan_date),
+                         {"tomorrow": [], "this_week": [], "future": []}),
+    }
+    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        futures = {k: pool.submit(_run, k, fn, fallback)
+                   for k, (fn, fallback) in jobs.items()}
+        out = {k: f.result() for k, f in futures.items()}
+
+    events = out["events"]
+    matrix_items = out["matrix"]
+    project_due_today = out["project"]
+    habits = out["habits"]
+    overdue_all = out["overdue"]
+    done_today = out["done_today"]
+    intent = out["intent"]
+    inbox_health = out["inbox_health"]
+    bucket_active, bucket_done = out["bucket"]
+    upcoming = out["upcoming"]
 
     # Single timeline: meetings + matrix tasks + project tasks + Tasks
     # Bucket items merged chronologically. The template's filter chips
