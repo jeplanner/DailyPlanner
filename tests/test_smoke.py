@@ -5697,6 +5697,114 @@ def test_the_people_picker_never_lists_you_or_your_email(auth_client, monkeypatc
     assert not any("@" in str(v) for p in people for v in p.values())
 
 
+def test_a_task_can_be_filed_straight_against_a_goal(auth_client, monkeypatch):
+    """Asked 2026-08-30: "make the projects simpler. I want to attach
+    just goals to tasks. dont want all this intiative,epic hierarchy."
+
+    A goal is an OBJECTIVE — routes/goals.py says so in its own header:
+    "what earlier iterations called a Goal is now an Objective". So the
+    task carries objective_id and skips Key Result and Initiative.
+    """
+    import routes.projects as pr
+    made = {}
+
+    def fake_get(table, params=None, **k):
+        if table == "projects":
+            return [{"project_id": "p1", "name": "Office"}]
+        return []
+
+    def fake_post(table, payload, **k):
+        made.update(payload)
+        return [dict(payload, task_id="t1", status="open", priority="medium",
+                     start_date="2026-08-30")]
+
+    monkeypatch.setattr(pr, "get", fake_get)
+    monkeypatch.setattr(pr, "post", fake_post)
+    monkeypatch.setattr(pr, "_default_epic_id", lambda *a, **k: "epic-default")
+
+    r = auth_client.post("/projects/p1/tasks/add-ajax", json={
+        "task_text": "Draft the deck", "objective_id": "obj-7",
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert made["objective_id"] == "obj-7"
+    # The tree is still fed behind the scenes: project progress is
+    # computed from it, so dropping the default epic would silently
+    # change every project's completion figure.
+    assert made["epic_id"] == "epic-default"
+
+
+def test_adding_a_task_still_works_before_the_migration_runs(auth_client, monkeypatch):
+    """A migration file in the repo is not a column in production — this
+    codebase has been caught by exactly that before. The goal is simply
+    not recorded until the migration runs; the task still gets added."""
+    import routes.projects as pr
+    attempts = []
+
+    def fake_post(table, payload, **k):
+        attempts.append(dict(payload))
+        if "objective_id" in payload:
+            raise RuntimeError("PGRST204: column project_tasks.objective_id does not exist")
+        return [dict(payload, task_id="t1", status="open", priority="medium",
+                     start_date="2026-08-30")]
+
+    monkeypatch.setattr(pr, "get", lambda t, params=None, **k:
+                        [{"project_id": "p1", "name": "Office"}] if t == "projects" else [])
+    monkeypatch.setattr(pr, "post", fake_post)
+    monkeypatch.setattr(pr, "_default_epic_id", lambda *a, **k: None)
+
+    r = auth_client.post("/projects/p1/tasks/add-ajax", json={
+        "task_text": "Draft the deck", "objective_id": "obj-7",
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert len(attempts) == 2, "it did not retry without the new column"
+    assert "objective_id" not in attempts[1]
+
+
+def test_a_directly_filed_goal_is_not_overwritten_by_the_old_walk():
+    """_stamp_okr_ids resolves objective_id by walking task → initiative
+    → key result → objective. It used to assign unconditionally, which
+    set the field back to None for every task filed the simple way —
+    the walk finds nothing because there is no initiative to walk from,
+    which is the whole point of filing it directly."""
+    import routes.projects as pr
+    tasks = [
+        {"task_id": "a", "objective_id": "obj-7"},          # filed directly
+        {"task_id": "b", "initiative_id": None, "key_result_id": None},
+    ]
+    pr._stamp_okr_ids(tasks, "u1")
+    assert tasks[0]["objective_id"] == "obj-7", "the direct goal was wiped"
+    assert tasks[1]["objective_id"] is None
+
+
+def test_the_goal_picker_offers_goals_and_not_the_whole_ladder(auth_client, monkeypatch):
+    """The Objective › Key Result › Initiative labels the old picker
+    built are the shape being hidden, so the simple feed does not build
+    them. Cross-cutting goals with no project are included, as the old
+    picker allowed via include_unassigned."""
+    import routes.projects as pr
+    monkeypatch.setattr(pr, "get", lambda t, params=None, **k: [
+        {"id": "o1", "title": "Pass the certification", "project_id": "p1"},
+        {"id": "o2", "title": "Learning", "project_id": None},
+    ] if t == "objectives" else [])
+    goals = auth_client.get("/api/goals/simple?project_id=p1").get_json()["goals"]
+    assert [g["title"] for g in goals] == ["Pass the certification", "Learning"]
+    assert all("\u203a" not in g["title"] and " > " not in g["title"] for g in goals)
+
+
+def test_the_hierarchy_is_hidden_not_deleted():
+    """"disable for the timebeing" — a flag, not a deletion. Flipping it
+    off has to bring the old pickers back, so the markup and the columns
+    must both still be there."""
+    from config import SIMPLE_GOALS
+    assert SIMPLE_GOALS is True
+    page = open("templates/project_tasks.html", encoding="utf-8").read()
+    assert "add-task-epic" in page, "the epic picker was removed rather than hidden"
+    assert "add-task-initiative" in page
+    assert "{% if simple_goals %}" in page, "the goal picker is not behind the flag"
+    sql = open("MIGRATION_TASK_OBJECTIVE.sql", encoding="utf-8").read().lower()
+    assert "drop column" not in sql and "delete from" not in sql
+
+
 def test_a_shared_item_carries_its_day_and_time_and_can_be_ticked(auth_client, monkeypatch):
     """Asked 2026-08-30: "It should appear in chat space under a section
     called calendar where they know which item has been tagged them to

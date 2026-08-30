@@ -132,6 +132,29 @@ PRIORITY_RANK = {
 }
 
 DEFAULT_PRIORITY = "Medium"
+
+# ── SIMPLE GOALS ────────────────────────────────────────────────────
+# Asked 2026-08-30: "make the projects simpler. I want to attach just
+# goals to tasks. dont want all this intiative,epic hierarchy. disable
+# for the timebeing."
+#
+# True  → a task is filed against a GOAL (an objective) and the Epic and
+#         Initiative pickers are hidden.
+# False → the full Objective → Key Result → Initiative → Epic ladder,
+#         exactly as before.
+#
+# A FLAG AND NOT A DELETION, because "for the timebeing" is the whole
+# instruction: nothing is removed, no column is dropped, and every
+# existing initiative_id / epic_id keeps working and keeps being written
+# behind the scenes — project progress is computed from that tree, so
+# tearing it out would silently change every project's completion
+# figure. Flip this to False and the old pickers come back.
+#
+# Why the middle of the ladder is the part hidden, measured on the live
+# data the day it was asked for:
+#     key results whose current_value had EVER moved:  0 of 28
+#     tasks linked to a key result:                    3 of 120
+SIMPLE_GOALS = True
 DEFAULT_CATEGORY = "Office"
 QUADRANT_MAP = {
     "Q1": "do",

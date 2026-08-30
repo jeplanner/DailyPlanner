@@ -256,6 +256,22 @@
         <button type="button" class="pp-btn" data-p="low"><span class="pp-dot pp-low"></span>Low</button>
       </div>
       <input type="date" id="add-task-date" class="ptv2-add-date" value="{{ selected_date }}">
+      {# ── ONE PICKER, NOT FOUR ──────────────────────────────────────
+         "I want to attach just goals to tasks. dont want all this
+         intiative,epic hierarchy. disable for the timebeing."
+
+         With config.SIMPLE_GOALS on, a task is filed against a GOAL
+         (an objective) and the two middle layers are hidden. They are
+         HIDDEN, not removed: every existing initiative_id and epic_id
+         keeps its value, the server keeps assigning the default epic
+         behind the scenes because project progress is computed from
+         that tree, and flipping the flag off brings the old pickers
+         back exactly as they were. #}
+      {% if simple_goals %}
+      <select id="add-task-goal" class="ptv2-add-link goal-picker" data-current="">
+        <option value="">No goal</option>
+      </select>
+      {% endif %}
       <!-- Initiative picker hidden — epic is the canonical task parent.
            The server back-fills initiative_id from the chosen epic
            (see /projects/<id>/tasks/add-ajax). Element kept in the DOM
@@ -263,7 +279,8 @@
       <select id="add-task-initiative" class="ptv2-add-link kr-picker" data-current="" style="display:none">
         <option value="">No initiative</option>
       </select>
-      <select id="add-task-epic" class="ptv2-add-link kr-picker" data-current="">
+      <select id="add-task-epic" class="ptv2-add-link kr-picker" data-current=""
+              {% if simple_goals %}style="display:none"{% endif %}>
         <option value="">No epic</option>
       </select>
       <select id="add-task-sprint" class="ptv2-add-link kr-picker" data-current=""

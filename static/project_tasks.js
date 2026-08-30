@@ -134,12 +134,15 @@ async function addTask() {
   const initiativeId = (initSel?.value || "").trim() || null;
   const epicId       = (epicSel?.value || "").trim() || null;
   const sprintId     = (sprintSel?.value || "").trim() || null;
+  const goalSel      = _id("add-task-goal");
+  const objectiveId  = (goalSel?.value || "").trim() || null;
 
   try {
     const res = await _post(`/projects/${PROJECT_ID}/tasks/add-ajax`, {
       task_text: text,
       priority: _addPriority,
       start_date: dateInput?.value || "",
+      objective_id: objectiveId,
       initiative_id: initiativeId,
       epic_id: epicId,
       sprint_id: sprintId,
@@ -150,6 +153,9 @@ async function addTask() {
 
     input.value = "";
     // Remember the initiative + epic + sprint picks so rapid adds inherit them.
+    // Remember the goal too, so a run of tasks for one goal is typed
+    // once rather than re-picked every time.
+    if (goalSel)   goalSel.dataset.current   = objectiveId   || "";
     if (initSel)   initSel.dataset.current   = initiativeId || "";
     if (epicSel)   epicSel.dataset.current   = epicId       || "";
     if (sprintSel) sprintSel.dataset.current = sprintId     || "";
@@ -1913,6 +1919,35 @@ function ptBulkDelete() {
 let _krPickerOptionsHtml = null;
 let _okrPickerData = null;   // raw {objectives: [...]} from /api/goals/picker
 
+/* ── THE GOAL PICKER ───────────────────────────────────────────────
+   "I want to attach just goals to tasks."
+
+   /api/goals/simple returns the objectives and nothing else — the
+   Objective › Key Result › Initiative labels the old picker built are
+   the shape being hidden, so this does not build them. Absent when
+   config.SIMPLE_GOALS is off, in which case none of this runs. */
+async function loadGoalPickerOptions() {
+  const sel = document.querySelectorAll(".goal-picker");
+  if (!sel.length) return;
+  try {
+    const projectId = (typeof PROJECT_ID !== "undefined" && PROJECT_ID) ? PROJECT_ID : "";
+    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+    const res = await fetch(`/api/goals/simple${qs}`);
+    const goals = (await res.json()).goals || [];
+    const html = goals.length
+      ? `<option value="">— No goal —</option>` + goals.map(
+          g => `<option value="${g.id}">${_escHtml(g.title)}</option>`).join("")
+      : `<option value="">🎯 No goals yet — add one on the Goals page</option>`;
+    sel.forEach(el => {
+      const keep = el.dataset.current || el.value || "";
+      el.innerHTML = html;
+      if (keep) el.value = keep;
+    });
+  } catch (err) {
+    console.warn("Goal picker fetch failed:", err);
+  }
+}
+
 async function loadKrPickerOptions() {
   try {
     // Scope to the current project — tasks can only link to initiatives
@@ -2340,6 +2375,7 @@ function updateTaskInitiative(taskId, initiativeId, el) {
 // Initial load once the DOM is ready
 document.addEventListener("DOMContentLoaded", () => {
   loadKrPickerOptions();
+  loadGoalPickerOptions();
 });
 
 /* ═══════════════════════════════════════════════════════════

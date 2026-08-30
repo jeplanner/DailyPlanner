@@ -5,7 +5,7 @@ import logging
 
 from flask import Blueprint, jsonify, redirect, render_template, request, session, url_for
 
-from config import PRIORITY_MAP, SORT_PRESETS
+from config import PRIORITY_MAP, SIMPLE_GOALS, SORT_PRESETS
 from utils.user_tz import user_now, user_today
 from routes.todo import group_tasks_smart
 
@@ -240,6 +240,43 @@ def set_project_sort(project_id):
 
     return jsonify({"status": "ok"})
 
+@projects_bp.route("/api/goals/simple", methods=["GET"])
+@login_required
+def simple_goals():
+    """Just the goals, for the one picker that replaces four.
+
+    /api/goals/picker returns the whole Objective → Key Result →
+    Initiative tree and the client flattens it into "A › B › C" labels.
+    That is the shape being hidden, so this returns the level the task
+    now attaches to and nothing else.
+
+    Objectives with no project are included deliberately: a task often
+    serves a cross-cutting goal ("Learning") that belongs to no single
+    project, and the old picker already allowed that via
+    include_unassigned.
+    """
+    user_id = session["user_id"]
+    project_id = (request.args.get("project_id") or "").strip()
+    params = {
+        "user_id": f"eq.{user_id}",
+        "select": "id,title,project_id,time_horizon",
+        "order": "title.asc",
+        "limit": "200",
+    }
+    if project_id:
+        params["or"] = f"(project_id.eq.{project_id},project_id.is.null)"
+    try:
+        rows = get("objectives", params=params) or []
+    except Exception:
+        logger.exception("simple goals: could not load objectives")
+        return jsonify({"goals": []})
+    return jsonify({"goals": [
+        {"id": r["id"], "title": r.get("title") or "Untitled goal",
+         "mine": bool(project_id) and r.get("project_id") == project_id}
+        for r in rows
+    ]})
+
+
 @projects_bp.route("/projects/<project_id>/tasks")
 @login_required
 def project_tasks(project_id):
@@ -278,7 +315,7 @@ def project_tasks(project_id):
                   "duration_days,delegated_to,is_pinned,planned_hours,actual_hours,"
                   "is_recurring,recurrence_type,recurrence_days,recurrence_interval,"
                   "recurrence_end,auto_advance,order_index,created_at,"
-                  "key_result_id,initiative_id,epic_id,sprint_id",
+                  "key_result_id,initiative_id,epic_id,sprint_id,objective_id",
         "order": order,
         "limit": 500,
     }
@@ -289,7 +326,20 @@ def project_tasks(project_id):
     if overdue_only:
         params["due_date"] = f"lt.{today.isoformat()}"
 
-    raw_tasks = get("project_tasks", params=params) or []
+    try:
+        raw_tasks = get("project_tasks", params=params) or []
+    except Exception as e:
+        # objective_id arrives with MIGRATION_TASK_OBJECTIVE.sql, and a
+        # migration file in the repo is not a column in production —
+        # PostgREST answers a select for a missing column with a 400 and
+        # get() has no retry of its own. Drop it and fetch again, so the
+        # task page keeps working on an un-migrated database instead of
+        # failing wholesale over one optional field.
+        if ",objective_id" not in params.get("select", ""):
+            raise
+        logger.warning("project tasks: retrying select without objective_id (%s)", e)
+        params["select"] = params["select"].replace(",objective_id", "")
+        raw_tasks = get("project_tasks", params=params) or []
 
     tasks = [_build_task_dict(t, project, today) for t in raw_tasks]
 
@@ -321,6 +371,7 @@ def project_tasks(project_id):
 
     return render_template(
         "project_tasks.html",
+        simple_goals=SIMPLE_GOALS,
         project=project,
         grouped_tasks=grouped_tasks,
         today=today.isoformat(),
@@ -1702,6 +1753,12 @@ def _stamp_okr_ids(tasks, user_id):
     (initiative → key_result → objective). Legacy tasks that still have a
     direct key_result_id (pre-Initiative layer) also get objective_id filled.
     """
+    # A TASK FILED STRAIGHT AGAINST A GOAL NEEDS NO WALK. objective_id is
+    # the simple path (config.SIMPLE_GOALS); everything below is the old
+    # ladder, still here for rows that were filed the long way round and
+    # for when the flag is turned back off.
+    direct = [t for t in tasks if t.get("objective_id")]
+
     # Epics: tasks may carry epic_id only (no initiative_id yet). Resolve
     # epic → initiative so the rest of the walk picks them up.
     epic_ids = {t.get("epic_id") for t in tasks if t.get("epic_id") and not t.get("initiative_id")}
@@ -1765,7 +1822,13 @@ def _stamp_okr_ids(tasks, user_id):
         kr_id = initiative_to_kr.get(init_id) if init_id else t.get("key_result_id")
         obj_id = kr_to_objective.get(kr_id) if kr_id else None
         t["key_result_id"] = kr_id
-        t["objective_id"] = obj_id
+        # A GOAL FILED DIRECTLY WINS AND IS NOT OVERWRITTEN. This line
+        # used to assign unconditionally, which set objective_id back to
+        # None for every task filed the simple way — the walk finds
+        # nothing because there is no initiative to walk from, which is
+        # the entire point of filing it directly.
+        if not t.get("objective_id"):
+            t["objective_id"] = obj_id
 
 
 def _build_task_dict(t, project, today):
@@ -1869,6 +1932,11 @@ def add_project_task_ajax(project_id):
         if ep_rows:
             initiative_id = ep_rows[0].get("initiative_id") or None
 
+    # THE GOAL, filed directly. Optional and additive: a request that
+    # sends none behaves exactly as before.
+    raw_goal = data.get("objective_id")
+    objective_id = raw_goal if (raw_goal and str(raw_goal).strip() not in ("", "null")) else None
+
     max_order = get_max_order_index(project_id)
     payload = {
         "project_id": project_id,
@@ -1884,6 +1952,8 @@ def add_project_task_ajax(project_id):
         payload["initiative_id"] = initiative_id
     if epic_id:
         payload["epic_id"] = epic_id
+    if objective_id:
+        payload["objective_id"] = objective_id
     if sprint_id:
         payload["sprint_id"] = sprint_id
     # Optional due_date — the v2 tree-tab "+ Task" dialog passes one;
@@ -1893,7 +1963,20 @@ def add_project_task_ajax(project_id):
     if due_date:
         payload["due_date"] = due_date
 
-    result = post("project_tasks", payload)
+    try:
+        result = post("project_tasks", payload)
+    except Exception as e:
+        # THE COLUMN MAY NOT BE THERE YET. objective_id ships with
+        # MIGRATION_TASK_OBJECTIVE.sql, and a migration file in the repo
+        # is not a column in production — this codebase has been caught
+        # by exactly that before. Retry without it so adding a task keeps
+        # working on an un-migrated database; the goal is simply not
+        # recorded until the migration runs.
+        if "objective_id" not in payload:
+            raise
+        logger.warning("project task insert retry without objective_id: %s", e)
+        payload.pop("objective_id", None)
+        result = post("project_tasks", payload)
 
     if not result:
         return jsonify({"error": "Insert failed"}), 500
