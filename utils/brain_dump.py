@@ -90,6 +90,13 @@ ACTION_VERBS = {
     "sweep", "take", "talk", "test", "text", "tidy", "track", "train",
     "transfer", "update", "upload", "verify", "visit", "wash", "watch",
     "write",
+    # Added 2026-08-30 from a real work dump that came back under-split:
+    # "reflect feedback", "walk 10am", "pray 10.30" all failed the verb
+    # test, and a verb list is only as good as the last list it met.
+    "align", "approve", "attend", "brief", "chase", "circulate", "escalate",
+    "flag", "forward", "groom", "log", "nudge", "pray", "prep",
+    "prioritise", "prioritize", "raise", "reflect", "respond", "sanction",
+    "sync", "triage", "walk",
 }
 
 # "I need to …" and friends. These are the strongest signal in the whole
@@ -183,7 +190,19 @@ _AND_RE = re.compile(r"\s*(?:,\s*)?\band\s+(?:also\s+)?", re.IGNORECASE)
 # A comma between two instructions is a list. A comma before anything
 # else is punctuation — "book the flight, that one is urgent" is one
 # task and splitting it loses the reason it is urgent.
-_COMMA_RE = re.compile(r"\s*,\s+")
+# The space after the comma is optional: real typing produces
+# "capacity requests,theme review calendar". Digits on both sides are
+# excluded so "1,000" survives.
+_COMMA_RE = re.compile(r"(?<!\d)\s*,\s*(?!\d)")
+
+# Fragments that continue the sentence they are in rather than starting a
+# new item. "book the flight, that one is urgent" must stay one task.
+_CONTINUATION_RE = re.compile(
+    r"^(?:that|which|who|whom|whose|it|its|it'?s|this|these|those|they|"
+    r"he|she|we|i|one|because|since|so|but|though|although|if|when|"
+    r"while|where|as|however|especially|mainly|ideally)\b",
+    re.IGNORECASE,
+)
 # " — reply to the recruiter": a dash is a comma with better posture.
 _DASH_RE = re.compile(r"\s+[-–—]+\s+")
 
@@ -250,18 +269,57 @@ def _starts_an_instruction(right):
 
 
 def _is_only_a_marker(frag):
-    """Is this fragment nothing but priority words?
+    """Is this fragment nothing but WHEN or HOW URGENT?
 
-    "urgent - reply to the recruiter email" is ONE item. Splitting it at
-    the dash leaves a task called "Urgent", which is both useless and
-    steals the urgency from the task it belonged to.
+    Two real cases, both of which produced a task made of one useless
+    word and stole the qualifier from the task it belonged to:
+
+        "urgent - reply to the recruiter email"  → a task called "Urgent"
+        "Today - Reflect feedback before 12pm"   → a task called "Today"
     """
     left = _URGENT_RE.sub(" ", frag or "")
     left = _DEFER_RE.sub(" ", left)
+    left = _DEFER_DATED_RE.sub(" ", left)
+    left = _DAY_BEFORE_RE.sub(" ", left)
+    left = _DAYPART_RE.sub(" ", left)
+    left = _CLOCK_RE.sub(" ", left)
+    left = _CLOCK_BARE_MERIDIEM_RE.sub(" ", left)
     return not re.sub(r"[^a-z0-9]+", "", left, flags=re.IGNORECASE)
 
 
-def _split_on(rx, chunk):
+def _is_list_item(right):
+    """Is the text after this comma another ITEM, rather than more of the
+    sentence?
+
+    The verb test alone (see _starts_an_instruction) is right for prose
+    and useless for the commonest work dump there is:
+
+        "review deployment exceptions, traffic prioritisation, mail
+         regarding capacity requests, theme review calendar"
+
+    Not one of those has a verb, and they are obviously four tasks. What
+    separates them from "book the flight, that one is urgent" is that a
+    list item is a short noun phrase and a continuation is a clause.
+
+    A ONE-WORD run is deliberately NOT a list: "pick up groceries — milk,
+    eggs, bread" is one task with three things in it, and splitting that
+    produces three tasks that each mean nothing on their own.
+    """
+    first = right.split(",")[0].strip(" \t.;:-")
+    if not first:
+        return False
+    if _CONTINUATION_RE.match(first):
+        return False
+    if _is_only_effort(first) or _is_only_a_marker(first):
+        return False
+    # "meet Anita, 3pm at the office" — a fragment that opens with a time
+    # is the previous item's when, not a new item.
+    if _CLOCK_LEAD_RE.match(first):
+        return False
+    return 2 <= len(first.split()) <= 12
+
+
+def _split_on(rx, chunk, is_boundary=None):
     """Split on `rx`, but only where a new instruction starts on the right.
 
     Scans left to right and KEEPS a separator that does not begin an
@@ -269,6 +327,7 @@ def _split_on(rx, chunk):
     comma rather than the first. Iterative rather than recursive: the
     input is a paste, and a paste can be pathological.
     """
+    is_boundary = is_boundary or _starts_an_instruction
     out, buf, rest = [], "", chunk
     while True:
         m = rx.search(rest)
@@ -276,7 +335,7 @@ def _split_on(rx, chunk):
             buf += rest
             break
         left, right = rest[:m.start()], rest[m.end():]
-        if (_starts_an_instruction(right) and len(right.split()) >= 2
+        if (is_boundary(right) and len(right.split()) >= 2
                 and (buf + left).strip()
                 and not _is_only_a_marker(buf + left)):
             out.append(buf + left)
@@ -315,7 +374,9 @@ def _clauses(sentence):
     demonstrably begins (see _split_on)."""
     out = []
     for part in _HARD_CONNECTOR_RE.split(sentence):
-        for commaed in _split_on(_COMMA_RE, part):
+        for commaed in _split_on(
+                _COMMA_RE, part,
+                lambda r: _starts_an_instruction(r) or _is_list_item(r)):
             for dashed in _split_on(_DASH_RE, commaed):
                 out.extend(_split_on_and(dashed))
     return out
@@ -583,19 +644,60 @@ def extract_day_deadline(text, now):
 # there is ONE implementation of "what does 9:30 tomorrow mean" in the
 # codebase, and it is the one the manual "@1pm today" path has been
 # using in production since it shipped.
+_TAIL = r"(?:\s+(?:in\s+the\s+)?(morning|afternoon|evening|night))?"
+
+# WITH a preposition. Only this form may guess at a bare hour, because
+# "by 8" is a time and "8" on its own is a quantity.
 _CLOCK_RE = re.compile(
     r"\b(?:at|by|around|@|before|till|until|due\s+by|latest\s+by)\s*"
-    r"(\d{1,2})(?::(\d{2}))?\s*"
-    r"(a\.?m\.?|p\.?m\.?|o'?clock)?"
-    r"(?:\s+(?:in\s+the\s+)?(morning|afternoon|evening|night))?",
+    r"(\d{1,2})(?:[:.](\d{2}))?\s*"
+    r"(a\.?m\.?|p\.?m\.?|o'?clock)?" + _TAIL,
+    re.IGNORECASE,
+)
+
+# WITHOUT one — "walk 10am today", "pray 10.30 today". People write their
+# own day like this constantly and the preposition is the first thing to
+# go. It must carry a meridiem or real minutes, or "2 pager BBD Prep"
+# becomes an alarm at 2pm.
+_CLOCK_BARE_MERIDIEM_RE = re.compile(
+    r"\b(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)" + _TAIL,
+    re.IGNORECASE,
+)
+# "10.30" / "10:30" with no am/pm is only read when the clause names a
+# day. Alone it is as likely to be a version number or a score.
+_CLOCK_BARE_HHMM_RE = re.compile(
+    r"\b(\d{1,2})[:.](\d{2})\b()" + _TAIL,
+    re.IGNORECASE,
+)
+
+# Used by _is_list_item: does this fragment OPEN with a time?
+_CLOCK_LEAD_RE = re.compile(
+    r"^\s*\d{1,2}(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|o'?clock)\b"
+    r"|^\s*\d{1,2}[:.]\d{2}\b",
     re.IGNORECASE,
 )
 _DAY_BEFORE_RE = re.compile(r"\b(" + _DAY_WORDS + r")\b", re.IGNORECASE)
 
 
-def extract_clock(text, now):
-    """Read "tomorrow at 9:30am" / "by 5pm friday" into a real instant."""
+def _clock_match(text):
+    """The first readable time in the clause, and whether a bare hour may
+    be guessed at. Prepositional form first: it is the only one allowed
+    to read "by 8", so it must win when both could match."""
     m = _CLOCK_RE.search(text)
+    if m:
+        return m, True
+    m = _CLOCK_BARE_MERIDIEM_RE.search(text)
+    if m:
+        return m, False
+    m = _CLOCK_BARE_HHMM_RE.search(text)
+    if m and _DAY_BEFORE_RE.search(text):
+        return m, False
+    return None, False
+
+
+def extract_clock(text, now):
+    """Read "tomorrow at 9:30am" / "by 5pm friday" / "walk 10am today"."""
+    m, may_guess = _clock_match(text)
     if not m:
         return text, None, None, None
     hour = int(m.group(1))
@@ -618,6 +720,10 @@ def extract_clock(text, now):
         suffix = ""                      # 17:30 — already unambiguous
     elif minute is not None:
         suffix = ""                      # 9:30 — let quick_time decide
+    elif not may_guess:
+        # A bare "10.30" reached here only because the clause named a day;
+        # read it on the 24-hour clock rather than inventing a meridiem.
+        suffix = ""
     else:
         # A BARE HOUR IS A GUESS, AND IT SAYS SO. "at 9" is 9am or 9pm
         # and English does not say which. Taking the next 9 o'clock to

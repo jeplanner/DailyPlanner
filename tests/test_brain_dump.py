@@ -78,6 +78,87 @@ def test_duplicate_lines_collapse():
     assert len(items) == 1
 
 
+def test_a_real_work_dump_comes_out_as_the_list_it_is():
+    """The dump that exposed all of this, pasted verbatim on 2026-08-30.
+
+    It came back as SEVEN items, four of them several tasks glued
+    together, and the two timed personal items had no time on them. The
+    verb test alone cannot read a work list: "traffic prioritisation" and
+    "theme review calendar" contain no verb and are obviously tasks.
+    """
+    items = read_dump(
+        "Today - Reflect feedback before 12pm. review deployment exceptions , "
+        "traffic prioritisation, mail regarding capacity requests,theme review "
+        "calendar, upload the JAS initiatives to JIRA , Action item updates to "
+        "JIRA, Bug bash budget email, NPS in portal, complete the flipkart "
+        "training, 2 pager BBD Prep document for team. walk 10am today. "
+        "pray 10.30 today",
+        now=NOW,
+    )
+    titles = [i["text"] for i in items]
+    assert titles == [
+        "Reflect feedback",
+        "Review deployment exceptions",
+        "Traffic prioritisation",
+        "Mail regarding capacity requests",
+        "Theme review calendar",
+        "Upload the JAS initiatives to JIRA",
+        "Action item updates to JIRA",
+        "Bug bash budget email",
+        "NPS in portal",
+        "Complete the flipkart training",
+        "2 pager BBD Prep document for team",
+        "Walk",
+        "Pray",
+    ], titles
+    # "Today - " is a heading, not the first task.
+    assert not any(t.lower() == "today" for t in titles)
+    assert by_title(items, "Reflect")["due_at"].startswith("2026-08-31T06:30")
+    assert by_title(items, "Walk")["due_at"].startswith("2026-08-31T04:30")
+    assert by_title(items, "Pray")["due_at"].startswith("2026-08-31T05:00")
+
+
+def test_a_comma_list_of_noun_phrases_is_a_list_of_tasks():
+    items = read_dump(
+        "review deployment exceptions, traffic prioritisation, theme review "
+        "calendar", now=NOW)
+    assert len(items) == 3, [i["text"] for i in items]
+
+
+def test_a_one_word_comma_run_is_one_task_with_things_in_it():
+    """"pick up groceries — milk, eggs, bread" is a shopping trip, not
+    three tasks that each mean nothing on their own."""
+    items = read_dump("Pick up groceries — milk, eggs, bread", now=NOW)
+    assert len(items) == 1, [i["text"] for i in items]
+
+
+def test_a_comma_before_a_clause_still_does_not_split():
+    """The list rule must not eat the case it was carved out of."""
+    for line in ("Book the flight, that one is urgent",
+                 "Call Ravi, he wants the numbers",
+                 "Finish the deck, it needs the latest figures"):
+        assert len(read_dump(line, now=NOW)) == 1, line
+
+
+def test_a_time_written_without_a_preposition_is_still_a_time():
+    """Nobody writes "walk at 10am today" in their own notes."""
+    assert by_title(read_dump("walk 10am today", now=NOW), "Walk")["due_at"] \
+        .startswith("2026-08-31T04:30")
+    # 10.30 with a dot is how half of India writes half past ten.
+    assert by_title(read_dump("pray 10.30 today", now=NOW), "Pray")["due_at"] \
+        .startswith("2026-08-31T05:00")
+
+
+def test_a_quantity_is_not_a_time():
+    """"2 pager BBD Prep document" must not become an alarm at 2pm, and
+    that is exactly what a preposition-free time reader does if it is
+    allowed to guess at a bare number."""
+    it = by_title(read_dump("2 pager BBD Prep document for team", now=NOW),
+                  "pager")
+    assert it["due_at"] is None
+    assert it["time_bucket"] == "now"
+
+
 # ── titles ──────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("raw,expected", [
