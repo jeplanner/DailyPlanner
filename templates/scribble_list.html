@@ -62,14 +62,14 @@
       transition: background .12s, color .12s;
     }
     .nl-folder:hover { background: var(--color-surface-secondary); color: var(--color-text); }
-    .nl-folder.is-active { background: var(--color-primary-light); color: var(--color-primary); font-weight: 600; }
+    .nl-folder.is-active { background: var(--color-primary-light); color: var(--color-primary-ink); font-weight: 600; }
     .nl-folder svg { width: 15px; height: 15px; flex: 0 0 auto; opacity: .85; }
     .nl-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .nl-folder-count {
       font-size: 11.5px; color: var(--color-text-muted);
       font-variant-numeric: tabular-nums;
     }
-    .nl-folder.is-active .nl-folder-count { color: var(--color-primary); }
+    .nl-folder.is-active .nl-folder-count { color: var(--color-primary-ink); }
     .nl-side-section-label {
       font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
       text-transform: uppercase; color: var(--color-text-muted);
@@ -186,7 +186,7 @@
     /* Notes grid */
     .nl-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
       gap: 14px;
     }
     .nl-card {

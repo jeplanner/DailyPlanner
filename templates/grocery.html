@@ -170,14 +170,14 @@
     border: 1px solid var(--color-border, #e5e7eb);
     background: var(--color-surface-secondary, #f1f5f9);
     border-radius: 8px; cursor: pointer;
-    color: var(--color-primary, #4f46e5);
+    color: var(--color-primary-ink);
     display: inline-flex; align-items: center; justify-content: center;
     transition: background .12s, color .12s, border-color .12s;
   }
   .gr-icon-btn svg { width: 17px; height: 17px; stroke-width: 2.25; }
   .gr-icon-btn:hover {
     background: var(--color-primary-light);
-    color: var(--color-primary, #2563eb);
+    color: var(--color-primary-ink);
     border-color: var(--color-primary-border);
   }
   .gr-icon-btn.danger { color: var(--color-danger-on-tint); }
@@ -238,7 +238,7 @@
     background: color-mix(in srgb, var(--color-primary, #2563eb) 8%, transparent);
   }
   .gr-ac-name { color: var(--color-text); font-weight: 500; }
-  .gr-ac-name strong { color: var(--color-primary, #2563eb); font-weight: 700; }
+  .gr-ac-name strong { color: var(--color-primary-ink); font-weight: 700; }
   .gr-ac-cat {
     font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
     text-transform: uppercase; color: var(--color-text-muted, var(--color-text-secondary));

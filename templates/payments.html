@@ -33,7 +33,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--rc-bg);color:var(
 .rc-header-btns{display:flex;gap:6px;}
 
 /* Overview */
-.ov-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px;}
+.ov-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(160px, 100%),1fr));gap:10px;margin-bottom:16px;}
 .ov-card{background:var(--rc-surface);border-radius:12px;padding:14px;box-shadow:var(--rc-shadow);display:flex;flex-direction:column;gap:2px;}
 .ov-label{font-size:10px;font-weight:600;color:var(--rc-text3);text-transform:uppercase;letter-spacing:0.3px;}
 .ov-value{font-size:22px;font-weight:800;}
@@ -78,7 +78,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--rc-bg);color:var(
 .cat-cnt{font-size:11px;color:var(--rc-text3);}
 
 /* Cards */
-.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px, 100%),1fr));gap:10px;}
 .ref-card{
   background:var(--rc-surface);border:1px solid var(--rc-border);border-radius:12px;
   padding:14px 16px;box-shadow:var(--rc-shadow);transition:all 0.15s;

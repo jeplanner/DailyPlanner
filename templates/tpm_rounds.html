@@ -26,13 +26,13 @@
   .only { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--color-text-secondary); white-space: nowrap; }
 
   /* The loop map: which round each bank covers, so nothing is a surprise. */
-  .loop { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin: 0 0 12px; }
+  .loop { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 8px; margin: 0 0 12px; }
   .loop .r { border: 1px solid var(--color-border); border-radius: 12px; padding: 10px 12px; background: var(--color-surface); }
   .loop .r .n { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); }
   .loop .r .t { font-size: 14px; font-weight: 800; margin: 2px 0 4px; }
   .loop .r .c { font-size: 12px; color: var(--color-text-secondary); line-height: 1.45; }
   .loop .r.here { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1 inset; }
-  .loop .r a { color: var(--color-primary); font-weight: 700; text-decoration: none; font-size: 12px; }
+  .loop .r a { color: var(--color-primary-ink); font-weight: 700; text-decoration: none; font-size: 12px; }
 
   .effort { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; font-weight: 700; color: var(--color-text-secondary); margin: 0 0 10px; }
   .effort b { color: var(--color-text); font-weight: 900; }

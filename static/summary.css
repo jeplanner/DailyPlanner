@@ -383,7 +383,7 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
   text-transform: uppercase;
   padding: 4px 10px; border-radius: 999px;
   background: color-mix(in srgb, var(--color-primary) 14%, transparent);
-  color: var(--color-primary);
+  color: var(--color-primary-ink);
 }
 .md-hero {
   margin: 6px 0 20px;
@@ -417,7 +417,7 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
   display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; border-radius: 8px;
   background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-  color: var(--color-primary);
+  color: var(--color-primary-ink);
 }
 .md-card-icon svg { width: 15px; height: 15px; }
 .md-overdue-icon {
@@ -478,7 +478,7 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 12px;
   font-size: 13px; font-weight: 600;
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary-ink);
   background: transparent;
   border: 1px solid var(--color-border);
   border-radius: 999px;
@@ -562,7 +562,7 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
   border: 1px solid var(--color-border, #e2e8f0);
   border-radius: 999px;
   background: transparent;
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary-ink);
   font: inherit; font-size: 12.5px; font-weight: 600;
   cursor: pointer;
   transition: background .12s, border-color .12s;
@@ -587,7 +587,7 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
 }
 .md-plan-tomorrow-btn:hover {
   background: color-mix(in srgb, var(--color-primary, #2563eb) 10%, transparent);
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary-ink);
   border-color: color-mix(in srgb, var(--color-primary, #2563eb) 30%, transparent);
 }
 @media (max-width: 640px) {
@@ -618,7 +618,7 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
   cursor: pointer;
   word-break: break-word;
 }
-.md-focus-text:hover { color: var(--color-primary, #2563eb); }
+.md-focus-text:hover { color: var(--color-primary-ink); }
 .md-focus-done {
   text-decoration: line-through;
   color: var(--color-text-secondary, #94a3b8);
@@ -635,7 +635,7 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
 }
 .md-focus-empty:hover {
   border-color: var(--color-primary, #2563eb);
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary-ink);
   background: color-mix(in srgb, var(--color-primary, #2563eb) 5%, transparent);
 }
 .md-focus-edit {
@@ -649,7 +649,7 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
 }
 .md-focus-edit:hover {
   background: var(--color-bg-subtle, #f1f5f9);
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary-ink);
 }
 .md-focus-input {
   flex: 1;
@@ -702,7 +702,7 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
 .md-reschedule-btn svg { width: 14px; height: 14px; }
 .md-reschedule-btn:hover {
   background: color-mix(in srgb, var(--color-primary, #2563eb) 10%, transparent);
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary-ink);
 }
 .md-reschedule-btn:focus-visible {
   outline: 2px solid var(--color-primary, #2563eb);
@@ -1039,7 +1039,7 @@ html.dark .md-recap-card    .md-card-body .md-table-wrap {
 .md-row-link svg { width: 13px; height: 13px; }
 .md-row:hover .md-row-link,
 .md-overdue-row .md-row-link { opacity: 1; }
-.md-row-link:hover { background: var(--color-border); color: var(--color-primary); }
+.md-row-link:hover { background: var(--color-border); color: var(--color-primary-ink); }
 
 /* Habit mini progress bar (inside context cell for habit rows) */
 .md-habit-progress {

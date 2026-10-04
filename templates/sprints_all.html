@@ -8,75 +8,151 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
 <script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/dates.js') }}"></script>
 {% include "_pwa_head.html" %}
 <style>
   :root {
+    /* All aliases. The three that were still literals were also the three
+       that failed contrast: --sp-soft was #9ca3af, which is 2.4:1 on the
+       page and was carrying the empty-state text. */
     --sp-bg: var(--color-bg);
     --sp-surface: var(--color-surface);
     --sp-border: var(--color-border);
     --sp-text: var(--color-text);
-    --sp-mute:     #6b7280;
-    --sp-soft:     #9ca3af;
+    --sp-mute: var(--color-text-secondary);
+    --sp-soft: var(--color-text-muted);
     --sp-primary: var(--color-primary);
     --sp-success: var(--color-success);
-    --sp-warn:     #f59e0b;
+    --sp-warn: var(--color-warning);
     --sp-danger: var(--color-danger);
   }
-  @media (prefers-color-scheme: dark) {
-    :root { --sp-bg:#0f1115; --sp-surface:#181b22; --sp-border:#232733;
-            --sp-text: var(--color-text); --sp-mute:#9ca3af; --sp-soft:#6b7280; }
-  }
-  body { margin: 0; background: var(--sp-bg); color: var(--sp-text);
-         font: 15px/1.5 'Inter', system-ui, -apple-system, sans-serif;
-         padding-bottom: env(safe-area-inset-bottom); }
-  .sp-wrap { max-width: 980px; margin: 0 auto; padding: 18px 14px 80px; }
-  .sp-hdr  { display: flex; align-items: center; gap: 10px; padding: 6px 0 18px; }
-  .sp-hdr a.back { display: inline-flex; width: 36px; height: 36px; border-radius: 8px;
-                   color: var(--sp-text); text-decoration: none;
-                   align-items: center; justify-content: center; }
-  .sp-hdr a.back:hover { background: var(--sp-border); }
-  .sp-hdr h1 { margin: 0; font-size: 20px; font-weight: 700; flex: 1; }
-  .sp-hdr .today { font-size: 12px; color: var(--sp-mute); }
+  /* No dark block: the tokens above already carry both themes, and the one
+     that used to live here set its own blue-black surfaces that no longer
+     match the app's warm charcoal. */
 
-  .sp-bucket { margin-bottom: 28px; }
+  body { margin: 0; background: var(--sp-bg); color: var(--sp-text);
+         font: 15px/1.5 var(--font-family);
+         padding-bottom: env(safe-area-inset-bottom); }
+  .sp-wrap { max-width: 980px; margin: 0 auto; padding: 14px 14px 80px; }
+  @media (min-width: 641px) { .sp-wrap { padding: 18px 20px 80px; } }
+
+  /* ── Header ── */
+  .sp-hdr { display: flex; align-items: center; gap: 8px; padding: 2px 0 12px; }
+  .sp-hdr a.back {
+    display: inline-flex; width: 36px; height: 36px; flex: none;
+    border-radius: var(--radius-md);
+    color: var(--color-text-secondary); text-decoration: none;
+    align-items: center; justify-content: center;
+  }
+  .sp-hdr a.back:hover { background: var(--color-surface-secondary); color: var(--sp-text); }
+  .sp-hdr a.back svg { width: 18px; height: 18px; }
+  .sp-hdr h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.02em; flex: 1; }
+  .sp-hdr .today {
+    font-family: var(--font-family-data); font-size: 12px;
+    color: var(--sp-soft); white-space: nowrap;
+  }
+
+  /* ── What is running, at the top ──
+     Mirrors the Roadmap's summary strip so the two Work pages answer
+     "where do I stand" the same way. */
+  .sp-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; }
+  .sp-summary[hidden] { display: none !important; }
+  .sp-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 11px; border-radius: var(--radius-full);
+    border: 1px solid transparent;
+    font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+  .sp-pill.is-active   { background: var(--color-success-light); color: var(--color-success-on-tint); border-color: var(--color-success-border); }
+  .sp-pill.is-upcoming { background: var(--color-primary-light); color: var(--color-primary-on-tint); border-color: var(--color-primary-border); }
+  .sp-pill.is-ending   { background: var(--color-warning-light); color: var(--color-warning-on-tint); border-color: var(--color-warning-border); }
+
+  .sp-bucket { margin-bottom: 24px; }
   .sp-bucket-h {
     display: flex; align-items: center; gap: 8px;
     font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
     color: var(--sp-mute); font-weight: 700; margin: 0 0 10px;
   }
-  .sp-bucket-h .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sp-soft); }
+  .sp-bucket-h .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sp-soft); flex: none; }
   .sp-bucket-h.is-active .dot   { background: var(--sp-success); }
   .sp-bucket-h.is-upcoming .dot { background: var(--sp-primary); }
   .sp-bucket-h.is-recent .dot   { background: var(--sp-soft); }
-  .sp-bucket-h .count { background: var(--sp-border); color: var(--sp-text);
-                        padding: 1px 8px; border-radius: 999px; font-size: 11px;
-                        font-weight: 700; margin-left: 4px; }
+  .sp-bucket-h .count {
+    background: var(--color-surface-secondary); color: var(--sp-mute);
+    padding: 1px 8px; border-radius: var(--radius-full);
+    font-family: var(--font-family-data); font-size: 11px; font-weight: 600;
+  }
 
-  .sp-grid { display: grid; gap: 10px;
-             grid-template-columns: 1fr; }
-  @media (min-width: 780px) { .sp-grid { grid-template-columns: 1fr 1fr; } }
-  @media (min-width: 1100px){ .sp-grid { grid-template-columns: 1fr 1fr 1fr; } }
+  /* One column on a phone, widening up. min() so the track can never be
+     wider than the screen it is on. */
+  .sp-grid { display: grid; gap: 10px; grid-template-columns: 1fr; }
+  @media (min-width: 780px)  { .sp-grid { grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); } }
 
   .sp-card {
-    display: block; text-decoration: none; color: inherit;
+    display: flex; flex-direction: column; gap: 8px;
+    text-decoration: none; color: inherit;
     background: var(--sp-surface); border: 1px solid var(--sp-border);
-    border-radius: 14px; padding: 14px 16px;
-    transition: border-color .12s, transform .12s;
+    border-radius: var(--radius-lg); padding: 14px 16px;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   }
-  .sp-card:hover { border-color: var(--sp-primary); transform: translateY(-1px); }
-  .sp-card .proj { font-size: 12px; color: var(--sp-mute); font-weight: 600; }
-  .sp-card h3 { margin: 4px 0 8px; font-size: 16px; font-weight: 700; color: var(--sp-text); }
-  .sp-card .dates { font-size: 12px; color: var(--sp-mute);
-                    display: flex; align-items: center; gap: 8px; }
-  .sp-card .dates .pill {
-    display: inline-block; padding: 1px 8px; border-radius: 999px;
-    background: var(--sp-border); color: var(--sp-text); font-weight: 600;
+  @media (hover: hover) {
+    .sp-card:hover { border-color: var(--color-border-strong); box-shadow: var(--shadow-md); }
   }
-  .sp-card.is-running { border-color: var(--sp-success); }
-  .sp-card.is-running .dates .pill { background: var(--sp-success); color: #fff; }
+  .sp-card .proj {
+    font-size: 11.5px; color: var(--sp-soft); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .sp-card h3 { margin: 0; font-size: 16px; font-weight: 700; color: var(--sp-text); line-height: 1.3; }
 
-  .sp-empty { text-align: center; padding: 28px 12px; color: var(--sp-soft); font-size: 13px;
-              border: 1px dashed var(--sp-border); border-radius: 12px; }
+  /* Dates read as "5 Oct – 18 Oct", written by JS from the ISO values in
+     data attributes. They used to print raw 2026-10-05 → 2026-10-18,
+     which is two dates you have to decode and still does not tell you
+     whether you are inside them. */
+  .sp-when {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px;
+    font-size: 12.5px; color: var(--sp-mute);
+  }
+  .sp-range { font-family: var(--font-family-data); }
+  .sp-rel { font-weight: 600; }
+  .sp-card.is-running .sp-rel { color: var(--color-success-on-tint); }
+  .sp-card.is-ending  .sp-rel { color: var(--color-warning-on-tint); }
+  .sp-card.is-overdue .sp-rel { color: var(--color-danger-on-tint); }
+
+  /* ── How far through a running sprint is ──
+     The question an active sprint actually raises. Only drawn when both
+     dates exist; a half-dated sprint gets nothing rather than a bar at
+     an invented position. */
+  .sp-prog { display: flex; flex-direction: column; gap: 4px; }
+  .sp-prog[hidden] { display: none !important; }
+  .sp-prog-bar {
+    height: 5px; border-radius: var(--radius-full);
+    background: var(--color-surface-sunken); overflow: hidden;
+  }
+  .sp-prog-fill {
+    height: 100%; border-radius: var(--radius-full);
+    background: var(--sp-success);
+    transition: width var(--motion-duration-slow) var(--motion-easing-standard);
+  }
+  .sp-card.is-ending .sp-prog-fill { background: var(--sp-warn); }
+  .sp-card.is-overdue .sp-prog-fill { background: var(--sp-danger); }
+  .sp-prog-txt {
+    font-family: var(--font-family-data); font-size: 11.5px;
+    color: var(--sp-soft); font-variant-numeric: tabular-nums;
+  }
+
+  .sp-empty {
+    text-align: center; padding: 28px 12px; color: var(--sp-soft); font-size: 13px;
+    border: 1px dashed var(--sp-border); border-radius: var(--radius-lg);
+  }
+  .sp-none {
+    text-align: center; padding: 48px 20px;
+    background: var(--sp-surface); border: 1px dashed var(--sp-border);
+    border-radius: var(--radius-lg); color: var(--sp-mute);
+  }
+  .sp-none svg { width: 32px; height: 32px; color: var(--sp-soft); margin-bottom: 10px; }
+  .sp-none h2 { margin: 0 0 6px; font-size: 17px; font-weight: 700; color: var(--sp-text); }
+  .sp-none p { margin: 0 auto; max-width: 46ch; font-size: 13.5px; line-height: 1.55; }
 </style>
 </head>
 <body>
@@ -88,42 +164,128 @@
     <span class="today">{{ today }}</span>
   </header>
 
+  <div class="sp-summary" id="sp-summary" hidden></div>
+
   {% macro render_bucket(rows, klass, label) %}
+    {# Only rendered when there is something in it. Four buckets that
+       always drew, three of them saying "Nothing here.", meant a phone
+       scrolled past three empty sections to reach the one with content. #}
+    {% if rows %}
     <section class="sp-bucket">
       <h2 class="sp-bucket-h is-{{ klass }}">
         <span class="dot"></span>{{ label }}
         <span class="count">{{ rows|length }}</span>
       </h2>
-      {% if rows %}
-        <div class="sp-grid">
-          {% for s in rows %}
-            <a class="sp-card {% if s.is_active %}is-running{% endif %}"
-               href="/projects/{{ s.project_id }}/tasks#tree">
-              <div class="proj">{{ s.project_name }}</div>
-              <h3>{{ s.name }}</h3>
-              <div class="dates">
-                {% if s.starts_on or s.ends_on %}
-                  <span class="pill">
-                    {{ s.starts_on or '—' }} → {{ s.ends_on or '—' }}
-                  </span>
-                {% else %}
-                  <span>No dates</span>
-                {% endif %}
-              </div>
-            </a>
-          {% endfor %}
-        </div>
-      {% else %}
-        <div class="sp-empty">Nothing here.</div>
-      {% endif %}
+      <div class="sp-grid">
+        {% for s in rows %}
+          <a class="sp-card {% if s.is_active %}is-running{% endif %}"
+             href="/projects/{{ s.project_id }}/tasks#tree"
+             data-start="{{ s.starts_on or '' }}"
+             data-end="{{ s.ends_on or '' }}"
+             data-bucket="{{ klass }}">
+            <div class="proj">{{ s.project_name }}</div>
+            <h3>{{ s.name }}</h3>
+            <div class="sp-when">
+              <span class="sp-range">
+                {%- if s.starts_on or s.ends_on -%}
+                  {{ s.starts_on or '—' }} – {{ s.ends_on or '—' }}
+                {%- else -%}
+                  No dates
+                {%- endif -%}
+              </span>
+              <span class="sp-rel"></span>
+            </div>
+            <div class="sp-prog" hidden>
+              <div class="sp-prog-bar"><div class="sp-prog-fill" style="width:0%"></div></div>
+              <span class="sp-prog-txt"></span>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
     </section>
+    {% endif %}
   {% endmacro %}
 
   {{ render_bucket(active,   'active',   'Active') }}
   {{ render_bucket(upcoming, 'upcoming', 'Upcoming') }}
   {{ render_bucket(no_dates, 'recent',   'Undated') }}
   {{ render_bucket(recent,   'recent',   'Recently ended') }}
+
+  {% if not active and not upcoming and not no_dates and not recent %}
+    <div class="sp-none">
+      <i data-feather="flag"></i>
+      <h2>No sprints yet</h2>
+      <p>A sprint is a time-box on a project — give one a start and an end date
+         and it shows up here, with how far through it you are.</p>
+    </div>
+  {% endif %}
 </main>
-<script>document.addEventListener("DOMContentLoaded",()=>{if(window.feather)feather.replace()});</script>
+
+<script>
+/* Turn the ISO dates the server rendered into something readable, and say
+   how far through a running sprint is. All of it from data attributes and
+   the shared date helpers, so the route is untouched. */
+document.addEventListener("DOMContentLoaded", () => {
+  if (window.feather) feather.replace();
+
+  const D = window.DPDates;
+  if (!D) return;
+  const today = D.todayISO();
+  let active = 0, upcoming = 0, ending = 0;
+
+  document.querySelectorAll(".sp-card").forEach(card => {
+    const start = card.dataset.start || "";
+    const end = card.dataset.end || "";
+    const range = card.querySelector(".sp-range");
+    const rel = card.querySelector(".sp-rel");
+
+    if (start && end) {
+      range.textContent = `${D.shortDay(start)} – ${D.shortDay(end)}`;
+    } else if (start) {
+      range.textContent = `from ${D.shortDay(start)}`;
+    } else if (end) {
+      range.textContent = `until ${D.shortDay(end)}`;
+    }
+
+    const prog = D.progressThrough(start, end, today);
+    const bucket = card.dataset.bucket;
+
+    if (prog && !prog.notStarted && !prog.elapsed) {
+      // Running right now.
+      active++;
+      // "Ending" once there are two days or fewer left, which is when a
+      // sprint stops being something you are working in and starts being
+      // something you have to close out.
+      if (prog.remaining <= 2) { card.classList.add("is-ending"); ending++; }
+      rel.textContent = prog.remaining === 0
+        ? "ends today"
+        : `${prog.remaining} day${prog.remaining === 1 ? "" : "s"} left`;
+
+      const box = card.querySelector(".sp-prog");
+      box.hidden = false;
+      box.querySelector(".sp-prog-fill").style.width = prog.pct + "%";
+      box.querySelector(".sp-prog-txt").textContent =
+        `Day ${prog.day} of ${prog.total}`;
+    } else if (prog && prog.notStarted) {
+      if (bucket === "upcoming") upcoming++;
+      rel.textContent = D.relativeDay(start, today);
+    } else if (prog && prog.elapsed) {
+      rel.textContent = `ended ${D.relativeDay(end, today).replace(/^in /, "")}`;
+    } else if (end && !start) {
+      rel.textContent = D.relativeDay(end, today);
+    }
+  });
+
+  const parts = [];
+  if (active)   parts.push(`<span class="sp-pill is-active">${active} running</span>`);
+  if (ending)   parts.push(`<span class="sp-pill is-ending">${ending} ending soon</span>`);
+  if (upcoming) parts.push(`<span class="sp-pill is-upcoming">${upcoming} upcoming</span>`);
+  const summary = document.getElementById("sp-summary");
+  if (summary && parts.length) {
+    summary.innerHTML = parts.join("");
+    summary.hidden = false;
+  }
+});
+</script>
 </body>
 </html>

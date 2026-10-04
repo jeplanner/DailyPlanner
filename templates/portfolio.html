@@ -23,7 +23,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--pf-bg);color:var(
 .pf-header-btns{display:flex;gap:6px;}
 
 /* KPI Row */
-.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:20px;}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(160px, 100%),1fr));gap:10px;margin-bottom:20px;}
 
 /* Chart sizing — Chart.js with maintainAspectRatio:false needs a
    parent with an explicit height, otherwise the canvas grows to

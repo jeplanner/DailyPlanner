@@ -48,7 +48,7 @@
     }
     .mt-tab:hover { color: var(--color-text); }
     .mt-tab.is-active {
-      color: var(--color-primary);
+      color: var(--color-primary-ink);
       border-bottom-color: var(--color-primary);
     }
     .mt-tab-count {
@@ -62,7 +62,7 @@
     }
     .mt-tab.is-active .mt-tab-count {
       background: var(--color-primary-light);
-      color: var(--color-primary);
+      color: var(--color-primary-ink);
     }
 
     .mt-toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; align-items: center; }
@@ -85,7 +85,7 @@
     /* Cards */
     .mt-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
       gap: 14px;
     }
     .mt-card {
@@ -197,6 +197,36 @@
 
     @media (max-width: 700px) {
       .mt-app { padding: 16px 14px 80px; }
+      .mt-head { align-items: stretch; gap: 12px; }
+      .mt-head h1 { font-size: 23px; }
+      /* Reachable with a thumb instead of pinned to the far corner. */
+      .mt-cta { justify-content: center; width: 100%; padding: 12px 16px; }
+
+      /* A TAB BAR SCROLLS, IT DOES NOT WRAP. These were flex-wrap:wrap,
+         so on a phone the tabs broke onto two or three lines and stopped
+         reading as one row of choices. Sideways scroll inside the bar is
+         the pattern people already know, and it keeps the underline that
+         marks the current tab on the same line as the rest. */
+      .mt-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+      }
+      .mt-tabs::-webkit-scrollbar { display: none; }
+      .mt-tab {
+        flex: 0 0 auto;
+        /* These are plain <a>s, so the global 44px touch floor (which
+           keys off button / .btn / [role=button]) never reached them. */
+        min-height: 44px;
+        padding: 10px 14px;
+      }
+
+      .mt-toolbar { gap: 8px; }
+      .mt-search { flex: 1 1 100%; padding: 11px 14px; }
+      .mt-grid { gap: 10px; }
+      .mt-card { padding: 15px 15px 13px; }
     }
   </style>
 {% include "_pwa_head.html" %}

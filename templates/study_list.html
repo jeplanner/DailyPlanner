@@ -59,7 +59,7 @@
     }
     .st-tab:hover { color: var(--color-text); }
     .st-tab.is-active {
-      color: var(--color-primary);
+      color: var(--color-primary-ink);
       border-bottom-color: var(--color-primary);
     }
     .st-tab-count {
@@ -73,7 +73,7 @@
     }
     .st-tab.is-active .st-tab-count {
       background: var(--color-primary-light);
-      color: var(--color-primary);
+      color: var(--color-primary-ink);
     }
     .st-tab-count.due { background: var(--color-warning-light); color: var(--color-warning-on-tint); }
 
@@ -101,7 +101,7 @@
     /* Cards */
     .st-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
       gap: 14px;
     }
     .st-card {

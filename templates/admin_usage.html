@@ -16,7 +16,7 @@
   h2 { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
        color: var(--color-text-secondary); margin: 26px 0 10px; }
 
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 10px; }
   .card { background: var(--color-surface); border: 1px solid var(--color-border);
           border-radius: 12px; padding: 13px 15px; }
   .card .n { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
@@ -31,7 +31,7 @@
   tr:last-child td { border-bottom: none; }
   td .bar { height: 6px; border-radius: 999px; background: var(--color-border); margin-top: 5px; overflow: hidden; }
   td .bar > i { display: block; height: 100%; background: var(--color-primary); border-radius: 999px; }
-  a { color: var(--color-primary); text-decoration: none; }
+  a { color: var(--color-primary-ink); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
   .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;

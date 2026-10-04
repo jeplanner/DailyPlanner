@@ -31,11 +31,11 @@
     cursor: pointer; border: 1px solid var(--color-border); background: var(--color-surface);
     color: var(--color-text); text-decoration: none;
   }
-  .btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .btn:hover { border-color: var(--color-primary); color: var(--color-primary-ink); }
   .btn-primary { background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary); }
   .btn-primary:hover { color: var(--color-on-primary); filter: brightness(1.05); }
 
-  .tx-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .tx-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 10px; margin-bottom: 18px; }
   .tx-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 14px; }
   .tx-card-label { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--color-text-secondary); }
   .tx-card-val { font-size: 22px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; }
@@ -74,7 +74,7 @@
     color: var(--color-text-secondary); font-size: 14px;
   }
   .tx-empty strong { display: block; color: var(--color-text); font-size: 16px; margin-bottom: 6px; }
-  .tx-empty a { color: var(--color-primary); text-decoration: none; font-weight: 600; }
+  .tx-empty a { color: var(--color-primary-ink); text-decoration: none; font-weight: 600; }
 
   .tx-incomplete-banner {
     background: var(--color-warning-light); border: 1px solid var(--color-warning-border); color: var(--color-warning-on-tint);

@@ -102,7 +102,7 @@
     flex: 1; min-width: 0;
   }
   .tr-title a { color: inherit; text-decoration: none; }
-  .tr-title a:hover { color: var(--color-primary); }
+  .tr-title a:hover { color: var(--color-primary-ink); }
   .tr-meta {
     display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
     font-size: 11.5px; color: var(--color-text-secondary);
@@ -168,7 +168,7 @@
     transition: background .12s, color .12s, border-color .12s;
   }
   .tr-icon-btn svg { width: 15px; height: 15px; }
-  .tr-icon-btn:hover { background: var(--color-surface-secondary); color: var(--color-primary); border-color: var(--color-primary); }
+  .tr-icon-btn:hover { background: var(--color-surface-secondary); color: var(--color-primary-ink); border-color: var(--color-primary); }
   .tr-icon-btn.danger:hover { color: var(--color-danger-on-tint); border-color: #b91c1c; }
   .tr-icon-btn.success { color: var(--color-success-on-tint); border-color: color-mix(in srgb, var(--color-success) 30%, var(--color-border)); }
   .tr-card.is-done { opacity: .6; }
@@ -184,7 +184,7 @@
   }
   .tr-card.is-playing .tr-player { display: block; }
   .tr-player iframe { width: 100%; height: 100%; border: 0; display: block; }
-  .tr-icon-btn.is-active { color: var(--color-primary); border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 8%, transparent); }
+  .tr-icon-btn.is-active { color: var(--color-primary-ink); border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 8%, transparent); }
 
   /* Per-item notes panel — appears below the player when toggled */
   .tr-notes {
@@ -222,7 +222,7 @@
   }
   /* Indicator on the action button when this item already has notes */
   .tr-icon-btn.has-notes {
-    color: var(--color-primary);
+    color: var(--color-primary-ink);
     border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
   }
   .tr-icon-btn.has-notes::after {

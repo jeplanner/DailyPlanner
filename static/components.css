@@ -575,7 +575,7 @@
 .chip.is-active,
 .chip[aria-pressed="true"] {
     background: var(--color-primary-light);
-    color: var(--color-primary);
+    color: var(--color-primary-ink);
     border-color: var(--color-primary);
 }
 
@@ -590,7 +590,7 @@
     line-height: var(--line-height-snug);
     border: 1px solid transparent;
 }
-.alert-info     { background: var(--color-info-light);    color: var(--color-primary);        border-color: var(--color-primary-light); }
+.alert-info     { background: var(--color-info-light);    color: var(--color-primary-ink);        border-color: var(--color-primary-light); }
 .alert-success  { background: var(--color-success-light); color: var(--color-success-strong); border-color: var(--color-success-border); }
 .alert-warning  { background: var(--color-warning-light); color: var(--color-warning-strong); border-color: var(--color-warning-border); }
 .alert-danger   { background: var(--color-danger-light);  color: var(--color-danger-strong);  border-color: var(--color-danger-border); }

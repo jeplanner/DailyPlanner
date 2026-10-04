@@ -65,7 +65,7 @@
     /* Program cards */
     .pg-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
       gap: 14px;
     }
     .pg-card {
@@ -240,7 +240,42 @@
 
     @media (max-width: 700px) {
       .pg-app { padding: 16px 14px 80px; }
-      .pg-portfolio { grid-template-columns: 1fr; }
+
+      /* The RAG strip STAYS three across. It used to collapse to one
+         column, which turned three numbers into three tall tiles filling
+         the whole first screen — you had to scroll past the summary to
+         reach any actual program. Stacked content instead of a row keeps
+         each tile narrow enough to fit. */
+      .pg-portfolio { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      .pg-rag-tile {
+        flex-direction: column; align-items: flex-start; gap: 6px;
+        padding: 10px 12px;
+      }
+      .pg-rag-count { font-size: 19px; }
+      .pg-rag-label { font-size: 10px; letter-spacing: .03em; margin-top: 0; }
+
+      .pg-head { align-items: stretch; gap: 12px; }
+      .pg-head h1 { font-size: 23px; }
+      /* A full-width primary action is reachable with a thumb; a small
+         one floated to the right edge is not. */
+      .pg-cta { justify-content: center; width: 100%; padding: 12px 16px; }
+
+      /* Cards size to their content on a phone. A 220px floor meant you
+         saw barely two per screen, most of it whitespace. */
+      .pg-card { min-height: 0; padding: 15px 15px 14px; }
+      .pg-grid { gap: 10px; }
+
+      /* The review date no longer reserves 110px it cannot have. */
+      .pg-history-row { gap: 10px; padding: 13px 14px; flex-wrap: wrap; }
+      .pg-history-date { min-width: 0; }
+      .pg-history-cadence { flex: 1 0 auto; }
+
+      .pg-format { padding: 15px 16px; }
+    }
+
+    /* Very narrow: two across rather than three squeezed. */
+    @media (max-width: 380px) {
+      .pg-portfolio { grid-template-columns: 1fr 1fr; }
     }
   </style>
 {% include "_pwa_head.html" %}
@@ -351,7 +386,7 @@
               {% if hc > 1 %}
                 <a href="/programs/history/{{ (p.program_name or '')|urlencode }}"
                    onclick="event.stopPropagation()"
-                   style="color:var(--color-primary);text-decoration:none">
+                   style="color: var(--color-primary-ink);text-decoration:none">
                   <i data-feather="clock"></i> {{ hc }} reviews
                 </a>
               {% endif %}

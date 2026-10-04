@@ -3762,6 +3762,38 @@ def test_time_announcer_scheduling_behaviour():
     assert "0 failed" in r.stdout, r.stdout
 
 
+def test_the_roadmap_says_what_is_late():
+    """The roadmap's date maths, run against the shipped file.
+
+    Reported 2026-10-04: these pages needed to be usable on a phone. Two
+    things were wrong on this one and both are date logic, so both are
+    checked here rather than by eye:
+
+    - The page never said whether a row was late. Every block rendered
+      identically, so a task three weeks overdue looked like one due next
+      month. The block labels now carry "3 days late" / "Today" /
+      "in 2 weeks", computed from each block's own date against the
+      user's timezone.
+    - Rescheduling was HTML5 drag-and-drop ONLY, which fires no events at
+      all on a touch screen, so the page was read-only on a phone. The
+      reschedule sheet offers Today / Tomorrow / Next Monday / In a week,
+      and "Next Monday" has to be strictly in the future on all seven
+      weekdays — the off-by-one there would silently schedule work into
+      the past on a Monday.
+
+    Month ends, year ends and a leap day are included because the helper
+    does its arithmetic in UTC to avoid a DST shift moving a date by one.
+    """
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    r = subprocess.run(["node", "tests/js/timeline_dates.test.js"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "0 failed" in r.stdout, r.stdout
+
+
 # ── THE CHAIN (services/streak.py) ─────────────────────────────────────
 # Asked for 2026-08-22: "can you gamify something which will make me
 # motivated". Calibrated against the real numbers, which were 9 checklist
@@ -5096,8 +5128,13 @@ def test_the_menu_can_be_closed_from_anywhere_in_it():
     header = nav.split(".sidebar-header{")[1].split("}")[0]
     assert "position:sticky" in header, "Close scrolls out of reach again"
     assert "top:0" in header
-    # Opaque, or the list scrolls visibly underneath it.
-    assert "background:#ffffff" in header
+    # Opaque, or the list scrolls visibly underneath it. Asserted on the
+    # PROPERTY, not on a literal #ffffff: the nav is token-driven now, and
+    # --color-surface is just as opaque while also being right in dark
+    # mode, where the old literal was wrong. A transparent background, or
+    # none at all, is the regression this guards.
+    assert "background:" in header, "no background — the list shows through Close"
+    assert "transparent" not in header, "a see-through sticky header is the bug"
     assert ".sidebar-close{min-width:44px" in nav
     # Escape must still work, for the desktop half of the same problem.
     assert 'e.key === "Escape"' in nav and "closeSidebar()" in nav
@@ -5983,6 +6020,75 @@ def test_the_added_row_is_the_same_row_the_list_draws(auth_client, monkeypatch):
     # client guess is how a task sits under Today until you refresh.
     assert body["group"], "no group, so the client cannot place the row"
     assert f'data-group="{body["group"]}"' in body["html"]
+
+
+def test_no_card_grid_is_wider_than_the_phone_it_is_on():
+    """`repeat(auto-fill, minmax(340px, 1fr))` overflows a 360px phone.
+
+    The minimum in minmax() is a HARD floor: the track is at least 340px
+    whatever the container is, so inside a 14px-padded phone column the
+    grid is wider than the screen. body has overflow-x:hidden, so it does
+    not pan — it CLIPS, and the right edge of every card is simply gone,
+    which is far harder to notice than a scrollbar.
+
+    Reported 2026-10-04 as the Work pages not being usable on a phone;
+    24 grids across the app had it, Programs at 340px being the worst.
+    The fix is to let the floor collapse to the container:
+    minmax(min(340px, 100%), 1fr).
+
+    Guarded here because the broken form is the one every snippet and
+    every habit reaches for, so it comes back unless something objects.
+    """
+    import glob
+    import re
+
+    bad = []
+    pattern = re.compile(r"repeat\(\s*auto-(?:fill|fit)\s*,\s*minmax\(\s*(\d+)px")
+    for path in (glob.glob("templates/*.html") + glob.glob("static/*.css")
+                 + glob.glob("static/v2/*.css")):
+        text = open(path, encoding="utf-8").read()
+        for m in pattern.finditer(text):
+            line = text[:m.start()].count("\n") + 1
+            bad.append(f"{path}:{line} minmax({m.group(1)}px, …) — use minmax(min({m.group(1)}px, 100%), …)")
+    assert not bad, (
+        "these grid tracks have a hard pixel floor and will clip on a narrow "
+        "screen:\n  " + "\n  ".join(bad)
+    )
+
+
+def test_the_roadmap_can_be_rescheduled_without_a_mouse(auth_client, monkeypatch):
+    """Asked 2026-10-04: make the Work pages usable on a phone.
+
+    The Roadmap was the one that genuinely was not. Its only way to move a
+    task was HTML5 drag-and-drop, which fires no dragstart and no drop on
+    a touch screen — so on a phone you could read the plan and not change
+    it. It also never said what was late: every block rendered the same,
+    so three weeks overdue looked like due next month.
+
+    Both fixes are behaviour, not markup, so they are checked by running
+    the real static JS against the page Flask renders. Three blocks are
+    seeded either side of a fixed today so late / today / ahead are all
+    exercised, and the fixture's own dates are what the assertions use.
+    """
+    import routes.timeline as T
+    tasks = [
+        {"task_id": "late-1", "project_id": "p1", "project_name": "Platform",
+         "task_text": "Apply the RLS migration", "status": "todo",
+         "due_date": "2026-09-20"},
+        {"task_id": "today-1", "project_id": "p1", "project_name": "Platform",
+         "task_text": "Rotate the Supabase key", "status": "in progress",
+         "due_date": "2026-10-04"},
+        {"task_id": "ahead-1", "project_id": "p2", "project_name": "Interview prep",
+         "task_text": "Finish the P1 examples", "status": "todo",
+         "due_date": "2026-10-18"},
+    ]
+    monkeypatch.setattr(T, "load_timeline_tasks", lambda *a, **k: tasks)
+    monkeypatch.setattr(T, "get", lambda *a, **k: [
+        {"project_id": "p1", "name": "Platform"},
+        {"project_id": "p2", "name": "Interview prep"},
+    ])
+    _node_dom_test("tests/js/roadmap_panel.test.js",
+                   auth_client.get("/projects/timeline").get_data(as_text=True))
 
 
 def test_the_sidebar_collapses_in_a_real_dom(auth_client, monkeypatch):

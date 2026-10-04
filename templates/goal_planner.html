@@ -27,7 +27,7 @@
   /* ── The hero: one pinned goal, the only place that gets to be loud ── */
   .hero { border: 1px solid var(--color-border); border-radius: 16px; padding: 20px 20px 16px;
           margin-bottom: 14px; background: var(--color-surface); position: relative; overflow: hidden; }
-  .hero::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 5px; background: #64748b; }
+  .hero::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 5px; background: var(--color-text-muted); }
   .hero[data-tone="soon"]::before    { background: var(--color-warning); }
   .hero[data-tone="urgent"]::before  { background: var(--color-danger); }
   .hero[data-tone="overdue"]::before { background: var(--color-danger-strong); }
@@ -37,7 +37,14 @@
      without them the digits jiggle every tick and the eye keeps re-reading. */
   .clock { display: flex; align-items: flex-end; gap: 4px; flex-wrap: wrap; }
   .clock .seg { display: flex; flex-direction: column; align-items: center; min-width: 62px; }
-  .clock .seg b { font-size: 52px; font-weight: 900; line-height: 1; letter-spacing: -.03em;
+  /* The countdown is the page, and it reticks every second. Set in the
+     data face so the digits have a fixed advance width: with proportional
+     figures a 1 is narrower than a 0, so the whole clock shifted sideways
+     on most ticks and the DAYS : HRS : MINS separators moved with it.
+     Weight 600 rather than 900 because 600 is the heaviest Plex Mono this
+     app loads — asking for 900 would get a synthesised bold. */
+  .clock .seg b { font-family: var(--font-family-data);
+                  font-size: 52px; font-weight: 600; line-height: 1; letter-spacing: -.02em;
                   font-variant-numeric: tabular-nums; }
   .clock .seg i { font-style: normal; font-size: 10px; font-weight: 800; letter-spacing: .1em;
                   text-transform: uppercase; color: var(--color-text-secondary); margin-top: 4px; }
@@ -120,15 +127,15 @@
 
   .coach { margin-top: 12px; padding: 11px 13px; border-radius: 10px; font-size: 13.5px;
            font-weight: 700; line-height: 1.55; border-left: 4px solid; }
-  .coach[data-tone="celebrate"] { background: var(--color-success-light); border-color: #059669; color: var(--color-success-on-tint); }
+  .coach[data-tone="celebrate"] { background: var(--color-success-light); border-color: var(--color-success); color: var(--color-success-on-tint); }
   .coach[data-tone="cheer"]     { background: var(--color-primary-light); border-color: var(--color-primary); color: var(--color-primary-ink); }
-  .coach[data-tone="push"]      { background: var(--color-warning-light); border-color: #d97706; color: #78350f; }
+  .coach[data-tone="push"]      { background: var(--color-warning-light); border-color: var(--color-warning); color: var(--color-warning-on-tint); }
   .coach[data-tone="scold"]     { background: var(--color-danger-light); border-color: var(--color-danger); color: var(--color-danger-on-tint); }
-  .coach[data-tone="alarm"]     { background: var(--color-danger-light); border-color: #991b1b; color: var(--color-danger-on-tint); }
+  .coach[data-tone="alarm"]     { background: var(--color-danger-light); border-color: var(--color-danger); color: var(--color-danger-on-tint); }
 
   .budget { margin-top: 10px; font-size: 13px; font-weight: 700; padding: 9px 12px; border-radius: 9px;
             background: var(--color-bg); border: 1px dashed var(--color-border); }
-  .budget.bad { border-color: #dc2626; color: #991b1b; } html.dark .budget.bad { color:#fca5a5; }
+  .budget.bad { border-color: var(--color-danger); color: var(--color-danger-on-tint); }
 
   /* ── The quiet list ── */
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 11px 13px; border: 1px solid var(--color-border);
@@ -143,7 +150,7 @@
   .row[data-tone="urgent"] .rc, .row[data-tone="overdue"] .rc { color: var(--color-danger-on-tint); }
   .row .pin { font-size: 11px; font-weight: 800; border: 1px solid var(--color-border); background: var(--color-bg);
               border-radius: 999px; padding: 3px 9px; cursor: pointer; color: var(--color-text-secondary); }
-  .row .pin.on { background: var(--color-primary-hover); color: #fff; border-color: var(--color-primary); }
+  .row .pin.on { background: var(--color-primary-hover); color: var(--color-on-primary); border-color: var(--color-primary); }
   .row .prog { font-size: 11.5px; font-weight: 800; color: var(--color-text-secondary); white-space: nowrap; }
 
   .newbox { border: 1px solid var(--color-border); border-radius: 12px; padding: 12px; margin-bottom: 14px;
@@ -157,7 +164,7 @@
   .newbox .dl-row select { flex: 0 0 116px; }
   .newbox .dl-row input { flex: 1; min-width: 0; }
   .newbox .dl-row input[hidden] { display: none; }
-  .hero.nodate::before { background: #64748b; }
+  .hero.nodate::before { background: var(--color-text-muted); }
   .nodate-msg { font-size: 13.5px; font-weight: 600; color: var(--color-text-secondary);
                 margin-bottom: 10px; }
   .inline-dl { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }

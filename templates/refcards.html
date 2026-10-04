@@ -189,7 +189,7 @@ button { font-family: inherit; }
 /* ── Overview stats ────────────────────────────────────── */
 .v-overview {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   gap: 10px;
   margin-bottom: 18px;
 }
@@ -252,7 +252,7 @@ button { font-family: inherit; }
 /* ── Card list ─────────────────────────────────────────── */
 .v-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   gap: 12px;
 }
 .v-card {
@@ -409,7 +409,7 @@ button { font-family: inherit; }
 /* ── Instrument picker grid (Add flow) ──────────────────── */
 .v-picker-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(130px, 100%), 1fr));
   gap: 10px;
 }
 .v-picker-item {
@@ -577,7 +577,7 @@ textarea.v-fi { resize: vertical; min-height: 70px; }
 }
 .v-port-kpi {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }

@@ -109,7 +109,7 @@ body {
   border: none;
   border-radius: 9px;
   background: var(--g-primary);
-  color: #fff;
+  color: var(--color-on-primary);
   font-size: 13px;
   font-weight: 600;
   font-family: inherit;

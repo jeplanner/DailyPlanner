@@ -1,228 +1,608 @@
-/* ═══════════════════════════════════════════════════════════
-   ROADMAP / TIMELINE — responsive + dark-mode
-   Reuses design-system tokens so it stays in sync with the rest
-   of the app. The previous version had a fixed 120px left rail
-   margin and absolute-positioned date labels which broke below
-   ~720px viewport (date labels clipped, cards squashed).
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════════
+   ROADMAP / TIMELINE
+
+   A vertical rail, phone first. The rail is the only structure; state
+   (late / today / ahead) is carried by one small pill and the colour of
+   the dot, not by repainting whole cards — a roadmap where every late
+   row is a red block is unreadable the moment you are behind on more
+   than a couple of things.
+
+   Sizes and colours come from design-system.css so this page stays in
+   step with the rest of the app.
+   ═══════════════════════════════════════════════════════════════════════ */
 
 body {
-  font-family: var(--font-family, 'Inter', system-ui, sans-serif);
-  background: var(--color-bg, #f5f6f8);
-  color: var(--color-text, #0f172a);
+  font-family: var(--font-family);
+  background: var(--color-bg);
+  color: var(--color-text);
   margin: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0);
   -webkit-font-smoothing: antialiased;
 }
 
 .container {
   max-width: 1100px;
   margin: 0 auto;
-  padding: 18px 20px 80px;
+  padding: 14px 14px 80px;
+}
+@media (min-width: 641px) {
+  .container { padding: 18px 20px 80px; }
 }
 
-/* ───────────── HEADER ───────────── */
+/* ───────────────────────────── HEADER ───────────────────────────── */
 .timeline-header {
-  display: flex; flex-wrap: wrap; gap: 12px;
-  justify-content: space-between; align-items: center;
-  margin: 6px 0 22px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin: 2px 0 14px;
 }
-.timeline-header .left h2 {
-  font-size: 22px; font-weight: 800; margin: 0;
-  letter-spacing: -.01em;
-  color: var(--color-text, #0f172a);
+.timeline-header .left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
-.controls {
-  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+.timeline-header h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -.02em;
+  color: var(--color-text);
+}
+.tl-sub {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
 }
 
-/* Zoom toggle — segmented control matching the design-system pattern */
+/* Back to the parent page. Sprints already does this; the roadmap used
+   to offer "Back" at the very bottom of the scroll, pointing at the
+   Quick Bucket rather than at anything you had come from. */
+.tl-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+}
+.tl-back:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+.tl-back svg { width: 18px; height: 18px; }
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Zoom toggle — the segmented pattern from the design system. */
 .zoom-toggle {
-  display: inline-flex; gap: 0;
-  background: var(--color-surface-sunken, #eef0f3);
-  border: 1px solid var(--color-border, #e5e7eb);
-  border-radius: 9px;
+  display: inline-flex;
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   padding: 2px;
+  flex: none;
 }
 .zoom-toggle button {
-  padding: 6px 14px;
-  border: none; background: transparent;
-  border-radius: 7px;
-  font: inherit; font-size: 13px; font-weight: 600;
-  color: var(--color-text-secondary, #64748b);
+  padding: 7px 14px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
   cursor: pointer;
-  transition: background .12s, color .12s, box-shadow .12s;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 .zoom-toggle button.active {
-  background: var(--color-surface, #fff);
-  color: var(--color-text, #0f172a);
-  box-shadow: 0 1px 2px rgba(15,23,42,.08);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-xs);
 }
 
-/* Project filter dropdown */
+/* Project filter */
 .controls select {
   appearance: none;
   padding: 8px 32px 8px 12px;
-  border: 1px solid var(--color-border, #e5e7eb);
-  border-radius: 9px;
-  background: var(--color-surface, #fff);
-  color: var(--color-text, #0f172a);
-  font: inherit; font-size: 13px; font-weight: 500;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg>");
+  /* The chevron is drawn with currentColor so it survives a theme flip;
+     the old one hard-coded a slate stroke and vanished in dark mode. */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg>");
   background-repeat: no-repeat;
   background-position: right 10px center;
   max-width: 220px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
-.controls select:focus {
+.controls select:focus-visible {
   outline: none;
-  border-color: var(--color-primary, #2563eb);
-  box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.18));
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-ring);
 }
 
-/* ───────────── TIMELINE RAIL ─────────────
-   Single vertical line on the left, dots mark each block.
-   No fixed left margin — uses padding-left on each block so the
-   card area always sizes to the viewport. */
-.timeline {
-  position: relative;
-  padding-left: 0;
+/* ─────────────────── WHAT IS LATE, AT THE TOP ─────────────────── */
+.tl-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 18px;
 }
+.tl-summary[hidden] { display: none !important; }
+.tl-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 11px;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tl-pill.is-late  { background: var(--color-danger-light);  color: var(--color-danger-on-tint);  border-color: var(--color-danger-border); }
+.tl-pill.is-today { background: var(--color-primary-light); color: var(--color-primary-on-tint); border-color: var(--color-primary-border); }
+.tl-pill.is-ahead { background: var(--color-surface-secondary); color: var(--color-text-secondary); border-color: var(--color-border); }
+
+/* The pills are buttons — each one jumps to the first block of its kind,
+   which is the shortcut that matters when the roadmap opens on work from
+   months ago. They have to LOOK pressable, hence the cursor and the lift. */
+button.tl-pill {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 32px;
+  transition: filter var(--transition-fast), transform var(--transition-fast);
+}
+@media (pointer: coarse) { button.tl-pill { min-height: 44px; } }
+button.tl-pill:hover { filter: brightness(.97); }
+button.tl-pill:active { transform: scale(.97); }
+
+/* Where the jump landed, said briefly. Without it a smooth scroll ends
+   and you have to work out which row you were sent to. */
+.time-block.just-jumped .time-label { animation: tlJumped 1.4s var(--motion-easing-standard); }
+@keyframes tlJumped {
+  0%, 60% { background: var(--color-warning-light); box-shadow: 0 0 0 4px var(--color-warning-light); border-radius: 4px; }
+  100%    { background: transparent; box-shadow: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .time-block.just-jumped .time-label { animation: none; }
+}
+
+/* ─────────────────────────── THE RAIL ─────────────────────────── */
+.timeline { position: relative; }
 .timeline::before {
   content: "";
   position: absolute;
-  left: 11px; top: 4px; bottom: 4px;
+  left: 8px; top: 4px; bottom: 4px;
   width: 2px;
-  background: var(--color-border, #e5e7eb);
+  background: var(--color-border);
   border-radius: 1px;
+}
+@media (min-width: 641px) {
+  .timeline::before { left: 11px; }
 }
 
 .time-block {
   position: relative;
-  padding-left: 36px;
-  margin-bottom: 22px;
+  padding-left: 28px;
+  margin-bottom: 18px;
+}
+@media (min-width: 641px) {
+  .time-block { padding-left: 36px; margin-bottom: 22px; }
 }
 
-/* Date label + dot share a row at the top of the block.
-   Dot sits on the rail; label is to its right. */
 .time-node {
   position: relative;
-  margin-left: -36px;
+  margin-left: -28px;
   margin-bottom: 8px;
-  display: flex; align-items: center; gap: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-height: 24px;
+}
+@media (min-width: 641px) {
+  .time-node { margin-left: -36px; gap: 14px; }
 }
 .time-node .dot {
   position: relative;
-  width: 14px; height: 14px;
-  margin-left: 5px;          /* aligns with rail at left:11px (centre 12, dot half 7 → 5) */
-  background: var(--color-primary, #2563eb);
+  width: 12px; height: 12px;
+  margin-left: 2px;
+  background: var(--color-border-strong);
   border-radius: 50%;
-  box-shadow: 0 0 0 4px var(--color-bg, #f5f6f8);
+  /* The ring punches the dot out of the rail behind it. */
+  box-shadow: 0 0 0 4px var(--color-bg);
   flex: 0 0 auto;
 }
-html.dark .time-node .dot { box-shadow: 0 0 0 4px var(--color-bg); }
-
-.time-label {
-  font-size: 13px; font-weight: 700;
-  color: var(--color-text, #0f172a);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: .01em;
+@media (min-width: 641px) {
+  .time-node .dot { width: 14px; height: 14px; margin-left: 5px; }
 }
 
-/* ───────────── CARDS ───────────── */
+.time-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+  font-family: var(--font-family-data);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+.time-count {
+  font-family: var(--font-family-data);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-secondary);
+  color: var(--color-text-secondary);
+}
+/* "3 days late" / "Today" / "in 2 weeks" — the page's whole point is
+   knowing which of those a row is, and it used to say none of them. */
+.time-when {
+  font-family: var(--font-family);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  letter-spacing: 0;
+}
+
+.time-block.is-late  .dot { background: var(--color-danger); }
+.time-block.is-late  .time-when { color: var(--color-danger-on-tint); }
+.time-block.is-today .dot {
+  background: var(--color-primary);
+  /* Today gets the only halo on the page. */
+  box-shadow: 0 0 0 4px var(--color-bg), 0 0 0 6px var(--color-primary-light);
+}
+.time-block.is-today .time-when { color: var(--color-primary-on-tint); }
+.time-block.is-today .time-label { color: var(--color-primary-ink); }
+
+/* ──────────────────────────── CARDS ──────────────────────────── */
 .time-content {
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .timeline-card {
-  background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, #e5e7eb);
-  border-radius: 10px;
-  padding: 12px 14px;
-  cursor: grab;
-  box-shadow: 0 1px 2px rgba(15,23,42,.04);
-  transition: transform .14s ease, box-shadow .14s ease, border-color .14s;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 11px 11px 11px 13px;
+  box-shadow: var(--shadow-xs);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   word-break: break-word;
 }
-.timeline-card:hover {
-  transform: translateY(-1px);
-  border-color: var(--color-border-strong, #d1d5db);
-  box-shadow: 0 6px 16px rgba(15,23,42,.08);
+/* Only a mouse can drag, so only a mouse gets the grab cursor. */
+@media (hover: hover) and (pointer: fine) {
+  .timeline-card { cursor: grab; }
+  .timeline-card:active { cursor: grabbing; }
+  .timeline-card:hover {
+    border-color: var(--color-border-strong);
+    box-shadow: var(--shadow-md);
+  }
 }
-.timeline-card:active { cursor: grabbing; }
+.time-block.is-late .timeline-card {
+  /* A hairline on the leading edge, not a red card. */
+  box-shadow: inset 3px 0 0 0 var(--color-danger), var(--shadow-xs);
+}
 
-html.dark .timeline-card:hover { border-color: var(--color-border-strong); box-shadow: 0 8px 22px rgba(0,0,0,.45); }
-
+.card-main { flex: 1; min-width: 0; }
 .card-title {
-  font-weight: 600; font-size: 14px; line-height: 1.4;
-  margin-bottom: 4px;
-  color: var(--color-text, #0f172a);
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--color-text);
 }
 .card-meta {
-  font-size: 12px;
-  color: var(--color-text-muted, #6b7280);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 5px;
+  font-size: 11.5px;
 }
+.card-proj { color: var(--color-text-muted); font-weight: 600; }
+.card-status {
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-secondary);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+/* Reschedule. The only control on this page that works on a phone, so
+   it is a real 36/44px target rather than an icon you aim at. */
+.card-move {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px; height: 36px;
+  flex: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.card-move:hover {
+  background: var(--color-primary-light);
+  border-color: var(--color-primary-border);
+  color: var(--color-primary-ink);
+}
+.card-move svg { width: 15px; height: 15px; }
 
 /* Drag highlights */
-.timeline-card.drag-over { outline: 2px dashed var(--color-primary, #2563eb); }
+.timeline-card.drag-over { outline: 2px dashed var(--color-primary); }
 .time-block.drag-over {
-  background: var(--color-primary-light, #eff6ff);
-  border-radius: 12px;
+  background: var(--color-primary-light);
+  border-radius: var(--radius-lg);
 }
 
-/* ───────────── EMPTY STATES ───────────── */
+/* ───────────────────────── EMPTY STATES ───────────────────────── */
 .empty-slot {
-  font-size: 12px; padding: 6px 0;
-  color: var(--color-text-muted, #94a3b8);
+  font-size: 12px;
+  padding: 6px 0;
+  color: var(--color-text-muted);
   font-style: italic;
 }
 .empty-timeline {
-  text-align: center; padding: 56px 20px;
-  background: var(--color-surface, #fff);
-  border: 1px dashed var(--color-border, #e5e7eb);
-  border-radius: 14px;
-  color: var(--color-text-muted, #6b7280);
-  font-size: 14px;
+  text-align: center;
+  padding: 48px 20px;
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-secondary);
 }
-
-/* Footer back link */
-body > .container > a[href="/"] {
-  display: inline-flex; align-items: center; gap: 6px;
-  margin-top: 24px;
-  padding: 8px 14px;
-  border: 1px solid var(--color-border, #e5e7eb);
-  border-radius: 9px;
-  background: var(--color-surface, #fff);
-  color: var(--color-text-secondary, #64748b);
+.empty-timeline svg {
+  width: 32px; height: 32px;
+  color: var(--color-text-muted);
+  margin-bottom: 10px;
+}
+.empty-timeline h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+.empty-timeline p {
+  margin: 0 auto 16px;
+  max-width: 46ch;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.tl-cta {
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-size: 13.5px;
+  font-weight: 600;
   text-decoration: none;
-  font-size: 13px; font-weight: 600;
-  transition: background .12s, color .12s, border-color .12s;
 }
-body > .container > a[href="/"]:hover {
-  background: var(--color-surface-secondary, #f9fafb);
-  color: var(--color-text, #0f172a);
-  border-color: var(--color-border-strong, #d1d5db);
+.tl-cta:hover { background: var(--color-primary-hover); }
+
+/* ═══════════════════════ RESCHEDULE SHEET ═══════════════════════
+   Docks to the bottom edge on a phone — that is where a thumb is, and
+   it keeps the card you tapped visible above it. Centres as a dialog
+   from 641px up. */
+.tl-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--color-backdrop);
+  z-index: var(--z-overlay);
+}
+.tl-sheet-scrim[hidden] { display: none !important; }
+
+body.tl-sheet-open { overflow: hidden; }
+
+.tl-sheet {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 16px calc(16px + env(safe-area-inset-bottom, 0));
+  background: var(--color-surface-elevated);
+  border-top: 1px solid var(--color-border);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  box-shadow: var(--shadow-xl);
+  max-height: 88vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transform: translateY(100%);
+  transition: transform var(--motion-duration-slow) var(--motion-easing-standard);
+}
+.tl-sheet.is-open { transform: translateY(0); }
+.tl-sheet[hidden] { display: none !important; }
+
+@media (min-width: 641px) {
+  .tl-sheet {
+    left: 50%; right: auto; bottom: auto; top: 50%;
+    width: min(440px, calc(100vw - 32px));
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--color-border);
+    padding: 16px 18px 18px;
+    transform: translate(-50%, -50%) scale(.97);
+    opacity: 0;
+    transition: opacity var(--motion-duration-base) var(--motion-easing-standard),
+                transform var(--motion-duration-base) var(--motion-easing-standard);
+  }
+  .tl-sheet.is-open { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  .tl-sheet-grip { display: none; }
 }
 
-/* ───────────── MOBILE ───────────── */
-@media (max-width: 640px) {
-  .container { padding: 14px 14px 80px; }
-  .timeline-header { gap: 10px; margin-bottom: 16px; }
-  .timeline-header .left h2 { font-size: 18px; }
-  .controls { width: 100%; justify-content: stretch; gap: 8px; }
-  .controls select { flex: 1 1 auto; max-width: none; min-width: 0; font-size: 14px; }
-  .zoom-toggle { flex: 0 0 auto; }
-  .zoom-toggle button { padding: 7px 12px; font-size: 13px; }
+/* The grab handle says "this came up from the bottom and goes back". */
+.tl-sheet-grip {
+  width: 40px; height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-strong);
+  margin: 0 auto 2px;
+}
 
-  .time-block { padding-left: 28px; margin-bottom: 18px; }
-  .timeline::before { left: 8px; }
-  .time-node { margin-left: -28px; gap: 10px; }
-  .time-node .dot { margin-left: 2px; width: 12px; height: 12px; }
-  .time-label { font-size: 12.5px; }
+.tl-sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.tl-sheet-eyebrow {
+  margin: 0 0 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.tl-sheet-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+.tl-sheet-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px; height: 32px;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.tl-sheet-x:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+.tl-sheet-x svg { width: 17px; height: 17px; }
 
-  .timeline-card { padding: 11px 13px; border-radius: 9px; }
-  .card-title { font-size: 14px; }
-  .card-meta  { font-size: 11.5px; }
+.tl-sheet-current {
+  margin: -4px 0 0;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
 
-  .empty-timeline { padding: 40px 16px; font-size: 13.5px; }
+/* Quick choices. Two columns on a phone so all four fit without a
+   scroll, and each one is a whole tap target rather than a link. */
+.tl-quick {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.tl-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 10px 12px;
+  min-height: 56px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.tl-chip small {
+  font-family: var(--font-family-data);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+.tl-chip:hover {
+  background: var(--color-primary-light);
+  border-color: var(--color-primary-border);
+}
+/* Where it already is — shown, but not offered as a move. */
+.tl-chip.is-current {
+  background: var(--color-surface-secondary);
+  color: var(--color-text-muted);
+  border-style: dashed;
+}
+
+.tl-datefield {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.tl-datefield input {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  width: 100%;
+}
+.tl-datefield input:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-ring);
+}
+
+.tl-sheet-foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.tl-btn-ghost,
+.tl-btn-primary {
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  min-height: 44px;
+}
+.tl-btn-ghost {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+.tl-btn-ghost:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+.tl-btn-primary {
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-on-primary);
+  flex: 1;
+}
+.tl-btn-primary:hover:not(:disabled) { background: var(--color-primary-hover); }
+.tl-btn-primary:disabled { opacity: .6; cursor: progress; }
+@media (min-width: 641px) {
+  .tl-btn-primary { flex: 0 0 auto; }
 }

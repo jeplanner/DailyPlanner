@@ -2,44 +2,59 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 <title>Roadmap — DailyPlanner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='timeline_ui.css') }}">
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
-<script src="{{ url_for('static', filename='timeline_ui.js') }}"></script>
+<script src="{{ url_for('static', filename='js/dates.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='timeline_ui.js') }}" defer></script>
 
 {% include "_pwa_head.html" %}
 </head>
 
 <body>
 
-<div class="nav-icons">  {% include "_top_nav.html" %}  </div>  
+<div class="nav-icons">  {% include "_top_nav.html" %}  </div>
 <div class="container">
 
-<!-- ======================
+<!-- ══════════════════════════════════════════════════════════════════
      HEADER
-====================== -->
-
-<div class="timeline-header">
+     Named "Roadmap" because that is what the sidebar calls it. It used
+     to say "Project Schedule Timeline", so you clicked one thing and
+     arrived somewhere apparently else.
+     ══════════════════════════════════════════════════════════════════ -->
+<header class="timeline-header">
 
   <div class="left">
-    <h2>🕒 Project Schedule Timeline</h2>
+    <a href="/projects" class="tl-back" aria-label="Back to projects">
+      <i data-feather="arrow-left"></i>
+    </a>
+    <div>
+      <h1>Roadmap</h1>
+      <p class="tl-sub">Every scheduled project task, earliest first.</p>
+    </div>
   </div>
 
   <div class="controls">
 
     <!-- Zoom Toggle -->
-    <div class="zoom-toggle">
-      <button onclick="setZoom('day')" class="{{ 'active' if zoom=='day' else '' }}">Day</button>
-      <button onclick="setZoom('week')" class="{{ 'active' if zoom=='week' else '' }}">Week</button>
+    <div class="zoom-toggle" role="group" aria-label="Group by">
+      <button type="button" onclick="setZoom('day')"
+              aria-pressed="{{ 'true' if zoom=='day' else 'false' }}"
+              class="{{ 'active' if zoom=='day' else '' }}">Day</button>
+      <button type="button" onclick="setZoom('week')"
+              aria-pressed="{{ 'true' if zoom=='week' else 'false' }}"
+              class="{{ 'active' if zoom=='week' else '' }}">Week</button>
     </div>
 
     <!-- Project Filter -->
-    <select onchange="filterProject(this.value)">
-      <option value="">All Projects</option>
+    <select onchange="filterProject(this.value)" aria-label="Filter by project">
+      <option value="">All projects</option>
       {% for p in projects %}
         <option value="{{ p.project_id }}"
           {{ 'selected' if p.project_id == request.args.get('project') else '' }}>
@@ -50,12 +65,18 @@
 
   </div>
 
-</div>
+</header>
+
+<!-- Counts of what is late / due today / still ahead. Filled by
+     timeline_ui.js from each block's own date against the user's today,
+     so it needs nothing from the server. The roadmap used to render a
+     task that was three weeks late exactly like one due next month. -->
+<div class="tl-summary" id="tl-summary" hidden></div>
 
 
-<!-- ======================
+<!-- ══════════════════════════════════════════════════════════════════
      TIMELINE
-====================== -->
+     ══════════════════════════════════════════════════════════════════ -->
 
 <div class="timeline">
 
@@ -63,8 +84,9 @@
 
   {% for block in timeline_blocks %}
 
-    <!-- ✅ DROP TARGET BLOCK -->
-    <div class="time-block"
+    <!-- Drop target for mouse drag. Touch has no drag events at all, so
+         every card also carries its own Reschedule button. -->
+    <section class="time-block"
          data-date="{{ block.date if block.date else '' }}"
          ondragover="dragOver(event)"
          ondragleave="dragLeave(event)"
@@ -72,9 +94,11 @@
 
       <div class="time-node">
         <div class="dot"></div>
-        <div class="time-label">
+        <h2 class="time-label">
           {{ block.label }}
-        </div>
+          <span class="time-count">{{ block.tasks|length }}</span>
+          <span class="time-when"></span>
+        </h2>
       </div>
 
       <div class="time-content">
@@ -82,21 +106,31 @@
         {% if block.tasks %}
 
           {% for t in block.tasks %}
-            <div class="timeline-card"
+            <article class="timeline-card"
                  draggable="true"
                  data-task="{{ t.task_id }}"
                  data-project="{{ t.project_id }}"
+                 data-title="{{ t.task_text }}"
+                 data-date="{{ block.date if block.date else '' }}"
                  ondragstart="dragStart(event)">
 
-              <div class="card-title">
-                {{ t.task_text }}
+              <div class="card-main">
+                <div class="card-title">{{ t.task_text }}</div>
+                <div class="card-meta">
+                  <span class="card-proj">{{ t.project_name or "No project" }}</span>
+                  {% if t.status %}
+                    <span class="card-status">{{ t.status }}</span>
+                  {% endif %}
+                </div>
               </div>
 
-              <div class="card-meta">
-                {{ t.project_name or "—" }} • {{ t.status }}
-              </div>
+              <button type="button" class="card-move"
+                      onclick="openReschedule(this)"
+                      aria-label="Reschedule this task">
+                <i data-feather="calendar"></i>
+              </button>
 
-            </div>
+            </article>
           {% endfor %}
 
         {% else %}
@@ -106,22 +140,67 @@
         {% endif %}
 
       </div>
-    </div>
+    </section>
 
   {% endfor %}
 
 {% else %}
 
   <div class="empty-timeline">
-    No scheduled project tasks found
+    <i data-feather="git-branch"></i>
+    <h2>Nothing scheduled yet</h2>
+    <p>A project task shows up here once it has a start or due date. Give one a
+       date and it lands on the roadmap.</p>
+    <a class="tl-cta" href="/projects">Open projects</a>
   </div>
 
 {% endif %}
 
 </div>
 
-<a href="/">⬅ Back</a>
-
 </div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════
+     RESCHEDULE SHEET
+     The roadmap's one job is moving work around, and until now the only
+     way to do it was HTML5 drag-and-drop — which fires no events at all
+     on a touch screen. So on a phone this page was read-only.
+
+     A sheet rather than a bare date input, for two reasons: the quick
+     choices cover almost every actual move in one tap, and a block only
+     exists on this page if it already has a task in it, so dragging
+     could never move something to a free day. The date field can.
+     ══════════════════════════════════════════════════════════════════ -->
+<div class="tl-sheet-scrim" id="tl-scrim" hidden onclick="closeReschedule()"></div>
+<div class="tl-sheet" id="tl-sheet" hidden role="dialog" aria-modal="true"
+     aria-labelledby="tl-sheet-title">
+  <div class="tl-sheet-grip" aria-hidden="true"></div>
+  <header class="tl-sheet-head">
+    <div>
+      <p class="tl-sheet-eyebrow">Reschedule</p>
+      <h2 id="tl-sheet-title"></h2>
+    </div>
+    <button type="button" class="tl-sheet-x" onclick="closeReschedule()" aria-label="Close">
+      <i data-feather="x"></i>
+    </button>
+  </header>
+
+  <p class="tl-sheet-current" id="tl-sheet-current"></p>
+
+  <div class="tl-quick" id="tl-quick"></div>
+
+  <label class="tl-datefield">
+    <span>Or pick a date</span>
+    <input type="date" id="tl-date">
+  </label>
+
+  <footer class="tl-sheet-foot">
+    <button type="button" class="tl-btn-ghost" onclick="closeReschedule()">Cancel</button>
+    <button type="button" class="tl-btn-primary" id="tl-save" onclick="saveReschedule()">Move</button>
+  </footer>
+</div>
+
+<script>document.addEventListener("DOMContentLoaded",()=>{if(window.feather)feather.replace()});</script>
 </body>
 </html>
