@@ -28,8 +28,11 @@
   --radius-card: 12px;
   --radius-btn: 8px;
   --radius-pill: 999px;
-  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
-  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
+  /* --space-* deliberately NOT redefined here. This file used to repeat
+     eight of them at exactly the design system's values, and it loads
+     after design-system.css, so its copies won. Harmless while they
+     agreed, and a silent trap the moment the scale changed anywhere
+     else: the change would apply on every page except this one. */
 }
 :root {
   --sm-bg: var(--color-bg); --sm-surface: #fff; --sm-text: #1a1a2e;
