@@ -1189,3 +1189,12 @@ body {
     box-shadow: var(--shadow-xl);
   }
 }
+
+/* Where the percentage came from. A number that counts itself is only
+   trustworthy if you can see what it counted. */
+.goal-source {
+  align-self: flex-start;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}

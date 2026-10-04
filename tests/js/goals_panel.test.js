@@ -11,9 +11,15 @@
  *     moved (0 of 28) — so the bar was permanently empty on every goal.
  *     Dragging now writes manual_progress, the field /goal-planner already
  *     wrote, so a percentage set in either place shows in both.
- *  3. EIGHTEEN CONTROLS sat on one objective carrying two key results with
- *     two initiatives each. Three icon buttons per row became one menu and
- *     the key results fold away, so a row has one visible action.
+ *  3. TWENTY CONTROLS sat on one objective carrying two key results with
+ *     two initiatives each (counted in this harness, not estimated).
+ *     Three icon buttons per row became one menu and the key results fold
+ *     away, so a row shows three.
+ *  4. AND NOW IT COUNTS ITSELF. Once MIGRATION_TASK_OBJECTIVE was applied
+ *     (2026-10-04) a goal knows which tasks are its own, so progress comes
+ *     from "3 of 8 tasks done" without anyone typing anything. A row says
+ *     which source its number came from, and a typed override offers the
+ *     counted figure back.
  *
  * The page is rendered by Flask (tests/test_smoke.py writes it to the path
  * given as argv[2]) and the real static/goals.js runs against it, so the
@@ -28,9 +34,9 @@ const JS = fs.readFileSync(__dirname + "/../../static/goals.js", "utf8");
 let pass = 0, fail = 0;
 const ok = (n, c) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL ") + n); };
 
-/* Two goals: one with a typed 60% over key results that roll up to 20%,
-   one with neither — the case that always showed 0% and could not be
-   changed. */
+/* Three goals, one per progress source: a typed 60% sitting over an
+   automatic figure, one with no source at all (the case that always
+   showed 0% and could not be changed), and one counting its own tasks. */
 const OBJECTIVES = [
   {
     id: "o1", title: "Launch v2 with premium experience", project_id: "p1",
@@ -38,6 +44,7 @@ const OBJECTIVES = [
     target_date: "2026-11-18", status: "active", color: "#424aa8",
     description: "Ship the paid tier.", manual_progress: 60,
     _progress: 60, _progress_source: "manual", _rolled_up: 20,
+    _task_done: 2, _task_total: 4, _from_tasks: 50,
     key_results: [{
       id: "k1", objective_id: "o1", title: "Paid signups", start_value: 0,
       current_value: 40, target_value: 200, direction: "up", unit: "",
@@ -48,7 +55,17 @@ const OBJECTIVES = [
     id: "o2", title: "Clear the interview backlog", project_id: null,
     time_horizon: "monthly", target_date: "2026-12-31", status: "active",
     color: null, manual_progress: null,
-    _progress: 0, _progress_source: "none", _rolled_up: 0, key_results: [],
+    _progress: 0, _progress_source: "none", _rolled_up: 0,
+    _task_done: 0, _task_total: 0, _from_tasks: null, key_results: [],
+  },
+  {
+    // Counting itself: 3 of 8 of its own tasks are done.
+    id: "o3", title: "Ship the RLS migration", project_id: "p1",
+    project_name: "Platform", time_horizon: "quarterly",
+    target_date: "2026-10-20", status: "active", color: null,
+    manual_progress: null, _progress: 38, _progress_source: "tasks",
+    _rolled_up: 0, _task_done: 3, _task_total: 8, _from_tasks: 38,
+    key_results: [],
   },
 ];
 
@@ -90,7 +107,7 @@ const OBJECTIVES = [
   window.renderObjectives();
 
   /* ── 1. One row per goal, and ONE visible action on it ─────────────── */
-  ok("one row per goal", all(".goal-card").length === 2);
+  ok("one row per goal", all(".goal-card").length === 3);
 
   const row = q('.goal-card[data-objective-id="o1"]');
   const menuButtons = Array.from(row.querySelectorAll(".goal-menu-wrap > button"));
@@ -138,10 +155,21 @@ const OBJECTIVES = [
   ok("it goes to that goal", patch && patch.url === "/api/goals/o1");
   ok("it writes manual_progress", patch && patch.body.manual_progress === 75);
 
+  /* ── 5b. A counted percentage says what it counted ─────────────────── */
+  const counted = q('.goal-card[data-objective-id="o3"]');
+  ok("a task-derived goal shows its progress",
+     counted.querySelector('[data-pct-for="o3"]').textContent === "38%");
+  ok("...and says what it counted",
+     /3 of 8 tasks done/.test(counted.querySelector(".goal-source").textContent));
+  ok("a counted goal is not asked to justify itself with a roll-up link",
+     !counted.querySelector(".goal-rollup"));
+
   /* ── 6. The disagreement with key results is shown, with a way back ── */
   const rollup = q('.goal-card[data-objective-id="o1"] .goal-rollup');
-  ok("a typed percentage over live key results says so", !!rollup);
-  ok("it names the roll-up", rollup && /20%/.test(rollup.textContent));
+  ok("a typed percentage over an automatic one says so", !!rollup);
+  // Tasks are offered ahead of key results, matching the server precedence.
+  ok("it offers the task count, not the key results",
+     rollup && /2 of 4 tasks done = 50%/.test(rollup.textContent));
   ok("a goal with no key results offers no roll-up link",
      !q('.goal-card[data-objective-id="o2"] .goal-rollup'));
 
@@ -179,7 +207,7 @@ const OBJECTIVES = [
   ok("filtering to an empty group explains itself and offers a way back",
      !!q(".goal-none .goal-link"));
   window.setFilter("all");
-  ok("going back shows both goals again", all(".goal-card").length === 2);
+  ok("going back shows every goal again", all(".goal-card").length === 3);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

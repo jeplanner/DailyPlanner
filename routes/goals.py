@@ -196,6 +196,48 @@ def goals_page():
 # Helpers
 # ──────────────────────────────────────────────────────────────────────
 
+def _task_progress(user_id, objective_ids):
+    """Done-task share per objective, from project_tasks.objective_id.
+
+    This is the progress that maintains itself. MIGRATION_TASK_OBJECTIVE
+    put objective_id on project_tasks and backfilled it through the
+    initiative -> key_result -> objective walk, so a goal already knows
+    which tasks belong to it — there is no reason to make anyone type a
+    percentage the app can count.
+
+    "Done" is `status == "done"`, which is how the projects list computes
+    completion_pct. Deliberately the same definition rather than a second
+    one: three different answers to "what is finished" is a bug this
+    codebase has paid for before.
+
+    Returns {objective_id: (done, total)} and never raises — a goal page
+    that 500s because this query failed would be a worse outcome than one
+    showing no task figure. get() has no PGRST204 retry, unlike
+    post/update, so a missing column here is a hard 400.
+    """
+    if not objective_ids:
+        return {}
+    try:
+        rows = get("project_tasks", params={
+            "user_id": f"eq.{user_id}",
+            "objective_id": f"in.({','.join(objective_ids)})",
+            "is_deleted": "eq.false",
+            "select": "objective_id,status",
+            "limit": 5000,
+        }) or []
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning("_task_progress failed, falling back: %s", e)
+        return {}
+    out = {}
+    for r in rows:
+        oid = r.get("objective_id")
+        if not oid:
+            continue
+        done, total = out.get(oid, (0, 0))
+        out[oid] = (done + (1 if r.get("status") == "done" else 0), total + 1)
+    return out
+
+
 def _kr_progress(kr):
     start = float(kr.get("start_value") or 0)
     current = float(kr.get("current_value") or 0)
@@ -525,12 +567,17 @@ def list_objectives():
         k["initiatives"] = [i for i in initiatives if i["key_result_id"] == k["id"]]
         k["_progress"] = _kr_progress(k)
 
+    task_counts = _task_progress(user_id, objective_ids)
+
     for o in objectives:
         o["key_results"] = [k for k in krs if k["objective_id"] == o["id"]]
         rolled = (
             sum(k["_progress"] for k in o["key_results"]) / len(o["key_results"])
             if o["key_results"] else 0
         )
+        done, total = task_counts.get(o["id"], (0, 0))
+        o["_task_done"], o["_task_total"] = done, total
+        from_tasks = round(done / total * 100) if total else None
         # SAME PRECEDENCE AS THE PLANNER: a typed percentage wins, else the
         # key-result roll-up, else nothing. This endpoint used to return the
         # roll-up and only the roll-up, which meant /goals showed 0% for
@@ -539,13 +586,32 @@ def list_objectives():
         # progress bar on this page was permanently empty, and a percentage
         # typed on /goal-planner (which does honour manual_progress) was
         # invisible here. See _objective_progress() for the same rule.
+        # PRECEDENCE: typed, then its own tasks, then key results, then nothing.
+        #
+        # Tasks come before key results because tasks are what this app
+        # actually holds — 120 of them linked, against key results whose
+        # current_value had ever moved being 0 of 28. A number the app can
+        # count beats one somebody has to remember to update.
+        #
+        # A typed value still wins outright: they looked at the goal and
+        # made a judgement, and overruling that would make the field
+        # pointless. Clearing it drops back down this list.
         typed = o.get("manual_progress")
-        if typed is None:
-            o["_progress"] = rolled
-            o["_progress_source"] = "key_results" if o["key_results"] else "none"
-        else:
+        if typed is not None:
             o["_progress"] = max(0, min(100, int(typed)))
             o["_progress_source"] = "manual"
+        elif from_tasks is not None:
+            o["_progress"] = from_tasks
+            o["_progress_source"] = "tasks"
+        elif o["key_results"]:
+            o["_progress"] = round(rolled)
+            o["_progress_source"] = "key_results"
+        else:
+            o["_progress"] = 0
+            o["_progress_source"] = "none"
+        # What the automatic sources say, so the UI can offer the way back
+        # from a typed override instead of hiding the disagreement.
+        o["_from_tasks"] = from_tasks
         # Kept alongside so the UI can show the disagreement rather than
         # hiding it when someone has typed over a live roll-up.
         o["_rolled_up"] = round(rolled)

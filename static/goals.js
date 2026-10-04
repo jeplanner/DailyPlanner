@@ -231,15 +231,34 @@ function renderObjectiveCard(o, hideProjectBadge) {
   if (o.category) meta.push(`<span class="goal-meta-item">${esc(o.category)}</span>`);
   if (o.time_horizon) meta.push(`<span class="goal-meta-item">${esc(o.time_horizon)}</span>`);
 
-  /* The disagreement is SHOWN, not hidden. If you have dragged this to 60%
-     while its key results average 20%, saying so — and offering the way
-     back — beats silently preferring one of the two numbers. */
-  const override = (source === "manual" && krs.length)
-    ? `<button type="button" class="goal-rollup" onclick="clearGoalProgress('${o.id}')"
-         title="Clear the typed percentage and go back to the key-result roll-up">
-         key results say ${rolled}% — use that
-       </button>`
-    : "";
+  /* WHERE THE NUMBER CAME FROM.
+     Progress that counts itself is only trustworthy if you can see what it
+     counted, so a task-derived figure says so: "3 of 8 tasks done". And if
+     you have dragged the bar over an automatic number, the disagreement is
+     SHOWN with a one-tap way back, rather than the page silently preferring
+     one of the two. */
+  const taskTotal = o._task_total || 0;
+  const taskDone = o._task_done || 0;
+  const fromTasks = (o._from_tasks === 0 || o._from_tasks) ? o._from_tasks : null;
+
+  let note = "";
+  if (source === "tasks") {
+    note = `<span class="goal-source">${taskDone} of ${taskTotal} task${taskTotal === 1 ? "" : "s"} done</span>`;
+  } else if (source === "key_results") {
+    note = `<span class="goal-source">from ${krs.length} key result${krs.length === 1 ? "" : "s"}</span>`;
+  } else if (source === "manual") {
+    // Offer whichever automatic source actually exists, tasks first.
+    const auto = fromTasks !== null
+      ? { pct: fromTasks, what: `${taskDone} of ${taskTotal} tasks done` }
+      : (krs.length ? { pct: rolled, what: "key results" } : null);
+    note = auto
+      ? `<button type="button" class="goal-rollup" onclick="clearGoalProgress('${o.id}')"
+           title="Clear the typed percentage and let this goal count itself again">
+           ${esc(auto.what)} = ${auto.pct}% — use that
+         </button>`
+      : `<span class="goal-source">set by hand</span>`;
+  }
+  const override = note;
 
   return `
     <div class="goal-card ${statusClass} bucket-${bucket}" data-objective-id="${o.id}">

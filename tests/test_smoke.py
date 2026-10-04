@@ -6135,6 +6135,101 @@ def test_goal_progress_prefers_a_typed_percentage_over_the_rollup(auth_client, m
     assert by_id["o3"]["_progress_source"] == "none"
 
 
+def test_a_goal_counts_its_own_tasks_before_asking_anyone(auth_client, monkeypatch):
+    """Progress that maintains itself, now that objective_id is populated.
+
+    MIGRATION_TASK_OBJECTIVE (applied 2026-10-04) put objective_id on
+    project_tasks and backfilled it through the initiative -> key_result ->
+    objective walk, so a goal already knows which tasks are its own. Making
+    anyone type a percentage the app can count was the remaining piece of
+    the "cumbersome" complaint.
+
+    Precedence is typed -> its own tasks -> key results -> nothing. Tasks
+    beat key results because tasks are what this app actually holds: 120
+    linked, against key results whose current_value had ever moved being
+    0 of 28. A typed value still wins, because that is a human judgement.
+
+    "Done" is status == "done", the same definition the projects list uses
+    for completion_pct — deliberately not a second one.
+    """
+    import routes.goals as G
+
+    objectives = [
+        {"id": "o1", "title": "typed beats its tasks", "project_id": None,
+         "status": "active", "manual_progress": 60, "target_date": None},
+        {"id": "o2", "title": "3 of 8 tasks done", "project_id": None,
+         "status": "active", "manual_progress": None, "target_date": None},
+        {"id": "o3", "title": "tasks beat key results", "project_id": None,
+         "status": "active", "manual_progress": None, "target_date": None},
+    ]
+    # o3 has BOTH: tasks at 100% and a key result at 0%. Tasks must win.
+    krs = [{"id": "k3", "objective_id": "o3", "title": "c", "start_value": 0,
+            "current_value": 0, "target_value": 100, "direction": "up"}]
+    tasks = (
+        [{"objective_id": "o1", "status": "done"}] * 2
+        + [{"objective_id": "o1", "status": "todo"}] * 2
+        + [{"objective_id": "o2", "status": "done"}] * 3
+        + [{"objective_id": "o2", "status": "todo"}] * 5
+        + [{"objective_id": "o3", "status": "done"}] * 2
+    )
+
+    def fake_get(table, params=None, **kw):
+        return {"objectives": [dict(o) for o in objectives],
+                "key_results": [dict(k) for k in krs],
+                "project_tasks": [dict(t) for t in tasks]}.get(table, [])
+
+    monkeypatch.setattr(G, "get", fake_get)
+    by_id = {o["id"]: o for o in auth_client.get("/api/goals").get_json()["objectives"]}
+
+    # A typed percentage still wins, but the task figure rides along so the
+    # UI can offer "2 of 4 tasks done = 50% — use that".
+    assert by_id["o1"]["_progress"] == 60
+    assert by_id["o1"]["_progress_source"] == "manual"
+    assert by_id["o1"]["_from_tasks"] == 50
+    assert (by_id["o1"]["_task_done"], by_id["o1"]["_task_total"]) == (2, 4)
+
+    # 3 of 8 = 38%, counted rather than typed.
+    assert by_id["o2"]["_progress"] == 38
+    assert by_id["o2"]["_progress_source"] == "tasks"
+
+    # Tasks outrank key results: 100% from tasks, not 0% from the KR.
+    assert by_id["o3"]["_progress"] == 100
+    assert by_id["o3"]["_progress_source"] == "tasks"
+
+
+def test_the_goals_page_survives_a_task_query_that_fails(auth_client, monkeypatch):
+    """A broken task count must cost the task figure, not the page.
+
+    get() has no PGRST204 retry, unlike post/update, so a missing or
+    renamed column is a hard 400 — the trap that once 400'd the whole task
+    page for selecting objective_id before its migration had run. The task
+    count is therefore wrapped: the page falls back down the precedence
+    and still renders.
+    """
+    import routes.goals as G
+
+    objectives = [
+        {"id": "o1", "title": "has key results", "project_id": None,
+         "status": "active", "manual_progress": None, "target_date": None},
+    ]
+    krs = [{"id": "k1", "objective_id": "o1", "title": "a", "start_value": 0,
+            "current_value": 50, "target_value": 100, "direction": "up"}]
+
+    def fake_get(table, params=None, **kw):
+        if table == "project_tasks":
+            raise RuntimeError("column project_tasks.objective_id does not exist")
+        return {"objectives": [dict(o) for o in objectives],
+                "key_results": [dict(k) for k in krs]}.get(table, [])
+
+    monkeypatch.setattr(G, "get", fake_get)
+    r = auth_client.get("/api/goals")
+    assert r.status_code == 200, "a failed task count must not take the page down"
+    o = r.get_json()["objectives"][0]
+    assert o["_progress"] == 50
+    assert o["_progress_source"] == "key_results"
+    assert (o["_task_done"], o["_task_total"]) == (0, 0)
+
+
 def test_goal_progress_can_be_set_and_cleared_from_the_okr_page(auth_client, monkeypatch):
     """The OKR page could not write the field that drives its own bar.
 
