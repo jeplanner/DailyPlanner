@@ -146,6 +146,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, render_template, request, session
 
+from config import SIMPLE_GOALS
 from services.login_service import login_required
 from supabase_client import get, post, update
 
@@ -184,7 +185,11 @@ def _soft_delete(table, params):
 @goals_bp.route("/goals")
 @login_required
 def goals_page():
-    return render_template("goals.html")
+    # SIMPLE_GOALS was already True and already honoured by the project
+    # tasks page, which hides the Epic and Initiative pickers. This page
+    # never read it, so /goals was the one place still presenting the full
+    # Project -> Objective -> Key Result -> Initiative -> Task ladder.
+    return render_template("goals.html", simple_goals=SIMPLE_GOALS)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -522,10 +527,28 @@ def list_objectives():
 
     for o in objectives:
         o["key_results"] = [k for k in krs if k["objective_id"] == o["id"]]
-        o["_progress"] = (
+        rolled = (
             sum(k["_progress"] for k in o["key_results"]) / len(o["key_results"])
             if o["key_results"] else 0
         )
+        # SAME PRECEDENCE AS THE PLANNER: a typed percentage wins, else the
+        # key-result roll-up, else nothing. This endpoint used to return the
+        # roll-up and only the roll-up, which meant /goals showed 0% for
+        # every goal that had no key results — and measured on live data,
+        # key results whose current_value had ever moved was 0 of 28. So the
+        # progress bar on this page was permanently empty, and a percentage
+        # typed on /goal-planner (which does honour manual_progress) was
+        # invisible here. See _objective_progress() for the same rule.
+        typed = o.get("manual_progress")
+        if typed is None:
+            o["_progress"] = rolled
+            o["_progress_source"] = "key_results" if o["key_results"] else "none"
+        else:
+            o["_progress"] = max(0, min(100, int(typed)))
+            o["_progress_source"] = "manual"
+        # Kept alongside so the UI can show the disagreement rather than
+        # hiding it when someone has typed over a live roll-up.
+        o["_rolled_up"] = round(rolled)
         o["project_name"] = pmap.get(o.get("project_id")) if o.get("project_id") else None
 
     return jsonify({
@@ -575,10 +598,21 @@ def update_objective(objective_id):
         "project_id", "title", "description", "category", "time_horizon",
         "start_date", "target_date", "status", "color", "order_index",
         "is_deleted",  # allow restore via PATCH {is_deleted: false}
+        # A typed percentage. The planner could already write this; the OKR
+        # page could not, so the only way to make a goal show progress there
+        # was to create a key result and hand-edit its current value — which
+        # the live data says nobody ever did.
+        "manual_progress",
     }
     patch = {k: v for k, v in data.items() if k in allowed}
     if not patch:
         return jsonify({"error": "no valid fields"}), 400
+
+    if "manual_progress" in patch:
+        cleaned, err = _clean_manual_progress(patch["manual_progress"])
+        if err:
+            return jsonify({"error": err}), 400
+        patch["manual_progress"] = cleaned
 
     if "project_id" in patch and patch["project_id"] == "":
         patch["project_id"] = None

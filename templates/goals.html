@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() }}">
-<title>OKRs</title>
+<title>Goals — DailyPlanner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='goals.css') }}">
@@ -19,35 +19,67 @@
 
 <div class="goals-app">
 
-  <!-- Header -->
-  <div class="goals-header">
-    <div>
-      <h1>OKRs</h1>
-      <p class="goals-sub">Projects → <strong>Objectives</strong> → <strong>Key Results</strong> → <strong>Initiatives</strong> → <strong>Tasks</strong>. Strategy flows down, progress rolls up.</p>
+  <!-- ══════════════════════════════════════════════════════════════════
+       HEADER
+       Called "Goals", which is what SIMPLE_GOALS made it: a task attaches
+       straight to a goal, and the Key Result / Initiative layers are
+       folded away. Calling the page OKRs while hiding the KRs was the
+       first thing that didn't add up.
+       ══════════════════════════════════════════════════════════════════ -->
+  <header class="goals-header">
+    <div class="goals-header-text">
+      <h1>Goals</h1>
+      <p class="goals-sub">A goal is a sentence and a date. Drag the bar to say how far along it is.</p>
     </div>
     <div class="goals-header-actions">
-      <select id="project-filter" class="project-filter" onchange="loadGoals()" title="Filter by project">
+      <select id="project-filter" class="project-filter" onchange="loadGoals()"
+              aria-label="Filter by project">
         <option value="">All projects</option>
       </select>
       <label class="pill-toggle">
-        <input type="checkbox" id="include-archived">
-        <span>Show archived</span>
+        <input type="checkbox" id="include-archived" onchange="loadGoals()">
+        <span>Archived</span>
       </label>
-      <button class="btn-primary" onclick="openNewObjectiveModal()">
-        <i data-feather="plus"></i> New Objective
-      </button>
     </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       ADD A GOAL — one field
+       This replaces "New Objective" as the primary path. The modal is
+       still here behind More options, but it asked for nine fields when
+       the endpoint has only ever required the title, so writing a goal
+       down cost a dialog, a project, a horizon, a category and a colour.
+       ══════════════════════════════════════════════════════════════════ -->
+  <div class="goal-compose">
+    <input type="text" id="goal-quick-title" maxlength="200"
+           placeholder="What do you want to achieve?"
+           autocomplete="off" onkeydown="quickAddKeydown(event)">
+    <label class="goal-compose-date">
+      <span class="visually-hidden">Target date (optional)</span>
+      <input type="date" id="goal-quick-date" onkeydown="quickAddKeydown(event)">
+    </label>
+    <button type="button" class="btn-primary" id="goal-quick-add" onclick="addGoalInline()">
+      <i data-feather="plus"></i> Add goal
+    </button>
+    <p class="goal-compose-hint">
+      Enter to add · date optional ·
+      <button type="button" class="goal-link" onclick="openNewObjectiveModal()">more options</button>
+    </p>
   </div>
 
-  <!-- Goals container -->
+  <!-- Counts that double as the filter: "1 overdue" is the thing you then
+       want to look at, so it is the button that shows you. -->
+  <div class="goals-summary" id="goals-summary" hidden></div>
+
+  <!-- Goals -->
   <div id="goals-list"></div>
 
   <!-- Empty state -->
   <div id="goals-empty" class="goals-empty" style="display:none;">
     <i data-feather="target"></i>
-    <h2>No objectives yet</h2>
-    <p>Start with a strategic objective for one of your projects. Then add key results to measure success, and initiatives to group the tasks that move them forward.</p>
-    <button class="btn-primary" onclick="openNewObjectiveModal()">Create your first objective</button>
+    <h2>No goals yet</h2>
+    <p>Write one in the box above — a sentence is enough. Give it a date and
+       it starts counting down; drag its bar as you make progress.</p>
   </div>
 </div>
 

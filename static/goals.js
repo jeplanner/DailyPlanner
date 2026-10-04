@@ -82,20 +82,106 @@ function populateProjectSelectors() {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   THE LIST
+
+   Rebuilt 2026-10-04: "UX is very cumbersome for OKR."
+
+   It was. One objective carrying two key results with two initiatives
+   each put EIGHTEEN controls on a single card — three icon buttons on the
+   objective, a number input and two more buttons per key result, two per
+   initiative, plus an Add button at every level. And creating one goal
+   meant a modal with nine fields when only the title is required.
+
+   The reason that was all ceremony is in the live data, which is why
+   SIMPLE_GOALS exists in config.py: key results whose current_value had
+   ever moved was 0 of 28, and tasks linked to a key result 3 of 120. The
+   measurement layer was never used. Worse, /api/goals derived objective
+   progress ONLY from key results — so every goal without one showed 0%,
+   and the progress bar on this page was permanently empty.
+
+   So: a goal is a sentence, a date and a percentage you can drag. Key
+   results still exist and nothing was deleted; they are folded away
+   behind a disclosure and the Add action moved into the row's menu,
+   exactly as SIMPLE_GOALS already treats the Epic and Initiative pickers
+   on the project tasks page.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Which goals are showing. Counts in the summary double as the filter,
+   because "1 overdue" is the thing you then want to look at. */
+state.filter = "all";
+
+function daysUntil(o) {
+  const iso = objectiveDeadlineIso(o);
+  if (!iso) return null;
+  const ms = new Date(iso) - new Date();
+  return Math.floor(ms / 86400000);
+}
+
+function goalBucket(o) {
+  const d = daysUntil(o);
+  if (d === null) return "undated";
+  if (d < 0) return "overdue";
+  if (d <= 30) return "soon";
+  return "later";
+}
+
+function setFilter(which) {
+  state.filter = which;
+  renderObjectives();
+}
+
 function renderObjectives() {
   const container = $("goals-list");
   const empty = $("goals-empty");
+  const summary = $("goals-summary");
+
   if (!state.objectives.length) {
     container.innerHTML = "";
+    if (summary) summary.hidden = true;
     empty.style.display = "block";
     if (window.feather) feather.replace();
     return;
   }
   empty.style.display = "none";
 
-  // Group by project
-  const byProject = new Map();
+  // ── Counts first, then the filter they drive.
+  const counts = { all: state.objectives.length, overdue: 0, soon: 0, undated: 0 };
   for (const o of state.objectives) {
+    const b = goalBucket(o);
+    if (counts[b] !== undefined) counts[b]++;
+  }
+  if (summary) {
+    const chip = (key, label, cls) =>
+      counts[key]
+        ? `<button type="button" class="goal-chip ${cls} ${state.filter === key ? "is-on" : ""}"
+             onclick="setFilter('${key}')">${counts[key]} ${label}</button>`
+        : "";
+    summary.innerHTML =
+      `<button type="button" class="goal-chip is-all ${state.filter === "all" ? "is-on" : ""}"
+         onclick="setFilter('all')">All ${counts.all}</button>` +
+      chip("overdue", "overdue", "is-overdue") +
+      chip("soon", "due within a month", "is-soon") +
+      chip("undated", "no date", "is-undated");
+    summary.hidden = false;
+  }
+
+  const shown = state.filter === "all"
+    ? state.objectives
+    : state.objectives.filter(o => goalBucket(o) === state.filter);
+
+  if (!shown.length) {
+    container.innerHTML =
+      `<div class="goal-none">Nothing in this group.
+         <button type="button" class="goal-link" onclick="setFilter('all')">Show all goals</button>
+       </div>`;
+    if (window.feather) feather.replace();
+    return;
+  }
+
+  // Group by project, but only when there is more than one to tell apart.
+  const byProject = new Map();
+  for (const o of shown) {
     const key = o.project_id || "__unassigned__";
     if (!byProject.has(key)) byProject.set(key, []);
     byProject.get(key).push(o);
@@ -105,23 +191,21 @@ function renderObjectives() {
   const keys = [...byProject.keys()].sort((a, b) => {
     if (a === "__unassigned__") return 1;
     if (b === "__unassigned__") return -1;
-    const na = (projectNameMap.get(a) || "").toLowerCase();
-    const nb = (projectNameMap.get(b) || "").toLowerCase();
-    return na.localeCompare(nb);
+    return (projectNameMap.get(a) || "").toLowerCase()
+      .localeCompare((projectNameMap.get(b) || "").toLowerCase());
   });
 
   const singleProjectView = keys.length === 1;
   const sections = [];
   for (const key of keys) {
     const objs = byProject.get(key);
-    const label =
-      key === "__unassigned__"
-        ? "Unassigned · personal objectives"
-        : (projectNameMap.get(key) || "Unknown project");
+    const label = key === "__unassigned__"
+      ? "Personal · no project"
+      : (projectNameMap.get(key) || "Unknown project");
     if (!singleProjectView) {
       sections.push(`<div class="project-group-header">${esc(label)}</div>`);
     }
-    sections.push(objs.map(renderObjectiveCard).join(""));
+    sections.push(objs.map(o => renderObjectiveCard(o, singleProjectView)).join(""));
   }
 
   container.innerHTML = sections.join("");
@@ -131,45 +215,209 @@ function renderObjectives() {
   if (window.feather) feather.replace();
 }
 
-function renderObjectiveCard(o) {
-  const color = o.color || "#2563eb";
+function renderObjectiveCard(o, hideProjectBadge) {
+  const color = o.color || "#424aa8";
   const progress = Math.round(o._progress || 0);
   const statusClass = o.status && o.status !== "active" ? o.status : "";
-  const projectBadge = o.project_name
-    ? `<span class="goal-category" style="background:#eef2ff;color:#4338ca;">📁 ${esc(o.project_name)}</span>`
+  const bucket = goalBucket(o);
+  const krs = o.key_results || [];
+  const source = o._progress_source || "none";
+  const rolled = Math.round(o._rolled_up || 0);
+
+  const meta = [];
+  if (!hideProjectBadge && o.project_name) {
+    meta.push(`<span class="goal-meta-item">${esc(o.project_name)}</span>`);
+  }
+  if (o.category) meta.push(`<span class="goal-meta-item">${esc(o.category)}</span>`);
+  if (o.time_horizon) meta.push(`<span class="goal-meta-item">${esc(o.time_horizon)}</span>`);
+
+  /* The disagreement is SHOWN, not hidden. If you have dragged this to 60%
+     while its key results average 20%, saying so — and offering the way
+     back — beats silently preferring one of the two numbers. */
+  const override = (source === "manual" && krs.length)
+    ? `<button type="button" class="goal-rollup" onclick="clearGoalProgress('${o.id}')"
+         title="Clear the typed percentage and go back to the key-result roll-up">
+         key results say ${rolled}% — use that
+       </button>`
     : "";
 
   return `
-    <div class="goal-card ${statusClass}" data-objective-id="${o.id}">
-      <div class="goal-card-header">
-        <div class="goal-color-bar" style="background:${esc(color)}"></div>
-        <div class="goal-card-body-wrap">
-          <div class="goal-title-row">
-            <div class="goal-title">${esc(o.title)}</div>
-            ${projectBadge}
-            ${o.category ? `<span class="goal-category">${esc(o.category)}</span>` : ""}
-            ${o.time_horizon ? `<span class="goal-horizon">${esc(o.time_horizon)}</span>` : ""}
-          </div>
-          ${o.description ? `<div class="goal-description">${esc(o.description)}</div>` : ""}
+    <div class="goal-card ${statusClass} bucket-${bucket}" data-objective-id="${o.id}">
+      <div class="goal-color-bar" style="background:${esc(color)}"></div>
+
+      <div class="goal-main">
+        <div class="goal-title-row">
+          <h3 class="goal-title">${esc(o.title)}</h3>
+          ${o.status && o.status !== "active"
+            ? `<span class="goal-status-pill">${esc(o.status)}</span>` : ""}
+        </div>
+
+        <div class="goal-meta">
+          ${meta.join('<span class="goal-meta-dot">·</span>')}
           ${renderDueBlock(o)}
-          <div class="goal-progress-wrap">
-            <div class="progress-bar"><div class="progress-bar-fill" style="width:${progress}%;background:${esc(color)}"></div></div>
-            <div class="progress-label">${progress}%</div>
-          </div>
         </div>
-        <div class="goal-actions">
-          <button class="icon-btn" title="Edit" onclick="openEditObjectiveModal('${o.id}')"><i data-feather="edit-2"></i></button>
-          <button class="icon-btn" title="Archive / unarchive" onclick="toggleObjectiveArchived('${o.id}')"><i data-feather="${o.status === 'active' ? 'archive' : 'rotate-ccw'}"></i></button>
-          <button class="icon-btn danger" title="Delete" onclick="deleteObjective('${o.id}')"><i data-feather="trash-2"></i></button>
+
+        ${o.description ? `<p class="goal-description">${esc(o.description)}</p>` : ""}
+
+        <div class="goal-progress-row">
+          <label class="goal-slider-wrap">
+            <span class="visually-hidden">Progress for ${esc(o.title)}</span>
+            <input type="range" class="goal-slider" min="0" max="100" step="5"
+                   value="${progress}"
+                   style="--pct:${progress}%; --accent:${esc(color)}"
+                   oninput="previewGoalProgress(this, '${o.id}')"
+                   onchange="setGoalProgress('${o.id}', this.value)">
+          </label>
+          <output class="goal-pct" data-pct-for="${o.id}">${progress}%</output>
         </div>
+        ${override}
+
+        ${krs.length ? `
+          <details class="kr-fold" ${state.openKrFolds?.has(o.id) ? "open" : ""}
+                   ontoggle="rememberKrFold('${o.id}', this.open)">
+            <summary>${krs.length} key result${krs.length === 1 ? "" : "s"}</summary>
+            <div class="objective-list">
+              ${krs.map(kr => renderKr(o, kr)).join("")}
+              <button class="add-inline" onclick="openNewKrModal('${o.id}')"><i data-feather="plus"></i> Add key result</button>
+            </div>
+          </details>` : ""}
       </div>
-      <div class="objective-list">
-        ${(o.key_results || []).map(kr => renderKr(o, kr)).join("")}
-        <button class="add-inline" onclick="openNewKrModal('${o.id}')"><i data-feather="plus"></i> Add key result</button>
+
+      <div class="goal-menu-wrap">
+        <button class="icon-btn goal-menu-btn" aria-label="More actions for ${esc(o.title)}"
+                aria-haspopup="true" onclick="toggleGoalMenu(event, '${o.id}')">
+          <i data-feather="more-horizontal"></i>
+        </button>
+        <div class="goal-menu" id="goal-menu-${o.id}" hidden>
+          <button type="button" onclick="openEditObjectiveModal('${o.id}')">
+            <i data-feather="edit-2"></i> Edit details
+          </button>
+          <button type="button" onclick="openNewKrModal('${o.id}')">
+            <i data-feather="target"></i> Add key result
+          </button>
+          <button type="button" onclick="toggleObjectiveArchived('${o.id}')">
+            <i data-feather="${o.status === "active" ? "archive" : "rotate-ccw"}"></i>
+            ${o.status === "active" ? "Archive" : "Unarchive"}
+          </button>
+          <button type="button" class="danger" onclick="deleteObjective('${o.id}')">
+            <i data-feather="trash-2"></i> Delete
+          </button>
+        </div>
       </div>
     </div>
   `;
 }
+
+/* Which folds the user had open, so a re-render does not close them. */
+state.openKrFolds = new Set();
+function rememberKrFold(id, open) {
+  if (open) state.openKrFolds.add(id); else state.openKrFolds.delete(id);
+}
+
+/* ── The row menu. One button instead of three, which is most of what
+      made a list of goals feel like a control panel. ── */
+function toggleGoalMenu(ev, id) {
+  ev.stopPropagation();
+  const menu = $(`goal-menu-${id}`);
+  const wasOpen = menu && !menu.hidden;
+  closeAllGoalMenus();
+  if (menu && !wasOpen) menu.hidden = false;
+}
+
+function closeAllGoalMenus() {
+  document.querySelectorAll(".goal-menu").forEach(m => { m.hidden = true; });
+}
+
+document.addEventListener("click", closeAllGoalMenus);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closeAllGoalMenus();
+});
+
+/* ── Progress ──────────────────────────────────────────────────────────
+   Dragging writes `manual_progress`, the same field /goal-planner has
+   always written — so a percentage set in either place now shows in both.
+   The slider is the bar: no second control to find, and a range input is
+   draggable, tappable and keyboard-operable without any work. */
+
+function previewGoalProgress(input, id) {
+  input.style.setProperty("--pct", input.value + "%");
+  const out = document.querySelector(`[data-pct-for="${id}"]`);
+  if (out) out.textContent = input.value + "%";
+}
+
+async function setGoalProgress(id, value) {
+  const pct = Math.max(0, Math.min(100, parseInt(value, 10) || 0));
+  const obj = state.objectives.find(o => o.id === id);
+  const before = obj ? obj.manual_progress : null;
+  if (obj) { obj.manual_progress = pct; obj._progress = pct; obj._progress_source = "manual"; }
+  try {
+    await api("PATCH", `/api/goals/${id}`, { manual_progress: pct });
+    renderObjectives();
+  } catch (err) {
+    console.error(err);
+    // Put the number back. A slider that stays where you dragged it while
+    // the server still holds the old value is worse than one that snaps.
+    if (obj) { obj.manual_progress = before; }
+    showToast("Could not save that progress", "error");
+    await loadGoals();
+  }
+}
+
+async function clearGoalProgress(id) {
+  try {
+    await api("PATCH", `/api/goals/${id}`, { manual_progress: "" });
+    showToast("Back to the key-result roll-up");
+    await loadGoals();
+  } catch (err) {
+    console.error(err);
+    showToast("Could not clear that", "error");
+  }
+}
+
+/* ── Adding a goal ─────────────────────────────────────────────────────
+   One field. The nine-field modal is still there behind "More options",
+   but it is no longer the price of writing down a goal: eight of those
+   nine fields are optional and the endpoint has only ever required the
+   title. */
+async function addGoalInline() {
+  const input = $("goal-quick-title");
+  const date = $("goal-quick-date");
+  const title = (input?.value || "").trim();
+  if (!title) { input?.focus(); return; }
+
+  const btn = $("goal-quick-add");
+  if (btn) btn.disabled = true;
+  try {
+    await api("POST", "/api/goals", {
+      title,
+      target_date: date?.value || null,
+      project_id: $("project-filter")?.value || null,
+      time_horizon: "quarterly",
+    });
+    input.value = "";
+    if (date) date.value = "";
+    showToast("Goal added");
+    await loadGoals();
+    input.focus();
+  } catch (err) {
+    console.error(err);
+    showToast("Could not add that goal", "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function quickAddKeydown(e) {
+  if (e.key === "Enter") { e.preventDefault(); addGoalInline(); }
+}
+
+/* ── Key results and initiatives, unchanged ────────────────────────────
+   Nothing here was deleted. SIMPLE_GOALS folds this layer away because
+   the live data says it went unused — 0 of 28 key results had ever had
+   their current_value moved — but a goal that genuinely IS a number still
+   measures itself this way, and flipping the flag brings the inline
+   buttons back. The only change is where it is rendered: inside a
+   <details> on the row rather than always open underneath it. */
 
 function renderKr(o, kr) {
   const progress = Math.round(kr._progress || 0);

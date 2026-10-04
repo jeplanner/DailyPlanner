@@ -6056,6 +6056,124 @@ def test_no_card_grid_is_wider_than_the_phone_it_is_on():
     )
 
 
+def test_a_goal_is_a_sentence_a_date_and_a_bar_you_can_drag(auth_client, monkeypatch):
+    """Reported 2026-10-04: "UX is very cumbersome for OKR."
+
+    It was, in three ways that are all measurable rather than matters of
+    taste, and the DOM test asserts each:
+
+    - ADDING one cost a nine-field modal, when /api/goals has only ever
+      required a title. A one-field composer now posts the title alone.
+    - PROGRESS COULD NOT BE SET. /api/goals derived it from key results
+      only, and on live data no key result's current_value had ever moved
+      (0 of 28, which is why config.SIMPLE_GOALS exists), so the bar read
+      0% on every goal and there was no way to change it. Dragging now
+      writes manual_progress — the field /goal-planner already wrote, so a
+      percentage set in either place finally shows in both.
+    - EIGHTEEN CONTROLS sat on one objective with two key results carrying
+      two initiatives each. Three icon buttons per row became one menu and
+      the key results fold away.
+
+    SIMPLE_GOALS was already True and already honoured by the project
+    tasks page; /goals was the one surface still presenting the full
+    Project -> Objective -> Key Result -> Initiative -> Task ladder.
+    """
+    monkeypatch.setattr("routes.goals.get", lambda *a, **k: [])
+    _node_dom_test("tests/js/goals_panel.test.js",
+                   auth_client.get("/goals").get_data(as_text=True))
+
+
+def test_goal_progress_prefers_a_typed_percentage_over_the_rollup(auth_client, monkeypatch):
+    """/goals and /goal-planner must agree on what progress means.
+
+    They did not. The planner honoured `manual_progress` and this endpoint
+    ignored it, so a percentage typed on one page was invisible on the
+    other, and a goal with no key results was pinned at 0% here forever.
+    Same precedence as _objective_progress now: typed wins, else the
+    key-result roll-up, else nothing — and `_rolled_up` rides along so the
+    UI can show the disagreement rather than silently picking a side.
+    """
+    import routes.goals as G
+
+    objectives = [
+        {"id": "o1", "title": "Typed over live KRs", "project_id": None,
+         "status": "active", "manual_progress": 60, "target_date": None},
+        {"id": "o2", "title": "Roll-up only", "project_id": None,
+         "status": "active", "manual_progress": None, "target_date": None},
+        {"id": "o3", "title": "Neither", "project_id": None,
+         "status": "active", "manual_progress": None, "target_date": None},
+    ]
+    krs = [
+        # 40 of 200 = 20%
+        {"id": "k1", "objective_id": "o1", "title": "a", "start_value": 0,
+         "current_value": 40, "target_value": 200, "direction": "up"},
+        # 50 of 100 = 50%
+        {"id": "k2", "objective_id": "o2", "title": "b", "start_value": 0,
+         "current_value": 50, "target_value": 100, "direction": "up"},
+    ]
+
+    def fake_get(table, params=None, **kw):
+        if table == "objectives":
+            return [dict(o) for o in objectives]
+        if table == "key_results":
+            return [dict(k) for k in krs]
+        return []
+
+    monkeypatch.setattr(G, "get", fake_get)
+    body = auth_client.get("/api/goals").get_json()
+    by_id = {o["id"]: o for o in body["objectives"]}
+
+    assert by_id["o1"]["_progress"] == 60
+    assert by_id["o1"]["_progress_source"] == "manual"
+    # The roll-up travels alongside so the UI can offer "key results say 20%".
+    assert by_id["o1"]["_rolled_up"] == 20
+
+    assert by_id["o2"]["_progress"] == 50
+    assert by_id["o2"]["_progress_source"] == "key_results"
+
+    assert by_id["o3"]["_progress"] == 0
+    assert by_id["o3"]["_progress_source"] == "none"
+
+
+def test_goal_progress_can_be_set_and_cleared_from_the_okr_page(auth_client, monkeypatch):
+    """The OKR page could not write the field that drives its own bar.
+
+    PATCH /api/goals/<id> had no `manual_progress` in its allowlist, so the
+    only way to make a goal show progress was to create a key result and
+    hand-edit its current value. Validation reuses _clean_manual_progress,
+    which clamps rather than rejects an out-of-range number (150 obviously
+    means done) and treats "" as "go back to the roll-up".
+    """
+    import routes.goals as G
+
+    wrote = []
+    monkeypatch.setattr(G, "update",
+                        lambda table, params=None, json=None, **k: wrote.append(dict(json or {})) or [{}])
+
+    def patch_progress(value):
+        wrote.clear()
+        r = auth_client.patch("/api/goals/o1", json={"manual_progress": value})
+        return r, (wrote[0].get("manual_progress") if wrote else "<no write>")
+
+    r, stored = patch_progress(65)
+    assert r.status_code == 200 and stored == 65
+
+    # Empty means clear, which returns the goal to its key results.
+    r, stored = patch_progress("")
+    assert r.status_code == 200 and stored is None
+
+    # Clamped, not refused.
+    r, stored = patch_progress(150)
+    assert r.status_code == 200 and stored == 100
+    r, stored = patch_progress(-20)
+    assert r.status_code == 200 and stored == 0
+
+    # Junk is a real mistake: storing 0 would look like lost progress.
+    r, stored = patch_progress("abc")
+    assert r.status_code == 400, "junk must be rejected, not silently stored as 0"
+    assert stored == "<no write>"
+
+
 def test_the_roadmap_can_be_rescheduled_without_a_mouse(auth_client, monkeypatch):
     """Asked 2026-10-04: make the Work pages usable on a phone.
 

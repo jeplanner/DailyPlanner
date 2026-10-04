@@ -808,9 +808,13 @@ button.nav-group-title:hover{background:var(--color-surface-secondary);color:var
         Sprints
       </a>
 
-      <a href="/goals" data-match="^/goals$" title="OKRs — Project → Objective → Key Result → Initiative → Task">
+      {# "Goals", not "OKRs". SIMPLE_GOALS folds the Key Result and
+         Initiative layers away (0 of 28 key results had ever been
+         updated), so a label promising OKRs described a page that
+         deliberately no longer leads with them. #}
+      <a href="/goals" data-match="^/goals$" title="Goals — what you are trying to achieve, with a date and a progress bar">
         <i data-feather="target"></i>
-        OKRs
+        Goals
       </a>
 
       <a href="/goal-planner" data-match="^/goal-planner" title="Goal countdowns — deadline, pace vs plan, and whether the time budget actually works">
