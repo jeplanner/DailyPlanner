@@ -13,7 +13,6 @@
   <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
   <style>
     body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
-    html.dark body { background: #0b1220; }
 
     .fe-app { max-width: 880px; margin: 0 auto; padding: 18px 20px 80px; }
 
@@ -35,15 +34,14 @@
     .fe-method-pill {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 4px 10px;
-      background: #fef3c7; color: #92400e;
+      background: var(--color-warning-light); color: var(--color-warning-on-tint);
       font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
       text-transform: uppercase;
       border-radius: 999px;
     }
-    html.dark .fe-method-pill { background: rgba(217,119,6,.25); color: #fbbf24; }
 
     .fe-status { margin-left: auto; font-size: 12.5px; color: var(--color-text-muted); }
-    .fe-status.saved { color: #16a34a; }
+    .fe-status.saved { color: var(--color-success-on-tint); }
     .fe-status.saving { color: var(--color-primary); }
     .fe-status.error { color: var(--color-danger); }
 
@@ -60,11 +58,11 @@
     .fe-iterate {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 7px 12px;
-      background: #f59e0b; color: #fff;
+      background: var(--color-warning); color: #fff;
       border: none; border-radius: 8px;
       font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
     }
-    .fe-iterate:hover { background: #d97706; }
+    .fe-iterate:hover { background: var(--color-warning); }
     .fe-iterate svg { width: 13px; height: 13px; }
 
     .fe-title-input {
@@ -105,7 +103,6 @@
       border-radius: 12px;
       font-size: 12.5px;
     }
-    html.dark .fe-chain { background: #0f1729; border-color: #28344a; }
     .fe-chain-label {
       font-size: 11px; font-weight: 700; letter-spacing: .06em;
       text-transform: uppercase;
@@ -131,7 +128,6 @@
       border-color: var(--color-primary);
       font-weight: 700;
     }
-    html.dark .fe-chain-item.is-current { background: rgba(37,99,235,.22); color: #93c5fd; }
     .fe-chain-num { font-variant-numeric: tabular-nums; opacity: .65; }
 
     /* The 4-step Feynman layout: stacked sections */
@@ -142,7 +138,6 @@
       padding: 16px 18px;
       margin-bottom: 14px;
     }
-    html.dark .fe-step { background: #111a2c; border-color: #28344a; }
 
     .fe-step-head {
       display: flex; align-items: center; gap: 10px;

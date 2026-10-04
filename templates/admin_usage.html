@@ -37,14 +37,11 @@
 
   .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
           padding: 2px 9px; border-radius: 999px; }
-  .pill.ok  { background: #dcfce7; color: #166534; }
-  .pill.bad { background: #fee2e2; color: #991b1b; }
-  html.dark .pill.ok  { background: #14331f; color: #86efac; }
-  html.dark .pill.bad { background: #3a1414; color: #fca5a5; }
+  .pill.ok  { background: var(--color-success-light); color: var(--color-success-on-tint); }
+  .pill.bad { background: var(--color-danger-light); color: var(--color-danger-on-tint); }
 
-  .alert { background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+  .alert { background: var(--color-warning-light); border: 1px solid var(--color-warning-border); color: var(--color-warning-on-tint);
            border-radius: 12px; padding: 12px 15px; font-size: 13.5px; margin: 14px 0; }
-  html.dark .alert { background: #2a210a; border-color: #5a4708; color: #fcd34d; }
   .muted { color: var(--color-text-secondary); font-size: 12px; }
   .qb-btn-sm {
     font: inherit; font-size: 12px; font-weight: 600;
@@ -53,8 +50,8 @@
     background: var(--color-surface); color: var(--color-text);
   }
   .qb-btn-sm:hover { background: var(--color-surface-secondary, #f1f5f9); }
-  .qb-btn-sm.danger { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
-  .qb-btn-sm.danger:hover { background: #fee2e2; }
+  .qb-btn-sm.danger { color: var(--color-danger-on-tint); border-color: var(--color-danger-border); background: var(--color-danger-light); }
+  .qb-btn-sm.danger:hover { background: var(--color-danger-light); }
   .qb-btn-sm:disabled { opacity: .5; cursor: not-allowed; }
 </style>
 {% include "_pwa_head.html" %}

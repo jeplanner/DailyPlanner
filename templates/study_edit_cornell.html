@@ -13,7 +13,6 @@
   <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
   <style>
     body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
-    html.dark body { background: #0b1220; }
 
     .ce-app { max-width: 1200px; margin: 0 auto; padding: 18px 20px 80px; }
 
@@ -35,15 +34,14 @@
     .ce-method-pill {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 4px 10px;
-      background: #dbeafe; color: #1d4ed8;
+      background: var(--color-primary-light); color: var(--color-primary-ink);
       font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
       text-transform: uppercase;
       border-radius: 999px;
     }
-    html.dark .ce-method-pill { background: rgba(37,99,235,.22); color: #93c5fd; }
 
     .ce-status { margin-left: auto; font-size: 12.5px; color: var(--color-text-muted); }
-    .ce-status.saved { color: #16a34a; }
+    .ce-status.saved { color: var(--color-success-on-tint); }
     .ce-status.saving { color: var(--color-primary); }
     .ce-status.error { color: var(--color-danger); }
 
@@ -105,7 +103,6 @@
       padding: 14px;
       min-height: 200px;
     }
-    html.dark .ce-pane { background: #111a2c; border-color: #28344a; }
 
     .ce-pane-cues { grid-area: cues; }
     .ce-pane-notes { grid-area: notes; }

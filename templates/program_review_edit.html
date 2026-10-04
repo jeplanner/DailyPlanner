@@ -13,7 +13,6 @@
   <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
   <style>
     body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
-    html.dark body { background: #0b1220; }
 
     .pe-app { max-width: 980px; margin: 0 auto; padding: 18px 20px 80px; }
 
@@ -34,7 +33,7 @@
     .pe-back svg { width: 14px; height: 14px; }
 
     .pe-status { margin-left: auto; font-size: 12.5px; color: var(--color-text-muted); }
-    .pe-status.saved { color: #16a34a; }
+    .pe-status.saved { color: var(--color-success-on-tint); }
     .pe-status.saving { color: var(--color-primary); }
     .pe-status.error { color: var(--color-danger); }
 
@@ -49,9 +48,9 @@
     .pe-icon-btn:hover { color: var(--color-text); border-color: var(--color-border-strong); }
     .pe-icon-btn.danger:hover { color: var(--color-danger); border-color: var(--color-danger); }
     .pe-icon-btn.primary {
-      background: #f59e0b; color: #fff; border-color: #f59e0b;
+      background: var(--color-warning); color: #fff; border-color: var(--color-warning);
     }
-    .pe-icon-btn.primary:hover { background: #d97706; border-color: #d97706; color: #fff; }
+    .pe-icon-btn.primary:hover { background: var(--color-warning); border-color: #d97706; color: #fff; }
     .pe-icon-btn svg { width: 13px; height: 13px; }
 
     /* Title */
@@ -94,7 +93,6 @@
       margin-bottom: 18px;
       font-size: 12px;
     }
-    html.dark .pe-history-strip { background: #0f1729; border-color: #28344a; }
     .pe-history-label {
       font-weight: 700; color: var(--color-text-muted);
       text-transform: uppercase; letter-spacing: .05em;
@@ -117,13 +115,12 @@
       background: var(--color-primary-light); color: var(--color-primary);
       border-color: var(--color-primary); font-weight: 700;
     }
-    html.dark .pe-history-chip.is-current { background: rgba(37,99,235,.22); color: #93c5fd; }
     .pe-history-rag {
       width: 8px; height: 8px; border-radius: 50%;
     }
-    .pe-history-rag.red { background: #dc2626; }
-    .pe-history-rag.amber { background: #f59e0b; }
-    .pe-history-rag.green { background: #16a34a; }
+    .pe-history-rag.red { background: var(--color-danger); }
+    .pe-history-rag.amber { background: var(--color-warning); }
+    .pe-history-rag.green { background: var(--color-success); }
 
     /* Sections */
     .pe-section {
@@ -133,7 +130,6 @@
       padding: 18px 20px;
       margin-bottom: 14px;
     }
-    html.dark .pe-section { background: #111a2c; border-color: #28344a; }
 
     .pe-section-head {
       display: flex; align-items: center; gap: 10px;
@@ -182,7 +178,6 @@
       line-height: 1.55;
       resize: vertical;
     }
-    html.dark .pe-textarea { background: #0b1220; }
     .pe-textarea:focus {
       outline: none; border-color: var(--color-primary);
       box-shadow: 0 0 0 3px var(--color-primary-ring);
@@ -217,12 +212,9 @@
       color: var(--color-text-muted);
     }
     .pe-rag-btn:hover { color: var(--color-text); }
-    .pe-rag-btn.is-active.red { background: #fee2e2; color: #b91c1c; }
-    .pe-rag-btn.is-active.amber { background: #fef3c7; color: #92400e; }
-    .pe-rag-btn.is-active.green { background: #dcfce7; color: #166534; }
-    html.dark .pe-rag-btn.is-active.red { background: rgba(220,38,38,.22); color: #fca5a5; }
-    html.dark .pe-rag-btn.is-active.amber { background: rgba(245,158,11,.22); color: #fbbf24; }
-    html.dark .pe-rag-btn.is-active.green { background: rgba(22,163,74,.22); color: #86efac; }
+    .pe-rag-btn.is-active.red { background: var(--color-danger-light); color: var(--color-danger-on-tint); }
+    .pe-rag-btn.is-active.amber { background: var(--color-warning-light); color: var(--color-warning-on-tint); }
+    .pe-rag-btn.is-active.green { background: var(--color-success-light); color: var(--color-success-on-tint); }
 
     /* Row-editor (workstreams, milestones, risks, decisions) */
     .pe-rows { display: flex; flex-direction: column; gap: 8px; }
@@ -235,7 +227,6 @@
       border-radius: 10px;
       align-items: start;
     }
-    html.dark .pe-row { background: #0b1220; }
 
     .pe-row.workstream {
       grid-template-columns: minmax(140px, 1.5fr) minmax(120px, 1fr) auto minmax(220px, 2.5fr) auto;
@@ -264,7 +255,7 @@
       cursor: pointer;
       align-self: center;
     }
-    .pe-row-rm:hover { background: rgba(220,38,38,.12); color: #b91c1c; }
+    .pe-row-rm:hover { background: rgba(220,38,38,.12); color: var(--color-danger-on-tint); }
     .pe-row-rm svg { width: 14px; height: 14px; }
 
     .pe-row-rag {
@@ -282,9 +273,9 @@
       font-weight: 700; font-size: 11px;
       color: var(--color-text-muted);
     }
-    .pe-row-rag button.is-active.red { background: #dc2626; color: #fff; }
-    .pe-row-rag button.is-active.amber { background: #f59e0b; color: #fff; }
-    .pe-row-rag button.is-active.green { background: #16a34a; color: #fff; }
+    .pe-row-rag button.is-active.red { background: var(--color-danger); color: #fff; }
+    .pe-row-rag button.is-active.amber { background: var(--color-warning); color: #fff; }
+    .pe-row-rag button.is-active.green { background: var(--color-success); color: #fff; }
 
     .pe-row-status {
       display: inline-flex; align-items: center; justify-content: center;
@@ -297,9 +288,9 @@
       min-width: 95px;
       align-self: center;
     }
-    .pe-row-status.hit { background: #dcfce7; color: #166534; border-color: #86efac; }
-    .pe-row-status.slipped { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
-    .pe-row-status.missed { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+    .pe-row-status.hit { background: var(--color-success-light); color: var(--color-success-on-tint); border-color: var(--color-success-border); }
+    .pe-row-status.slipped { background: var(--color-warning-light); color: var(--color-warning-on-tint); border-color: var(--color-warning-border); }
+    .pe-row-status.missed { background: var(--color-danger-light); color: var(--color-danger-on-tint); border-color: var(--color-danger-border); }
     .pe-row-status.upcoming { background: var(--color-surface); color: var(--color-text-muted); }
 
     .pe-add-row {

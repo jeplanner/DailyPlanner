@@ -100,8 +100,8 @@
   .fl-icon {
     width: 32px; height: 32px; flex: 0 0 auto;
     border-radius: 50%;
-    background: linear-gradient(135deg, #dbeafe, #c7d2fe);
-    color: #1e40af;
+    background: linear-gradient(135deg, var(--color-primary-light), #c7d2fe);
+    color: var(--color-primary-ink);
     display: flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: 13px;
   }
@@ -118,7 +118,7 @@
   .fl-running-pill {
     margin-left: 8px;
     display: inline-block; padding: 1px 8px; border-radius: 999px;
-    background: rgba(22,163,74,.16); color: #166534;
+    background: rgba(22,163,74,.16); color: var(--color-success-on-tint);
     font-size: 11px; font-weight: 700;
     animation: flPulse 2s ease-in-out infinite;
   }
@@ -174,8 +174,6 @@
     .fl-head .fl-col-last, .fl-head .fl-col-actions { display: none; }
     .fl-detail { padding-left: 14px; }
   }
-  html.dark .fl-icon { background: linear-gradient(135deg, #1e3a8a, #3730a3); color: #bfdbfe; }
-  html.dark .fl-running-pill { background: rgba(22,163,74,.22); color: #86efac; }
 </style>
 {% include "_pwa_head.html" %}
 </head>
@@ -371,7 +369,7 @@
         ${sessions.map(s => {
           const dur = s.duration_seconds != null
             ? _fmtSec(s.duration_seconds)
-            : (s.ended_at ? '—' : '<span style="color:#15803d">running</span>');
+            : (s.ended_at ? '—' : '<span style="color:var(--color-success-on-tint)">running</span>');
           return `<div class="fl-session">
                     <span class="fl-session-date">${_fmtDate(s.started_at)}</span>
                     <span class="fl-session-dur">${dur}</span>

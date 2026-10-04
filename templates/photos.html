@@ -79,8 +79,8 @@
   .ph-action svg { width: 14px; height: 14px; }
   .ph-card:hover .ph-action,
   .ph-action:focus-visible { opacity: 1; }
-  .ph-action.danger:hover { background: #b91c1c; }
-  .ph-action:not(.danger):hover { background: #1d4ed8; }
+  .ph-action.danger:hover { background: var(--color-danger-strong); }
+  .ph-action:not(.danger):hover { background: var(--color-primary-hover); }
   .ph-action:active { transform: scale(.92); }
   @media (hover: none) { .ph-action { opacity: 1; } }
 
@@ -129,13 +129,13 @@
     position: fixed; left: 50%; bottom: 24px;
     transform: translateX(-50%);
     padding: 10px 18px; border-radius: 999px;
-    background: #0f172a; color: #fff;
+    background: var(--color-text); color: var(--color-text-inverse);
     font-size: 13.5px; font-weight: 600;
     box-shadow: 0 12px 28px rgba(15,23,42,.32);
     z-index: 9999;
   }
-  .ph-toast.is-error { background: #b91c1c; }
-  .ph-toast.is-saving { background: #1d4ed8; }
+  .ph-toast.is-error { background: var(--color-danger-strong); }
+  .ph-toast.is-saving { background: var(--color-primary-hover); }
 </style>
 {% include "_pwa_head.html" %}
 </head>

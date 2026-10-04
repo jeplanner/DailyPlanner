@@ -125,7 +125,7 @@
   }
   .gr-check:hover { border-color: var(--color-primary, #16a34a); }
   .gr-check.is-on {
-    background: #16a34a; border-color: #16a34a;
+    background: var(--color-success); border-color: var(--color-success);
   }
   .gr-check.is-on::after {
     content: ""; position: absolute;
@@ -157,9 +157,9 @@
     font-size: 11px; font-weight: 700; letter-spacing: .02em;
     text-transform: uppercase;
   }
-  .gr-prio-high   { background: color-mix(in srgb, #dc2626 14%, transparent); color: #b91c1c; }
+  .gr-prio-high   { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger-on-tint); }
   .gr-prio-medium { display: none; }   /* default — hide chip to reduce noise */
-  .gr-prio-low    { background: color-mix(in srgb, #6b7280 14%, transparent); color: #4b5563; }
+  .gr-prio-low    { background: color-mix(in srgb, #6b7280 14%, transparent); color: var(--color-text-secondary); }
 
   .gr-row-actions { display: inline-flex; gap: 6px; align-items: center; }
   /* Was transparent + tertiary text → invisible at rest. Now: tinted chip
@@ -177,12 +177,12 @@
   }
   .gr-icon-btn svg { width: 17px; height: 17px; stroke-width: 2.25; }
   .gr-icon-btn:hover {
-    background: #eef2ff;
+    background: var(--color-primary-light);
     color: var(--color-primary, #2563eb);
-    border-color: #a5b4fc;
+    border-color: var(--color-primary-border);
   }
-  .gr-icon-btn.danger { color: #dc2626; }
-  .gr-icon-btn.danger:hover { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+  .gr-icon-btn.danger { color: var(--color-danger-on-tint); }
+  .gr-icon-btn.danger:hover { background: var(--color-danger-light); border-color: var(--color-danger-border); color: var(--color-danger-on-tint); }
 
   /* ── Empty / loading ─── */
   .gr-empty {

@@ -122,20 +122,20 @@
       align-items: end; gap: 16px;
       padding: 8px 0 14px;
       margin-bottom: 4px;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid var(--color-border-light);
     }
     .md-tight-meta { min-width: 0; }
     .md-tight-greet {
       font-size: 22px; font-weight: 600; margin: 0;
       line-height: 1.15; letter-spacing: -.02em;
-      color: #0f172a;
+      color: var(--color-text);
     }
     .md-tight-date {
       margin: 4px 0 0; font-size: 13px;
-      color: #64748b; font-weight: 400;
+      color: var(--color-text-muted); font-weight: 400;
     }
-    .md-today-tag { color: #4f46e5; font-weight: 600; }
-    .md-hero-overdue { color: #dc2626; font-weight: 600; }
+    .md-today-tag { color: var(--color-primary-ink); font-weight: 600; }
+    .md-hero-overdue { color: var(--color-danger-on-tint); font-weight: 600; }
     /* Progress: ditch the gimmicky gradient bar, render as crisp
        fraction text. Tabular numerics so the digits don't dance. */
     .md-tight-progress {
@@ -144,16 +144,16 @@
     .md-tight-progress .md-progress-track { display: none; }
     .md-tight-count {
       font-size: 28px; font-weight: 600; line-height: 1;
-      color: #0f172a; font-variant-numeric: tabular-nums;
+      color: var(--color-text); font-variant-numeric: tabular-nums;
       letter-spacing: -.02em;
     }
     .md-tight-count b { font-weight: 700; }
-    .md-tight-count--empty { font-size: 14px; font-style: italic; color: #94a3b8; }
+    .md-tight-count--empty { font-size: 14px; font-style: italic; color: var(--color-text-muted); }
     /* Hide the legacy stacked headers entirely — replaced by the tight one. */
     .md-title-row, .md-hero, .md-greeting, .md-progress-card { display: none !important; }
 
     /* ── PAGE: minimal noise so the list itself dominates ─── */
-    .md-app, .summary-app, body { background: #ffffff; }
+    .md-app, .summary-app, body { background: var(--color-surface); }
 
     /* ── HIDE NOISE ────────────────────────────────────────── */
     .md-filter-chips,
@@ -189,12 +189,12 @@
     /* Today's Focus when set — quote-like rendering, not a card. */
     .md-focus-card {
       padding: 14px 0 !important;
-      border-bottom: 1px solid #f1f5f9 !important;
+      border-bottom: 1px solid var(--color-border-light) !important;
     }
     .md-focus-card .md-card-head { display: none !important; }
     .md-focus-card .md-focus-text {
       font-size: 16px; font-weight: 500; line-height: 1.4;
-      color: #0f172a; font-style: italic;
+      color: var(--color-text); font-style: italic;
     }
     /* Overdue + Today's flow render as one continuous list, no
        heads, no boxed wrappers. */
@@ -226,7 +226,7 @@
       column-gap: 12px;
       row-gap: 2px;
       padding: 14px 0;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid var(--color-border-light);
       cursor: pointer;
       transition: background .15s;
       background: transparent !important;
@@ -257,20 +257,20 @@
     .md-agenda-table .md-row-title,
     .md-overdue-table .md-row-title {
       font-size: 15px; line-height: 1.4;
-      color: #0f172a; font-weight: 400;
+      color: var(--color-text); font-weight: 400;
       white-space: normal; overflow: visible; text-overflow: clip;
       max-width: none; display: block;
     }
     .md-agenda-table tr.md-done .md-row-title,
     .md-overdue-table tr.md-done .md-row-title {
-      color: #94a3b8; text-decoration: line-through;
+      color: var(--color-text-muted); text-decoration: line-through;
     }
 
     /* Context — small muted text, no pill background. */
     .md-agenda-table .md-context-chip,
     .md-overdue-table .md-context-chip {
       font-size: 12px; font-weight: 400;
-      color: #64748b; letter-spacing: 0;
+      color: var(--color-text-muted); letter-spacing: 0;
       padding: 0; background: transparent !important; border: none;
     }
 
@@ -279,7 +279,7 @@
     .md-overdue-table .md-overdue-chip {
       font-size: 12.5px; font-weight: 500;
       font-variant-numeric: tabular-nums;
-      color: #64748b;
+      color: var(--color-text-muted);
       padding: 0; background: transparent !important; border: none;
     }
     .md-agenda-table .md-time-any {
@@ -289,7 +289,7 @@
     .md-overdue-table .md-c-due {
       background: transparent !important; padding: 0 !important;
     }
-    .md-overdue-table .md-overdue-chip { color: #dc2626; font-weight: 600; }
+    .md-overdue-table .md-overdue-chip { color: var(--color-danger-on-tint); font-weight: 600; }
 
     /* Hide context on very narrow phones so the title gets full
        width. */
@@ -304,7 +304,7 @@
     .md-c-status .md-check {
       width: 20px; height: 20px;
       border-radius: 5px;
-      border: 1.5px solid #cbd5e1;
+      border: 1.5px solid var(--color-border-strong);
       background: transparent;
       box-sizing: border-box;
       padding: 0;
@@ -319,10 +319,10 @@
       display: inline-flex; align-items: center; justify-content: center;
     }
     .md-c-status .md-check-done {
-      background: #4f46e5; border-color: #4f46e5; color: #fff;
+      background: var(--color-primary); border-color: #4f46e5; color: #fff;
     }
     .md-c-status .md-check-done svg { width: 12px; height: 12px; }
-    .md-c-status .md-check-open { border-color: #cbd5e1; }
+    .md-c-status .md-check-open { border-color: var(--color-border-strong); }
 
     /* ── PARKED — only allowed heading on the page ──────── */
     .md-parked-card {
@@ -332,26 +332,26 @@
       box-shadow: none !important;
       margin-top: 32px !important;
       padding-top: 18px !important;
-      border-top: 1px solid #f1f5f9 !important;
+      border-top: 1px solid var(--color-border-light) !important;
     }
     .md-parked-card .md-card-head { padding: 0 0 8px !important; }
     .md-parked-card .md-card-title {
       font-size: 12px !important; font-weight: 700 !important;
       letter-spacing: .08em !important; text-transform: uppercase !important;
-      color: #64748b !important; gap: 8px !important;
+      color: var(--color-text-muted) !important; gap: 8px !important;
     }
     .md-parked-card .md-card-icon {
       width: 16px !important; height: 16px !important;
       background: transparent !important; border: none !important;
-      color: #64748b !important;
+      color: var(--color-text-muted) !important;
     }
     .md-parked-card .md-card-icon svg { width: 14px !important; height: 14px !important; }
     .md-parked-card .md-count-pill {
       font-size: 11px !important; padding: 1px 8px !important; font-weight: 700 !important;
-      background: #f1f5f9 !important; color: #475569 !important; border: none !important;
+      background: var(--color-surface-secondary) !important; color: var(--color-text-secondary) !important; border: none !important;
     }
     .md-parked-card .md-parked-hint {
-      font-size: 12px; color: #94a3b8; margin: 0 0 8px;
+      font-size: 12px; color: var(--color-text-muted); margin: 0 0 8px;
     }
 
     /* ── SECTION LABELS (Today / Tomorrow / This week / etc.) ──
@@ -361,18 +361,18 @@
     .md-section--upcoming {
       margin-top: 24px;
       padding-top: 16px;
-      border-top: 1px solid #f1f5f9;
+      border-top: 1px solid var(--color-border-light);
     }
     .md-section-label {
       font-size: 11px; font-weight: 700; letter-spacing: .1em;
       text-transform: uppercase;
-      color: #64748b; margin: 0 0 8px;
+      color: var(--color-text-muted); margin: 0 0 8px;
       display: flex; align-items: center; gap: 8px;
     }
     .md-section-count {
       font-size: 11px; font-weight: 700;
       padding: 1px 8px; border-radius: 999px;
-      background: #f1f5f9; color: #475569;
+      background: var(--color-surface-secondary); color: var(--color-text-secondary);
       letter-spacing: 0;
     }
     .md-section-label--today {
@@ -403,7 +403,7 @@
       height: 18px !important;
       margin: 0 !important;
       border-radius: 5px !important;
-      border: 1.5px solid #cbd5e1 !important;
+      border: 1.5px solid var(--color-border-strong) !important;
       background: transparent !important;
       flex: 0 0 auto !important;
     }
@@ -414,7 +414,7 @@
     }
     .md-table .md-task-toggle.is-done {
       border-color: #4f46e5 !important;
-      background: #4f46e5 !important;
+      background: var(--color-primary) !important;
     }
     .md-table .md-task-toggle.is-done::after {
       left: 5px !important; top: 1px !important;
@@ -441,7 +441,7 @@
       padding: 14px 0 !important;
       margin: 0 !important;
       border: none !important;
-      border-bottom: 1px solid #f1f5f9 !important;
+      border-bottom: 1px solid var(--color-border-light) !important;
       background: transparent !important;
       box-shadow: none !important;
       cursor: pointer;
@@ -492,7 +492,7 @@
     .md-table .md-row-title {
       font-size: 15px !important;
       line-height: 1.42 !important;
-      color: #0f172a !important;
+      color: var(--color-text) !important;
       font-weight: 400 !important;
       white-space: normal !important;
       overflow: visible !important;
@@ -502,13 +502,13 @@
       flex: initial !important;
     }
     .md-table tr.md-done .md-row-title {
-      color: #94a3b8 !important;
+      color: var(--color-text-muted) !important;
       text-decoration: line-through !important;
     }
     .md-table .md-context-chip {
       font-size: 12.5px !important;
       font-weight: 400 !important;
-      color: #64748b !important;
+      color: var(--color-text-muted) !important;
       letter-spacing: 0 !important;
       padding: 0 !important;
       background: transparent !important;
@@ -518,7 +518,7 @@
       font-size: 13px !important;
       font-weight: 500 !important;
       font-variant-numeric: tabular-nums !important;
-      color: #64748b !important;
+      color: var(--color-text-muted) !important;
       padding: 0 !important;
       background: transparent !important;
       border: none !important;
@@ -534,7 +534,7 @@
     .md-overdue-table .md-overdue-chip {
       display: inline-block !important;
       font-size: 13px !important; font-weight: 600 !important;
-      color: #dc2626 !important;
+      color: var(--color-danger-on-tint) !important;
       padding: 0 !important; background: transparent !important;
       border: none !important;
       white-space: nowrap !important;
@@ -546,19 +546,25 @@
     }
 
     /* ═══════════════════════════════════════════════════════════
-       DAILY VIEW — Amazon-inspired palette + dly-* components.
+       DAILY VIEW — dly-* components.
 
-       Amazon-derived palette:
-         --amz-text       : #0F1111   (titles, important text)
-         --amz-text-muted : #565959   (meta, body text)
-         --amz-text-faded : #6F7373   (secondary meta, "Anytime")
-         --amz-border     : #D5D9D9   (1 px borders)
-         --amz-divider    : #EAEDED   (row separators)
-         --amz-bg-hover   : #F7FAFA   (row hover tint)
-         --amz-link       : #007185   (links / accent / done state)
-         --amz-link-hover : #C7511F   (active link / CTA hover)
-         --amz-success    : #007600   (positive)
-         --amz-warning    : #B12704   (overdue / error)
+       This section used to carry a hand-copied Amazon palette: their
+       teal #007185 for links and the done state, their orange #C7511F
+       for hover, their red #B12704 for overdue, and their four greys.
+       It read as a different product from the page it was on -- and
+       Today's Plan is the page opened most. The layout was the good part
+       and is untouched; the colours are the app's own tokens now, so
+       "done" here is the same green as "done" everywhere else.
+
+       Roles, in design-system.css terms:
+         --color-text              titles, important text
+         --color-text-secondary    meta, body text
+         --color-text-muted        secondary meta, "Anytime"
+         --color-border            row separators, 1 px borders
+         --color-surface-secondary row hover tint
+         --color-primary / -ink    links, accent, done state
+         --color-success-on-tint   positive
+         --color-danger-on-tint    overdue / error
 
        Type: system stack, three sizes (15 / 13 / 11), tabular
        numerics for clock columns. No custom fonts.
@@ -587,19 +593,19 @@
       padding: 0 0 6px;
       font-size: 11px; font-weight: 700;
       letter-spacing: .14em; text-transform: uppercase;
-      color: #565959;
+      color: var(--color-text-secondary);
     }
     .dly-section-count {
       font-size: 11px; font-weight: 700;
       padding: 1px 8px; border-radius: 12px;
-      background: #EAEDED; color: #565959;
+      background: var(--color-border); color: var(--color-text-secondary);
       letter-spacing: 0;
     }
 
     /* List + row */
     .dly-list {
       list-style: none; padding: 0; margin: 0;
-      border-top: 1px solid #EAEDED;
+      border-top: 1px solid var(--color-border);
     }
     .dly-row {
       display: grid;
@@ -610,28 +616,28 @@
       column-gap: 14px;
       row-gap: 3px;
       padding: 14px 4px;
-      border-bottom: 1px solid #EAEDED;
+      border-bottom: 1px solid var(--color-border);
       cursor: pointer;
       transition: background .12s;
       align-items: start;
     }
-    .dly-row:hover { background: #F7FAFA; }
-    .dly-row.is-done .dly-title { color: #6F7373; text-decoration: line-through; }
+    .dly-row:hover { background: var(--color-surface-secondary); }
+    .dly-row.is-done .dly-title { color: var(--color-text-muted); text-decoration: line-through; }
     .dly-row.is-done .dly-ctx   { color: #B0B5B5; }
 
     /* ── CHECKBOX ─────────────────────────────────────────────
        Larger (22 × 22), thicker border (2 px), more contrasted
        so it reads as obviously tappable. Hover shows a faint
-       tint + darker border. Done state fills Amazon teal-blue
-       (#007185) with a clean white tick — visibility against
-       both white backgrounds and the hover wash. */
+       tint + darker border. Done state fills --color-primary with
+       a clean white tick — visibility against both white
+       backgrounds and the hover wash. */
     .dly-check {
       grid-area: check;
       width: 22px; height: 22px;
       margin-top: 0;
       border: 2px solid #888C8C;
       border-radius: 6px;
-      background: #fff;
+      background: var(--color-surface);
       cursor: pointer;
       padding: 0;
       transition: border-color .12s, background .12s, box-shadow .1s, transform .08s;
@@ -640,18 +646,18 @@
       box-shadow: 0 1px 0 rgba(0,0,0,.04);
     }
     .dly-check:hover {
-      border-color: #007185;
+      border-color: var(--color-primary);
       background: #F0F7F8;
     }
     .dly-check:focus-visible {
       outline: none;
-      border-color: #007185;
+      border-color: var(--color-primary);
       box-shadow: 0 0 0 3px rgba(0,113,133,.25);
     }
     .dly-check:active { transform: scale(.92); }
     .dly-check.is-done {
-      background: #007185;
-      border-color: #007185;
+      background: var(--color-primary);
+      border-color: var(--color-primary);
     }
     .dly-check.is-done:hover {
       background: #005965;
@@ -672,7 +678,7 @@
     .dly-title {
       grid-area: title;
       font-size: 16px; line-height: 1.45;
-      color: #0F1111; font-weight: 500;
+      color: var(--color-text); font-weight: 500;
       min-width: 0; word-break: break-word;
       align-self: center;
       letter-spacing: -.005em;
@@ -680,7 +686,7 @@
     .dly-ctx {
       grid-area: ctx;
       font-size: 13px; line-height: 1.4;
-      color: #565959; font-weight: 400;
+      color: var(--color-text-secondary); font-weight: 400;
       align-self: start;
     }
 
@@ -689,13 +695,13 @@
       grid-area: meta;
       font-size: 13px; font-weight: 500;
       font-variant-numeric: tabular-nums;
-      color: #565959; white-space: nowrap;
+      color: var(--color-text-secondary); white-space: nowrap;
       align-self: center;
       padding-left: 12px;
     }
-    .dly-meta--anytime { color: #6F7373; font-style: italic; font-weight: 400; }
-    .dly-meta--overdue { color: #B12704; font-weight: 700; }
-    .dly-meta--time    { color: #0F1111; font-weight: 600; }
+    .dly-meta--anytime { color: var(--color-text-muted); font-style: italic; font-weight: 400; }
+    .dly-meta--overdue { color: var(--color-danger-on-tint); font-weight: 700; }
+    .dly-meta--time    { color: var(--color-text); font-weight: 600; }
 
     @media (max-width: 380px) {
       .dly-row { grid-template-columns: 32px 1fr auto; column-gap: 12px; }
@@ -726,7 +732,7 @@
       max-height: 360px;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
-      border-bottom: 1px solid #EAEDED;
+      border-bottom: 1px solid var(--color-border);
     }
     .md-parked-card .md-parked-body {
       max-height: 360px;
@@ -736,15 +742,15 @@
 
     /* ── HEADER + ACCENTS ── repaint the tight header in the same
        Amazon palette so it doesn't clash with the new list. */
-    .md-tight-greet { color: #0F1111; }
-    .md-tight-date { color: #565959; }
-    .md-today-tag { color: #007185; font-weight: 700; }
-    .md-hero-overdue { color: #B12704; font-weight: 700; }
-    .md-tight-count { color: #0F1111; }
-    .md-tight-header { border-bottom-color: #EAEDED; }
+    .md-tight-greet { color: var(--color-text); }
+    .md-tight-date { color: var(--color-text-secondary); }
+    .md-today-tag { color: var(--color-primary-ink); font-weight: 700; }
+    .md-hero-overdue { color: var(--color-danger-on-tint); font-weight: 700; }
+    .md-tight-count { color: var(--color-text); }
+    .md-tight-header { border-bottom-color: var(--color-border); }
     /* Quiet expander link uses Amazon teal. */
-    .md-more-toggle { color: #007185; }
-    .md-more-toggle:hover { color: #C7511F; }
+    .md-more-toggle { color: var(--color-primary-ink); }
+    .md-more-toggle:hover { color: var(--color-primary-hover); }
 
     /* ── MORE SECTIONS expander — quiet text link ────────── */
     .md-more-toggle {
@@ -752,9 +758,9 @@
       margin: 18px 0 0; padding: 0;
       font: inherit; font-size: 13px; font-weight: 500;
       background: transparent; border: none;
-      color: #4f46e5; cursor: pointer;
+      color: var(--color-primary-ink); cursor: pointer;
     }
-    .md-more-toggle:hover { color: #4338ca; }
+    .md-more-toggle:hover { color: var(--color-primary-ink); }
     .md-more-toggle svg { width: 14px; height: 14px; transition: transform .18s; }
     body[data-md-more="1"] .md-more-toggle svg { transform: rotate(180deg); }
   </style>
@@ -1217,9 +1223,9 @@
     }
     .md-chip:hover { background: var(--color-surface-secondary, #f3f4f6); color: var(--color-text, #111827); }
     .md-chip.is-active {
-      background: #4338ca; color: #fff; border-color: #4338ca;
+      background: var(--color-primary); color: #fff; border-color: var(--color-primary);
     }
-    .md-chip--bucket.is-active { background: #6366f1; border-color: #6366f1; }
+    .md-chip--bucket.is-active { background: var(--color-primary); border-color: #6366f1; }
     .md-chip-count {
       font-size: 11px; padding: 1px 7px; border-radius: 999px;
       background: rgba(0,0,0,.07); font-weight: 700;
@@ -2118,13 +2124,11 @@
 }
 .peek-sheet:not(.hidden) { transform: translateX(0); }
 .peek-sheet.hidden { pointer-events: none; }
-html.dark .peek-sheet { background: #1e293b; border-left-color: #334155; color: #f1f5f9; }
 
 .peek-head {
   padding: 16px 20px 14px; border-bottom: 1px solid var(--color-border, #e2e8f0);
   display: flex; flex-direction: column; gap: 10px; flex-shrink: 0;
 }
-html.dark .peek-head { border-bottom-color: #334155; }
 .peek-head-row { display: flex; justify-content: space-between; align-items: center; }
 .peek-close {
   width: 34px; height: 34px; border: none; background: none;
@@ -2144,8 +2148,7 @@ html.dark .peek-head { border-bottom-color: #334155; }
   background: var(--color-border, #e5e7eb); color: var(--color-text-secondary, #475569);
   font-weight: 500;
 }
-.peek-meta .chip.overdue { background: color-mix(in srgb, #dc2626 14%, transparent); color: #b91c1c; font-weight: 700; }
-html.dark .peek-meta .chip.overdue { background: #3b1111; color: #fca5a5; }
+.peek-meta .chip.overdue { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger-on-tint); font-weight: 700; }
 
 .peek-body {
   flex: 1; overflow-y: auto;
@@ -2171,7 +2174,7 @@ html.dark .peek-meta .chip.overdue { background: #3b1111; color: #fca5a5; }
   background: var(--color-border, #e5e7eb); margin-top: 4px;
 }
 .peek-habit-fill {
-  height: 100%; background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+  height: 100%; background: linear-gradient(90deg, var(--color-success) 0%, var(--color-success-strong) 100%);
   border-radius: 4px; transition: width .3s ease;
 }
 
@@ -2188,7 +2191,6 @@ html.dark .peek-meta .chip.overdue { background: #3b1111; color: #fca5a5; }
   .peek-foot { flex-direction: column-reverse; gap: 8px; padding: 12px 16px; }
   .peek-foot .peek-btn { width: 100%; }
 }
-html.dark .peek-foot { border-top-color: #334155; }
 .peek-btn {
   flex: 1; padding: 10px 14px; border: none; border-radius: 10px;
   font-size: 13.5px; font-weight: 700; font-family: inherit; cursor: pointer;
@@ -2199,7 +2201,7 @@ html.dark .peek-foot { border-top-color: #334155; }
 .peek-btn:hover { filter: brightness(1.06); }
 .peek-btn:active { transform: scale(.98); }
 .peek-btn-primary { background: var(--color-primary, #2563eb); color: #fff; }
-.peek-btn-primary.peek-btn-success { background: #059669; }
+.peek-btn-primary.peek-btn-success { background: var(--color-success-strong); }
 .peek-btn-primary.peek-btn-disabled,
 .peek-btn-primary:disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
 .peek-btn-ghost {
@@ -2237,9 +2239,6 @@ html.dark .peek-foot { border-top-color: #334155; }
   border-color: var(--color-primary, #2563eb);
   color: var(--color-primary, #2563eb);
 }
-html.dark .peek-reschedule { border-top-color: #334155; }
-html.dark .peek-reschedule-btn { border-color: #334155; color: #f1f5f9; }
-html.dark .peek-reschedule-btn:hover { background: #273449; color: #93c5fd; border-color: #475569; }
 
 /* Timer strip in the peek sheet — configurable Pomodoro duration
    plus quick presets and a Stopwatch fallback. Pause/stop live in the
@@ -2333,20 +2332,11 @@ html.dark .peek-reschedule-btn:hover { background: #273449; color: #93c5fd; bord
   color: var(--color-primary, #2563eb);
   border-color: var(--color-primary, #2563eb);
 }
-html.dark .peek-timer { border-top-color: #334155; }
-html.dark .peek-timer-input { background: #0f172a; border-color: #334155; }
-html.dark .peek-timer-input input { color: #f1f5f9; }
-html.dark .peek-timer-step { background: #1e293b; color: #94a3b8; }
-html.dark .peek-timer-step:hover { background: #273449; color: #f1f5f9; }
-html.dark .peek-timer-opt-ghost { background: transparent; border-color: #334155; color: #94a3b8; }
-html.dark .peek-timer-opt-ghost:hover { background: #273449; color: #f1f5f9; }
-html.dark .peek-timer-chip { border-color: #334155; color: #94a3b8; }
-html.dark .peek-timer-chip:hover { background: rgba(37,99,235,.22); color: #93c5fd; border-color: #1d4ed8; }
 
 .peek-timer-running {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 12px; border-radius: 10px;
-  background: var(--tint-success-bg, color-mix(in srgb, #16a34a 14%, transparent));
+  background: var(--tint-success-bg, color-mix(in srgb, var(--color-success) 14%, transparent));
   color: var(--color-success-on-tint, #166534);
   font-size: 12.5px; font-weight: 600;
   flex: 1 1 100%;
@@ -2361,7 +2351,7 @@ html.dark .peek-timer-chip:hover { background: rgba(37,99,235,.22); color: #93c5
   font-size: 11px; font-weight: 700;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
-  background: #dc2626; color: #fff;
+  background: var(--color-danger); color: #fff;
   border-radius: 999px;
   animation: timerPulse 2s ease-in-out infinite;
 }
@@ -2420,7 +2410,6 @@ html.dark .peek-timer-chip:hover { background: rgba(37,99,235,.22); color: #93c5
   opacity: 0; pointer-events: none;
   transform: translate(-50%, -45%);
 }
-html.dark .quick-capture-sheet { background: #1e293b; color: #f1f5f9; }
 @media (max-width: 640px) {
   .quick-capture-sheet {
     top: auto; bottom: 0; left: 0; right: 0;
@@ -2455,7 +2444,6 @@ html.dark .quick-capture-sheet { background: #1e293b; color: #f1f5f9; }
   border-color: var(--color-primary, #2563eb);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #2563eb) 15%, transparent);
 }
-html.dark .qc-text { background: #0f172a; border-color: #334155; color: #f1f5f9; }
 .qc-when { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .qc-chip {
   appearance: none;
@@ -2483,9 +2471,6 @@ html.dark .qc-text { background: #0f172a; border-color: #334155; color: #f1f5f9;
   background: transparent;
   color: var(--color-text, #0f172a);
 }
-html.dark .qc-chip { color: #cbd5e1; border-color: #334155; }
-html.dark .qc-chip:hover { color: #93c5fd; border-color: #475569; }
-html.dark .qc-date { border-color: #334155; color: #f1f5f9; }
 .qc-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
 .qc-btn {
   padding: 9px 16px; border-radius: 10px; font: inherit; font-size: 13.5px; font-weight: 700;
@@ -2495,8 +2480,6 @@ html.dark .qc-date { border-color: #334155; color: #f1f5f9; }
 .qc-btn-primary:disabled { opacity: .5; cursor: not-allowed; }
 .qc-btn-ghost { background: transparent; color: var(--color-text-secondary, #475569); border: 1px solid var(--color-border, #e2e8f0); }
 .qc-btn-ghost:hover { background: var(--color-border, #e5e7eb); }
-html.dark .qc-btn-ghost { color: #cbd5e1; border-color: #334155; }
-html.dark .qc-btn-ghost:hover { background: #273449; }
 
 /* Every row is clickable — cursor + focus ring reinforce that */
 .md-row[role="button"] { cursor: pointer; }
@@ -2526,9 +2509,8 @@ html.dark .qc-btn-ghost:hover { background: #273449; }
    off the day's plate. Single-tap "Today" pulls one back into the matrix.
    ════════════════════════════════════════════════════════════════ */
 .md-parked-card { /* inherits .md-card */ }
-.md-parked-icon { background: var(--tint-warning-bg, color-mix(in srgb, #f59e0b 16%, transparent)); color: var(--color-warning, #b45309); }
-.md-count-warn  { background: var(--tint-warning-bg, color-mix(in srgb, #f59e0b 16%, transparent)); color: var(--color-warning-on-tint, #92400e); }
-html.dark .md-count-warn { background: rgba(245,158,11,.22); color: #fcd34d; }
+.md-parked-icon { background: var(--tint-warning-bg, color-mix(in srgb, var(--color-warning) 16%, transparent)); color: var(--color-warning, #b45309); }
+.md-count-warn  { background: var(--tint-warning-bg, color-mix(in srgb, var(--color-warning) 16%, transparent)); color: var(--color-warning-on-tint, #92400e); }
 .md-parked-hint {
   font-size: 12.5px; color: var(--color-text-secondary, #64748b);
   margin-left: auto; flex: 0 1 auto;
@@ -3866,8 +3848,8 @@ document.addEventListener("keydown", (e) => {
     transition: opacity 0.15s;
   }
   .reflection-save-status.is-visible { opacity: 1; }
-  .reflection-save-status.is-saved   { color: #166534; }
-  .reflection-save-status.is-error   { color: #dc2626; }
+  .reflection-save-status.is-saved   { color: var(--color-success-on-tint); }
+  .reflection-save-status.is-error   { color: var(--color-danger-on-tint); }
   .card-title { display: flex; align-items: center; gap: 8px; }
 </style>
 <script>

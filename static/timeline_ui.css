@@ -57,9 +57,6 @@ body {
   color: var(--color-text, #0f172a);
   box-shadow: 0 1px 2px rgba(15,23,42,.08);
 }
-html.dark .zoom-toggle { background: #0f172a; border-color: #334155; }
-html.dark .zoom-toggle button { color: #94a3b8; }
-html.dark .zoom-toggle button.active { background: #1e293b; color: #f1f5f9; }
 
 /* Project filter dropdown */
 .controls select {
@@ -81,7 +78,6 @@ html.dark .zoom-toggle button.active { background: #1e293b; color: #f1f5f9; }
   border-color: var(--color-primary, #2563eb);
   box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.18));
 }
-html.dark .controls select { background-color: #0f172a; border-color: #334155; color: #f1f5f9; }
 
 /* ───────────── TIMELINE RAIL ─────────────
    Single vertical line on the left, dots mark each block.
@@ -99,7 +95,6 @@ html.dark .controls select { background-color: #0f172a; border-color: #334155; c
   background: var(--color-border, #e5e7eb);
   border-radius: 1px;
 }
-html.dark .timeline::before { background: #28344a; }
 
 .time-block {
   position: relative;
@@ -125,7 +120,7 @@ html.dark .timeline::before { background: #28344a; }
   box-shadow: 0 0 0 4px var(--color-bg, #f5f6f8);
   flex: 0 0 auto;
 }
-html.dark .time-node .dot { box-shadow: 0 0 0 4px #0b1220; }
+html.dark .time-node .dot { box-shadow: 0 0 0 4px var(--color-bg); }
 
 .time-label {
   font-size: 13px; font-weight: 700;
@@ -155,8 +150,8 @@ html.dark .time-node .dot { box-shadow: 0 0 0 4px #0b1220; }
   box-shadow: 0 6px 16px rgba(15,23,42,.08);
 }
 .timeline-card:active { cursor: grabbing; }
-html.dark .timeline-card { background: #111a2c; border-color: #28344a; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
-html.dark .timeline-card:hover { border-color: #3b4865; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
+
+html.dark .timeline-card:hover { border-color: var(--color-border-strong); box-shadow: 0 8px 22px rgba(0,0,0,.45); }
 
 .card-title {
   font-weight: 600; font-size: 14px; line-height: 1.4;
@@ -174,7 +169,6 @@ html.dark .timeline-card:hover { border-color: #3b4865; box-shadow: 0 8px 22px r
   background: var(--color-primary-light, #eff6ff);
   border-radius: 12px;
 }
-html.dark .time-block.drag-over { background: rgba(37,99,235,.18); }
 
 /* ───────────── EMPTY STATES ───────────── */
 .empty-slot {
@@ -190,7 +184,6 @@ html.dark .time-block.drag-over { background: rgba(37,99,235,.18); }
   color: var(--color-text-muted, #6b7280);
   font-size: 14px;
 }
-html.dark .empty-timeline { background: #111a2c; border-color: #28344a; color: #94a3b8; }
 
 /* Footer back link */
 body > .container > a[href="/"] {
@@ -210,8 +203,6 @@ body > .container > a[href="/"]:hover {
   color: var(--color-text, #0f172a);
   border-color: var(--color-border-strong, #d1d5db);
 }
-html.dark body > .container > a[href="/"] { background: #111a2c; border-color: #28344a; color: #cbd5e1; }
-html.dark body > .container > a[href="/"]:hover { background: #15203a; color: #f1f5f9; }
 
 /* ───────────── MOBILE ───────────── */
 @media (max-width: 640px) {

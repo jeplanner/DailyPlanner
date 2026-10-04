@@ -16,17 +16,7 @@
     /* Explicit dark-mode tweaks so the page reads as actually dark on
        phones, not "off-white". The design-system base flips already,
        but a couple of inline rules used hardcoded light surfaces. */
-    html.dark body { background: #0b1220; }
-    html.dark .nl-sidebar { background: #111a2c; border-right-color: #28344a; }
-    html.dark .nl-card    { background: #111a2c; border-color: #28344a; }
-    html.dark .nl-card:hover { border-color: #3b4865; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
-    html.dark .nl-folder:hover { background: #15203a; color: #f1f5f9; }
-    html.dark .nl-folder-row .nl-folder-menu-btn:hover { background: #15203a; color: #f1f5f9; }
-    html.dark .nl-search { background: #111a2c; border-color: #28344a; }
-    html.dark .nl-search-clear { background: #15203a; }
-    html.dark .nl-folder-chip { background: #15203a; color: #cbd5e1; }
-    html.dark .nl-empty { background: #111a2c; border-color: #28344a; }
-    html.dark .nl-folder-mobile { background: #111a2c; border-color: #28344a; color: #f1f5f9; }
+    html.dark .nl-card:hover { border-color: var(--color-border-strong); box-shadow: 0 8px 22px rgba(0,0,0,.45); }
     .nl-app {
       display: grid;
       grid-template-columns: 260px 1fr;
@@ -74,7 +64,6 @@
     }
     .nl-folder:hover { background: var(--color-surface-secondary); color: var(--color-text); }
     .nl-folder.is-active { background: var(--color-primary-light); color: var(--color-primary); font-weight: 600; }
-    html.dark .nl-folder.is-active { background: rgba(37,99,235,.22); color: #93c5fd; }
     .nl-folder svg { width: 15px; height: 15px; flex: 0 0 auto; opacity: .85; }
     .nl-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .nl-folder-count {
@@ -235,10 +224,9 @@
       box-shadow: 0 1px 0 rgba(180,83,9,.45);
     }
     html.dark .nl-card.is-pinned:hover {
-      border-color: #F59E0B;
+      border-color: var(--color-warning);
       box-shadow: 0 6px 18px rgba(0,0,0,.45);
     }
-    html.dark .nl-card.is-pinned .nl-card-foot { border-top-color: rgba(245,158,11,.25); }
 
     .nl-card-pin {
       position: absolute; top: 10px; right: 10px;
@@ -251,12 +239,10 @@
     }
     .nl-card:hover .nl-card-pin,
     .nl-card.is-pinned .nl-card-pin { opacity: 1; }
-    .nl-card-pin:hover { background: rgba(217,119,6,.12); color: #B45309; }
-    .nl-card.is-pinned .nl-card-pin { color: #B45309; }
+    .nl-card-pin:hover { background: rgba(217,119,6,.12); color: var(--color-warning-on-tint); }
+    .nl-card.is-pinned .nl-card-pin { color: var(--color-warning-on-tint); }
     .nl-card.is-pinned .nl-card-pin svg { fill: currentColor; }
     .nl-card-pin svg { width: 15px; height: 15px; }
-    html.dark .nl-card.is-pinned .nl-card-pin,
-    html.dark .nl-card-pin:hover { color: #FBBF24; background: rgba(245,158,11,.18); }
 
     .nl-card-title {
       font-size: 15px; font-weight: 700;

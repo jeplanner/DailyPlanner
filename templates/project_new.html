@@ -12,26 +12,16 @@
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <style>
   :root {
-    --np-bg: #f7f8fa;
+    --np-bg: var(--color-bg);
     --np-surface: var(--color-surface, #ffffff);
-    --np-text: #1a1a2e;
-    --np-text2: #6b7280;
-    --np-text3: #9ca3af;
+    --np-text: var(--color-text);
+    --np-text2: var(--color-text-secondary);
+    --np-text3: var(--color-text-muted);
     --np-border: var(--color-border, #e5e7eb);
     --np-primary: var(--color-primary, #2563eb);
-    --np-primary-hover: #1d4ed8;
+    --np-primary-hover: var(--color-primary-hover);
     --np-primary-light: var(--color-primary-light, #eff6ff);
     --np-shadow: 0 4px 24px rgba(0,0,0,0.08);
-  }
-  html.dark {
-    --np-bg: #0f172a;
-    --np-surface: #1e293b;
-    --np-text: #f1f5f9;
-    --np-text2: #94a3b8;
-    --np-text3: #64748b;
-    --np-border: #334155;
-    --np-primary-light: #1e3a5f;
-    --np-shadow: 0 4px 24px rgba(0,0,0,0.3);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -266,13 +256,13 @@
       <div class="color-section">
         <label>Project Color</label>
         <div class="color-picker">
-          <div class="color-dot active" style="background:#2563eb" data-color="#2563eb" onclick="pickColor(this)"></div>
-          <div class="color-dot" style="background:#7c3aed" data-color="#7c3aed" onclick="pickColor(this)"></div>
-          <div class="color-dot" style="background:#059669" data-color="#059669" onclick="pickColor(this)"></div>
-          <div class="color-dot" style="background:#d97706" data-color="#d97706" onclick="pickColor(this)"></div>
-          <div class="color-dot" style="background:#dc2626" data-color="#dc2626" onclick="pickColor(this)"></div>
+          <div class="color-dot active" style="background:var(--color-primary)" data-color="var(--color-primary)" onclick="pickColor(this)"></div>
+          <div class="color-dot" style="background:var(--color-primary)" data-color="var(--color-primary)" onclick="pickColor(this)"></div>
+          <div class="color-dot" style="background:var(--color-success-strong)" data-color="var(--color-success-strong)" onclick="pickColor(this)"></div>
+          <div class="color-dot" style="background:var(--color-warning)" data-color="var(--color-warning)" onclick="pickColor(this)"></div>
+          <div class="color-dot" style="background:var(--color-danger)" data-color="var(--color-danger)" onclick="pickColor(this)"></div>
           <div class="color-dot" style="background:#ec4899" data-color="#ec4899" onclick="pickColor(this)"></div>
-          <div class="color-dot" style="background:#6366f1" data-color="#6366f1" onclick="pickColor(this)"></div>
+          <div class="color-dot" style="background:var(--color-primary)" data-color="var(--color-primary)" onclick="pickColor(this)"></div>
         </div>
       </div>
 

@@ -45,38 +45,38 @@
   .chip { display: flex; align-items: baseline; gap: 6px; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; padding: 6px 12px; }
   .chip b { font-size: 16px; font-weight: 900; letter-spacing: -.01em; }
   .chip span { font-size: 11px; color: var(--color-text-secondary); font-weight: 600; }
-  .chip.count b { color: #b91c1c; }
-  .chip.streak b { color: #ea580c; } .chip.days b { color: #4338ca; }
+  .chip.count b { color: var(--color-danger-on-tint); }
+  .chip.streak b { color: #ea580c; } .chip.days b { color: var(--color-primary-ink); }
   /* The days chip escalates with the deadline, and pulses only on the last
      day - the one deadline this whole page exists to serve. */
-  .chip.days[data-tone="soon"] b    { color: #d97706; }
-  .chip.days[data-tone="urgent"] b  { color: #dc2626; }
-  .chip.days[data-tone="overdue"] b { color: #b91c1c; }
+  .chip.days[data-tone="soon"] b    { color: var(--color-warning-on-tint); }
+  .chip.days[data-tone="urgent"] b  { color: var(--color-danger-on-tint); }
+  .chip.days[data-tone="overdue"] b { color: var(--color-danger-on-tint); }
   /* Blink via a class toggle from countdown.js, not a CSS animation — iOS
      Low Power Mode pauses animations and Reduce Motion suppresses them, so
      the animated version showed nothing on exactly the phones that needed
      it. Under Reduce Motion the class is pinned on instead of toggling. */
   .chip.days { transition: background-color .28s ease, border-color .28s ease; }
-  .chip.days.flash { border-color: #dc2626; }
-  .chip.days.flash.flash-on { background: #dc2626; border-color: #dc2626; }
+  .chip.days.flash { border-color: var(--color-danger); }
+  .chip.days.flash.flash-on { background: var(--color-danger); border-color: var(--color-danger); }
   .chip.days.flash.flash-on b, .chip.days.flash.flash-on span { color: #fff; }
 
   /* ── Coach banner ── */
   .coach { margin-top: 14px; border-radius: 16px; padding: 15px 16px; border: 1px solid; }
   .coach p { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.4; }
   .coach .q { margin-top: 8px; font-size: 12.5px; font-weight: 500; font-style: italic; opacity: .85; }
-  .coach.scold { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+  .coach.scold { background: var(--color-danger-light); border-color: var(--color-danger-border); color: var(--color-danger-on-tint); }
   .coach.push { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
-  .coach.cheer { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
-  .coach.celebrate { background: #eef2ff; border-color: #c7d2fe; color: #3730a3; }
-  html.dark .coach.scold { background: #2a1414; } html.dark .coach.push { background: #2a1c10; }
-  html.dark .coach.cheer { background: #0f2a20; } html.dark .coach.celebrate { background: #161a33; }
+  .coach.cheer { background: var(--color-success-light); border-color: var(--color-success-border); color: var(--color-success-on-tint); }
+  .coach.celebrate { background: var(--color-primary-light); border-color: var(--color-primary-border); color: var(--color-primary-ink); }
+html.dark .coach.push { background: #2a1c10; }
+html.dark .coach.celebrate { background: #161a33; }
 
   /* ── Today panel ── */
   .today-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 620px) { .today-grid { grid-template-columns: 1fr; } .hero .ring { margin: 0 auto; } }
   .prog { height: 12px; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; overflow: hidden; margin: 8px 0; }
-  .prog > i { display: block; height: 100%; background: #10b981; border-radius: 999px; width: 0; transition: width .3s; }
+  .prog > i { display: block; height: 100%; background: var(--color-success); border-radius: 999px; width: 0; transition: width .3s; }
   .mini-lbl { font-size: 12px; color: var(--color-text-secondary); font-weight: 600; }
   .log-form { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
   .log-form .row { display: flex; gap: 8px; }
@@ -100,8 +100,8 @@
   .topic .t { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; }
   .pips { display: flex; gap: 4px; flex: none; }
   .pip { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-bg); cursor: pointer; padding: 0; }
-  .pip.on { background: linear-gradient(135deg,#f59e0b,#10b981); border-color: transparent; }
-  .topic .del { background: none; border: none; color: #ef4444; cursor: pointer; padding: 3px; flex: none; }
+  .pip.on { background: linear-gradient(135deg,var(--color-warning),var(--color-success)); border-color: transparent; }
+  .topic .del { background: none; border: none; color: var(--color-danger-on-tint); cursor: pointer; padding: 3px; flex: none; }
   .topic .del svg { width: 15px; height: 15px; }
   .add-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   .add-row input { flex: 1; min-width: 160px; padding: 9px 11px; font-size: 14px; }
@@ -109,7 +109,7 @@
 
   /* ── Stories ── */
   .story { border: 1px solid var(--color-border); border-radius: 13px; padding: 12px 13px; margin-bottom: 10px; background: var(--color-surface); }
-  .story.done { border-color: #a7f3d0; }
+  .story.done { border-color: var(--color-success-border); }
   .story-head { display: flex; gap: 8px; align-items: center; }
   .story-head input.title { flex: 1; font-weight: 700; font-size: 15px; padding: 7px 9px; }
   .story-head input.comp { width: 130px; font-size: 13px; padding: 7px 9px; }
@@ -120,7 +120,7 @@
   .story-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
   .story-foot .reh { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; cursor: pointer; }
   .story-foot .spacer { flex: 1; }
-  .story-foot .del { background: none; border: none; color: #ef4444; cursor: pointer; font-weight: 600; font-size: 13px; }
+  .story-foot .del { background: none; border: none; color: var(--color-danger-on-tint); cursor: pointer; font-weight: 600; font-size: 13px; }
 
   /* ── Question bank ── */
   .qbank-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -129,7 +129,7 @@
   .qbank-only { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--color-text-secondary); white-space: nowrap; }
   .qbank-prog { font-size: 12.5px; font-weight: 700; color: var(--color-text-secondary); }
   .q-card { border: 1px solid var(--color-border); border-radius: 12px; margin-bottom: 8px; background: var(--color-surface); overflow: hidden; }
-  .q-card.done { border-color: #a7f3d0; }
+  .q-card.done { border-color: var(--color-success-border); }
   .q-head { display: flex; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; }
   .q-head .q-prac { width: 18px; height: 18px; flex: none; cursor: pointer; }
   .q-head .q-text { flex: 1; font-size: 14px; font-weight: 600; }
@@ -139,22 +139,20 @@
   .q-card.open .q-body { display: block; }
   .star { font-size: 13.5px; line-height: 1.45; margin: 4px 0; }
   .star b { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 6px; font-size: 11px; font-weight: 800; color: #fff; margin-right: 7px; vertical-align: 1px; }
-  .star.s b { background: #6366f1; } .star.t b { background: #0ea5e9; } .star.a b { background: #f59e0b; } .star.r b { background: #10b981; }
+  .star.s b { background: var(--color-primary); } .star.t b { background: #0ea5e9; } .star.a b { background: var(--color-warning); } .star.r b { background: var(--color-success); }
   .q-tip { font-size: 12.5px; font-style: italic; color: var(--color-text-secondary); margin: 8px 0 10px; }
   /* What separates a hire from a no-hire on this specific question, and the
      follow-ups the panel will push with — where the round is actually decided. */
-  .q-sw { white-space: pre-wrap; font-size: 13px; line-height: 1.6; background: #fffbeb;
-          border-left: 3px solid #f59e0b; border-radius: 6px; padding: 8px 11px; margin: 8px 0; }
+  .q-sw { white-space: pre-wrap; font-size: 13px; line-height: 1.6; background: var(--color-warning-light);
+          border-left: 3px solid var(--color-warning); border-radius: 6px; padding: 8px 11px; margin: 8px 0; }
   .q-sw .lbl { display: block; font-size: 10px; font-weight: 800; text-transform: uppercase;
-               letter-spacing: .04em; color: #b45309; margin-bottom: 3px; }
-  html.dark .q-sw { background: #241a06; border-left-color: #fbbf24; }
+               letter-spacing: .04em; color: var(--color-warning-on-tint); margin-bottom: 3px; }
   .q-probes { margin: 8px 0; }
   .q-probes > .lbl { display: block; font-size: 10px; font-weight: 800; text-transform: uppercase;
-                     letter-spacing: .04em; color: #7c3aed; margin-bottom: 4px; }
+                     letter-spacing: .04em; color: var(--color-primary-ink); margin-bottom: 4px; }
   .q-probe { display: flex; gap: 9px; padding: 6px 10px; margin-bottom: 4px; background: #faf5ff;
              border-left: 3px solid #a78bfa; border-radius: 6px; font-size: 13px; line-height: 1.5; }
-  .q-probe .n { flex: none; font-weight: 800; color: #7c3aed; }
-  html.dark .q-probe { background: #1e1233; border-left-color: #8b5cf6; }
+  .q-probe .n { flex: none; font-weight: 800; color: var(--color-primary-ink); }
   /* A few lines of what the question is testing and how the story opens,
      so the bank can be skimmed without opening every card. Built from the
      coaching tip plus the Situation — the two things you want before
@@ -162,7 +160,7 @@
   .q-sum { flex: 1 0 100%; font-size: 12.5px; line-height: 1.5; margin: 2px 0 0;
            color: var(--color-text-secondary); overflow-wrap: anywhere; }
   .q-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
-  .q-edited { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 999px; padding: 2px 7px; flex: none; }
+  .q-edited { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-success-on-tint); background: var(--color-success-light); border: 1px solid var(--color-success-border); border-radius: 999px; padding: 2px 7px; flex: none; }
   .q-edit label { display: block; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); margin: 8px 0 3px; }
   .q-edit textarea { width: 100%; box-sizing: border-box; min-height: 46px; resize: vertical; padding: 8px 10px; font-size: 13.5px; }
   .q-edit textarea.q { min-height: 40px; font-weight: 600; }
@@ -170,8 +168,8 @@
   /* System-design entry fields */
   .sd-field { margin: 7px 0; font-size: 13.5px; line-height: 1.45; }
   .sd-field .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); display: block; margin-bottom: 2px; }
-  .sd-field.problem .lbl { color: #b45309; } .sd-field.answer .lbl { color: #4338ca; }
-  .sd-field.disadv .lbl { color: #b91c1c; } .sd-field.compete .lbl { color: #047857; }
+  .sd-field.problem .lbl { color: var(--color-warning-on-tint); } .sd-field.answer .lbl { color: var(--color-primary-ink); }
+  .sd-field.disadv .lbl { color: var(--color-danger-on-tint); } .sd-field.compete .lbl { color: var(--color-success-on-tint); }
   .sd-arch { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 8px; padding: 9px 11px; margin: 7px 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; line-height: 1.4; white-space: pre-wrap; overflow-x: auto; }
   .q-edit textarea.arch { font-family: ui-monospace, monospace; font-size: 12px; }
   /* Full framework walkthrough */
@@ -193,15 +191,14 @@
   .sd-rel-empty { font-size: 12px; color: var(--color-text-secondary); font-style: italic; }
 
   .sd-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 2px; }
-  .sd-tag { font-size: 11px; font-weight: 600; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 2px 9px; cursor: pointer; }
-  .sd-tag:hover { background: #e0e7ff; }
-  html.dark .sd-tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
+  .sd-tag { font-size: 11px; font-weight: 600; color: var(--color-primary-ink); background: var(--color-primary-light); border: 1px solid var(--color-primary-border); border-radius: 999px; padding: 2px 9px; cursor: pointer; }
+  .sd-tag:hover { background: var(--color-primary-light); }
 
   .sess { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 8px 11px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; margin-bottom: 6px; }
-  .sess .m { font-weight: 800; color: #047857; white-space: nowrap; }
+  .sess .m { font-weight: 800; color: var(--color-success-on-tint); white-space: nowrap; }
   .sess .d { color: var(--color-text-secondary); font-size: 12px; white-space: nowrap; }
   .sess .f { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sess .del { background: none; border: none; color: #ef4444; cursor: pointer; padding: 3px; }
+  .sess .del { background: none; border: none; color: var(--color-danger-on-tint); cursor: pointer; padding: 3px; }
   .sess .del svg { width: 14px; height: 14px; }
   .empty { color: var(--color-text-secondary); font-size: 13px; padding: 8px 2px; }
 
@@ -230,9 +227,6 @@
      .dark class is present. Without this, these panels keep their light
      background while --color-text flips to near-white, so the text
      disappears on mobile. */
-  html.dark .q-sw .lbl { color: #fcd34d; }
-  html.dark .q-probes > .lbl { color: #c4b5fd; }
-  html.dark .q-probe .n { color: #c4b5fd; }
   @media (prefers-color-scheme: dark) {
     :root:not(.light) .coach.scold { background: #2a1414; }
     :root:not(.light) .coach.push { background: #2a1c10; }

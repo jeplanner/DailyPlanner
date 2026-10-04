@@ -137,7 +137,18 @@
     --color-info-on-tint: var(--color-primary-ink);
 
     /* Canonical soft-chip fills. Pages should use these rather than
-       inventing their own color-mix() expression. */
+       inventing their own color-mix() expression.
+
+       About two dozen places across the app already write
+       color-mix(in srgb, var(--color-primary) N%, transparent), which
+       now nests light-dark() inside color-mix(). That is valid -- a
+       light-dark() IS a <color> -- and it was checked rather than
+       assumed: if an engine ever failed to parse the nested form the
+       declaration drops, the chip falls back to a transparent
+       background, and its text is --color-primary-ink sitting on the
+       page instead of on a 14% tint, which still measures 8.5:1. The
+       failure mode is a chip that loses its tint, never one that loses
+       its text. */
     --tint-success-bg: color-mix(in srgb, var(--color-success) 14%, transparent);
     --tint-warning-bg: color-mix(in srgb, var(--color-warning) 16%, transparent);
     --tint-danger-bg:  color-mix(in srgb, var(--color-danger)  14%, transparent);
@@ -526,4 +537,71 @@ input[type="radio"],
 input[type="range"],
 progress {
     accent-color: var(--color-primary);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TOUCH + SCROLL BEHAVIOUR
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── iOS zooms the whole page when you focus an input whose text is under
+   16px, and it does not zoom back out. You then pan the page by hand to
+   find the Save button. 39 rules in this codebase set a form control
+   below 16px -- 13px and 14px mostly -- and nothing anywhere raised it,
+   so on the installed iPhone app that happened on every text field.
+
+   16px is the threshold, not a preference: Safari compares the computed
+   font-size and nothing else. Scoped to coarse pointers so the denser
+   desktop sizing is untouched, and `!important` because the per-page
+   rules it has to beat are more specific than any selector here.
+
+   The viewport meta could suppress the zoom with maximum-scale=1
+   instead, but that also takes away pinch-to-zoom, which is a real
+   accessibility need and a worse trade than slightly larger input text
+   on a phone. */
+@media (pointer: coarse) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+    textarea,
+    select {
+        font-size: max(16px, 1rem) !important;
+    }
+    /* Same 44px floor the buttons already have. A date field or a select
+       at 36px is as hard to hit as a 36px button, and most of this app's
+       input is typing into one. */
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]),
+    textarea,
+    select {
+        min-height: 44px;
+    }
+}
+
+/* ── The top bar is `position: sticky`, so an in-page jump -- a #anchor,
+   a "back to the section you came from" link, scrollIntoView() -- lands
+   the target UNDER the bar and the thing you asked to see is the one
+   thing hidden. scroll-margin-top reserves the bar's height on any
+   element that can be a jump target. */
+:root { --sticky-top: 56px; }
+@media (max-width: 720px) { :root { --sticky-top: 48px; } }
+
+[id]:target,
+h1[id], h2[id], h3[id], h4[id],
+[data-anchor],
+section[id], article[id], details[id] {
+    scroll-margin-top: calc(var(--sticky-top) + var(--space-3));
+}
+html { scroll-padding-top: calc(var(--sticky-top) + var(--space-3)); }
+
+/* ── Scrolling to the end of a dialog, a sheet or a drawer must not then
+   start scrolling the page behind it -- on a phone that reads as the
+   dialog sliding away under your thumb. */
+.dialog, .sheet, .scrim, .sidebar,
+[role="dialog"], [aria-modal="true"] {
+    overscroll-behavior: contain;
+}
+
+/* ── iOS paints a grey box over anything tapped. Every interactive
+   element here already has its own :active state, so the flash is only
+   ever a second, uglier answer to the same question. */
+a, button, [role="button"], label, summary,
+input, select, textarea {
+    -webkit-tap-highlight-color: transparent;
 }

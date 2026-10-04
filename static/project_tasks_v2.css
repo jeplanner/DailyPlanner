@@ -4,18 +4,24 @@
    project_tasks.css still loads — this file overrides the busy
    toolbar, replaces the header, and styles the four new tabs. */
 
+/* Aliases onto design-system.css, not a second palette. This file used
+   to define its own surfaces, its own grey ramp and its own accent in
+   both light and dark -- which is why this page was a slightly
+   different blue and a slightly cooler grey than the rest of the app.
+   The --ptv2 names stay (every rule below uses them); only their
+   values now come from one place. */
 :root {
-  --ptv2-bg:        #f7f8fa;
-  --ptv2-surface:   #ffffff;
-  --ptv2-border:    #e4e6ee;
-  --ptv2-text:      #1f2330;
-  --ptv2-text-mute: #6b7280;
-  --ptv2-text-soft: #9ca3af;
-  --ptv2-primary:   #6366f1;
-  --ptv2-primary-soft: #eef2ff;
-  --ptv2-danger:    #ef4444;
-  --ptv2-success:   #22c55e;
-  --ptv2-warn:      #f59e0b;
+  --ptv2-bg: var(--color-bg);
+  --ptv2-surface: var(--color-surface);
+  --ptv2-border: var(--color-border);
+  --ptv2-text: var(--color-text);
+  --ptv2-text-mute: var(--color-text-muted);
+  --ptv2-text-soft: var(--color-text-muted);
+  --ptv2-primary: var(--color-primary);
+  --ptv2-primary-soft: var(--color-primary-light);
+  --ptv2-danger: var(--color-danger);
+  --ptv2-success: var(--color-success);
+  --ptv2-warn:      var(--color-warning);
   --ptv2-shadow:    0 4px 16px rgba(15, 17, 21, 0.06);
 }
 /* Dark tokens: respect the app's explicit light/dark toggle.
@@ -23,27 +29,6 @@
    - :root:not(.light) inside the OS pref query → no explicit choice + OS is dark
    Without :not(.light), a user who forced light on an OS-dark device would
    still get dark tokens here. Matches design-system.css. */
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) {
-    --ptv2-bg:        #0f1115;
-    --ptv2-surface:   #181b22;
-    --ptv2-border:    #232733;
-    --ptv2-text:      #e8eaf0;
-    --ptv2-text-mute: #9ca3af;
-    --ptv2-text-soft: #6b7280;
-    --ptv2-primary-soft: #1e2030;
-  }
-}
-html.dark {
-  --ptv2-bg:        #0f1115;
-  --ptv2-surface:   #181b22;
-  --ptv2-border:    #232733;
-  --ptv2-text:      #e8eaf0;
-  --ptv2-text-mute: #9ca3af;
-  --ptv2-text-soft: #6b7280;
-  --ptv2-primary-soft: #1e2030;
-}
-
 /* Container: drop the old .proj-app padding so the new sticky elements
    reach the viewport edges on mobile. */
 .proj-app {
@@ -188,7 +173,7 @@ html.dark {
 .ptv2-sprint-chip.is-running .sc-dot      { background: var(--ptv2-success); }
 .ptv2-sprint-chip.is-past    .sc-dot      { background: var(--ptv2-text-soft); }
 .ptv2-sprint-chip.is-upcoming .sc-dot     { background: var(--ptv2-primary); }
-.ptv2-sprint-chip.is-selected .sc-dot     { background: #fff; }
+.ptv2-sprint-chip.is-selected .sc-dot     { background: var(--color-surface); }
 
 .ptv2-sprint-chip .sc-meta {
   display: flex; align-items: center; gap: 8px;
@@ -213,7 +198,7 @@ html.dark {
   display: block; height: 100%; border-radius: 2px;
   background: var(--ptv2-primary);
 }
-.ptv2-sprint-chip.is-selected .sc-bar-fill { background: #fff; }
+.ptv2-sprint-chip.is-selected .sc-bar-fill { background: var(--color-surface); }
 
 /* The 3-dot menu trigger sitting on the chip's right edge. */
 .ptv2-sprint-chip .sc-menu {
@@ -283,7 +268,7 @@ html.dark {
 .ptv2-sn-create {
   background: var(--ptv2-primary); color: #fff;
 }
-.ptv2-sn-create:hover { background: #4f46e5; }
+.ptv2-sn-create:hover { background: var(--color-primary); }
 
 /* ── Per-chip ⋮ popover menu ─────────────────────────────────── */
 .ptv2-sprint-menu {
@@ -397,11 +382,11 @@ body.ptv2-dragging-task .okrc-row.ptv2-droppable {
 .ptv2-dlg-btn.is-primary {
   background: var(--ptv2-primary); border-color: var(--ptv2-primary); color: #fff;
 }
-.ptv2-dlg-btn.is-primary:hover { background: #4f46e5; border-color: #4f46e5; }
+.ptv2-dlg-btn.is-primary:hover { background: var(--color-primary); border-color: #4f46e5; }
 .ptv2-dlg-btn.is-danger {
   background: var(--ptv2-danger); border-color: var(--ptv2-danger); color: #fff;
 }
-.ptv2-dlg-btn.is-danger:hover { background: #dc2626; border-color: #dc2626; }
+.ptv2-dlg-btn.is-danger:hover { background: var(--color-danger); border-color: var(--color-danger); }
 @media (max-width: 480px) {
   .ptv2-dlg-card { max-width: 100%; }
   .ptv2-dlg-actions { flex-direction: column-reverse; }
@@ -637,7 +622,7 @@ body[data-active-tab="all"] #table-view { padding: 0 14px; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 240px;
 }
-.ptv2-tn-filter-chip:hover { background: #4f46e5; }
+.ptv2-tn-filter-chip:hover { background: var(--color-primary); }
 .ptv2-tn-filter-chip > span:last-child {
   font-size: 14px; line-height: 1;
   opacity: 0.85; margin-left: 2px;
@@ -717,9 +702,9 @@ body[data-active-tab="all"] #table-view { padding: 0 14px; }
   font-size: 11px; font-weight: 700;
   color: #fff;
 }
-.ptv2-tn-icon.is-okr  { background: #8b5cf6; }   /* violet */
+.ptv2-tn-icon.is-okr  { background: var(--color-primary); }   /* violet */
 .ptv2-tn-icon.is-init { background: #06b6d4; }   /* cyan */
-.ptv2-tn-icon.is-epic { background: #f59e0b; }   /* amber */
+.ptv2-tn-icon.is-epic { background: var(--color-warning); }   /* amber */
 .ptv2-tn-icon.is-task { background: transparent; color: var(--ptv2-text-mute); border: 1px solid var(--ptv2-border); }
 .ptv2-tn-icon.is-task.is-done { background: var(--ptv2-success); color: #fff; border-color: var(--ptv2-success); }
 
@@ -865,7 +850,7 @@ body.ptv2-dragging-task .ptv2-tn-row.is-droppable {
   background: var(--ptv2-primary); color: #fff; border: 0; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.ptv2-add-submit:hover { background: #4f46e5; }
+.ptv2-add-submit:hover { background: var(--color-primary); }
 .ptv2-add-submit i { width: 18px; height: 18px; }
 .ptv2-add-more {
   display: flex; flex-wrap: wrap; gap: 8px;

@@ -9,33 +9,24 @@
   --header-height: 56px;
   --col-header-height: 72px;
 
-  --gcal-bg: #fff;
-  --gcal-surface: #f8f9fa;
-  --gcal-border: #dadce0;
-  --gcal-border-light: #e8eaed;
-  --gcal-text: #3c4043;
-  --gcal-text-secondary: #70757a;
-  --gcal-primary: #1a73e8;
-  --gcal-primary-hover: #1765cc;
-  --gcal-today-bg: #1a73e8;
-  --gcal-today-text: #fff;
-  --gcal-event-low: #039be5;
-  --gcal-event-medium: #7986cb;
-  --gcal-event-high: #d50000;
+  /* --gcal-bg is the white GRID, --gcal-surface the grey gutter beside
+     it: the opposite sense from the rest of the codebase, so they map to
+     surface / surface-secondary rather than to --color-bg. The page keeps
+     its calendar LAYOUT; the colours are the app's. */
+  --gcal-bg: var(--color-surface);
+  --gcal-surface: var(--color-surface-secondary);
+  --gcal-border: var(--color-border);
+  --gcal-border-light: var(--color-border-light);
+  --gcal-text: var(--color-text);
+  --gcal-text-secondary: var(--color-text-secondary);
+  --gcal-primary: var(--color-primary);
+  --gcal-primary-hover: var(--color-primary-hover);
+  --gcal-today-bg: var(--color-primary);
+  --gcal-today-text: var(--color-on-primary);
+  --gcal-event-low: var(--color-success);
+  --gcal-event-medium: var(--color-warning);
+  --gcal-event-high: var(--color-danger);
   --gcal-event-project: #0b8043;
-}
-
-html.dark {
-  --gcal-bg: #1e1e1e;
-  --gcal-surface: #292929;
-  --gcal-border: #3c4043;
-  --gcal-border-light: #3c4043;
-  --gcal-text: #e8eaed;
-  --gcal-text-secondary: #9aa0a6;
-  --gcal-today-bg: #8ab4f8;
-  --gcal-today-text: #1e1e1e;
-  --gcal-primary: #8ab4f8;
-  --gcal-primary-hover: #aecbfa;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -297,11 +288,11 @@ body {
   color: var(--gcal-text-secondary); border-radius: 6px; cursor: pointer;
   display: flex; align-items: center; justify-content: center; transition: all 0.15s;
 }
-.smart-voice-btn:hover { border-color: #dc2626; color: #dc2626; }
+.smart-voice-btn:hover { border-color: var(--color-danger); color: var(--color-danger-on-tint); }
 .smart-voice-btn.voice-recording,
 .voice-recording {
-  background: #dc2626 !important; color: #fff !important;
-  border-color: #dc2626 !important;
+  background: var(--color-danger) !important; color: #fff !important;
+  border-color: var(--color-danger) !important;
   animation: voicePulse 1s ease infinite;
 }
 @keyframes voicePulse {
@@ -509,7 +500,7 @@ body {
   left: -1px;
   right: 0;
   height: 0;
-  border-top: 2px solid #ea4335;
+  border-top: 2px solid var(--color-danger);
   z-index: 51;
   pointer-events: none;
 }
@@ -519,7 +510,7 @@ body {
   top: -5px;
   width: 10px;
   height: 10px;
-  background: #ea4335;
+  background: var(--color-danger);
   border-radius: 50%;
 }
 
@@ -553,17 +544,17 @@ body {
 .drag-time-badge {
   position: fixed;
   display: none;
-  background: #1a73e8;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
   font: 600 12px/1.3 "Inter", system-ui, sans-serif;
   padding: 7px 11px;
   border-radius: 10px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32), 0 1px 4px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   z-index: 99999;
   pointer-events: none;
   white-space: nowrap;
   letter-spacing: 0.1px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 1px solid color-mix(in srgb, var(--color-on-primary) 24%, transparent);
 }
 .drag-time-badge::after {
   /* Small arrow pointing down toward the cursor */
@@ -575,7 +566,7 @@ body {
   height: 0;
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
-  border-top: 6px solid #1a73e8;
+  border-top: 6px solid var(--color-primary);
 }
 
 /* Ghost event */
@@ -629,7 +620,7 @@ body {
     transparent 6px,
     transparent 12px
   );
-  border-left-color: #dc2626 !important;
+  border-left-color: var(--color-danger) !important;
   box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.45);
 }
 .event-chip.is-missed .chip-title {
@@ -643,13 +634,13 @@ html.dark .event-chip.is-missed {
     transparent 6px,
     transparent 12px
   );
-  border-left-color: #f87171 !important;
+  border-left-color: var(--color-danger) !important;
   box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.45);
 }
 /* A missed chip is information, not decoration — keep it legible when the
    user has asked for less motion or more contrast. */
 @media (prefers-contrast: more) {
-  .event-chip.is-missed { outline: 2px solid #dc2626; outline-offset: -2px; }
+  .event-chip.is-missed { outline: 2px solid var(--color-danger); outline-offset: -2px; }
 }
 
 .event-chip .event-title {
@@ -843,12 +834,12 @@ html.dark .event-chip.is-missed {
   flex-shrink: 0;
 }
 .gcal-status-pill.connected {
-  border-color: #a7f3d0;
-  background: #ecfdf5;
-  color: #166534;
+  border-color: var(--color-success-border);
+  background: var(--color-success-light);
+  color: var(--color-success-on-tint);
 }
 .gcal-status-pill.connected .gcal-status-dot {
-  background: #10b981;
+  background: var(--color-success);
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
   animation: gcalPulse 2s ease-in-out infinite;
 }
@@ -857,14 +848,12 @@ html.dark .event-chip.is-missed {
   50%      { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.08); }
 }
 .gcal-status-pill.disconnected {
-  border-color: #fde68a;
-  background: #fffbeb;
-  color: #b45309;
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-light);
+  color: var(--color-warning-on-tint);
 }
-.gcal-status-pill.disconnected .gcal-status-dot { background: #f59e0b; }
+.gcal-status-pill.disconnected .gcal-status-dot { background: var(--color-warning); }
 .gcal-status-pill:hover { filter: brightness(0.97); transform: translateY(-1px); }
-html.dark .gcal-status-pill.connected { background: #064e3b; border-color: #065f46; color: #6ee7b7; }
-html.dark .gcal-status-pill.disconnected { background: #451a03; border-color: #78350f; color: #fcd34d; }
 
 @media (max-width: 480px) {
   .gcal-status-pill { padding: 6px 8px; font-size: 10px; }
@@ -1379,8 +1368,6 @@ html.dark .gcal-status-pill.disconnected { background: #451a03; border-color: #7
 }
 
 /* Dark theme compatibility (the tokens already swap via --gcal-*) */
-html.dark .cp-face-bg { fill: #0f172a; }
-html.dark .cp-num text { fill: #f1f5f9; }
 
 /* Quadrant Picker */
 .quadrant-picker {
@@ -1393,10 +1380,10 @@ html.dark .cp-num text { fill: #f1f5f9; }
 }
 .quad-btn:hover { border-color: var(--gcal-primary); }
 .quad-btn.active { border-width: 2px; }
-.quad-btn.active.q-do { border-color: #dc2626; background: #fef2f2; color: #dc2626; }
-.quad-btn.active.q-schedule { border-color: #2563eb; background: #eff6ff; color: #2563eb; }
-.quad-btn.active.q-delegate { border-color: #d97706; background: #fffbeb; color: #d97706; }
-.quad-btn.active.q-eliminate { border-color: #6b7280; background: #f3f4f6; color: #6b7280; }
+.quad-btn.active.q-do { border-color: var(--color-danger); background: var(--color-danger-light); color: var(--color-danger-on-tint); }
+.quad-btn.active.q-schedule { border-color: var(--color-primary); background: var(--color-primary-light); color: var(--color-primary-ink); }
+.quad-btn.active.q-delegate { border-color: #d97706; background: var(--color-warning-light); color: var(--color-warning-on-tint); }
+.quad-btn.active.q-eliminate { border-color: #6b7280; background: var(--color-surface-secondary); color: var(--color-text-muted); }
 .quad-btn.active[data-q=""] { border-color: var(--gcal-primary); background: var(--gcal-surface); }
 
 /* Quadrant badge on event chips */
@@ -1404,10 +1391,10 @@ html.dark .cp-num text { fill: #f1f5f9; }
   font-size: 8px; font-weight: 700; padding: 0 4px; border-radius: 3px;
   text-transform: uppercase; letter-spacing: 0.3px; display: inline-block;
 }
-.chip-quadrant.cq-do { background: #fef2f2; color: #dc2626; }
-.chip-quadrant.cq-schedule { background: #eff6ff; color: #2563eb; }
-.chip-quadrant.cq-delegate { background: #fffbeb; color: #d97706; }
-.chip-quadrant.cq-eliminate { background: #f3f4f6; color: #6b7280; }
+.chip-quadrant.cq-do { background: var(--color-danger-light); color: var(--color-danger-on-tint); }
+.chip-quadrant.cq-schedule { background: var(--color-primary-light); color: var(--color-primary-ink); }
+.chip-quadrant.cq-delegate { background: var(--color-warning-light); color: var(--color-warning-on-tint); }
+.chip-quadrant.cq-eliminate { background: var(--color-surface-secondary); color: var(--color-text-muted); }
 
 .end-preview {
   font-size: 12px;
@@ -1423,8 +1410,8 @@ html.dark .cp-num text { fill: #f1f5f9; }
 
 /* Conflict box */
 .conflict-box {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: var(--color-danger-light);
+  border: 1px solid var(--color-danger-border);
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 16px;
@@ -1432,11 +1419,10 @@ html.dark .cp-num text { fill: #f1f5f9; }
   gap: 10px;
   align-items: flex-start;
 }
-html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
-.conflict-icon { color: #dc2626; flex-shrink: 0; padding-top: 2px; }
+.conflict-icon { color: var(--color-danger-on-tint); flex-shrink: 0; padding-top: 2px; }
 .conflict-icon svg { width: 18px; height: 18px; }
 .conflict-box strong { font-size: 13px; }
-#conflict-list { font-size: 12px; color: #70757a; margin: 4px 0 8px; }
+#conflict-list { font-size: 12px; color: var(--color-text-muted); margin: 4px 0 8px; }
 .conflict-actions { display: flex; gap: 6px; margin-top: 4px; }
 
 .modal-actions {
@@ -1752,9 +1738,9 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
   vertical-align: middle;
   box-shadow: 0 0 0 1.5px rgba(255,255,255,0.7);
 }
-.chip-prio-dot.prio-high { background: #dc2626; }
-.chip-prio-dot.prio-medium { background: #f59e0b; }
-.chip-prio-dot.prio-low { background: #10b981; }
+.chip-prio-dot.prio-high { background: var(--color-danger); }
+.chip-prio-dot.prio-medium { background: var(--color-warning); }
+.chip-prio-dot.prio-low { background: var(--color-success); }
 
 /* ═══════════ SCROLLBAR ═══════════ */
 /* Scrollbar */
@@ -1797,7 +1783,7 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
   pointer-events: none;
 }
 .recurrence-day-picker label:has(input:checked) {
-  background: #6366f1;
+  background: var(--color-primary);
   border-color: #6366f1;
   color: #fff;
 }
@@ -1822,13 +1808,12 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
   z-index: 2000;
 }
 .cal-recurring-dialog {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 12px;
   padding: 20px 22px;
   box-shadow: 0 24px 48px rgba(15, 23, 42, 0.2);
   width: min(90vw, 380px);
 }
-html.dark .cal-recurring-dialog { background: #1e293b; color: #f1f5f9; }
 .cal-recurring-dialog h3 {
   margin: 0 0 12px;
   font-size: 16px;

@@ -128,7 +128,7 @@ body {
   display: inline-flex; align-items: center; justify-content: center;
   transition: background .12s, border-color .12s, transform .08s;
 }
-.cl-edit:hover { background: var(--color-primary-light); border-color: #a5b4fc; }
+.cl-edit:hover { background: var(--color-primary-light); border-color: var(--color-primary-border); }
 .cl-edit:active { transform: scale(.94); }
 .cl-edit-glyph {
   font-size: 18px; line-height: 1;

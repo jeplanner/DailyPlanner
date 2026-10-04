@@ -6,8 +6,7 @@
   <title>Prayer — DailyPlanner</title>
   <style>
     body { margin: 0; font-family: 'Inter', system-ui, -apple-system, sans-serif;
-           background: #fffdf7; color: #1a1a2e; -webkit-tap-highlight-color: transparent; }
-    html.dark body { background: #0f172a; color: #f1f5f9; }
+           background: #fffdf7; color: var(--color-text); -webkit-tap-highlight-color: transparent; }
 
     .prayer-container {
       max-width: 960px;
@@ -26,11 +25,10 @@
       letter-spacing: 0.02em;
     }
     .prayer-header p {
-      color: #6b7280;
+      color: var(--color-text-muted);
       margin: 4px 0 0;
       font-size: 13.5px;
     }
-    html.dark .prayer-header p { color: #94a3b8; }
 
     /* Responsive grid. 2 columns mobile, 3 on tablet, 4 on desktop. */
     .prayer-grid {
@@ -40,15 +38,14 @@
     }
 
     .prayer-card {
-      background: #ffffff;
-      border: 1px solid #e5e7eb;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
       border-radius: 14px;
       overflow: hidden;
       text-align: center;
       transition: transform 0.15s, box-shadow 0.15s;
       box-shadow: 0 1px 3px rgba(0,0,0,0.04);
     }
-    html.dark .prayer-card { background: #1e293b; border-color: #334155; }
 
     .prayer-card:hover, .prayer-card:active {
       transform: translateY(-2px);
@@ -61,13 +58,12 @@
       position: relative;
       width: 100%;
       aspect-ratio: 1 / 1;
-      background: linear-gradient(135deg, #fef3c7, #fde68a);
+      background: linear-gradient(135deg, var(--color-warning-light), #fde68a);
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
     }
-    html.dark .prayer-frame { background: linear-gradient(135deg, #78350f, #92400e); }
 
     .prayer-frame img {
       width: 100%;
@@ -103,17 +99,17 @@
       <p>A small moment of stillness before you begin.</p>
       <div style="margin-top:14px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
         <a href="/prayer/kavasam"
-           style="display:inline-block; padding:8px 16px; background:#d97706; color:#fff; border-radius:20px; text-decoration:none; font-size:13.5px; font-weight:500;">
+           style="display:inline-block; padding:8px 16px; background:var(--color-warning); color:#fff; border-radius:20px; text-decoration:none; font-size:13.5px; font-weight:500;">
           📜 கந்த சஷ்டி கவசம்
         </a>
         <a href="/prayer/rangapura" target="_blank" rel="noopener"
-           style="display:inline-block; padding:8px 16px; background:#1e40af; color:#fff; border-radius:20px; text-decoration:none; font-size:13.5px; font-weight:500;"
+           style="display:inline-block; padding:8px 16px; background:var(--color-primary-active); color:#fff; border-radius:20px; text-decoration:none; font-size:13.5px; font-weight:500;"
            title="Opens in a new tab so audio keeps playing while you navigate">
           🎵 Rangapura Vihara ↗
         </a>
         <button type="button" id="prayer-add-photo"
                 onclick="document.getElementById('prayer-file-input').click()"
-                style="display:inline-flex; align-items:center; gap:6px; padding:8px 16px; background:#15803d; color:#fff; border:none; border-radius:20px; cursor:pointer; font-size:13.5px; font-weight:500;"
+                style="display:inline-flex; align-items:center; gap:6px; padding:8px 16px; background:var(--color-success); color:#fff; border:none; border-radius:20px; cursor:pointer; font-size:13.5px; font-weight:500;"
                 title="Upload your own photo to this page">
           ＋ Add photo
         </button>
@@ -177,7 +173,6 @@
       text-transform: uppercase; color: #6b5d52;
       margin: 18px 4px 10px;
     }
-    html.dark .prayer-section-label { color: #94a3b8; }
     .prayer-user-card { position: relative; }
     .prayer-delete-btn {
       position: absolute; top: 6px; right: 6px;
@@ -191,20 +186,20 @@
     }
     .prayer-user-card:hover .prayer-delete-btn,
     .prayer-delete-btn:focus-visible { opacity: 1; }
-    .prayer-delete-btn:hover { background: #b91c1c; }
+    .prayer-delete-btn:hover { background: var(--color-danger-strong); }
     .prayer-delete-btn:active { transform: scale(.92); }
 
     .prayer-toast {
       position: fixed; left: 50%; bottom: 24px;
       transform: translateX(-50%);
       padding: 10px 18px; border-radius: 999px;
-      background: #0f172a; color: #fff;
+      background: var(--color-text); color: var(--color-text-inverse);
       font-size: 13.5px; font-weight: 600;
       box-shadow: 0 12px 28px rgba(15,23,42,.32);
       z-index: 9999;
     }
-    .prayer-toast.is-error { background: #b91c1c; }
-    .prayer-toast.is-saving { background: #1d4ed8; }
+    .prayer-toast.is-error { background: var(--color-danger-strong); }
+    .prayer-toast.is-saving { background: var(--color-primary-hover); }
 
     /* Always make the delete button visible on touch devices since
        there's no hover state. */

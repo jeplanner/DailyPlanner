@@ -2,19 +2,25 @@
    KNOWLEDGE BASE — Modern layout with facets + card grid
    ═══════════════════════════════════════════════════════════ */
 
+/* Aliases onto design-system.css, not a second palette. This file used
+   to define its own surfaces, its own grey ramp and its own accent in
+   both light and dark -- which is why this page was a slightly
+   different blue and a slightly cooler grey than the rest of the app.
+   The --kb names stay (every rule below uses them); only their
+   values now come from one place. */
 :root {
-  --kb-bg: #f7f8fa;
-  --kb-surface: #ffffff;
-  --kb-surface-alt: #f9fafb;
-  --kb-border: #e5e7eb;
-  --kb-border-light: #f1f3f5;
-  --kb-text: #0f172a;
-  --kb-text2: #475569;
-  --kb-text3: #94a3b8;
-  --kb-primary: #2563eb;
-  --kb-primary-light: #eff6ff;
-  --kb-danger: #dc2626;
-  --kb-success: #10b981;
+  --kb-bg: var(--color-bg);
+  --kb-surface: var(--color-surface);
+  --kb-surface-alt: var(--color-surface-secondary);
+  --kb-border: var(--color-border);
+  --kb-border-light: var(--color-border-light);
+  --kb-text: var(--color-text);
+  --kb-text2: var(--color-text-secondary);
+  --kb-text3: var(--color-text-muted);
+  --kb-primary: var(--color-primary);
+  --kb-primary-light: var(--color-primary-light);
+  --kb-danger: var(--color-danger);
+  --kb-success: var(--color-success);
   --kb-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   --kb-shadow-hover: 0 8px 28px rgba(0, 0, 0, 0.10);
 
@@ -34,20 +40,6 @@
   --kb-cat-shopping:     #be185d;
   --kb-cat-other:        #6b7280;
 }
-html.dark {
-  --kb-bg: #0f172a;
-  --kb-surface: #1e293b;
-  --kb-surface-alt: #273142;
-  --kb-border: #334155;
-  --kb-border-light: #1e293b;
-  --kb-text: #f1f5f9;
-  --kb-text2: #cbd5e1;
-  --kb-text3: #64748b;
-  --kb-primary-light: #172554;
-  --kb-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  --kb-shadow-hover: 0 8px 28px rgba(0, 0, 0, 0.45);
-}
-
 * { box-sizing: border-box; }
 body {
   margin: 0;
@@ -544,11 +536,10 @@ body {
   opacity: 1 !important;
 }
 .btn-delete:hover {
-  background: #fef2f2;
+  background: var(--color-danger-light);
   color: var(--kb-danger);
   opacity: 1 !important;
 }
-html.dark .btn-delete:hover { background: #3b1111; }
 
 /* Description */
 .ref-content {
@@ -637,9 +628,6 @@ html.dark .btn-delete:hover { background: #3b1111; }
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
   animation: kbShimmer 1.4s infinite;
 }
-html.dark .ref-skeleton::after {
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
-}
 @keyframes kbShimmer {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(100%); }
@@ -687,9 +675,6 @@ html.dark .ref-skeleton::after {
   border-bottom: 1px solid var(--kb-border);
   background: linear-gradient(135deg, var(--kb-primary-light) 0%, var(--kb-surface) 70%);
 }
-html.dark .modal-header {
-  background: linear-gradient(135deg, var(--kb-primary-light) 0%, var(--kb-surface) 70%);
-}
 .modal-eyebrow {
   font-size: 10px;
   font-weight: 800;
@@ -719,7 +704,6 @@ html.dark .modal-header {
   transition: background 0.12s;
 }
 .modal-close:hover { background: rgba(0, 0, 0, 0.06); color: var(--kb-text); }
-html.dark .modal-close:hover { background: rgba(255, 255, 255, 0.08); }
 .modal-close svg { width: 18px; height: 18px; }
 
 /* Add-modal tabs */

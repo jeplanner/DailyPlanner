@@ -31,7 +31,7 @@
   .prog { font-size: 12.5px; font-weight: 700; color: var(--color-text-secondary); }
 
   .q-card { border: 1px solid var(--color-border); border-radius: 12px; margin-bottom: 8px; background: var(--color-surface); overflow: hidden; }
-  .q-card.done { border-color: #a7f3d0; }
+  .q-card.done { border-color: var(--color-success-border); }
   /* Wraps, because this row now carries up to six chips (priority, time,
      frequency, sub-area, difficulty, category) and they are all flex:none.
      Without wrapping they cannot shrink and the row is simply clipped off
@@ -69,12 +69,10 @@
   .q-card.open .q-body { display: block; }
   .fld { margin: 8px 0; font-size: 13.5px; line-height: 1.5; }
   .fld .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); display: block; margin-bottom: 2px; }
-  .fld.answer .lbl { color: #4338ca; } .fld.pitfall .lbl { color: #b45309; } .fld.follow .lbl { color: #047857; } .fld.cx .lbl { color: #0369a1; }
+  .fld.answer .lbl { color: var(--color-primary-ink); } .fld.pitfall .lbl { color: var(--color-warning-on-tint); } .fld.follow .lbl { color: var(--color-success-on-tint); } .fld.cx .lbl { color: #0369a1; }
   .fld.freq .lbl { color: #9333ea; } .fld.mnem .lbl { color: #c2410c; }
-  .code.diagram { background: #f8fafc; color: #0f172a; border-color: #cbd5e1; }
-  html.dark .code.diagram { background: #0b1220; color: #cbd5e1; }
+  .code.diagram { background: var(--color-surface-secondary); color: var(--color-text); border-color: var(--color-border-strong); }
   .fld.mnem { background: #fff7ed; border-left: 3px solid #fb923c; border-radius: 6px; padding: 6px 10px; }
-  html.dark .fld.mnem { background: #2a1a0f; }
   /* The ANSWER is the field she reads under time pressure, so it is written as
      a one-line headline followed by short labelled points — and that shape only
      survives if the line breaks do. Without pre-wrap the whole thing collapses
@@ -85,21 +83,19 @@
                 overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .fld.answer .head { display: block; font-weight: 700; font-size: 14.5px; line-height: 1.45;
                       margin-bottom: 6px; color: var(--color-text); }
-  html.dark .fld.answer { background: #131a33; border-left-color: #818cf8; }
   /* Long-form "explain it like I'm new to this" walkthrough: keeps the
      step/section line breaks the text was written with. */
   .fld.deep { white-space: pre-wrap; background: #f5f7ff; border-left: 3px solid #6366f1;
               border-radius: 6px; padding: 8px 11px; font-size: 13px; line-height: 1.62;
               overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .fld.deep .lbl { color: #4338ca; }
-  html.dark .fld.deep { background: #131a33; border-left-color: #818cf8; }
+  .fld.deep .lbl { color: var(--color-primary-ink); }
   /* Several worked examples per topic, each numbered and independently read.
      Each one is a <details>: a ten-section rewrite runs to several thousand
      characters, so ten of them expanded at once is a wall you scroll past
      rather than read. Collapsed, their opening lines ("1. THE GOAL IN PLAIN
      ENGLISH", "5. THE SLOW VERSION FIRST") read as a table of contents. */
   .ex-slot { margin: 0; }
-  .ex { margin-bottom: 5px; background: #f0fdf4; border-left: 3px solid #34d399;
+  .ex { margin-bottom: 5px; background: var(--color-success-light); border-left: 3px solid var(--color-success);
         border-radius: 6px; overflow: hidden; }
   .ex > summary { display: flex; gap: 9px; align-items: center; padding: 8px 10px; cursor: pointer;
                   list-style: none; font-size: 12.5px; font-weight: 700; line-height: 1.4;
@@ -108,7 +104,7 @@
   .ex > summary .caret { margin-left: auto; flex: none; font-size: 11px; color: var(--color-text-secondary);
                          transition: transform .12s ease; }
   .ex[open] > summary .caret { transform: rotate(90deg); }
-  .ex .n { flex: none; width: 19px; height: 19px; border-radius: 50%; background: #059669; color: #fff;
+  .ex .n { flex: none; width: 19px; height: 19px; border-radius: 50%; background: var(--color-success-strong); color: #fff;
            font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
   .ex .exttl { min-width: 0; overflow-wrap: anywhere; }
   /* The worked examples contain ASCII tables and rules ("---+----+---",
@@ -137,23 +133,18 @@
   .sec > .secbody { padding: 0 11px 11px; }
   .sec > .secbody > .fld { margin-top: 0; }
   .sec > .secbody > .code { margin-top: 0; }
-  .sec-answer > summary { color: #4338ca; } .sec-deep > summary { color: #4338ca; }
-  .sec-recipe > summary { color: #b45309; } .sec-pitfall > summary { color: #b45309; }
-  .sec-follow > summary { color: #047857; } .sec-exs > summary { color: #047857; }
+  .sec-answer > summary { color: var(--color-primary-ink); } .sec-deep > summary { color: var(--color-primary-ink); }
+  .sec-recipe > summary { color: var(--color-warning-on-tint); } .sec-pitfall > summary { color: var(--color-warning-on-tint); }
+  .sec-follow > summary { color: var(--color-success-on-tint); } .sec-exs > summary { color: var(--color-success-on-tint); }
   .sec-cx > summary { color: #0369a1; } .sec-freq > summary { color: #9333ea; }
   .sec-mnem > summary { color: #c2410c; }
-  html.dark .sec-answer > summary, html.dark .sec-deep > summary { color: #a5b4fc; }
-  html.dark .sec-recipe > summary, html.dark .sec-pitfall > summary { color: #fcd34d; }
-  html.dark .sec-follow > summary, html.dark .sec-exs > summary { color: #6ee7b7; }
   /* One tap to open everything, for reading a topic end to end. */
   .secbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 8px; }
-  html.dark .ex { background: #0e2119; border-left-color: #10b981; }
   /* Planning chips: study priority, stack rank and how long the topic takes. */
   .q-pri { font-size: 10px; font-weight: 900; letter-spacing: .03em; border-radius: 999px; padding: 2px 7px; white-space: nowrap; flex: none; }
-  .pri-P0 { color: #fff; background: #dc2626; } .pri-P1 { color: #fff; background: #ea580c; }
+  .pri-P0 { color: #fff; background: var(--color-danger); } .pri-P1 { color: #fff; background: #ea580c; }
   .pri-P2 { color: #fff; background: #0891b2; } .pri-P3 { color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); }
-  .q-time { font-size: 10.5px; font-weight: 800; color: #4338ca; background: #eef2ff; border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
-  html.dark .q-time { color: #c7d2fe; background: #1e1b4b; }
+  .q-time { font-size: 10.5px; font-weight: 800; color: var(--color-primary-ink); background: var(--color-primary-light); border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
   .q-rank { font-size: 10.5px; font-weight: 700; color: var(--color-text-secondary); white-space: nowrap; flex: none; }
   /* Interview-tag row and chips. The frequency chip is the loud one: it is
      the single most useful thing on the card when time is short. */
@@ -162,45 +153,39 @@
                 color: var(--color-text-secondary); align-self: center; }
   .q-freq { font-size: 10px; font-weight: 900; letter-spacing: .02em; border-radius: 999px;
             padding: 2px 8px; white-space: nowrap; flex: none; }
-  .freq-must { color: #fff; background: #b91c1c; }
-  .freq-common { color: #fff; background: #7c3aed; }
+  .freq-must { color: #fff; background: var(--color-danger-strong); }
+  .freq-common { color: #fff; background: var(--color-primary); }
   .freq-rare { color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); }
   .q-sub { font-size: 10px; font-weight: 800; color: #0f766e; background: #ccfbf1; border-radius: 999px;
            padding: 2px 8px; white-space: nowrap; flex: none; }
-  html.dark .q-sub { color: #5eead4; background: #042f2e; }
   /* A shadowed near-duplicate. Deliberately muted and dashed: this is the
      row to SKIP, so it must not compete with the frequency chip beside it. */
-  .q-dup { font-size: 10px; font-weight: 800; color: #92400e; background: #fef3c7;
-           border: 1px dashed #f59e0b; border-radius: 999px;
+  .q-dup { font-size: 10px; font-weight: 800; color: var(--color-warning-on-tint); background: var(--color-warning-light);
+           border: 1px dashed var(--color-warning); border-radius: 999px;
            padding: 2px 8px; white-space: nowrap; flex: none; }
-  html.dark .q-dup { color: #fcd34d; background: #3a2a06; border-color: #b45309; }
   .q-card.dup .q-text { opacity: .72; }
   .fld.tags { background: #fdf4ff; border-left: 3px solid #a855f7; }
-  html.dark .fld.tags { background: #2a1033; }
   .fld.tags .flagnote { display: block; margin-top: 4px; font-style: italic; color: var(--color-text-secondary); }
   /* The effort readout under the title: total time, and how much is left. */
   .effort { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; font-weight: 700;
             color: var(--color-text-secondary); margin: 0 0 10px; }
   .effort b { color: var(--color-text); font-weight: 900; }
   .effort .bar { flex: 1 0 100%; height: 6px; border-radius: 999px; background: var(--color-border); overflow: hidden; }
-  .effort .bar > i { display: block; height: 100%; background: #10b981; }
+  .effort .bar > i { display: block; height: 100%; background: var(--color-success); }
   /* The plain-English recipe you read BEFORE the code: numbered steps, kept
      on their own lines so you can follow one line at a time while typing. */
-  .fld.recipe { white-space: pre-wrap; background: #fffbeb; border-left: 3px solid #f59e0b;
+  .fld.recipe { white-space: pre-wrap; background: var(--color-warning-light); border-left: 3px solid var(--color-warning);
                 border-radius: 6px; padding: 8px 11px; font-size: 13px; line-height: 1.6;
                 overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .fld.recipe .lbl { color: #b45309; }
-  html.dark .fld.recipe { background: #241a06; border-left-color: #fbbf24; }
-  .fld.plan { background: #f5f3ff; border-left: 3px solid #8b5cf6; border-radius: 6px; padding: 6px 10px; }
-  .fld.plan .lbl { color: #6d28d9; }
-  html.dark .fld.plan { background: #1e1b33; }
+  .fld.recipe .lbl { color: var(--color-warning-on-tint); }
+  .fld.plan { background: #f5f3ff; border-left: 3px solid var(--color-primary); border-radius: 6px; padding: 6px 10px; }
+  .fld.plan .lbl { color: var(--color-primary-ink); }
   .q-diff { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
-  .diff-easy { color: #047857; background: #d1fae5; } .diff-medium { color: #b45309; background: #fef3c7; } .diff-hard { color: #b91c1c; background: #fee2e2; }
-  html.dark .diff-easy { color: #6ee7b7; background: #064e3b; } html.dark .diff-medium { color: #fcd34d; background: #78350f; } html.dark .diff-hard { color: #fca5a5; background: #7f1d1d; }
+  .diff-easy { color: var(--color-success-on-tint); background: var(--color-success-light); } .diff-medium { color: var(--color-warning-on-tint); background: var(--color-warning-light); } .diff-hard { color: var(--color-danger-on-tint); background: var(--color-danger-light); }
+html.dark .diff-medium { color: #fcd34d; background: #78350f; } html.dark .diff-hard { color: #fca5a5; background: #7f1d1d; }
   .code { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.45; white-space: pre; overflow-x: auto; }
   .tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 2px; }
-  .tag { font-size: 11px; font-weight: 600; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 2px 9px; cursor: pointer; }
-  html.dark .tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
+  .tag { font-size: 11px; font-weight: 600; color: var(--color-primary-ink); background: var(--color-primary-light); border: 1px solid var(--color-primary-border); border-radius: 999px; padding: 2px 9px; cursor: pointer; }
   .q-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
   /* ── Must read / Optional ─────────────────────────────────────────
@@ -222,10 +207,9 @@
      on while reading. */
   .q-read { font-size: 10px; font-weight: 900; letter-spacing: .02em; border-radius: 999px;
             padding: 2px 8px; white-space: nowrap; }
-  .read-must { color: #fff; background: #b45309; }
+  .read-must { color: #fff; background: var(--color-warning-strong); }
   .read-opt  { color: var(--color-text-secondary); background: var(--color-bg);
                border: 1px solid var(--color-border); }
-  html.dark .read-must { color: #fde68a; background: #78350f; }
 
   .rnote { font-size: 12px; line-height: 1.5; color: var(--color-text-secondary); margin: 0 0 10px; }
 
@@ -286,21 +270,11 @@
      .dark class is present. Without this, these panels keep their light
      background while --color-text flips to near-white, so the text
      disappears on mobile. */
-  html.dark .fld.deep .lbl { color: #a5b4fc; }
-  html.dark .fld.recipe .lbl { color: #fcd34d; }
-  html.dark .fld.plan .lbl { color: #c4b5fd; }
-  html.dark .ex .n { background: #10b981; }
-  html.dark .fld.answer .lbl { color: #a5b4fc; }
-  html.dark .fld.freq .lbl { color: #d8b4fe; }
-  html.dark .fld.mnem .lbl { color: #fdba74; }
-  html.dark .fld.cx .lbl { color: #7dd3fc; }
-  html.dark .fld.pitfall .lbl { color: #fcd34d; }
-  html.dark .fld.follow .lbl { color: #6ee7b7; }
   @media (prefers-color-scheme: dark) {
     :root:not(.light) .sec-answer > summary, :root:not(.light) .sec-deep > summary { color: #a5b4fc; }
     :root:not(.light) .sec-recipe > summary, :root:not(.light) .sec-pitfall > summary { color: #fcd34d; }
     :root:not(.light) .sec-follow > summary, :root:not(.light) .sec-exs > summary { color: #6ee7b7; }
-    :root:not(.light) .code.diagram { background: #0b1220; color: #cbd5e1; }
+    :root:not(.light) .code.diagram { background: var(--color-surface-sunken); color: #cbd5e1; }
     :root:not(.light) .fld.mnem { background: #2a1a0f; }
     :root:not(.light) .fld.deep { background: #131a33; border-left-color: #818cf8; }
     :root:not(.light) .fld.answer { background: #131a33; border-left-color: #818cf8; }
@@ -315,7 +289,7 @@
     :root:not(.light) .fld.deep .lbl { color: #a5b4fc; }
     :root:not(.light) .fld.recipe .lbl { color: #fcd34d; }
     :root:not(.light) .fld.plan .lbl { color: #c4b5fd; }
-    :root:not(.light) .ex .n { background: #10b981; }
+    :root:not(.light) .ex .n { background: var(--color-success); }
     :root:not(.light) .fld.answer .lbl { color: #a5b4fc; }
     :root:not(.light) .fld.freq .lbl { color: #d8b4fe; }
     :root:not(.light) .fld.mnem .lbl { color: #fdba74; }
@@ -330,17 +304,17 @@
      into recognition, which is the thing this exists to avoid. */
   .quiz { margin-top: 14px; border-top: 2px dashed var(--color-border); padding-top: 10px; }
   .quiz > .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase;
-                 letter-spacing: .04em; color: #7c3aed; display: block; margin-bottom: 2px; }
+                 letter-spacing: .04em; color: var(--color-primary-ink); display: block; margin-bottom: 2px; }
   .quiz .qsub { font-size: 11px; color: var(--color-text-muted); margin-bottom: 8px; }
   .qi { border: 1px solid var(--color-border); border-radius: 10px; padding: 9px 11px;
         margin-bottom: 7px; background: var(--color-bg); }
   .qi .kind { display: inline-block; font-size: 9px; font-weight: 800; text-transform: uppercase;
               letter-spacing: .05em; padding: 2px 6px; border-radius: 999px;
-              background: #ede9fe; color: #5b21b6; margin-bottom: 5px; }
+              background: var(--color-primary-light); color: var(--color-primary-ink); margin-bottom: 5px; }
   .qi .ask { font-size: 13.5px; line-height: 1.5; font-weight: 600; }
   .qi .hint { font-size: 12px; color: var(--color-text-muted); margin-top: 5px; font-style: italic; }
   .qi .ans { display: none; white-space: pre-wrap; font-size: 13px; line-height: 1.6;
-             margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: #f1f5f9;
+             margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--color-surface-secondary);
              font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
              overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .qi.shown .ans { display: block; }
@@ -348,7 +322,7 @@
   .qi .qbtn { font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 999px;
               border: 1px solid var(--color-border); background: var(--color-surface);
               color: var(--color-text); cursor: pointer; min-height: 32px; }
-  .qi .qbtn.reveal { border-color: #7c3aed; color: #6d28d9; }
+  .qi .qbtn.reveal { border-color: var(--color-primary); color: var(--color-primary-ink); }
   .qi .grade { display: none; gap: 6px; flex-wrap: wrap; }
   .qi.shown .grade { display: flex; }
   /* The reveal button STAYS, and becomes "Hide the answer". Removing it left
@@ -356,20 +330,15 @@
      reloading the page — and re-reading an answer you have already seen is
      exactly what this quiz exists to prevent. */
   .qi.shown .qbtn.reveal { border-color: var(--color-border); color: var(--color-text-secondary); }
-  .qi .qbtn.got { border-color: #059669; color: #047857; }
-  .qi .qbtn.miss { border-color: #dc2626; color: #b91c1c; }
-  .qi.graded-got { border-color: #6ee7b7; background: #ecfdf5; }
-  .qi.graded-miss { border-color: #fca5a5; background: #fef2f2; }
+  .qi .qbtn.got { border-color: #059669; color: var(--color-success-on-tint); }
+  .qi .qbtn.miss { border-color: var(--color-danger); color: var(--color-danger-on-tint); }
+  .qi.graded-got { border-color: var(--color-success-border); background: var(--color-success-light); }
+  .qi.graded-miss { border-color: var(--color-danger-border); background: var(--color-danger-light); }
   .qi .verdict { font-size: 11.5px; font-weight: 700; margin-top: 6px; }
   .due-chip { font-size: 11px; font-weight: 800; padding: 3px 9px; border-radius: 999px;
-              background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
-  html.dark .qi .ans { background: #0b1220; }
-  html.dark .qi .kind { background: #4c1d95; color: #ddd6fe; }
-  html.dark .qi.graded-got { background: #052e26; }
-  html.dark .qi.graded-miss { background: #3f1212; }
-  html.dark .due-chip { background: #422006; color: #fde68a; border-color: #92400e; }
+              background: var(--color-warning-light); color: var(--color-warning-on-tint); border: 1px solid var(--color-warning-border); }
   @media (prefers-color-scheme: dark) {
-    :root:not(.light) .qi .ans { background: #0b1220; }
+    :root:not(.light) .qi .ans { background: var(--color-surface-sunken); }
     :root:not(.light) .qi .kind { background: #4c1d95; color: #ddd6fe; }
     :root:not(.light) .qi.graded-got { background: #052e26; }
     :root:not(.light) .qi.graded-miss { background: #3f1212; }

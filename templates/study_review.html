@@ -13,7 +13,6 @@
   <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
   <style>
     body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
-    html.dark body { background: #0b1220; }
 
     .rv-app { max-width: 760px; margin: 0 auto; padding: 24px 20px 80px; }
 
@@ -49,7 +48,7 @@
     }
     .rv-bar-fill {
       height: 100%;
-      background: #16a34a;
+      background: var(--color-success);
       transition: width .35s ease;
     }
 
@@ -64,7 +63,7 @@
       display: flex; flex-direction: column;
     }
     html.dark .rv-card {
-      background: #111a2c; border-color: #28344a;
+      background: var(--color-surface-elevated); border-color: var(--color-border);
       box-shadow: 0 8px 28px rgba(0,0,0,.4);
     }
 
@@ -77,10 +76,8 @@
       width: fit-content;
       margin-bottom: 10px;
     }
-    .rv-card-method.cornell { background: #dbeafe; color: #1d4ed8; }
-    .rv-card-method.feynman { background: #fef3c7; color: #92400e; }
-    html.dark .rv-card-method.cornell { background: rgba(37,99,235,.22); color: #93c5fd; }
-    html.dark .rv-card-method.feynman { background: rgba(217,119,6,.25); color: #fbbf24; }
+    .rv-card-method.cornell { background: var(--color-primary-light); color: var(--color-primary-ink); }
+    .rv-card-method.feynman { background: var(--color-warning-light); color: var(--color-warning-on-tint); }
 
     .rv-card-title {
       font-size: 22px; font-weight: 800; letter-spacing: -.01em;
@@ -102,10 +99,6 @@
       white-space: pre-wrap;
       color: var(--color-text);
     }
-    html.dark .rv-prompt {
-      background: rgba(37,99,235,.16);
-      color: #e2e8f0;
-    }
     .rv-prompt-label {
       font-size: 11px; font-weight: 700; letter-spacing: .06em;
       text-transform: uppercase;
@@ -122,7 +115,6 @@
       font-size: 13.5px; color: var(--color-text-secondary);
       line-height: 1.55;
     }
-    html.dark .rv-self-check { background: #0f1729; border-color: #28344a; }
 
     /* Hidden answer pane — revealed on click */
     .rv-answer {
@@ -181,15 +173,14 @@
     }
     .rv-btn.show:hover { border-color: var(--color-border-strong); }
     .rv-btn.forgot {
-      background: #fee2e2; color: #b91c1c;
+      background: var(--color-danger-light); color: var(--color-danger-on-tint);
     }
     .rv-btn.forgot:hover { background: #fecaca; }
-    html.dark .rv-btn.forgot { background: rgba(220,38,38,.18); color: #fca5a5; }
 
     .rv-btn.remembered {
-      background: #16a34a; color: #fff;
+      background: var(--color-success); color: #fff;
     }
-    .rv-btn.remembered:hover { background: #15803d; }
+    .rv-btn.remembered:hover { background: var(--color-success); }
 
     .rv-btn[disabled] { opacity: .5; cursor: not-allowed; }
 
@@ -211,8 +202,7 @@
       border: 1px solid var(--color-border);
       border-radius: 18px;
     }
-    html.dark .rv-done { background: #111a2c; border-color: #28344a; }
-    .rv-done svg.big { width: 56px; height: 56px; color: #16a34a; margin-bottom: 16px; }
+    .rv-done svg.big { width: 56px; height: 56px; color: var(--color-success-on-tint); margin-bottom: 16px; }
     .rv-done h2 { margin: 0 0 10px; font-size: 22px; font-weight: 800; }
     .rv-done p { margin: 0 0 20px; color: var(--color-text-secondary); font-size: 14px; line-height: 1.55; }
     .rv-done .rv-cta {

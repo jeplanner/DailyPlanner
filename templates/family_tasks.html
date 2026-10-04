@@ -94,12 +94,12 @@
   .ft-assignee {
     align-self: flex-start;
     padding: 2px 8px; border-radius: 999px;
-    background: #eff6ff; color: #1d4ed8;
-    border: 1px solid #bfdbfe;
+    background: var(--color-primary-light); color: var(--color-primary-ink);
+    border: 1px solid var(--color-primary-border);
     font-size: 11.5px; font-weight: 600;
     white-space: nowrap;
   }
-  .ft-row.mine .ft-assignee { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+  .ft-row.mine .ft-assignee { background: var(--color-success-light); color: var(--color-success-on-tint); border-color: var(--color-success-border); }
 
   .ft-due {
     align-self: flex-start;
@@ -109,8 +109,8 @@
     font-size: 11.5px; font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  .ft-due.is-overdue { background: #fee2e2; color: #b91c1c; }
-  .ft-due.is-today   { background: #fef3c7; color: #92400e; }
+  .ft-due.is-overdue { background: var(--color-danger-light); color: var(--color-danger-on-tint); }
+  .ft-due.is-today   { background: var(--color-warning-light); color: var(--color-warning-on-tint); }
 
   .ft-row-actions { display: inline-flex; gap: 4px; align-self: flex-start; }
   .ft-row-btn {
@@ -121,7 +121,7 @@
     cursor: pointer;
   }
   .ft-row-btn:hover { background: var(--color-surface-secondary, #f3f4f6); border-color: var(--color-border); }
-  .ft-row-btn.danger:hover { color: #b91c1c; }
+  .ft-row-btn.danger:hover { color: var(--color-danger-on-tint); }
   .ft-row-btn svg { width: 14px; height: 14px; }
 
   .ft-empty, .ft-loading {

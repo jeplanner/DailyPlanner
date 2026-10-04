@@ -13,7 +13,6 @@
   <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
   <style>
     body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
-    html.dark body { background: #0b1220; }
 
     .st-app { max-width: 1200px; margin: 0 auto; padding: 22px 24px 64px; }
     .st-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
@@ -36,9 +35,9 @@
     }
     .st-cta.secondary:hover { border-color: var(--color-border-strong); }
     .st-cta.review {
-      background: #16a34a; color: #fff;
+      background: var(--color-success); color: #fff;
     }
-    .st-cta.review:hover { background: #15803d; }
+    .st-cta.review:hover { background: var(--color-success); }
     .st-cta svg { width: 14px; height: 14px; }
 
     /* Tabs */
@@ -77,9 +76,7 @@
       background: var(--color-primary-light);
       color: var(--color-primary);
     }
-    html.dark .st-tab.is-active .st-tab-count { background: rgba(37,99,235,.22); color: #93c5fd; }
-    .st-tab-count.due { background: #fef3c7; color: #92400e; }
-    html.dark .st-tab-count.due { background: rgba(217,119,6,.25); color: #fbbf24; }
+    .st-tab-count.due { background: var(--color-warning-light); color: var(--color-warning-on-tint); }
 
     /* Search */
     .st-toolbar {
@@ -121,8 +118,7 @@
       min-height: 160px;
     }
     .st-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.06); }
-    html.dark .st-card { background: #111a2c; border-color: #28344a; }
-    html.dark .st-card:hover { border-color: #3b4865; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
+    html.dark .st-card:hover { border-color: var(--color-border-strong); box-shadow: 0 8px 22px rgba(0,0,0,.45); }
 
     .st-card-method {
       display: inline-flex; align-items: center; gap: 4px;
@@ -133,10 +129,8 @@
       margin-bottom: 8px;
       width: fit-content;
     }
-    .st-card-method.cornell { background: #dbeafe; color: #1d4ed8; }
-    .st-card-method.feynman { background: #fef3c7; color: #92400e; }
-    html.dark .st-card-method.cornell { background: rgba(37,99,235,.22); color: #93c5fd; }
-    html.dark .st-card-method.feynman { background: rgba(217,119,6,.25); color: #fbbf24; }
+    .st-card-method.cornell { background: var(--color-primary-light); color: var(--color-primary-ink); }
+    .st-card-method.feynman { background: var(--color-warning-light); color: var(--color-warning-on-tint); }
 
     .st-card-title {
       font-size: 15.5px; font-weight: 700;
@@ -168,9 +162,8 @@
       display: inline-flex; align-items: center; gap: 3px;
       font-variant-numeric: tabular-nums;
     }
-    .st-card-foot .stage.due { color: #b45309; font-weight: 700; }
-    html.dark .st-card-foot .stage.due { color: #fbbf24; }
-    .st-card-foot .stage.mastered { color: #16a34a; font-weight: 700; }
+    .st-card-foot .stage.due { color: var(--color-warning-on-tint); font-weight: 700; }
+    .st-card-foot .stage.mastered { color: var(--color-success-on-tint); font-weight: 700; }
 
     .st-empty {
       grid-column: 1 / -1;
@@ -197,7 +190,6 @@
       border: 1px solid var(--color-border);
       border-radius: 14px;
     }
-    html.dark .st-method-card { background: #111a2c; border-color: #28344a; }
     .st-method-card h3 {
       margin: 0 0 8px;
       font-size: 15px; font-weight: 700;

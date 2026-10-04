@@ -2,29 +2,24 @@
    GOALS & OKRs
    ═══════════════════════════════════════════════════════════════ */
 
+/* Aliases onto design-system.css, not a second palette. This file used
+   to define its own surfaces, its own grey ramp and its own accent in
+   both light and dark -- which is why this page was a slightly
+   different blue and a slightly cooler grey than the rest of the app.
+   The --g names stay (every rule below uses them); only their
+   values now come from one place. */
 :root {
-  --g-bg: #f7f8fa;
-  --g-surface: #ffffff;
-  --g-border: #e5e7eb;
-  --g-border-light: #f1f3f5;
-  --g-text: #111827;
-  --g-text2: #6b7280;
-  --g-text3: #9ca3af;
-  --g-primary: #2563eb;
+  --g-bg: var(--color-bg);
+  --g-surface: var(--color-surface);
+  --g-border: var(--color-border);
+  --g-border-light: var(--color-border-light);
+  --g-text: var(--color-text);
+  --g-text2: var(--color-text-secondary);
+  --g-text3: var(--color-text-muted);
+  --g-primary: var(--color-primary);
   --g-shadow: 0 1px 3px rgba(0,0,0,.06);
   --g-shadow-hover: 0 4px 14px rgba(0,0,0,.08);
 }
-html.dark {
-  --g-bg: #0f172a;
-  --g-surface: #1e293b;
-  --g-border: #334155;
-  --g-border-light: #273142;
-  --g-text: #f1f5f9;
-  --g-text2: #94a3b8;
-  --g-text3: #64748b;
-  --g-shadow: 0 1px 3px rgba(0,0,0,.2);
-}
-
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
@@ -198,12 +193,11 @@ body {
   font-weight: 600;
   padding: 3px 8px;
   border-radius: 10px;
-  background: #eff6ff;
+  background: var(--color-primary-light);
   color: var(--g-primary);
   text-transform: uppercase;
   letter-spacing: .4px;
 }
-html.dark .goal-horizon { background: #172554; }
 
 .goal-description {
   font-size: 13px;
@@ -218,8 +212,8 @@ html.dark .goal-horizon { background: #172554; }
   color: var(--g-text3);
   margin-top: 6px;
 }
-.goal-due.overdue { color: #dc2626; font-weight: 600; }
-.goal-due.soon    { color: #d97706; font-weight: 600; }
+.goal-due.overdue { color: var(--color-danger-on-tint); font-weight: 600; }
+.goal-due.soon    { color: var(--color-warning-on-tint); font-weight: 600; }
 
 /* Live countdown on an objective card. The tone comes from countdown.js as a
    data-tone attribute, so the colour escalates on its own as the deadline
@@ -233,10 +227,10 @@ html.dark .goal-horizon { background: #172554; }
 }
 .goal-due.goal-countdown b { font-size: 14px; font-weight: 800; letter-spacing: -.01em; }
 .goal-due.goal-countdown i { font-style: normal; font-size: 10.5px; opacity: .75; margin-left: 2px; }
-.goal-due.goal-countdown[data-tone="soon"]    { color: #d97706; }
-.goal-due.goal-countdown[data-tone="urgent"]  { color: #dc2626; }
-.goal-due.goal-countdown[data-tone="overdue"] { color: #b91c1c; font-weight: 700; }
-.goal-due.goal-countdown[data-tone="done"]    { color: #059669; }
+.goal-due.goal-countdown[data-tone="soon"]    { color: var(--color-warning-on-tint); }
+.goal-due.goal-countdown[data-tone="urgent"]  { color: var(--color-danger-on-tint); }
+.goal-due.goal-countdown[data-tone="overdue"] { color: var(--color-danger-on-tint); font-weight: 700; }
+.goal-due.goal-countdown[data-tone="done"]    { color: var(--color-success-on-tint); }
 
 .goal-progress-wrap {
   display: flex;
@@ -285,8 +279,7 @@ html.dark .goal-horizon { background: #172554; }
 }
 .icon-btn:hover { background: var(--g-border-light); color: var(--g-text); }
 .icon-btn svg { width: 16px; height: 16px; }
-.icon-btn.danger:hover { color: #dc2626; background: #fef2f2; }
-html.dark .icon-btn.danger:hover { background: #3b1111; }
+.icon-btn.danger:hover { color: var(--color-danger-on-tint); background: var(--color-danger-light); }
 
 /* ── Objectives inside a goal ── */
 .objective-list {
@@ -362,7 +355,7 @@ html.dark .icon-btn.danger:hover { background: #3b1111; }
 }
 .kr-progress-bar-fill {
   height: 100%;
-  background: #10b981;
+  background: var(--color-success);
   border-radius: 10px;
   transition: width .3s ease;
 }
@@ -395,8 +388,7 @@ html.dark .icon-btn.danger:hover { background: #3b1111; }
   margin-top: 6px;
   font-family: inherit;
 }
-.add-inline:hover { background: #eff6ff; border-color: var(--g-primary); }
-html.dark .add-inline:hover { background: #172554; }
+.add-inline:hover { background: var(--color-primary-light); border-color: var(--g-primary); }
 .add-inline-sub { font-size: 10px; padding: 4px 8px; margin-left: 18px; }
 
 /* ── Initiative rows (nested inside a KR block) ── */
@@ -533,7 +525,7 @@ html.dark .add-inline:hover { background: #172554; }
   margin: 12px 0 4px;
 }
 .goal-modal-body label:first-child { margin-top: 0; }
-.goal-modal-body .req { color: #dc2626; }
+.goal-modal-body .req { color: var(--color-danger-on-tint); }
 .goal-modal-body .hint {
   text-transform: none;
   font-weight: 400;
@@ -600,16 +592,11 @@ html.dark .add-inline:hover { background: #172554; }
 @media (max-width: 768px) {
   /* Slightly warmer, higher-contrast surface tones on mobile */
   :root {
-    --g-bg: #f4f6fb;
-    --g-text: #0f172a;
-    --g-text2: #475569;
-    --g-text3: #64748b;
+    --g-bg: var(--color-bg);
+    --g-text: var(--color-text);
+    --g-text2: var(--color-text-secondary);
+    --g-text3: var(--color-text-muted);
   }
-  html.dark {
-    --g-text2: #cbd5e1;
-    --g-text3: #94a3b8;
-  }
-
   body { -webkit-text-size-adjust: 100%; font-size: 15px; }
 
   .goals-app { padding: 14px 14px 96px; }

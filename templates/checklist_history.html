@@ -19,7 +19,7 @@
     .ch-tabs a{font-size:12.5px;font-weight:700;padding:5px 12px;border-radius:999px;
       border:1px solid var(--color-border);background:var(--color-surface);
       color:var(--color-text);text-decoration:none}
-    .ch-tabs a.on{background:#4338ca;border-color:#4338ca;color:#fff}
+    .ch-tabs a.on{background:var(--color-primary);border-color:var(--color-primary);color:#fff}
 
     .ch-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}
     .ch-stat{border:1px solid var(--color-border);border-radius:12px;padding:12px;
@@ -35,10 +35,10 @@
       justify-content:center;font-size:9.5px;font-weight:800;text-decoration:none;
       border:1px solid var(--color-border);color:var(--color-text-secondary)}
     .ch-cell.none{background:var(--color-bg);opacity:.55}
-    .ch-cell.full{background:#059669;border-color:#059669;color:#fff}
-    .ch-cell.most{background:#a7f3d0;border-color:#6ee7b7;color:#065f46}
-    .ch-cell.some{background:#fde68a;border-color:#fbbf24;color:#92400e}
-    .ch-cell.bad {background:#fecaca;border-color:#f87171;color:#991b1b}
+    .ch-cell.full{background:var(--color-success-strong);border-color:#059669;color:#fff}
+    .ch-cell.most{background:var(--color-success-light);border-color:var(--color-success-border);color:var(--color-success-on-tint)}
+    .ch-cell.some{background:#fde68a;border-color:#fbbf24;color:var(--color-warning-on-tint)}
+    .ch-cell.bad {background:#fecaca;border-color:var(--color-danger);color:var(--color-danger-on-tint)}
     .ch-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;
       color:var(--color-text-secondary);margin:-12px 0 22px}
     .ch-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;
@@ -52,7 +52,7 @@
     .ch-row .n{font-size:13.5px;font-weight:600}
     .ch-row .v{font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
     .ch-bar{grid-column:1/-1;height:5px;border-radius:3px;background:var(--color-border);overflow:hidden}
-    .ch-bar i{display:block;height:100%;background:#4338ca}
+    .ch-bar i{display:block;height:100%;background:var(--color-primary)}
     .ch-empty{padding:34px 12px;text-align:center;color:var(--color-text-secondary);
       font-size:14px;line-height:1.6}
     @media(max-width:560px){.ch-stats{grid-template-columns:1fr}}
@@ -105,8 +105,8 @@
       {% endfor %}
     </div>
     <div class="ch-legend">
-      <span><i style="background:#059669"></i>all done</span>
-      <span><i style="background:#a7f3d0"></i>most</span>
+      <span><i style="background:var(--color-success-strong)"></i>all done</span>
+      <span><i style="background:var(--color-success-light)"></i>most</span>
       <span><i style="background:#fde68a"></i>some</span>
       <span><i style="background:#fecaca"></i>few or none</span>
       <span><i style="background:var(--color-bg);border:1px solid var(--color-border)"></i>nothing due</span>

@@ -203,10 +203,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
   font-size:12px;font-weight:500;font-family:inherit;cursor:pointer;transition:all .12s;
 }
 .em-dt-btn-group button:hover{border-color:var(--q-schedule);color:var(--q-schedule);}
-.em-dt-btn-group button.active{background:var(--q-schedule);color:#fff;border-color:var(--q-schedule);}
-.em-dt-btn-group.status-group button.active{background:#0f766e;border-color:#0f766e;}
-.em-dt-btn-group.status-group button[data-s="deleted"].active{background:var(--color-danger-strong);border-color:#b91c1c;}
-.em-dt-btn-group.status-group button[data-s="skipped"].active{background:var(--color-primary);border-color:#4f46e5;}
+.em-dt-btn-group button.active{background:var(--q-schedule);color:var(--color-on-primary);border-color:var(--q-schedule);}
+.em-dt-btn-group.status-group button.active{background:var(--color-success);border-color:var(--color-success);}
+.em-dt-btn-group.status-group button[data-s="deleted"].active{background:var(--color-danger-strong);border-color:var(--color-danger-strong);}
+.em-dt-btn-group.status-group button[data-s="skipped"].active{background:var(--color-primary);border-color:var(--color-primary);}
 .em-dt-info{font-size:12px;color:var(--em-text2);line-height:1.5;display:flex;flex-direction:column;gap:4px;}
 .em-dt-info div{display:flex;gap:6px;}
 .em-dt-info div b{min-width:74px;font-weight:600;color:var(--em-text3);}
@@ -263,7 +263,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 
 /* Status badge + resolution menu */
 .em-status-badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:0.3px;margin-left:4px;}
-.em-status-badge.done{background:#d1fae5;color:var(--color-success-on-tint);}
+.em-status-badge.done{background:var(--color-success-light);color:var(--color-success-on-tint);}
 .em-status-badge.in_progress{background:var(--color-primary-light);color:var(--color-primary-ink);}
 .em-status-badge.deleted{background:var(--color-danger-light);color:var(--color-danger-on-tint);}
 .em-status-badge.skipped{background:var(--color-primary-light);color:var(--color-primary-ink);}
@@ -302,11 +302,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 @keyframes emSlideDown{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:translateY(0);}}
 .em-select-bar .em-sel-count{font-size:14px;font-weight:700;flex:1;}
 .em-select-bar button{
-  border:1px solid rgba(255,255,255,.5);background:transparent;color:#fff;
+  border:1px solid color-mix(in srgb, var(--color-text-inverse) 55%, transparent);background:transparent;color:var(--color-text-inverse);
   padding:6px 12px;border-radius:7px;font-size:12px;font-weight:600;
   font-family:inherit;cursor:pointer;
 }
-.em-select-bar button:hover{background:rgba(255,255,255,.15);border-color:#fff;}
+.em-select-bar button:hover{background:color-mix(in srgb, var(--color-text-inverse) 16%, transparent);border-color:var(--color-text-inverse);}
 .em-select-bar .em-sel-exit{
   width:32px;height:32px;padding:0;border-radius:50%;
   display:flex;align-items:center;justify-content:center;font-size:18px;line-height:1;
@@ -352,9 +352,9 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .em-action-dock{
   position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(14px);
   display:none;align-items:center;gap:6px;
-  background:rgba(30,41,59,.96);color:#fff;backdrop-filter:blur(10px);
+  background:var(--color-text);color:var(--color-text-inverse);backdrop-filter:blur(10px);
   padding:8px;border-radius:14px;
-  box-shadow:0 16px 40px rgba(0,0,0,.35);
+  box-shadow:var(--shadow-xl);
   z-index:999;opacity:0;transition:all .22s ease;
   max-width:96vw;
 }
@@ -422,7 +422,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .em-prio-pill.high::before{background:var(--color-danger);box-shadow:0 0 0 2px rgba(220,38,38,.25);}
 .em-prio-pill.medium{background:var(--color-warning-light);color:var(--color-warning-on-tint);}
 .em-prio-pill.medium::before{background:var(--color-warning);box-shadow:0 0 0 2px rgba(245,158,11,.25);}
-.em-prio-pill.low{background:#d1fae5;color:var(--color-success-on-tint);}
+.em-prio-pill.low{background:var(--color-success-light);color:var(--color-success-on-tint);}
 .em-prio-pill.low::before{background:var(--color-success);box-shadow:0 0 0 2px rgba(16,185,129,.25);}
 
 /* ── Travel settings modal ── */
@@ -472,13 +472,13 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .tv-confirm-actions .cancel{background:var(--em-surface);color:var(--em-text2);}
 .tv-confirm-actions .cancel:hover{background:var(--em-border);color:var(--em-text);}
 .tv-confirm-actions .confirm{background:var(--color-danger);border-color:var(--color-danger);color:#fff;}
-.tv-confirm-actions .confirm:hover{background:var(--color-danger-strong);border-color:#b91c1c;}
+.tv-confirm-actions .confirm:hover{background:var(--color-danger-strong);border-color:var(--color-danger-strong);}
 @keyframes tvSlideDown{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:translateY(0);}}
 
 /* Undo toast (custom, distinct from standard toast.js ones because we need an action button) */
 .tv-undo-toast{
   position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(12px);
-  background:rgba(30,41,59,.96);color:#fff;
+  background:var(--color-text);color:var(--color-text-inverse);
   padding:12px 14px 12px 18px;border-radius:12px;
   font-size:13px;font-weight:500;font-family:'Inter',system-ui,sans-serif;
   display:flex;align-items:center;gap:12px;
@@ -489,8 +489,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .tv-undo-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .tv-undo-toast .tv-undo-msg{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .tv-undo-toast button{
-  background:transparent;border:1px solid rgba(255,255,255,.35);
-  color:#fff;padding:6px 14px;border-radius:7px;
+  background:transparent;border:1px solid color-mix(in srgb, var(--color-text-inverse) 38%, transparent);
+  color:var(--color-text-inverse);padding:6px 14px;border-radius:7px;
   font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;
   text-transform:uppercase;letter-spacing:.5px;flex-shrink:0;
 }

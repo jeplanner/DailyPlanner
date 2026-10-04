@@ -35,25 +35,17 @@
      dark surface and secondary text differ from this page's, so letting
      the shared token flip would restyle dark mode silently. */
   :root {
-    --pl-bg: #f7f8fa;
+    --pl-bg: var(--color-bg);
     --pl-surface: var(--color-surface, #fff);
-    --pl-text: #1a1a2e;
-    --pl-text2: #6b7280; --pl-text3: #9ca3af;
+    --pl-text: var(--color-text);
+    --pl-text2: var(--color-text-secondary); --pl-text3: #9ca3af;
     --pl-border: var(--color-border, #e5e7eb);
     --pl-primary: var(--color-primary, #2563eb);
     --pl-primary-light: var(--color-primary-light, #eff6ff);
-    --pl-success: #059669; --pl-success-light: #ecfdf5;
-    --pl-warning: #f59e0b;
+    --pl-success: var(--color-success); --pl-success-light: #ecfdf5;
+    --pl-warning: var(--color-warning);
     --pl-danger: var(--color-danger, #dc2626); --pl-danger-light: #fef2f2;
     --pl-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  }
-  html.dark {
-    --pl-bg: #0f172a; --pl-surface: #1e293b; --pl-text: #f1f5f9;
-    --pl-text2: #94a3b8; --pl-text3: #64748b; --pl-border: #334155;
-    --pl-primary-light: #1e3a5f;
-    --pl-success: #34d399; --pl-success-light: #06281f;
-    --pl-danger: #f87171; --pl-danger-light: #331617;
-    --pl-shadow: 0 1px 3px rgba(0,0,0,0.2);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Inter', system-ui, sans-serif; background: var(--pl-bg); color: var(--pl-text); min-height: 100vh; }
@@ -224,7 +216,7 @@
     color: var(--pl-text); cursor: pointer; display: flex; align-items: center; gap: 8px;
   }
   .card-menu button:hover { background: var(--pl-border); }
-  .card-menu button.danger { color: #dc2626; }
+  .card-menu button.danger { color: var(--color-danger-on-tint); }
   .card-menu button svg { width: 14px; height: 14px; }
   .archived-badge {
     display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase;

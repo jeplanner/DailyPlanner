@@ -2,35 +2,28 @@
    HEALTH & HABITS — Modern SaaS Habit Tracker
    ═══════════════════════════════════════════════════ */
 
+/* Aliases onto design-system.css, not a second palette. This file used
+   to define its own surfaces, its own grey ramp and its own accent in
+   both light and dark -- which is why this page was a slightly
+   different blue and a slightly cooler grey than the rest of the app.
+   The --hab names stay (every rule below uses them); only their
+   values now come from one place. */
 :root {
-  --hab-bg: #f7f8fa;
-  --hab-surface: #ffffff;
-  --hab-text: #1a1a2e;
-  --hab-text2: #6b7280;
-  --hab-text3: #9ca3af;
-  --hab-border: #e5e7eb;
-  --hab-primary: #6366f1;
-  --hab-primary-light: #eef2ff;
-  --hab-success: #10b981;
-  --hab-success-light: #ecfdf5;
-  --hab-warning: #f59e0b;
-  --hab-danger: #ef4444;
-  --hab-ring-bg: #e5e7eb;
-  --hab-ring-fill: #6366f1;
+  --hab-bg: var(--color-bg);
+  --hab-surface: var(--color-surface);
+  --hab-text: var(--color-text);
+  --hab-text2: var(--color-text-secondary);
+  --hab-text3: var(--color-text-muted);
+  --hab-border: var(--color-border);
+  --hab-primary: var(--color-primary);
+  --hab-primary-light: var(--color-primary-light);
+  --hab-success: var(--color-success);
+  --hab-success-light: var(--color-success-light);
+  --hab-warning: var(--color-warning);
+  --hab-danger: var(--color-danger);
+  --hab-ring-bg: var(--color-surface-sunken);
+  --hab-ring-fill: var(--color-primary);
   --hab-card-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-
-html.dark {
-  --hab-bg: #0f172a;
-  --hab-surface: #1e293b;
-  --hab-text: #f1f5f9;
-  --hab-text2: #94a3b8;
-  --hab-text3: #64748b;
-  --hab-border: #334155;
-  --hab-primary-light: #1e1b4b;
-  --hab-success-light: #052e16;
-  --hab-ring-bg: #334155;
-  --hab-card-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -254,9 +247,9 @@ body {
   margin-bottom: 2px;
 }
 .stat-icon svg { width: 18px; height: 18px; }
-.streak-icon { background: #fef3c7; color: #f59e0b; }
+.streak-icon { background: var(--color-warning-light); color: #f59e0b; }
 .score-icon { background: #fce7f3; color: #ec4899; }
-.avg-icon { background: #dbeafe; color: #3b82f6; }
+.avg-icon { background: var(--color-primary-light); color: #3b82f6; }
 .stat-value { font-size: 24px; font-weight: 800; color: var(--hab-text); line-height: 1; }
 .stat-label {
   font-size: 11px; font-weight: 500; color: var(--hab-text3);
@@ -323,8 +316,8 @@ body {
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   color: var(--hab-text); transition: all 0.15s;
 }
-.habit-action-btn:hover { background: #eef2ff; border-color: #a5b4fc; color: var(--hab-text); }
-.habit-delete-btn:hover { background: #fee2e2; border-color: #fca5a5; color: var(--hab-danger); }
+.habit-action-btn:hover { background: var(--color-primary-light); border-color: var(--color-primary-border); color: var(--hab-text); }
+.habit-delete-btn:hover { background: var(--color-danger-light); border-color: var(--color-danger-border); color: var(--hab-danger); }
 
 /* Habit Input Row */
 .habit-input-row {
@@ -390,7 +383,7 @@ body {
   content: '';
   position: absolute; top: 3px; left: 3px;
   width: 30px; height: 30px;
-  background: #fff; border-radius: 50%;
+  background: var(--color-surface); border-radius: 50%;
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   transition: transform 0.25s;
 }
@@ -424,16 +417,12 @@ body {
    ═══════════════════════════════════════════════════════════ */
 .habit-card.completed .habit-progress-bar {
   /* White track with a green border stands out against the mint card */
-  background: #ffffff;
-  border: 1px solid #a7f3d0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-success-border);
   height: 10px;
 }
-html.dark .habit-card.completed .habit-progress-bar {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: #065f46;
-}
 .habit-card.completed .habit-progress-fill {
-  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+  background: linear-gradient(90deg, var(--color-success) 0%, var(--color-success-strong) 100%);
   box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
 }
 
@@ -475,7 +464,7 @@ html.dark .habit-card.completed .habit-progress-bar {
   gap: 6px;
   margin-top: 10px;
   padding: 8px 12px;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: linear-gradient(135deg, var(--color-success) 0%, var(--color-success-strong) 100%);
   color: #ffffff;
   border-radius: 999px;
   font-size: 12px;
@@ -552,14 +541,10 @@ html.dark .habit-card.completed .habit-progress-bar {
   width: 22px; height: 22px; border-radius: 4px;
   background: var(--hab-ring-bg); transition: background 0.2s;
 }
-.heatmap-cell.level-1 { background: #d1fae5; }
-.heatmap-cell.level-2 { background: #6ee7b7; }
-.heatmap-cell.level-3 { background: #10b981; }
-.heatmap-cell.level-4 { background: #047857; }
-html.dark .heatmap-cell.level-1 { background: #064e3b; }
-html.dark .heatmap-cell.level-2 { background: #065f46; }
-html.dark .heatmap-cell.level-3 { background: #047857; }
-html.dark .heatmap-cell.level-4 { background: #10b981; }
+.heatmap-cell.level-1 { background: var(--color-success-light); }
+.heatmap-cell.level-2 { background: var(--color-success-light); }
+.heatmap-cell.level-3 { background: var(--color-success); }
+.heatmap-cell.level-4 { background: var(--color-success-strong); }
 
 /* ═══════════ HABIT SHEET MODAL ═══════════ */
 .sheet-overlay {

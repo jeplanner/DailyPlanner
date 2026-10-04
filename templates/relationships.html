@@ -43,9 +43,9 @@
     font-size: 13px; color: var(--color-text-secondary);
   }
   .rel-stat strong { font-size: 15px; font-weight: 800; color: var(--color-text); font-variant-numeric: tabular-nums; }
-  .rel-stat.is-late strong { color: #b91c1c; }
-  .rel-stat.is-due  strong { color: #b45309; }
-  .rel-stat.is-ok   strong { color: #166534; }
+  .rel-stat.is-late strong { color: var(--color-danger-on-tint); }
+  .rel-stat.is-due  strong { color: var(--color-warning-on-tint); }
+  .rel-stat.is-ok   strong { color: var(--color-success-on-tint); }
 
   /* Add form */
   .rel-form {
@@ -100,9 +100,9 @@
     color: var(--color-text-muted); letter-spacing: 0; text-transform: none;
   }
   .rel-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
-  .rel-dot-late { background: #dc2626; box-shadow: 0 0 0 4px rgba(220,38,38,.14); }
-  .rel-dot-due  { background: #f59e0b; box-shadow: 0 0 0 4px rgba(245,158,11,.16); }
-  .rel-dot-ok   { background: #16a34a; box-shadow: 0 0 0 4px rgba(22,163,74,.14); }
+  .rel-dot-late { background: var(--color-danger); box-shadow: 0 0 0 4px rgba(220,38,38,.14); }
+  .rel-dot-due  { background: var(--color-warning); box-shadow: 0 0 0 4px rgba(245,158,11,.16); }
+  .rel-dot-ok   { background: var(--color-success); box-shadow: 0 0 0 4px rgba(22,163,74,.14); }
 
   /* List */
   .rel-list { display: flex; flex-direction: column; gap: 8px; }
@@ -126,13 +126,13 @@
   }
   .rel-avatar {
     width: 40px; height: 40px; border-radius: 50%;
-    background: linear-gradient(135deg, #dbeafe, #c7d2fe);
-    color: #1e40af; font-weight: 700; font-size: 16px;
+    background: linear-gradient(135deg, var(--color-primary-light), #c7d2fe);
+    color: var(--color-primary-ink); font-weight: 700; font-size: 16px;
     display: flex; align-items: center; justify-content: center;
     flex: 0 0 auto;
   }
-  .rel-row.is-late .rel-avatar { background: linear-gradient(135deg, #fee2e2, #fecaca); color: #991b1b; }
-  .rel-row.is-due  .rel-avatar { background: linear-gradient(135deg, #fef3c7, #fde68a); color: #92400e; }
+  .rel-row.is-late .rel-avatar { background: linear-gradient(135deg, var(--color-danger-light), #fecaca); color: var(--color-danger-on-tint); }
+  .rel-row.is-due  .rel-avatar { background: linear-gradient(135deg, var(--color-warning-light), #fde68a); color: var(--color-warning-on-tint); }
   .rel-name-block { min-width: 0; }
   .rel-name { font-weight: 600; font-size: 15px; color: var(--color-text); }
   .rel-meta {
@@ -150,9 +150,9 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  .rel-status.is-ok   { background: rgba(22,163,74,.12); color: #166534; }
-  .rel-status.is-due  { background: rgba(245,158,11,.16); color: #b45309; }
-  .rel-status.is-late { background: rgba(220,38,38,.12); color: #b91c1c; }
+  .rel-status.is-ok   { background: rgba(22,163,74,.12); color: var(--color-success-on-tint); }
+  .rel-status.is-due  { background: rgba(245,158,11,.16); color: var(--color-warning-on-tint); }
+  .rel-status.is-late { background: rgba(220,38,38,.12); color: var(--color-danger-on-tint); }
   .rel-touch-btn {
     appearance: none; padding: 7px 12px;
     font: inherit; font-size: 12.5px; font-weight: 600;
@@ -163,7 +163,7 @@
     transition: background .12s, color .12s, border-color .12s;
   }
   .rel-touch-btn:hover {
-    background: rgba(22,163,74,.08); color: #166534; border-color: #16a34a;
+    background: rgba(22,163,74,.08); color: var(--color-success-on-tint); border-color: var(--color-success);
   }
   .rel-touch-btn svg { width: 13px; height: 13px; }
   .rel-more-btn {
@@ -198,12 +198,12 @@
   .rel-archive-btn {
     appearance: none; padding: 7px 12px;
     font: inherit; font-size: 12.5px; font-weight: 600;
-    color: #b91c1c; background: transparent;
+    color: var(--color-danger-on-tint); background: transparent;
     border: 1px solid var(--color-border); border-radius: 8px;
     cursor: pointer;
     display: inline-flex; align-items: center; gap: 6px;
   }
-  .rel-archive-btn:hover { background: rgba(220,38,38,.08); border-color: #fca5a5; }
+  .rel-archive-btn:hover { background: rgba(220,38,38,.08); border-color: var(--color-danger-border); }
   .rel-archive-btn svg { width: 13px; height: 13px; }
 
   /* Empty state */
@@ -224,13 +224,6 @@
   .rel-loading.hidden { display: none; }
 
   /* Dark mode tweaks (uses design-system tokens; light-mode constants get nudged) */
-  html.dark .rel-avatar { background: linear-gradient(135deg, #1e3a8a, #3730a3); color: #bfdbfe; }
-  html.dark .rel-row.is-late .rel-avatar { background: linear-gradient(135deg, #3b1111, #4c1d1d); color: #fca5a5; }
-  html.dark .rel-row.is-due  .rel-avatar { background: linear-gradient(135deg, #451a03, #4d2c0a); color: #fcd34d; }
-  html.dark .rel-status.is-ok   { background: rgba(22,163,74,.18); color: #86efac; }
-  html.dark .rel-status.is-due  { background: rgba(245,158,11,.22); color: #fcd34d; }
-  html.dark .rel-status.is-late { background: rgba(220,38,38,.22); color: #fca5a5; }
-  html.dark .rel-touch-btn:hover { background: rgba(22,163,74,.15); color: #86efac; border-color: #16a34a; }
 </style>
 {% include "_pwa_head.html" %}
 </head>

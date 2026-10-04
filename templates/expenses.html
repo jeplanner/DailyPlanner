@@ -22,9 +22,9 @@
   /* Expense / Income segmented toggle */
   .seg { display: flex; gap: 0; border: 1px solid var(--color-border); border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
   .seg button { flex: 1; font: inherit; font-size: 14px; font-weight: 700; padding: 10px; border: none; background: var(--color-bg); color: var(--color-text-secondary); cursor: pointer; }
-  .seg button.on[data-kind="expense"]  { background: #fef2f2; color: #b91c1c; }
-  .seg button.on[data-kind="income"]   { background: #ecfdf5; color: #047857; }
-  .seg button.on[data-kind="transfer"] { background: #eef2ff; color: #4338ca; }
+  .seg button.on[data-kind="expense"]  { background: var(--color-danger-light); color: var(--color-danger-on-tint); }
+  .seg button.on[data-kind="income"]   { background: var(--color-success-light); color: var(--color-success-on-tint); }
+  .seg button.on[data-kind="transfer"] { background: var(--color-primary-light); color: var(--color-primary-ink); }
   .seg button + button { border-left: 1px solid var(--color-border); }
 
   .row { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -54,30 +54,30 @@
   .stat { flex: 1; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 10px 12px; text-align: center; }
   .stat .v { font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
   .stat .l { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
-  .stat.in .v { color: #047857; } .stat.out .v { color: #b91c1c; }
+  .stat.in .v { color: var(--color-success-on-tint); } .stat.out .v { color: var(--color-danger-on-tint); }
 
   .list { display: flex; flex-direction: column; gap: 8px; }
   .exp { display: flex; align-items: center; gap: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 11px 13px; }
   .exp .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-  .exp.kind-expense .dot { background: #ef4444; } .exp.kind-income .dot { background: #10b981; }
-  .exp.kind-transfer .dot { background: #6366f1; }
-  .exp.kind-transfer .amt { color: #4338ca; }
+  .exp.kind-expense .dot { background: var(--color-danger); } .exp.kind-income .dot { background: var(--color-success); }
+  .exp.kind-transfer .dot { background: var(--color-primary); }
+  .exp.kind-transfer .amt { color: var(--color-primary-ink); }
   .exp .cat { font-weight: 700; font-size: 15px; }
   .exp .cat.empty { color: var(--color-text-muted, #94a3b8); font-weight: 600; }
   .exp .nt { font-size: 12.5px; color: var(--color-text-secondary); margin-top: 1px; }
   .exp .mid { flex: 1; min-width: 0; }
   .exp .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   .exp .badge { font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--color-bg); border: 1px solid var(--color-border); color: var(--color-text-secondary); }
-  .exp .badge.rec { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
-  .exp .badge.need { background: #ecfdf5; border-color: #a7f3d0; color: #047857; }
+  .exp .badge.rec { background: var(--color-primary-light); border-color: var(--color-primary-border); color: var(--color-primary-ink); }
+  .exp .badge.need { background: var(--color-success-light); border-color: var(--color-success-border); color: var(--color-success-on-tint); }
   .exp .badge.want { background: #fff7ed; border-color: #fed7aa; color: #c2410c; }
-  .exp .badge.saving { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+  .exp .badge.saving { background: var(--color-primary-light); border-color: var(--color-primary-border); color: var(--color-primary-ink); }
   .exp .amt { font-weight: 800; font-size: 16px; white-space: nowrap; }
-  .exp.kind-expense .amt { color: #b91c1c; } .exp.kind-income .amt { color: #047857; }
+  .exp.kind-expense .amt { color: var(--color-danger-on-tint); } .exp.kind-income .amt { color: var(--color-success-on-tint); }
   .exp .rcpt { text-decoration: none; font-size: 18px; flex: none; }
   .exp .acts { display: flex; flex-direction: column; gap: 2px; flex: none; }
   .exp .del, .exp .edit { background: none; border: none; cursor: pointer; padding: 4px; display: inline-flex; }
-  .exp .del { color: #ef4444; } .exp .edit { color: var(--color-text-secondary); }
+  .exp .del { color: var(--color-danger-on-tint); } .exp .edit { color: var(--color-text-secondary); }
   .exp .del svg, .exp .edit svg { width: 17px; height: 17px; }
   .empty { text-align: center; color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; }
 
@@ -93,7 +93,7 @@
   .cat-row:last-child { border-bottom: none; }
   .cat-row .cn { flex: 1; font-weight: 600; font-size: 14px; }
   .cat-row .bar { flex: 2; height: 8px; background: var(--color-border); border-radius: 999px; overflow: hidden; }
-  .cat-row .bar > i { display: block; height: 100%; background: #ef4444; border-radius: 999px; }
+  .cat-row .bar > i { display: block; height: 100%; background: var(--color-danger); border-radius: 999px; }
   .cat-row .ca { font-weight: 700; font-size: 14px; min-width: 80px; text-align: right; }
 </style>
 {% include "_pwa_head.html" %}

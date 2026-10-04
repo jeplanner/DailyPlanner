@@ -30,9 +30,8 @@
   .sub{color:var(--color-text-secondary);font-size:13px;margin:0 0 6px}
   .sub a{color:var(--color-primary);font-weight:700;text-decoration:none}
   .verified{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;
-       color:#047857;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:999px;
+       color:var(--color-success-on-tint);background:var(--color-success-light);border:1px solid var(--color-success-border);border-radius:999px;
        padding:3px 10px;margin:0 0 12px}
-  html.dark .verified{color:#6ee7b7;background:#052e26;border-color:#065f46}
 
   .btn{font:inherit;font-weight:700;border:1px solid var(--color-border);
        background:var(--color-surface);color:var(--color-text);border-radius:10px;
@@ -53,7 +52,7 @@
 
   .q-card{border:1px solid var(--color-border);border-radius:12px;margin-bottom:8px;
           background:var(--color-surface);overflow:hidden}
-  .q-card.done{border-color:#34d399}
+  .q-card.done{border-color:var(--color-success)}
   .q-head{display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding:11px 13px;cursor:pointer}
   .q-head input[type=checkbox]{width:18px;height:18px;flex:none;cursor:pointer}
   .q-head .t{flex:1;font-size:14.5px;font-weight:700;min-width:0;overflow-wrap:anywhere}
@@ -73,11 +72,11 @@
   .chip{flex:none;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;
         border:1px solid var(--color-border);color:var(--color-text-secondary);
         white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .chip.easy{border-color:#34d399;color:#059669}
-  .chip.medium{border-color:#fbbf24;color:#b45309}
-  .chip.hard{border-color:#f87171;color:#dc2626}
+  .chip.easy{border-color:var(--color-success);color:var(--color-success-on-tint)}
+  .chip.medium{border-color:#fbbf24;color:var(--color-warning-on-tint)}
+  .chip.hard{border-color:var(--color-danger);color:var(--color-danger-on-tint)}
   .chip.trap{border-color:#f472b6;color:#db2777}
-  .chip.port{border-color:#a78bfa;color:#7c3aed}
+  .chip.port{border-color:#a78bfa;color:var(--color-primary-ink)}
   .chip.sch{border-color:var(--color-primary);color:var(--color-primary)}
 
   .q-body{display:none;padding:0 13px 13px;border-top:1px solid var(--color-border)}
@@ -93,21 +92,17 @@
   /* The query and its result, paired. The result gets the green edge because
      it is the part that was machine-checked. */
   .fld.query pre{border-left:3px solid var(--color-primary)}
-  .fld.result pre{border-left:3px solid #34d399;background:#f6fefa}
-  html.dark .fld.result pre{background:#08211a}
+  .fld.result pre{border-left:3px solid var(--color-success);background:#f6fefa}
   .fld.trap{background:#fdf2f8;border-left:3px solid #db2777;border-radius:0 8px 8px 0;
        padding:9px 11px;margin-top:12px}
-  html.dark .fld.trap{background:#2a0f1d}
-  .fld.port{background:#f5f3ff;border-left:3px solid #7c3aed;border-radius:0 8px 8px 0;
+  .fld.port{background:#f5f3ff;border-left:3px solid var(--color-primary);border-radius:0 8px 8px 0;
        padding:9px 11px;margin-top:12px}
-  html.dark .fld.port{background:#1e1b3a}
 
   .schemabar{display:flex;align-items:center;justify-content:space-between;gap:8px;
        margin-top:12px}
   .tags{display:flex;flex-wrap:wrap;gap:5px;margin:9px 0 2px}
-  .tag{font-size:11px;font-weight:600;color:#4338ca;background:#eef2ff;
-       border:1px solid #c7d2fe;border-radius:999px;padding:2px 9px}
-  html.dark .tag{background:#1e1b4b;border-color:#3730a3;color:#c7d2fe}
+  .tag{font-size:11px;font-weight:600;color:var(--color-primary-ink);background:var(--color-primary-light);
+       border:1px solid var(--color-primary-border);border-radius:999px;padding:2px 9px}
   .empty{padding:26px 12px;text-align:center;color:var(--color-text-secondary);font-size:14px}
 
   /* ── DARK MODE ON A PHONE ────────────────────────────────────────────

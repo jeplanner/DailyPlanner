@@ -13,7 +13,6 @@
   <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
   <style>
     body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
-    html.dark body { background: #0b1220; }
 
     .mp-app { max-width: 880px; margin: 0 auto; padding: 18px 20px 80px; }
 
@@ -39,11 +38,9 @@
       text-transform: uppercase;
       border-radius: 999px;
     }
-    .mp-status-pill.upcoming { background: #dbeafe; color: #1d4ed8; }
-    .mp-status-pill.done { background: #dcfce7; color: #166534; }
+    .mp-status-pill.upcoming { background: var(--color-primary-light); color: var(--color-primary-ink); }
+    .mp-status-pill.done { background: var(--color-success-light); color: var(--color-success-on-tint); }
     .mp-status-pill.cancelled { background: var(--color-surface-sunken); color: var(--color-text-muted); }
-    html.dark .mp-status-pill.upcoming { background: rgba(37,99,235,.22); color: #93c5fd; }
-    html.dark .mp-status-pill.done { background: rgba(22,163,74,.22); color: #86efac; }
 
     .mp-status-controls {
       display: inline-flex; gap: 6px; margin-left: 8px;
@@ -61,7 +58,7 @@
     }
 
     .mp-status { margin-left: auto; font-size: 12.5px; color: var(--color-text-muted); }
-    .mp-status.saved { color: #16a34a; }
+    .mp-status.saved { color: var(--color-success-on-tint); }
     .mp-status.saving { color: var(--color-primary); }
     .mp-status.error { color: var(--color-danger); }
 
@@ -113,7 +110,6 @@
       padding: 18px 20px;
       margin-bottom: 14px;
     }
-    html.dark .mp-section { background: #111a2c; border-color: #28344a; }
 
     .mp-section-head {
       display: flex; align-items: baseline; gap: 10px;
@@ -137,7 +133,7 @@
       font-style: italic;
     }
 
-    .mp-section.post .mp-section-num { background: #16a34a; }
+    .mp-section.post .mp-section-num { background: var(--color-success); }
 
     .mp-field { margin-bottom: 12px; }
     .mp-field:last-child { margin-bottom: 0; }
@@ -162,7 +158,6 @@
       background: var(--color-bg);
       font: inherit; font-size: 14px; color: var(--color-text);
     }
-    html.dark .mp-input, html.dark .mp-textarea { background: #0b1220; }
 
     .mp-input:focus, .mp-textarea:focus {
       outline: none; border-color: var(--color-primary);
@@ -184,11 +179,7 @@
     /* Post-meeting section gets a softer background to signal "after" */
     .mp-section.post {
       background: linear-gradient(180deg, rgba(22,163,74,.04), transparent);
-      border-color: #86efac;
-    }
-    html.dark .mp-section.post {
-      background: linear-gradient(180deg, rgba(22,163,74,.08), transparent);
-      border-color: rgba(22,163,74,.4);
+      border-color: var(--color-success-border);
     }
 
     @media (max-width: 700px) {

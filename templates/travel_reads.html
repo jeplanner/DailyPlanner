@@ -29,7 +29,7 @@
     font-size: 12.5px; color: var(--color-text-secondary);
   }
   .tr-chip strong { color: var(--color-text); font-weight: 800; font-variant-numeric: tabular-nums; }
-  .tr-chip.minutes { background: color-mix(in srgb, #2563eb 8%, transparent); border-color: color-mix(in srgb, #2563eb 20%, transparent); }
+  .tr-chip.minutes { background: color-mix(in srgb, var(--color-primary) 8%, transparent); border-color: color-mix(in srgb, var(--color-primary) 20%, transparent); }
 
   /* Add form */
   .tr-add { background: var(--color-surface); border: 1px solid var(--color-border);
@@ -114,13 +114,13 @@
     background: var(--color-bg-subtle, #f1f5f9); color: var(--color-text-secondary);
     font-size: 10.5px; letter-spacing: .02em; text-transform: uppercase;
   }
-  .tr-pill.kind-video    { background: color-mix(in srgb, #dc2626 12%, transparent); color: #b91c1c; }
-  .tr-pill.kind-podcast  { background: color-mix(in srgb, #7c3aed 12%, transparent); color: #6d28d9; }
-  .tr-pill.kind-audio    { background: color-mix(in srgb, #16a34a 12%, transparent); color: #166534; }
-  .tr-pill.kind-article  { background: color-mix(in srgb, #2563eb 12%, transparent); color: #1d4ed8; }
-  .tr-pill.kind-other    { background: color-mix(in srgb, #6b7280 14%, transparent); color: #4b5563; }
-  .tr-pill.prio-high     { background: color-mix(in srgb, #f59e0b 16%, transparent); color: #92400e; }
-  .tr-pill.prio-low      { background: color-mix(in srgb, #6b7280 12%, transparent); color: #4b5563; }
+  .tr-pill.kind-video    { background: color-mix(in srgb, var(--color-danger) 12%, transparent); color: var(--color-danger-on-tint); }
+  .tr-pill.kind-podcast  { background: color-mix(in srgb, var(--color-primary) 12%, transparent); color: var(--color-primary-ink); }
+  .tr-pill.kind-audio    { background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success-on-tint); }
+  .tr-pill.kind-article  { background: color-mix(in srgb, var(--color-primary) 12%, transparent); color: var(--color-primary-ink); }
+  .tr-pill.kind-other    { background: color-mix(in srgb, #6b7280 14%, transparent); color: var(--color-text-secondary); }
+  .tr-pill.prio-high     { background: color-mix(in srgb, var(--color-warning) 16%, transparent); color: var(--color-warning-on-tint); }
+  .tr-pill.prio-low      { background: color-mix(in srgb, #6b7280 12%, transparent); color: var(--color-text-secondary); }
 
   /* Drive-mode label chips. Hue tells you at a glance whether an
      item is consumable while driving. Click toggles the chip off;
@@ -130,12 +130,12 @@
     font-size: 10.5px; font-weight: 700; letter-spacing: 0; text-transform: none;
     cursor: pointer; border: 1px solid transparent;
   }
-  .tr-lbl-drivable { background: #dcfce7; color: #166534; }
-  .tr-lbl-visual   { background: #fee2e2; color: #b91c1c; }
-  .tr-lbl-quick    { background: #fef3c7; color: #92400e; }
-  .tr-lbl-long     { background: #dbeafe; color: #1e40af; }
+  .tr-lbl-drivable { background: var(--color-success-light); color: var(--color-success-on-tint); }
+  .tr-lbl-visual   { background: var(--color-danger-light); color: var(--color-danger-on-tint); }
+  .tr-lbl-quick    { background: var(--color-warning-light); color: var(--color-warning-on-tint); }
+  .tr-lbl-long     { background: var(--color-primary-light); color: var(--color-primary-ink); }
   .tr-lbl-priority { background: #fce7f3; color: #9d174d; }
-  .tr-lbl-other    { background: #f1f5f9; color: #475569; }
+  .tr-lbl-other    { background: var(--color-surface-secondary); color: var(--color-text-secondary); }
   .tr-lbl-add {
     background: transparent; color: var(--color-text-secondary);
     border: 1px dashed var(--color-border); padding: 0px 7px;
@@ -170,8 +170,8 @@
   }
   .tr-icon-btn svg { width: 15px; height: 15px; }
   .tr-icon-btn:hover { background: var(--color-surface-secondary); color: var(--color-primary); border-color: var(--color-primary); }
-  .tr-icon-btn.danger:hover { color: #b91c1c; border-color: #b91c1c; }
-  .tr-icon-btn.success { color: #16a34a; border-color: color-mix(in srgb, #16a34a 30%, var(--color-border)); }
+  .tr-icon-btn.danger:hover { color: var(--color-danger-on-tint); border-color: #b91c1c; }
+  .tr-icon-btn.success { color: var(--color-success-on-tint); border-color: color-mix(in srgb, var(--color-success) 30%, var(--color-border)); }
   .tr-card.is-done { opacity: .6; }
   .tr-card.is-done .tr-title { text-decoration: line-through; color: var(--color-text-muted); }
 
@@ -208,8 +208,8 @@
     color: var(--color-text-muted, var(--color-text-secondary));
     transition: opacity .25s;
   }
-  .tr-notes-status.is-saved { color: #16a34a; }
-  .tr-notes-status.is-error { color: #b91c1c; }
+  .tr-notes-status.is-saved { color: var(--color-success-on-tint); }
+  .tr-notes-status.is-error { color: var(--color-danger-on-tint); }
   .tr-notes textarea {
     width: 100%; min-height: 130px;
     padding: 10px 12px; font: inherit; font-size: 13.5px; line-height: 1.55;
@@ -280,15 +280,15 @@
   .tr-bookmarklet {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 8px 14px; border-radius: 999px; font-size: 13px; font-weight: 700;
-    background: color-mix(in srgb, #2563eb 10%, transparent);
-    color: #1d4ed8; text-decoration: none;
-    border: 1px dashed color-mix(in srgb, #2563eb 35%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+    color: var(--color-primary-ink); text-decoration: none;
+    border: 1px dashed color-mix(in srgb, var(--color-primary) 35%, transparent);
     cursor: grab; user-select: none;
   }
-  .tr-bookmarklet:hover { background: color-mix(in srgb, #2563eb 16%, transparent); }
+  .tr-bookmarklet:hover { background: color-mix(in srgb, var(--color-primary) 16%, transparent); }
   .tr-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
   .tr-status { margin-top: 10px; font-size: 12.5px; color: var(--color-text-secondary); min-height: 18px; }
-  .tr-status.is-error { color: #b91c1c; }
+  .tr-status.is-error { color: var(--color-danger-on-tint); }
   .tr-cost {
     display: inline-block; padding: 1px 8px; border-radius: 999px;
     background: var(--color-bg-subtle, #f1f5f9); font-size: 11px; font-weight: 700;

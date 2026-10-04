@@ -199,8 +199,6 @@
     }
     .folder-select:hover { border-color: var(--color-border-strong, #cbd5e1); }
     .folder-select:focus { outline: none; border-color: var(--color-primary, #2563eb); box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.18)); }
-    html.dark .folder-select { background: #0f172a; border-color: #334155; color: #f1f5f9; }
-    html.dark .folder-picker-icon { color: #94a3b8; }
 
     .pin-btn { color: var(--color-text-muted); }
     .pin-btn:hover { color: var(--color-warning, #f59e0b); }
@@ -219,7 +217,6 @@
       padding: 2px;
       margin-left: 6px;
     }
-    html.dark .mode-toggle { background: #0f172a; border-color: #334155; }
     .mode-btn {
       display: inline-flex; align-items: center; gap: 5px;
       padding: 5px 10px;
@@ -233,9 +230,6 @@
       background: var(--color-surface, #fff);
       color: var(--color-text, #0f172a);
       box-shadow: 0 1px 2px rgba(15,23,42,.08);
-    }
-    html.dark .mode-btn[aria-selected="true"] {
-      background: #1e293b; color: #f1f5f9;
     }
     .mode-btn svg { stroke-width: 2.4; }
 
@@ -291,7 +285,6 @@
       background: var(--color-surface-sunken, #eef0f3);
       color: var(--color-text);
     }
-    html.dark .editor-reader code { background: #0f172a; }
     .editor-reader pre {
       padding: 14px 16px; border-radius: 10px;
       background: var(--color-surface-sunken, #eef0f3);
@@ -300,7 +293,6 @@
       margin: 0 0 1em;
     }
     .editor-reader pre code { background: transparent; padding: 0; font-size: inherit; }
-    html.dark .editor-reader pre { background: #0f172a; }
     .editor-reader blockquote {
       border-left: 3px solid var(--color-border-strong, #d1d5db);
       padding: 2px 14px;
@@ -378,8 +370,6 @@
       padding: 0 4px;
       letter-spacing: .02em;
     }
-    html.dark .editor-nav-btn { background: #0f172a; border-color: #334155; color: #94a3b8; }
-    html.dark .editor-nav-btn:hover { background: #273449; color: #f1f5f9; border-color: #475569; }
 
     /* ── Peers rail (notes-in-folder, desktop only) ─────────── */
     .peers-rail {
@@ -393,14 +383,12 @@
       z-index: 50;
       overflow: hidden;
     }
-    html.dark .peers-rail { background: #1e293b; border-right-color: #334155; }
     .peers-rail-head {
       display: flex; align-items: center; justify-content: space-between;
       padding: 6px 10px 10px;
       border-bottom: 1px solid var(--color-border-light, #f1f3f5);
       margin-bottom: 6px;
     }
-    html.dark .peers-rail-head { border-bottom-color: #273449; }
     .peers-rail-label {
       display: inline-flex; align-items: center; gap: 6px;
       font-size: 11.5px; font-weight: 700;
@@ -418,7 +406,6 @@
       padding: 1px 7px; border-radius: 999px;
       font-variant-numeric: tabular-nums;
     }
-    html.dark .peers-rail-count { background: #0f172a; }
 
     .peers-rail-list {
       flex: 1; overflow-y: auto; padding: 0 2px;
@@ -439,15 +426,12 @@
       color: var(--color-primary, #2563eb);
       font-weight: 600;
     }
-    html.dark .peer-item.is-active {
-      background: rgba(37,99,235,.22); color: #93c5fd;
-    }
     .peer-item-icon {
       width: 14px; flex: 0 0 auto;
       color: var(--color-text-muted, #94a3b8);
       display: inline-flex; align-items: center; justify-content: center;
     }
-    .peer-item.is-pinned .peer-item-icon { color: #B45309; }
+    .peer-item.is-pinned .peer-item-icon { color: var(--color-warning-on-tint); }
     .peer-item.is-pinned .peer-item-icon svg { fill: currentColor; }
     .peer-item.is-active .peer-item-icon { color: inherit; }
     .peer-item-title {
@@ -589,16 +573,15 @@
     font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
     flex-shrink: 0;
   }
-  .at-kind.date    { background: color-mix(in srgb, #2563eb 14%, transparent); color: #1d4ed8; }
-  .at-kind.rec     { background: color-mix(in srgb, #7c3aed 14%, transparent); color: #6d28d9; }
-  .at-kind.project { background: color-mix(in srgb, #16a34a 14%, transparent); color: #166534; }
+  .at-kind.date    { background: color-mix(in srgb, var(--color-primary) 14%, transparent); color: var(--color-primary-ink); }
+  .at-kind.rec     { background: color-mix(in srgb, var(--color-primary) 14%, transparent); color: var(--color-primary-ink); }
+  .at-kind.project { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success-on-tint); }
   .at-label { flex: 1; min-width: 0; word-break: break-word; }
   .at-empty { padding: 10px 12px; color: var(--color-text-secondary); font-size: 12.5px; }
   html.dark .at-popover {
-    background: #1e293b; border-color: #334155;
+    background: var(--color-surface-elevated); border-color: var(--color-border);
     box-shadow: 0 8px 28px rgba(0, 0, 0, .4);
   }
-  html.dark .at-item:hover, html.dark .at-item.is-active { background: #273449; }
 </style>
 
 <div id="at-popover" class="at-popover hidden" role="listbox" aria-label="Tag suggestions"></div>
@@ -648,14 +631,14 @@
     color: var(--color-text-secondary);
     font-weight: 600;
   }
-  .clc-chip.is-date    { background: color-mix(in srgb, #2563eb 12%, transparent); color: #1d4ed8; }
-  .clc-chip.is-rec     { background: color-mix(in srgb, #7c3aed 12%, transparent); color: #6d28d9; }
-  .clc-chip.is-project { background: color-mix(in srgb, #16a34a 12%, transparent); color: #166534; }
-  .clc-chip.is-fallback { background: color-mix(in srgb, #f59e0b 14%, transparent); color: #92400e; }
-  .clc-chip.is-checked { background: color-mix(in srgb, #6b7280 14%, transparent); color: #4b5563; }
+  .clc-chip.is-date    { background: color-mix(in srgb, var(--color-primary) 12%, transparent); color: var(--color-primary-ink); }
+  .clc-chip.is-rec     { background: color-mix(in srgb, var(--color-primary) 12%, transparent); color: var(--color-primary-ink); }
+  .clc-chip.is-project { background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success-on-tint); }
+  .clc-chip.is-fallback { background: color-mix(in srgb, var(--color-warning) 14%, transparent); color: var(--color-warning-on-tint); }
+  .clc-chip.is-checked { background: color-mix(in srgb, #6b7280 14%, transparent); color: var(--color-text-secondary); }
   .clc-status { align-self: center; font-size: 18px; font-variant-numeric: tabular-nums; }
-  .clc-status.ok { color: #16a34a; }
-  .clc-status.err { color: #dc2626; }
+  .clc-status.ok { color: var(--color-success-on-tint); }
+  .clc-status.err { color: var(--color-danger-on-tint); }
   .clc-empty { padding: 20px; text-align: center; color: var(--color-text-secondary); font-size: 14px; }
   .clc-summary {
     margin-top: 12px; font-size: 13px;

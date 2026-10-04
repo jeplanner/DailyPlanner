@@ -38,26 +38,24 @@
   .effort { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; font-weight: 700; color: var(--color-text-secondary); margin: 0 0 10px; }
   .effort b { color: var(--color-text); font-weight: 900; }
   .effort .bar { flex: 1 0 100%; height: 6px; border-radius: 999px; background: var(--color-border); overflow: hidden; }
-  .effort .bar > i { display: block; height: 100%; background: #10b981; }
+  .effort .bar > i { display: block; height: 100%; background: var(--color-success); }
 
-  .brief { font-size: 13px; line-height: 1.6; background: #eef2ff; border-left: 3px solid #6366f1; border-radius: 8px; padding: 10px 13px; margin: 0 0 12px; }
-  html.dark .brief { background: #1e1b4b; }
+  .brief { font-size: 13px; line-height: 1.6; background: var(--color-primary-light); border-left: 3px solid #6366f1; border-radius: 8px; padding: 10px 13px; margin: 0 0 12px; }
   .brief b { font-weight: 800; }
 
   .q-card { border: 1px solid var(--color-border); border-radius: 12px; margin-bottom: 8px; background: var(--color-surface); overflow: hidden; }
-  .q-card.done { border-color: #a7f3d0; }
+  .q-card.done { border-color: var(--color-success-border); }
   .q-head { display: flex; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; }
   .q-head .q-prac { width: 18px; height: 18px; flex: none; cursor: pointer; }
   .q-head .q-text { flex: 1; font-size: 14.5px; font-weight: 700; }
   .q-card.done .q-text { color: var(--color-text-secondary); }
   .q-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; padding: 3px 8px; white-space: nowrap; flex: none; }
   .q-pri { font-size: 10px; font-weight: 900; border-radius: 999px; padding: 2px 7px; white-space: nowrap; flex: none; color: #fff; }
-  .pri-P0 { background: #dc2626; } .pri-P1 { background: #ea580c; } .pri-P2 { background: #0891b2; }
-  .q-time { font-size: 10.5px; font-weight: 800; color: #4338ca; background: #eef2ff; border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
-  html.dark .q-time { background: #1e1b4b; color: #c7d2fe; }
+  .pri-P0 { background: var(--color-danger); } .pri-P1 { background: #ea580c; } .pri-P2 { background: #0891b2; }
+  .q-time { font-size: 10.5px; font-weight: 800; color: var(--color-primary-ink); background: var(--color-primary-light); border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
   .q-diff { font-size: 10px; font-weight: 800; text-transform: uppercase; border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
-  .diff-medium { color: #b45309; background: #fef3c7; } .diff-hard { color: #b91c1c; background: #fee2e2; }
-  html.dark .diff-medium { color: #fcd34d; background: #78350f; } html.dark .diff-hard { color: #fca5a5; background: #7f1d1d; }
+  .diff-medium { color: var(--color-warning-on-tint); background: var(--color-warning-light); } .diff-hard { color: var(--color-danger-on-tint); background: var(--color-danger-light); }
+html.dark .diff-hard { color: #fca5a5; background: #7f1d1d; }
 
   .q-body { padding: 0 13px 13px 41px; display: none; }
   .q-card.open .q-body { display: block; }
@@ -68,25 +66,19 @@
      strong-vs-weak (amber), probes (purple), pitfalls (red). */
   .fld.test .lbl { color: var(--color-text-secondary); }
   .fld.frame { white-space: pre-wrap; background: #f5f7ff; border-left: 3px solid #6366f1; border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.62; }
-  .fld.frame .lbl { color: #4338ca; }
-  html.dark .fld.frame { background: #131a33; border-left-color: #818cf8; }
-  .fld.worked { white-space: pre-wrap; background: #f0fdf4; border-left: 3px solid #34d399; border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.62; }
-  .fld.worked .lbl { color: #047857; }
-  html.dark .fld.worked { background: #0e2119; border-left-color: #10b981; }
-  .fld.sw { white-space: pre-wrap; background: #fffbeb; border-left: 3px solid #f59e0b; border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.6; }
-  .fld.sw .lbl { color: #b45309; }
-  html.dark .fld.sw { background: #241a06; border-left-color: #fbbf24; }
-  .fld.pit { white-space: pre-wrap; background: #fef2f2; border-left: 3px solid #f87171; border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.6; }
-  .fld.pit .lbl { color: #b91c1c; }
-  html.dark .fld.pit { background: #2a1215; border-left-color: #ef4444; }
+  .fld.frame .lbl { color: var(--color-primary-ink); }
+  .fld.worked { white-space: pre-wrap; background: var(--color-success-light); border-left: 3px solid var(--color-success); border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.62; }
+  .fld.worked .lbl { color: var(--color-success-on-tint); }
+  .fld.sw { white-space: pre-wrap; background: var(--color-warning-light); border-left: 3px solid var(--color-warning); border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.6; }
+  .fld.sw .lbl { color: var(--color-warning-on-tint); }
+  .fld.pit { white-space: pre-wrap; background: var(--color-danger-light); border-left: 3px solid var(--color-danger); border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.6; }
+  .fld.pit .lbl { color: var(--color-danger-on-tint); }
   .probes { margin: 9px 0; }
-  .probes > .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #7c3aed; display: block; margin-bottom: 4px; }
+  .probes > .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-primary-ink); display: block; margin-bottom: 4px; }
   .probe { display: flex; gap: 9px; padding: 6px 10px; margin-bottom: 4px; background: #faf5ff; border-left: 3px solid #a78bfa; border-radius: 6px; font-size: 13px; line-height: 1.5; }
-  .probe .n { flex: none; font-weight: 800; color: #7c3aed; }
-  html.dark .probe { background: #1e1233; border-left-color: #8b5cf6; }
+  .probe .n { flex: none; font-weight: 800; color: var(--color-primary-ink); }
   .tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 2px; }
-  .tag { font-size: 11px; font-weight: 600; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 2px 9px; }
-  html.dark .tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
+  .tag { font-size: 11px; font-weight: 600; color: var(--color-primary-ink); background: var(--color-primary-light); border: 1px solid var(--color-primary-border); border-radius: 999px; padding: 2px 9px; }
   .empty { color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; text-align: center; }
   h2 { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); margin: 20px 0 9px; }
 
@@ -102,13 +94,6 @@
      .dark class is present. Without this, these panels keep their light
      background while --color-text flips to near-white, so the text
      disappears on mobile. */
-  html.dark .fld.frame .lbl { color: #a5b4fc; }
-  html.dark .fld.worked .lbl { color: #6ee7b7; }
-  html.dark .fld.sw .lbl { color: #fcd34d; }
-  html.dark .fld.pit .lbl { color: #fca5a5; }
-  html.dark .probes > .lbl { color: #c4b5fd; }
-  html.dark .probe .n { color: #c4b5fd; }
-  html.dark .brief { color: #e2e8f0; }
   @media (prefers-color-scheme: dark) {
     :root:not(.light) .brief { background: #1e1b4b; }
     :root:not(.light) .q-time { background: #1e1b4b; color: #c7d2fe; }

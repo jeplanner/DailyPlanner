@@ -13,8 +13,7 @@
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <style>
-:root{--pf-bg:#f7f8fa;--pf-surface: var(--color-surface, #fff);--pf-text:#1a1a2e;--pf-text2:#6b7280;--pf-text3:#9ca3af;--pf-border: var(--color-border, #e5e7eb);--pf-primary: var(--color-primary, #2563eb);--pf-primary-light: var(--color-primary-light, #eff6ff);--pf-success:#10b981;--pf-danger:#ef4444;--pf-shadow:0 1px 3px rgba(0,0,0,.06);}
-html.dark{--pf-bg:#0f172a;--pf-surface:#1e293b;--pf-text:#f1f5f9;--pf-text2:#94a3b8;--pf-text3:#64748b;--pf-border:#334155;--pf-primary-light:#1e3a5f;--pf-shadow:0 1px 3px rgba(0,0,0,.2);}
+:root{--pf-bg:var(--color-bg);--pf-surface:var(--color-surface);--pf-text:var(--color-text);--pf-text2:var(--color-text-secondary);--pf-text3:var(--color-text-muted);--pf-border:var(--color-border);--pf-primary:var(--color-primary);--pf-primary-light:var(--color-primary-light);--pf-success:var(--color-success);--pf-danger:var(--color-danger);--pf-shadow:var(--shadow-sm);}
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Inter',system-ui,sans-serif;background:var(--pf-bg);color:var(--pf-text);min-height:100vh;}
 .hidden{display:none!important;}
@@ -41,17 +40,15 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--pf-bg);color:var(
    data has only sells, no matching buy. Subtle yellow tint on the
    row + an inline pill badge in the name cell. The user can tell
    at a glance which positions need an older FY tradeBook import. */
-.row-sell-only{background:#fffbeb;}
-.row-sell-only:hover{background:#fef3c7;}
-html.dark .row-sell-only{background:rgba(245,158,11,0.07);}
+.row-sell-only{background:var(--color-warning-light);}
+.row-sell-only:hover{background:var(--color-warning-light);}
 .badge-warn{
   display:inline-flex;align-items:center;
   font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;
-  background:#fef3c7;color:#92400e;
+  background:var(--color-warning-light);color:var(--color-warning-on-tint);
   margin-left:6px;letter-spacing:.02em;cursor:help;
   vertical-align:middle;
 }
-html.dark .badge-warn{background:rgba(245,158,11,0.15);color:#fcd34d;}
 .kpi{background:var(--pf-surface);border-radius:12px;padding:14px;box-shadow:var(--pf-shadow);}
 .kpi-label{font-size:10px;font-weight:600;color:var(--pf-text3);text-transform:uppercase;letter-spacing:.3px;}
 .kpi-val{font-size:22px;font-weight:800;margin-top:2px;}
@@ -76,22 +73,22 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
 .pf-table .pnl-up{color:var(--pf-success);font-weight:600;}
 .pf-table .pnl-down{color:var(--pf-danger);font-weight:600;}
 .pf-table .type-badge{font-size:9px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;}
-.pf-table .type-stock{background:#dbeafe;color:#1d4ed8;}
-.pf-table .type-mf{background:#ede9fe;color:#6d28d9;}
-.pf-table .type-etf{background:#d1fae5;color:#065f46;}
-.pf-table .type-fd{background:#fef3c7;color:#92400e;}
+.pf-table .type-stock{background:var(--color-primary-light);color:var(--color-primary-ink);}
+.pf-table .type-mf{background:var(--color-primary-light);color:var(--color-primary-ink);}
+.pf-table .type-etf{background:var(--color-success-light);color:var(--color-success-on-tint);}
+.pf-table .type-fd{background:var(--color-warning-light);color:var(--color-warning-on-tint);}
 .pf-table .type-bond{background:#fce7f3;color:#9d174d;}
-.pf-table .type-gold{background:#fefce8;color:#a16207;}
-.pf-table .type-ppf{background:#ecfdf5;color:#166534;}
+.pf-table .type-gold{background:var(--color-warning-light);color:#a16207;}
+.pf-table .type-ppf{background:var(--color-success-light);color:var(--color-success-on-tint);}
 .pf-table .type-nps{background:#f0f9ff;color:#0369a1;}
-.pf-table .type-cash{background:#f1f5f9;color:#475569;}
-.pf-table .type-realestate{background:#f5f3ff;color:#6d28d9;}
+.pf-table .type-cash{background:var(--color-surface-secondary);color:var(--color-text-secondary);}
+.pf-table .type-realestate{background:#f5f3ff;color:var(--color-primary-ink);}
 .pf-table .type-crypto{background:#fdf4ff;color:#a21caf;}
 /* Row icon buttons — were almost invisible (transparent + muted text).
    Now they render as tinted chips so the user sees they exist. */
 .row-btn{width:30px;height:30px;border:1px solid var(--pf-border);background:var(--pf-bg);border-radius:8px;cursor:pointer;color:var(--pf-text);display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:1;margin:0 2px;}
-.row-btn:hover{background:#eef2ff;border-color:#a5b4fc;color:var(--pf-text);}
-.row-btn.del:hover{background:#fee2e2;border-color:#fca5a5;color:var(--pf-danger);}
+.row-btn:hover{background:var(--color-primary-light);border-color:var(--color-primary-border);color:var(--pf-text);}
+.row-btn.del:hover{background:var(--color-danger-light);border-color:var(--color-danger-border);color:var(--pf-danger);}
 
 /* Suggest dropdown */
 .suggest-list{position:absolute;top:100%;left:0;right:0;background:var(--pf-surface);border:1px solid var(--pf-border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);z-index:100;max-height:220px;overflow-y:auto;margin-top:2px;}
@@ -376,7 +373,7 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
         <div style="font-size:11px;font-weight:600;color:var(--pf-text3);text-transform:uppercase;margin-bottom:8px;">Maturity Calculator</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:13px;">
           <div><span style="color:var(--pf-text3);font-size:11px;">Principal</span><div id="fd-principal" style="font-weight:700;">—</div></div>
-          <div><span style="color:var(--pf-text3);font-size:11px;">Interest Earned</span><div id="fd-interest" style="font-weight:700;color:#059669;">—</div></div>
+          <div><span style="color:var(--pf-text3);font-size:11px;">Interest Earned</span><div id="fd-interest" style="font-weight:700;color:var(--color-success-on-tint);">—</div></div>
           <div><span style="color:var(--pf-text3);font-size:11px;">Maturity Value</span><div id="fd-maturity-val" style="font-weight:700;color:var(--pf-primary);">—</div></div>
         </div>
         <div id="fd-monthly-payout" style="display:none;margin-top:8px;font-size:12px;">
@@ -881,7 +878,7 @@ function renderTable(){
       <td class="num">${curDisplay}</td>
       <td class="num ${isSellOnly?'':cls}">${pnlDisplay}</td>
       <td class="num hide-m" id="xirr-${h.id}"><button class="xirr-calc-btn" onclick="calcHoldingXirr('${h.id}')" title="Calculate XIRR">Calc</button></td>
-      <td class="hide-m">${h._lastTxn?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;${h._lastTxn.txn_type==='buy'?'background:#fef2f2;color:#dc2626':'background:#ecfdf5;color:#059669'}">${h._lastTxn.txn_type}</span><div class="symbol">${h._lastTxn.txn_date||''}</div>`:`${h.buy_date?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:#fef2f2;color:#dc2626;">BUY</span><div class="symbol">${h.buy_date}</div>`:'—'}`}</td>
+      <td class="hide-m">${h._lastTxn?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;${h._lastTxn.txn_type==='buy'?'background:var(--color-danger-light);color:var(--color-danger-on-tint)':'background:var(--color-success-light);color:var(--color-success-on-tint)'}">${h._lastTxn.txn_type}</span><div class="symbol">${h._lastTxn.txn_date||''}</div>`:`${h.buy_date?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:var(--color-danger-light);color:var(--color-danger-on-tint);">BUY</span><div class="symbol">${h.buy_date}</div>`:'—'}`}</td>
       <td><button class="row-btn" onclick="openTxn('${h.id}','${esc(h.name)}')" title="Transactions">&#128200;</button><button class="row-btn" onclick="editHolding('${h.id}')" title="Edit">&#9999;&#65039;</button><button class="row-btn del" onclick="delHolding('${h.id}')" title="Delete">&#128465;</button></td>
     </tr>`;
   }).join('');
@@ -944,7 +941,7 @@ async function loadSummary(){
     const xirrSubEl = xirrEl ? xirrEl.parentElement.querySelector('.kpi-sub') : null;
     if (xirrSubEl) {
       if (sellOnly > 0) {
-        xirrSubEl.innerHTML = `<span style="color:#b91c1c;font-weight:600;">⚠ overstated</span> · ${sellOnly} position${sellOnly===1?'':'s'} have sells without buys`;
+        xirrSubEl.innerHTML = `<span style="color:var(--color-danger-on-tint);font-weight:600;">⚠ overstated</span> · ${sellOnly} position${sellOnly===1?'':'s'} have sells without buys`;
         xirrSubEl.title = 'XIRR includes sell cashflows whose corresponding buy history hasn\'t been imported yet, so the annualised return is too high. Import earlier FY tradeBooks to fix.';
       } else {
         xirrSubEl.textContent = 'annualized return';
@@ -1046,7 +1043,7 @@ function delHolding(id){
   let gone=false;const t=setTimeout(async()=>{await fetch(`/api/portfolio/holdings/${id}`,{method:'DELETE'});gone=true;loadSummary();},4000);
   const old=document.getElementById("undo-t");if(old)old.remove();
   const toast=document.createElement("div");toast.id="undo-t";
-  Object.assign(toast.style,{position:"fixed",bottom:"24px",left:"50%",transform:"translateX(-50%)",background:"rgba(30,30,30,.9)",color:"#fff",padding:"10px 16px",borderRadius:"10px",fontSize:"14px",fontFamily:"'Inter',system-ui",display:"flex",alignItems:"center",gap:"12px",zIndex:"9999",boxShadow:"0 4px 16px rgba(0,0,0,.25)"});
+  Object.assign(toast.style,{position:"fixed",bottom:"24px",left:"50%",transform:"translateX(-50%)",background:"rgba(30,30,30,.9)",color:"var(--color-surface)",padding:"10px 16px",borderRadius:"10px",fontSize:"14px",fontFamily:"'Inter',system-ui",display:"flex",alignItems:"center",gap:"12px",zIndex:"9999",boxShadow:"0 4px 16px rgba(0,0,0,.25)"});
   toast.innerHTML='<span>Holding deleted</span><button style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 12px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Undo</button>';
   toast.querySelector("button").onclick=()=>{clearTimeout(t);if(!gone){loadHoldings();showToast("Restored","success");}toast.remove();};
   document.body.appendChild(toast);setTimeout(()=>{if(toast.parentNode)toast.remove();},4500);

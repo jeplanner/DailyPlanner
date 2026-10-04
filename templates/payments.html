@@ -13,14 +13,14 @@
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <style>
 :root{
-  --rc-bg:#f7f8fa;--rc-surface: var(--color-surface, #fff);--rc-text:#1a1a2e;--rc-text2:#6b7280;
-  --rc-text3:#9ca3af;--rc-border: var(--color-border, #e5e7eb);--rc-primary: var(--color-primary, #2563eb);
-  --rc-primary-light: var(--color-primary-light, #eff6ff);--rc-success:#10b981;--rc-warning:#f59e0b;
-  --rc-danger:#ef4444;--rc-shadow:0 1px 3px rgba(0,0,0,0.06);
+  --rc-bg: var(--color-bg);--rc-surface: var(--color-surface, #fff);--rc-text:var(--color-text);--rc-text2:var(--color-text-secondary);
+  --rc-text3: var(--color-text-muted);--rc-border: var(--color-border, #e5e7eb);--rc-primary: var(--color-primary, #2563eb);
+  --rc-primary-light: var(--color-primary-light, #eff6ff);--rc-success:var(--color-success);--rc-warning:var(--color-warning);
+  --rc-danger: var(--color-danger);--rc-shadow:0 1px 3px rgba(0,0,0,0.06);
 }
 html.dark{
-  --rc-bg:#0f172a;--rc-surface:#1e293b;--rc-text:#f1f5f9;--rc-text2:#94a3b8;
-  --rc-text3:#64748b;--rc-border:#334155;--rc-primary-light:#1e3a5f;
+  --rc-bg: var(--color-bg);--rc-surface:var(--color-surface);--rc-text:var(--color-text);--rc-text2:var(--color-text-secondary);
+  --rc-text3: var(--color-text-muted);--rc-border:var(--color-border);--rc-primary-light:var(--color-primary-light);
   --rc-shadow:0 1px 3px rgba(0,0,0,0.2);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -43,8 +43,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--rc-bg);color:var(
 /* Alerts */
 .alert-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;}
 .alert-chip{display:flex;align-items:center;gap:4px;padding:5px 10px;border-radius:8px;font-size:11px;font-weight:600;}
-.alert-chip.overdue{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;}
-.alert-chip.upcoming{background:#fffbeb;color:#92400e;border:1px solid #fde68a;}
+.alert-chip.overdue{background:var(--color-danger-light);color:var(--color-danger-on-tint);border:1px solid var(--color-danger-border);}
+.alert-chip.upcoming{background:var(--color-warning-light);color:var(--color-warning-on-tint);border:1px solid var(--color-warning-border);}
 
 /* Context tabs */
 .ctx-tabs{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;flex-wrap:wrap;}
@@ -96,12 +96,12 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--rc-bg);color:var(
 
 .card-tags{display:flex;flex-wrap:wrap;gap:4px;}
 .ctag{padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;}
-.ctag.cycle{background:#ede9fe;color:#6d28d9;}
-.ctag.due{background:#fef3c7;color:#92400e;}
-.ctag.auto{background:#d1fae5;color:#065f46;}
+.ctag.cycle{background:var(--color-primary-light);color:var(--color-primary-ink);}
+.ctag.due{background:var(--color-warning-light);color:var(--color-warning-on-tint);}
+.ctag.auto{background:var(--color-success-light);color:var(--color-success-on-tint);}
 .ctag.method{background:var(--rc-primary-light);color:var(--rc-primary);}
-.ctag.status-active{background:#d1fae5;color:#065f46;}
-.ctag.status-inactive{background:#fee2e2;color:#991b1b;}
+.ctag.status-active{background:var(--color-success-light);color:var(--color-success-on-tint);}
+.ctag.status-inactive{background:var(--color-danger-light);color:var(--color-danger-on-tint);}
 
 .card-info{font-size:12px;color:var(--rc-text3);display:flex;flex-direction:column;gap:1px;}
 .card-info .mono{font-family:monospace;letter-spacing:0.3px;}
@@ -481,7 +481,7 @@ function esc(s){const d=document.createElement("div");d.textContent=String(s||""
 function showUndo(msg,onUndo){
   const old=document.getElementById("undo-t");if(old)old.remove();
   const t=document.createElement("div");t.id="undo-t";
-  Object.assign(t.style,{position:"fixed",bottom:"24px",left:"50%",transform:"translateX(-50%)",background:"rgba(30,30,30,.9)",color:"#fff",padding:"10px 16px",borderRadius:"10px",fontSize:"14px",fontFamily:"'Inter',system-ui",display:"flex",alignItems:"center",gap:"12px",zIndex:"9999",boxShadow:"0 4px 16px rgba(0,0,0,.25)"});
+  Object.assign(t.style,{position:"fixed",bottom:"24px",left:"50%",transform:"translateX(-50%)",background:"rgba(30,30,30,.9)",color:"var(--color-surface)",padding:"10px 16px",borderRadius:"10px",fontSize:"14px",fontFamily:"'Inter',system-ui",display:"flex",alignItems:"center",gap:"12px",zIndex:"9999",boxShadow:"0 4px 16px rgba(0,0,0,.25)"});
   t.innerHTML=`<span>${msg}</span><button style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 12px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Undo</button>`;
   t.querySelector("button").onclick=()=>{onUndo();t.remove();};
   document.body.appendChild(t);setTimeout(()=>{if(t.parentNode)t.remove();},4500);

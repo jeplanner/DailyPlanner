@@ -39,14 +39,14 @@
   }
   .ann-back:hover { background: #1f2937; }
   .ann-save {
-    background: #2563eb; color: white; margin-left: auto;
+    background: var(--color-primary); color: white; margin-left: auto;
   }
-  .ann-save:hover { background: #1d4ed8; }
+  .ann-save:hover { background: var(--color-primary-hover); }
   .ann-save:disabled { background: #4b5563; cursor: wait; }
   .ann-back svg, .ann-save svg { width: 14px; height: 14px; }
 
   .ann-title {
-    font-size: 13px; color: #9ca3af; font-weight: 500;
+    font-size: 13px; color: var(--color-text-muted); font-weight: 500;
     max-width: 320px; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -61,7 +61,7 @@
   }
   .ann-tool:hover { background: #1f2937; color: #fff; }
   .ann-tool.is-active {
-    background: #2563eb; color: white; border-color: #2563eb;
+    background: var(--color-primary); color: white; border-color: var(--color-primary);
   }
   .ann-tool svg { width: 16px; height: 16px; }
 
@@ -81,7 +81,7 @@
     display: flex; flex-direction: column; align-items: center; gap: 16px;
   }
   .ann-status {
-    color: #9ca3af; font-size: 13px;
+    color: var(--color-text-muted); font-size: 13px;
     padding: 28px 16px; text-align: center;
   }
 
@@ -130,7 +130,7 @@
   .ann-note-popup {
     position: absolute;
     min-width: 160px; max-width: 240px;
-    background: #fef3c7; color: #1f2937;
+    background: var(--color-warning-light); color: var(--color-text);
     border: 1px solid #b45309;
     border-radius: 4px;
     padding: 6px 8px; font-size: 12px; line-height: 1.4;
@@ -148,7 +148,7 @@
   }
   .ann-note-popup button {
     font-size: 11px; padding: 2px 8px; border-radius: 4px;
-    border: 1px solid #b45309; background: #fde68a; color: #1f2937;
+    border: 1px solid #b45309; background: #fde68a; color: var(--color-text);
     cursor: pointer;
   }
   .ann-note-popup button.danger { background: #fecaca; border-color: #b91c1c; }

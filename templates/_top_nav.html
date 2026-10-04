@@ -448,6 +448,11 @@
   font-weight:500;
   color:var(--color-text-secondary);
   white-space:nowrap;
+  /* The clock in here re-renders every second. In Inter a "1" is
+     narrower than a "0", so the date beside it used to shift sideways on
+     most ticks. Fixed advance widths hold it still. */
+  font-family:var(--font-family-data);
+  font-variant-numeric:tabular-nums;
 }
 .date-row--right{
   margin-left:auto;
@@ -1781,8 +1786,8 @@ document.addEventListener("keydown", (e) => {
   }
   .gpomo-time {
     margin-top: 2px;
-    font-family: ui-monospace, SFMono-Regular, monospace;
-    font-size: 22px; font-weight: 700;
+    font-family: var(--font-family-data);
+    font-size: 22px; font-weight: 600;
     font-variant-numeric: tabular-nums;
     color:var(--color-text);
     line-height: 1.1;

@@ -38,9 +38,6 @@
     border-radius: inherit;
     backdrop-filter: blur(2px);
 }
-html.dark .loading-overlay {
-    background: rgba(15, 23, 42, 0.72);
-}
 
 @keyframes spin {
     to { transform: rotate(360deg); }
@@ -427,7 +424,7 @@ html.dark .loading-overlay {
     top: 2px; left: 2px;
     width: calc(var(--switch-h) - 4px);
     height: calc(var(--switch-h) - 4px);
-    background: #fff;
+    background: var(--color-surface);
     border-radius: 50%;
     transition: transform var(--transition-fast);
     box-shadow: var(--shadow-xs);

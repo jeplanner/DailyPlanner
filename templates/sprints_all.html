@@ -12,20 +12,20 @@
 {% include "_pwa_head.html" %}
 <style>
   :root {
-    --sp-bg:       #f7f8fa;
-    --sp-surface:  #ffffff;
-    --sp-border:   #e4e6ee;
-    --sp-text:     #1f2330;
+    --sp-bg: var(--color-bg);
+    --sp-surface: var(--color-surface);
+    --sp-border: var(--color-border);
+    --sp-text: var(--color-text);
     --sp-mute:     #6b7280;
     --sp-soft:     #9ca3af;
-    --sp-primary:  #6366f1;
-    --sp-success:  #22c55e;
+    --sp-primary: var(--color-primary);
+    --sp-success: var(--color-success);
     --sp-warn:     #f59e0b;
-    --sp-danger:   #ef4444;
+    --sp-danger: var(--color-danger);
   }
   @media (prefers-color-scheme: dark) {
     :root { --sp-bg:#0f1115; --sp-surface:#181b22; --sp-border:#232733;
-            --sp-text:#e8eaf0; --sp-mute:#9ca3af; --sp-soft:#6b7280; }
+            --sp-text: var(--color-text); --sp-mute:#9ca3af; --sp-soft:#6b7280; }
   }
   body { margin: 0; background: var(--sp-bg); color: var(--sp-text);
          font: 15px/1.5 'Inter', system-ui, -apple-system, sans-serif;

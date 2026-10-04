@@ -29,10 +29,10 @@
   .hero { border: 1px solid var(--color-border); border-radius: 16px; padding: 20px 20px 16px;
           margin-bottom: 14px; background: var(--color-surface); position: relative; overflow: hidden; }
   .hero::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 5px; background: #64748b; }
-  .hero[data-tone="soon"]::before    { background: #d97706; }
-  .hero[data-tone="urgent"]::before  { background: #dc2626; }
-  .hero[data-tone="overdue"]::before { background: #7f1d1d; }
-  .hero[data-tone="done"]::before    { background: #059669; }
+  .hero[data-tone="soon"]::before    { background: var(--color-warning); }
+  .hero[data-tone="urgent"]::before  { background: var(--color-danger); }
+  .hero[data-tone="overdue"]::before { background: var(--color-danger-strong); }
+  .hero[data-tone="done"]::before    { background: var(--color-success-strong); }
   .hero-title { font-size: 17px; font-weight: 800; margin: 0 0 10px; }
   /* DAYS : HRS : MINS, with seconds alongside. Tabular figures matter here —
      without them the digits jiggle every tick and the eye keeps re-reading. */
@@ -57,19 +57,18 @@
      discrete state change is throttled by nothing. Under Reduce Motion the
      script pins .flash-on rather than toggling it, so the alert is permanent
      instead of blinking — visible either way. */
-  .flash .seg b { color: #dc2626; }
-  .flash.flash-on { background: #fef2f2; }
-  .flash.flash-on .seg b { color: #b91c1c; }
-  .flash.flash-on::before { background: #dc2626 !important; width: 8px; }
-  html.dark .flash.flash-on { background: #2a0b0b; }
+  .flash .seg b { color: var(--color-danger-on-tint); }
+  .flash.flash-on { background: var(--color-danger-light); }
+  .flash.flash-on .seg b { color: var(--color-danger-on-tint); }
+  .flash.flash-on::before { background: var(--color-danger) !important; width: 8px; }
   /* Transition the swap so it reads as a pulse rather than a strobe. Motion
      here is a colour fade, which Reduce Motion leaves alone. */
   .hero { transition: background-color .28s ease; }
   /* The colour escalates even when it is not yet flashing, because with every
      unit on screen the unit itself no longer signals urgency. */
-  .hero[data-tone="soon"] .clock .seg b   { color: #d97706; }
-  .hero[data-tone="urgent"] .clock .seg b { color: #dc2626; }
-  .hero[data-tone="overdue"] .clock .seg b { color: #b91c1c; }
+  .hero[data-tone="soon"] .clock .seg b   { color: var(--color-warning-on-tint); }
+  .hero[data-tone="urgent"] .clock .seg b { color: var(--color-danger-on-tint); }
+  .hero[data-tone="overdue"] .clock .seg b { color: var(--color-danger-on-tint); }
   .hero[data-overdue="true"] .clock .seg i::after { content: " over"; }
 
   .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; font-size: 12.5px;
@@ -101,36 +100,32 @@
      phone and the WCAG target size is 24px. */
   input.pctrange::-webkit-slider-thumb {
     -webkit-appearance: none; appearance: none; width: 22px; height: 22px;
-    margin-top: -7px; border-radius: 50%; background: #2563eb;
+    margin-top: -7px; border-radius: 50%; background: var(--color-primary);
     border: 3px solid var(--color-surface); box-shadow: 0 1px 4px rgba(0,0,0,.3); }
   input.pctrange::-moz-range-thumb {
-    width: 22px; height: 22px; border-radius: 50%; background: #2563eb;
+    width: 22px; height: 22px; border-radius: 50%; background: var(--color-primary);
     border: 3px solid var(--color-surface); box-shadow: 0 1px 4px rgba(0,0,0,.3); }
   input.pctrange.row::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: -5px; }
   input.pctrange.row::-moz-range-thumb { width: 18px; height: 18px; }
   input.pctrange:focus { outline: none; }
   input.pctrange:focus::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(37,99,235,.25); }
   /* While dragging, the number it is setting should be the loud thing. */
-  input.pctrange:active + .pctout, input.pctrange:focus + .pctout { color: #2563eb; }
+  input.pctrange:active + .pctout, input.pctrange:focus + .pctout { color: var(--color-primary-ink); }
   .meta .src { font-style: normal; font-size: 11px; font-weight: 700; opacity: .7; }
   .pacebar { height: 8px; border-radius: 999px; background: var(--color-border); overflow: hidden;
              margin: 10px 0 4px; position: relative; }
-  .pacebar i { display: block; height: 100%; background: #2563eb; }
+  .pacebar i { display: block; height: 100%; background: var(--color-primary); }
   /* The notch is where the plan says you should be — the gap to the fill
      is the whole story, and it reads instantly. */
   .pacebar .mark { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--color-text); }
 
   .coach { margin-top: 12px; padding: 11px 13px; border-radius: 10px; font-size: 13.5px;
            font-weight: 700; line-height: 1.55; border-left: 4px solid; }
-  .coach[data-tone="celebrate"] { background: #ecfdf5; border-color: #059669; color: #065f46; }
-  .coach[data-tone="cheer"]     { background: #eff6ff; border-color: #2563eb; color: #1e3a8a; }
-  .coach[data-tone="push"]      { background: #fffbeb; border-color: #d97706; color: #78350f; }
-  .coach[data-tone="scold"]     { background: #fef2f2; border-color: #dc2626; color: #7f1d1d; }
-  .coach[data-tone="alarm"]     { background: #fef2f2; border-color: #991b1b; color: #7f1d1d; }
-  html.dark .coach[data-tone="celebrate"] { background:#052e21; color:#a7f3d0; }
-  html.dark .coach[data-tone="cheer"]     { background:#0b1f3f; color:#bfdbfe; }
-  html.dark .coach[data-tone="push"]      { background:#2a1e05; color:#fde68a; }
-  html.dark .coach[data-tone="scold"], html.dark .coach[data-tone="alarm"] { background:#2a0b0b; color:#fecaca; }
+  .coach[data-tone="celebrate"] { background: var(--color-success-light); border-color: #059669; color: var(--color-success-on-tint); }
+  .coach[data-tone="cheer"]     { background: var(--color-primary-light); border-color: var(--color-primary); color: var(--color-primary-ink); }
+  .coach[data-tone="push"]      { background: var(--color-warning-light); border-color: #d97706; color: #78350f; }
+  .coach[data-tone="scold"]     { background: var(--color-danger-light); border-color: var(--color-danger); color: var(--color-danger-on-tint); }
+  .coach[data-tone="alarm"]     { background: var(--color-danger-light); border-color: #991b1b; color: var(--color-danger-on-tint); }
 
   .budget { margin-top: 10px; font-size: 13px; font-weight: 700; padding: 9px 12px; border-radius: 9px;
             background: var(--color-bg); border: 1px dashed var(--color-border); }
@@ -141,15 +136,15 @@
          border-radius: 11px; margin-bottom: 7px; background: var(--color-surface); }
   .row .rt { font-weight: 800; font-size: 14px; flex: 1; min-width: 0; }
   .row .rc { font-variant-numeric: tabular-nums; font-weight: 900; font-size: 14px; white-space: nowrap; }
-  .row .rc[data-tone="soon"]    { color: #d97706; }
-  .row .rc[data-tone="urgent"]  { color: #dc2626; }
-  .row .rc[data-tone="overdue"] { color: #b91c1c; }
+  .row .rc[data-tone="soon"]    { color: var(--color-warning-on-tint); }
+  .row .rc[data-tone="urgent"]  { color: var(--color-danger-on-tint); }
+  .row .rc[data-tone="overdue"] { color: var(--color-danger-on-tint); }
   .row .ru { font-size: 10.5px; font-weight: 800; color: var(--color-text-secondary);
              text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
-  .row[data-tone="urgent"] .rc, .row[data-tone="overdue"] .rc { color: #dc2626; }
+  .row[data-tone="urgent"] .rc, .row[data-tone="overdue"] .rc { color: var(--color-danger-on-tint); }
   .row .pin { font-size: 11px; font-weight: 800; border: 1px solid var(--color-border); background: var(--color-bg);
               border-radius: 999px; padding: 3px 9px; cursor: pointer; color: var(--color-text-secondary); }
-  .row .pin.on { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+  .row .pin.on { background: var(--color-primary-hover); color: #fff; border-color: var(--color-primary); }
   .row .prog { font-size: 11.5px; font-weight: 800; color: var(--color-text-secondary); white-space: nowrap; }
 
   .newbox { border: 1px solid var(--color-border); border-radius: 12px; padding: 12px; margin-bottom: 14px;
@@ -173,7 +168,7 @@
   .inline-dl select { flex: 0 0 116px; } .inline-dl input { flex: 0 1 150px; }
   .inline-dl input[hidden] { display: none; }
   .empty { text-align: center; padding: 34px 16px; color: var(--color-text-secondary); font-size: 14px; }
-  .warn { background:#fef2f2; border:1px solid #dc2626; color:#7f1d1d; padding:11px 13px; border-radius:10px;
+  .warn { background:var(--color-danger-light); border:1px solid var(--color-danger); color:var(--color-danger-on-tint); padding:11px 13px; border-radius:10px;
           font-size:13px; font-weight:700; margin-bottom:12px; }
   @media (max-width: 720px) {
     .newbox .grid { grid-template-columns: 1fr 1fr; }
