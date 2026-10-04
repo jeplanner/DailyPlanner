@@ -23,84 +23,203 @@
    ================================================ */
 
 :root {
-    /* ── Brand / accents ───────────────────────────── */
-    --color-primary: #2563eb;
-    --color-primary-hover: #1d4ed8;
-    --color-primary-active: #1e40af;
-    --color-primary-light: #eff6ff;
-    --color-primary-ring: rgba(37, 99, 235, 0.18);
-    --color-on-primary: #ffffff;
+    /* ══════════════════════════════════════════════════════════════════
+       PALETTE — "Ink & Marigold"
 
-    --color-danger: #dc2626;
-    --color-danger-strong: #b91c1c;
-    --color-danger-light: #fef2f2;
-    --color-danger-border: #fecaca;
+       Every value is written as `light-dark(<light>, <dark>)`, preceded
+       by the plain light value on its own line. Two reasons:
+
+       1. ONE SOURCE OF TRUTH. The dark palette used to live in two
+          distant blocks — `@media (prefers-color-scheme: dark)` and
+          `html.dark` — and they drifted: the sidebar's dark background
+          (#1e293b) never matched the token's (#111a2c), and per-page
+          light panels went invisible on phones because only one of the
+          two blocks had been updated. A pair of adjacent lines cannot
+          drift.
+       2. GRACEFUL ON OLD ENGINES. A browser without light-dark() drops
+          the second declaration as invalid and keeps the first, so it
+          renders the light theme instead of an unstyled page.
+
+       light-dark() reads `color-scheme`, which is declared on <html>
+       further down: `light dark` by default (follow the OS), forced by
+       `html.light` / `html.dark` when the user picks a side. That is
+       exactly the three-state behaviour the theme switch already had.
+       ══════════════════════════════════════════════════════════════════ */
+
+    /* ── Ink: the one accent ────────────────────────────────────────────
+       The app used to have three primaries at once — #2563eb (163 uses),
+       #4338ca (57) and #6366f1 (39) — so "the accent colour" was
+       whichever page you happened to be on. It is now a single deep
+       indigo that reads as fountain-pen ink on paper: cool against the
+       warm ground below, which is what lets it carry emphasis without
+       extra saturation.
+
+       Two indigos, because one value cannot do both jobs. `--color-
+       primary` is the FILL (white label on top). `--color-primary-ink`
+       is the INK — the indigo you may set as text or an icon on a page
+       surface. In dark mode a fill light enough to read as text would
+       fail under its own white label, so the two part company. */
+    --color-primary: #424aa8;
+    --color-primary: light-dark(#424aa8, #5b63c9);
+    --color-primary-hover: #373d93;
+    --color-primary-hover: light-dark(#373d93, #6a72d6);
+    --color-primary-active: #2e337d;
+    --color-primary-active: light-dark(#2e337d, #7a82e0);
+    --color-primary-light: #eceef9;          /* tinted surface */
+    --color-primary-light: light-dark(#eceef9, #232749);
+    --color-primary-border: #ccd2f0;
+    --color-primary-border: light-dark(#ccd2f0, #343a6b);
+    --color-primary-ring: rgba(66, 74, 168, 0.22);
+    --color-primary-ring: light-dark(rgba(66, 74, 168, 0.22), rgba(123, 131, 228, 0.34));
+    --color-on-primary: #ffffff;
+    /* Text-safe ink. 9.3:1 on paper, 6.7:1 on a dark card. */
+    --color-primary-ink: #373d93;
+    --color-primary-ink: light-dark(#373d93, #9ba1f0);
+    --color-primary-on-tint: var(--color-primary-ink);
+
+    /* ── Brick: late, destructive ───────────────────────────────────── */
+    --color-danger: #c2362f;                 /* white label: 5.4:1 */
+    --color-danger-strong: #a32923;
+    --color-danger-light: #fbeae8;
+    --color-danger-light: light-dark(#fbeae8, #3b1a18);
+    --color-danger-border: #f3c9c5;
+    --color-danger-border: light-dark(#f3c9c5, #6d2a26);
+    --color-danger-ring: rgba(194, 54, 47, 0.22);
     --color-on-danger: #ffffff;
 
-    --color-success: #15803d;
-    --color-success-strong: #166534;
-    --color-success-light: #f0fdf4;
-    --color-success-border: #bbf7d0;
+    /* ── Leaf: done ─────────────────────────────────────────────────── */
+    --color-success: #2f7d4f;                /* white label: 5.0:1 */
+    --color-success-strong: #25663f;
+    --color-success-light: #e7f3ea;
+    --color-success-light: light-dark(#e7f3ea, #15301f);
+    --color-success-border: #bfe0c9;
+    --color-success-border: light-dark(#bfe0c9, #27513a);
+    --color-success-ring: rgba(47, 125, 79, 0.22);
     --color-on-success: #ffffff;
 
-    --color-warning: #b45309;
-    --color-warning-strong: #92400e;
-    --color-warning-light: #fffbeb;
-    --color-warning-border: #fde68a;
+    /* ── Marigold: now, due, needs you ──────────────────────────────────
+       The one warm note, and the only hue allowed to interrupt. It earns
+       its place because this app is mostly about time running out —
+       overdue tasks, missed slots, the quarter-hour announcer, goal
+       countdowns. The FILL is pulled down to #9a6214 so a white label
+       clears 5:1 on it; the marigold itself lives in the tint and the
+       on-tint text, which is where attention colour actually appears. */
+    --color-warning: #9a6214;
+    --color-warning-strong: #7f500e;
+    --color-warning-light: #fbf1dd;
+    --color-warning-light: light-dark(#fbf1dd, #38260e);
+    --color-warning-border: #ecd5a4;
+    --color-warning-border: light-dark(#ecd5a4, #5e421a);
     --color-on-warning: #ffffff;
 
-    --color-info: #2563eb;
-    --color-info-strong: #1e40af;
-    --color-info-light: #eff6ff;
-    --color-info-border: #bfdbfe;
+    /* ── Info ───────────────────────────────────────────────────────────
+       Info and primary were already the same two hexes (#2563eb /
+       #eff6ff) wherever both appeared, so these are aliases rather than
+       a fourth ramp nobody can tell apart from the accent. */
+    --color-info: var(--color-primary);
+    --color-info-strong: var(--color-primary-hover);
+    --color-info-light: var(--color-primary-light);
+    --color-info-border: var(--color-primary-border);
 
-    /* ── "On-tint" text colors ──────────────────────────────
-       Use these for text that sits on a *-light tinted surface
-       (e.g. text on --color-success-light). They pin the contrast
-       at >=5:1 in both themes so we never ship an illegible pill
-       again. Distinct from --color-{x} (the saturated brand hue,
-       used for icons / borders / solid buttons) and --color-{x}-strong
-       (kept for headings). */
-    --color-success-on-tint: #166534;
-    --color-warning-on-tint: #92400e;
-    --color-danger-on-tint:  #991b1b;
-    --color-info-on-tint:    #1e40af;
+    /* ── "On-tint" text colours ─────────────────────────────────────────
+       For text sitting on a *-light tinted surface. Every pair below
+       clears 4.5:1 in BOTH themes — the reason they exist is that the
+       four badge variants were between 2.1:1 and 2.6:1 in dark mode,
+       i.e. unreadable, because they used the saturated hue as text on
+       the dark tint. Reach for these on a tint; reach for --color-{x}
+       for a solid fill, an icon or a border. */
+    --color-success-on-tint: #1f5c39;
+    --color-success-on-tint: light-dark(#1f5c39, #7fd3a0);
+    --color-warning-on-tint: #855209;
+    --color-warning-on-tint: light-dark(#855209, #eec177);
+    --color-danger-on-tint: #95251f;
+    --color-danger-on-tint: light-dark(#95251f, #f2a19b);
+    --color-info-on-tint: var(--color-primary-ink);
 
-    /* Standard pill / button tint pairs — these are the canonical
-       fills for soft-coloured chips. Pages should reach for these
-       instead of inventing color-mix() expressions. */
+    /* Canonical soft-chip fills. Pages should use these rather than
+       inventing their own color-mix() expression. */
     --tint-success-bg: color-mix(in srgb, var(--color-success) 14%, transparent);
     --tint-warning-bg: color-mix(in srgb, var(--color-warning) 16%, transparent);
     --tint-danger-bg:  color-mix(in srgb, var(--color-danger)  14%, transparent);
-    --tint-info-bg:    color-mix(in srgb, var(--color-info)    12%, transparent);
+    --tint-info-bg:    color-mix(in srgb, var(--color-primary) 14%, transparent);
 
-    /* ── Surface / text ────────────────────────────── */
-    --color-bg: #f5f6f8;
+    /* ── Paper: surfaces and text ───────────────────────────────────────
+       A warm near-neutral ground, not the blue-grey slate this app used
+       to sit on. Two reasons, both functional rather than decorative:
+
+       - The old page used slate (#f5f6f8, #94a3b8, #334155) AND cool
+         grey (#e5e7eb, #6b7280, #f3f4f6) at adjacent elevations, so
+         borders read slightly off-hue against the surfaces they bounded.
+         One ramp, one hue, no mismatch.
+       - With a blue accent on a blue-grey ground, everything shared one
+         hue family and nothing stood out. Warming the ground by ~40°
+         makes the ink and the state colours carry further at the SAME
+         saturation — the signals get louder while the page gets calmer,
+         which matters on a board that stays open all day.
+
+       Dark mode is the same idea inverted: a warm charcoal, not
+       blue-black, so the cool ink still reads as the accent. */
+    --color-bg: #f6f5f2;
+    --color-bg: light-dark(#f6f5f2, #1a1816);
     --color-surface: #ffffff;
-    --color-surface-secondary: #f9fafb;
+    --color-surface: light-dark(#ffffff, #232120);
+    --color-surface-secondary: #f1efea;
+    --color-surface-secondary: light-dark(#f1efea, #2c2926);
     --color-surface-elevated: #ffffff;
-    --color-surface-sunken: #eef0f3;
-    --color-text: #0f172a;
-    --color-text-secondary: #475569;
-    --color-text-muted: #6b7280;          /* WCAG AA on --color-bg (4.6:1) */
-    --color-text-disabled: #9ca3af;
-    --color-text-inverse: #ffffff;
-    --color-border: #e5e7eb;
-    --color-border-strong: #d1d5db;
-    --color-border-light: #f1f3f5;
-    --color-overlay: rgba(15, 23, 42, 0.45);
-    --color-backdrop: rgba(15, 23, 42, 0.55);
-    --color-link: var(--color-primary);
+    --color-surface-elevated: light-dark(#ffffff, #2c2926);
+    --color-surface-sunken: #e9e6e0;
+    --color-surface-sunken: light-dark(#e9e6e0, #100f0e);
 
-    /* ── Quadrant accents (Eisenhower / planner / etc.) ── */
-    --color-q-do:        #ef4444;   /* urgent + important */
-    --color-q-schedule:  #2563eb;   /* important, not urgent */
-    --color-q-delegate:  #f59e0b;   /* urgent, not important */
-    --color-q-eliminate: #6b7280;   /* neither */
+    --color-text: #24211c;                   /* 14.7:1 on the page */
+    --color-text: light-dark(#24211c, #f3f0ea);
+    --color-text-secondary: #5d574e;         /* 6.6:1 */
+    --color-text-secondary: light-dark(#5d574e, #cac4b8);
+    --color-text-muted: #6b655b;             /* 5.3:1 — AA at any size */
+    --color-text-muted: light-dark(#6b655b, #a39d91);
+    --color-text-disabled: #9b958b;
+    --color-text-disabled: light-dark(#9b958b, #7a746a);
+    /* Text for an INVERTED surface, i.e. on top of --color-text. Dark
+       mode must flip it: the tooltip is `background: var(--color-text)`
+       with this on top, and when both were near-white the tooltip was
+       invisible on every dark-mode page. */
+    --color-text-inverse: #ffffff;
+    --color-text-inverse: light-dark(#ffffff, #1a1816);
+
+    --color-border: #e3e0d9;
+    --color-border: light-dark(#e3e0d9, #38342f);
+    --color-border-strong: #cfcbc2;
+    --color-border-strong: light-dark(#cfcbc2, #4b463f);
+    --color-border-light: #eeece7;
+    --color-border-light: light-dark(#eeece7, #2a2724);
+    --color-overlay: rgba(36, 33, 28, 0.45);
+    --color-overlay: light-dark(rgba(36, 33, 28, 0.45), rgba(0, 0, 0, 0.66));
+    --color-backdrop: rgba(36, 33, 28, 0.55);
+    --color-backdrop: light-dark(rgba(36, 33, 28, 0.55), rgba(0, 0, 0, 0.76));
+    /* Links take the ink, not the fill, so they stay legible in dark. */
+    --color-link: var(--color-primary-ink);
+
+    /* ── Quadrant accents (Eisenhower / planner) ─────────────────────────
+       Pulled into the palette above so the matrix stops looking like a
+       separate app: do = brick, schedule = ink, delegate = marigold,
+       eliminate = the warm grey. The mapping is unchanged. */
+    --color-q-do:        var(--color-danger);
+    --color-q-schedule:  var(--color-primary);
+    --color-q-delegate:  var(--color-warning);
+    --color-q-eliminate: #6b655b;
+    --color-q-eliminate: light-dark(#6b655b, #a39d91);
 
     /* ── Typography ────────────────────────────────── */
     --font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --font-family-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+    /* ── The data voice ─────────────────────────────────────────────────
+       Time IS this app's subject: clocks, countdowns, durations, slot
+       times, prep minutes, streak counts, money. Inter sets those in the
+       same voice as a button label, so a column of times has to be read
+       rather than scanned. IBM Plex Mono gives every quantity a fixed
+       advance width and a ledger-like register, which means times line
+       up down a column and a changing clock no longer reflows its
+       neighbours. Used ONLY for quantities — never for prose. */
+    --font-family-data: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
     --font-size-2xs: 10px;
     --font-size-xs:  11px;
@@ -151,13 +270,21 @@
     --radius-2xl: 24px;
     --radius-full: 999px;
 
-    /* ── Shadows / elevation ───────────────────────── */
-    --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
-    --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
-    --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04);
-    --shadow-lg: 0 12px 28px rgba(15, 23, 42, 0.12), 0 4px 8px rgba(15, 23, 42, 0.05);
-    --shadow-xl: 0 24px 56px rgba(15, 23, 42, 0.18), 0 6px 12px rgba(15, 23, 42, 0.06);
-    --shadow-inset: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+    /* ── Shadows / elevation ─────────────────────────────────────────────
+       Tinted with the ink-brown of the text rather than slate blue. A
+       blue-black shadow on a warm ground is the single easiest way to
+       make a warm palette look dirty. */
+    --shadow-xs: 0 1px 2px rgba(36, 33, 28, 0.05);
+    --shadow-sm: 0 1px 3px rgba(36, 33, 28, 0.07), 0 1px 2px rgba(36, 33, 28, 0.04);
+    --shadow-md: 0 4px 12px rgba(36, 33, 28, 0.09), 0 2px 4px rgba(36, 33, 28, 0.05);
+    --shadow-lg: 0 12px 28px rgba(36, 33, 28, 0.13), 0 4px 8px rgba(36, 33, 28, 0.06);
+    --shadow-xl: 0 24px 56px rgba(36, 33, 28, 0.19), 0 6px 12px rgba(36, 33, 28, 0.07);
+    --shadow-inset: inset 0 1px 2px rgba(36, 33, 28, 0.06);
+    --shadow-xs: light-dark(0 1px 2px rgba(36, 33, 28, 0.05), 0 1px 2px rgba(0, 0, 0, 0.45));
+    --shadow-sm: light-dark(0 1px 3px rgba(36, 33, 28, 0.07), 0 1px 3px rgba(0, 0, 0, 0.45));
+    --shadow-md: light-dark(0 4px 12px rgba(36, 33, 28, 0.09), 0 4px 12px rgba(0, 0, 0, 0.55));
+    --shadow-lg: light-dark(0 12px 28px rgba(36, 33, 28, 0.13), 0 12px 28px rgba(0, 0, 0, 0.6));
+    --shadow-xl: light-dark(0 24px 56px rgba(36, 33, 28, 0.19), 0 24px 56px rgba(0, 0, 0, 0.66));
 
     /* ── Motion ────────────────────────────────────── */
     --motion-duration-fast: 120ms;
@@ -175,10 +302,13 @@
     --transition-normal: var(--motion-duration-base)  var(--motion-easing-standard);
     --transition-slow:   var(--motion-duration-slow)  var(--motion-easing-standard);
 
-    /* ── Focus ring ────────────────────────────────── */
+    /* ── Focus ring ─────────────────────────────────────────────────────
+       The ring is the ink in both themes now. It used to hard-code
+       #60a5fa for dark, which was the one place the old palette admitted
+       its blue did not survive a dark surface. */
     --ring-width: 2px;
     --ring-offset: 2px;
-    --ring-color: var(--color-primary);
+    --ring-color: var(--color-primary-ink);
     --ring: 0 0 0 var(--ring-offset) var(--color-surface),
             0 0 0 calc(var(--ring-width) + var(--ring-offset)) var(--ring-color);
 
@@ -191,83 +321,6 @@
     --z-popover: 1200;
     --z-tooltip: 1300;
     --z-toast: 9000;
-}
-
-/* ── Dark mode ─────────────────────────────────── */
-@media (prefers-color-scheme: dark) {
-    :root:not(.light) {
-        --color-bg: #0b1220;
-        --color-surface: #111a2c;
-        --color-surface-secondary: #15203a;
-        --color-surface-elevated: #1a2540;
-        --color-surface-sunken: #07101e;
-        --color-text: #f1f5f9;
-        --color-text-secondary: #cbd5e1;
-        --color-text-muted: #94a3b8;
-        --color-text-disabled: #64748b;
-        --color-border: #28344a;
-        --color-border-strong: #3b4865;
-        --color-border-light: #1d2740;
-        --color-overlay: rgba(0, 0, 0, 0.65);
-        --color-backdrop: rgba(0, 0, 0, 0.75);
-        --color-primary-light: #1e3a5f;
-        --color-danger-light: #3b1111;
-        --color-danger-border: #7f1d1d;
-        --color-success-light: #052e16;
-        --color-success-border: #14532d;
-        --color-warning-light: #451a03;
-        --color-warning-border: #78350f;
-        --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
-        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
-        --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.55);
-        --shadow-xl: 0 24px 56px rgba(0, 0, 0, 0.6);
-        --ring: 0 0 0 var(--ring-offset) var(--color-surface),
-                0 0 0 calc(var(--ring-width) + var(--ring-offset)) #60a5fa;
-    }
-}
-
-html.dark {
-    --color-bg: #0b1220;
-    --color-surface: #111a2c;
-    --color-surface-secondary: #15203a;
-    --color-surface-elevated: #1a2540;
-    --color-surface-sunken: #07101e;
-    --color-text: #f1f5f9;
-    --color-text-secondary: #cbd5e1;
-    --color-text-muted: #94a3b8;
-    --color-text-disabled: #64748b;
-    --color-border: #28344a;
-    --color-border-strong: #3b4865;
-    --color-border-light: #1d2740;
-    --color-overlay: rgba(0, 0, 0, 0.65);
-    --color-backdrop: rgba(0, 0, 0, 0.75);
-    --color-primary-light: #1e3a5f;
-    --color-danger-light: #3b1111;
-    --color-danger-border: #7f1d1d;
-    --color-success-light: #052e16;
-    --color-success-border: #14532d;
-    --color-warning-light: #451a03;
-    --color-warning-border: #78350f;
-    --color-info-light: #102753;
-    --color-info-border: #1d4ed8;
-    /* On-tint text colors — flipped for dark surfaces so contrast
-       stays >=5:1 against the dark *-light fills above. */
-    --color-success-on-tint: #86efac;
-    --color-warning-on-tint: #fcd34d;
-    --color-danger-on-tint:  #fca5a5;
-    --color-info-on-tint:    #93c5fd;
-    --tint-success-bg: rgba(22, 163, 74, 0.20);
-    --tint-warning-bg: rgba(245, 158, 11, 0.22);
-    --tint-danger-bg:  rgba(220, 38, 38, 0.22);
-    --tint-info-bg:    rgba(37, 99, 235, 0.24);
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.55);
-    --shadow-xl: 0 24px 56px rgba(0, 0, 0, 0.6);
-    --ring: 0 0 0 var(--ring-offset) var(--color-surface),
-            0 0 0 calc(var(--ring-width) + var(--ring-offset)) #60a5fa;
 }
 
 /* ──────────────────────────────────────────────────
@@ -401,4 +454,76 @@ pre, code { overflow-x: auto; max-width: 100%; }
     /* Inline text links inside prose are exempt — they are read, not
        tapped as targets, and padding them out wrecks the paragraph. */
     p a, li a, td a { min-height: 0; min-width: 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE DATA VOICE
+   ═══════════════════════════════════════════════════════════════════════
+   One rule, applied narrowly: a QUANTITY is set in --font-family-data
+   with fixed-width figures; everything else stays in Inter.
+
+   Why this app in particular. Nearly every screen here is a column of
+   times and counts — slot times on the board, the live clock, countdowns
+   to a goal, prep minutes per question, streak days, amounts. In a
+   proportional face a "1" is narrower than a "0", so those columns do
+   not line up and a ticking clock shifts the labels either side of it on
+   every second. Fixed advance widths fix both: figures stack into a
+   readable column, and nothing reflows as a number changes.
+
+   Deliberately NOT applied to prose, headings or buttons. A mono face
+   over a whole interface reads as a terminal, and this is a planner.
+
+   Use `<time>` for an actual time or date, and `.u-num` on the element
+   that wraps a bare quantity. `.u-num--lg` is for the one big number a
+   card is built around. */
+time,
+.u-num,
+[data-num] {
+    font-family: var(--font-family-data);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    letter-spacing: 0;
+}
+.u-num--lg {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-tight);
+}
+
+/* Tables of numbers get fixed figures without needing a class on every
+   cell — a totals column that jitters as it updates is the same defect. */
+td, th { font-variant-numeric: tabular-nums; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SELECTION + SCROLLBARS
+   ═══════════════════════════════════════════════════════════════════════
+   Small things, but they are the two places where a themed app most
+   often reverts to the browser's own blue and grey and gives the game
+   away. Both follow the palette instead. */
+::selection {
+    background: var(--color-primary-light);
+    color: var(--color-primary-ink);
+}
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: var(--color-border-strong);
+    border-radius: var(--radius-full);
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-disabled); background-clip: content-box; }
+
+/* Native widgets — checkboxes, radios, range, progress — take the ink
+   instead of the OS blue. One line, and it removes the single most
+   common "this is an unstyled form" tell across the whole app. */
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"],
+progress {
+    accent-color: var(--color-primary);
 }

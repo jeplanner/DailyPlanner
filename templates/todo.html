@@ -13,15 +13,25 @@
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <style>
-:root{--em-bg:#f7f8fa;--em-surface: var(--color-surface, #fff);--em-text:#1a1a2e;--em-text2:#6b7280;--em-text3:#9ca3af;
-  --em-border: var(--color-border, #e5e7eb);--em-shadow:0 1px 3px rgba(0,0,0,.06);
-  --q-do:#dc2626;--q-do-bg:#fef2f2;--q-do-border:#fecaca;
-  --q-schedule:#2563eb;--q-schedule-bg:#eff6ff;--q-schedule-border:#bfdbfe;
-  --q-delegate:#d97706;--q-delegate-bg:#fffbeb;--q-delegate-border:#fde68a;
-  --q-eliminate:#6b7280;--q-eliminate-bg:#f3f4f6;--q-eliminate-border:#d1d5db;}
-html.dark{--em-bg:#0f172a;--em-surface:#1e293b;--em-text:#f1f5f9;--em-text2:#94a3b8;--em-text3:#64748b;--em-border:#334155;
-  --q-do-bg:#3b1111;--q-schedule-bg:#1e3a5f;--q-delegate-bg:#451a03;--q-eliminate-bg:#1f2937;
-  --em-shadow:0 1px 3px rgba(0,0,0,.2);}
+/* This page used to keep a private copy of the palette under --em-* and
+   --q-* names, with its own light AND dark definitions. That is how the
+   matrix ended up a slightly different blue and a slightly different
+   grey from the rest of the app. The names stay (every rule below uses
+   them) but they are now aliases onto the design system, so the page
+   follows the theme and there is nothing left for a dark block to say. */
+:root{
+  --em-bg: var(--color-bg);
+  --em-surface: var(--color-surface);
+  --em-text: var(--color-text);
+  --em-text2: var(--color-text-secondary);
+  --em-text3: var(--color-text-muted);
+  --em-border: var(--color-border);
+  --em-shadow: var(--shadow-sm);
+  --q-do: var(--color-q-do);               --q-do-bg: var(--color-danger-light);        --q-do-border: var(--color-danger-border);
+  --q-schedule: var(--color-q-schedule);   --q-schedule-bg: var(--color-primary-light); --q-schedule-border: var(--color-primary-border);
+  --q-delegate: var(--color-q-delegate);   --q-delegate-bg: var(--color-warning-light); --q-delegate-border: var(--color-warning-border);
+  --q-eliminate: var(--color-q-eliminate); --q-eliminate-bg: var(--color-surface-secondary); --q-eliminate-border: var(--color-border-strong);
+}
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(--em-text);min-height:100vh;}
 
@@ -113,9 +123,9 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .em-task-title{font-size:14px;font-weight:500;word-break:break-word;}
 .em-task-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;}
 .em-source-badge{font-size:9px;font-weight:600;padding:1px 6px;border-radius:4px;text-transform:uppercase;}
-.em-src-event{background:#eff6ff;color:#2563eb;}
-.em-src-project{background:#f0fdf4;color:#166534;}
-.em-src-matrix{background:#f3f4f6;color:#6b7280;}
+.em-src-event{background:var(--color-primary-light);color:var(--color-primary-ink);}
+.em-src-project{background:var(--color-success-light);color:var(--color-success-on-tint);}
+.em-src-matrix{background:var(--color-surface-secondary);color:var(--color-text-muted);}
 .em-project-name{font-size:11px;color:var(--em-text3);}
 
 .em-task-actions{display:flex;gap:2px;flex-shrink:0;align-items:center;}
@@ -195,8 +205,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .em-dt-btn-group button:hover{border-color:var(--q-schedule);color:var(--q-schedule);}
 .em-dt-btn-group button.active{background:var(--q-schedule);color:#fff;border-color:var(--q-schedule);}
 .em-dt-btn-group.status-group button.active{background:#0f766e;border-color:#0f766e;}
-.em-dt-btn-group.status-group button[data-s="deleted"].active{background:#b91c1c;border-color:#b91c1c;}
-.em-dt-btn-group.status-group button[data-s="skipped"].active{background:#4f46e5;border-color:#4f46e5;}
+.em-dt-btn-group.status-group button[data-s="deleted"].active{background:var(--color-danger-strong);border-color:#b91c1c;}
+.em-dt-btn-group.status-group button[data-s="skipped"].active{background:var(--color-primary);border-color:#4f46e5;}
 .em-dt-info{font-size:12px;color:var(--em-text2);line-height:1.5;display:flex;flex-direction:column;gap:4px;}
 .em-dt-info div{display:flex;gap:6px;}
 .em-dt-info div b{min-width:74px;font-weight:600;color:var(--em-text3);}
@@ -253,14 +263,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 
 /* Status badge + resolution menu */
 .em-status-badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:0.3px;margin-left:4px;}
-.em-status-badge.done{background:#d1fae5;color:#166534;}
-.em-status-badge.in_progress{background:#dbeafe;color:#2563eb;}
-.em-status-badge.deleted{background:#fee2e2;color:#b91c1c;}
-.em-status-badge.skipped{background:#e0e7ff;color:#4f46e5;}
-html.dark .em-status-badge.done{background:#064e3b;color:#6ee7b7;}
-html.dark .em-status-badge.in_progress{background:#1e3a8a;color:#93c5fd;}
-html.dark .em-status-badge.deleted{background:#3b1111;color:#fca5a5;}
-html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
+.em-status-badge.done{background:#d1fae5;color:var(--color-success-on-tint);}
+.em-status-badge.in_progress{background:var(--color-primary-light);color:var(--color-primary-ink);}
+.em-status-badge.deleted{background:var(--color-danger-light);color:var(--color-danger-on-tint);}
+.em-status-badge.skipped{background:var(--color-primary-light);color:var(--color-primary-ink);}
 
 .em-more-wrap{position:relative;}
 .em-more-btn{width:22px;height:22px;border:1px solid transparent;background:none;border-radius:5px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--em-text3);font-size:14px;font-weight:700;line-height:1;padding:0;}
@@ -275,8 +281,7 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
 .em-more-menu .sep{height:1px;background:var(--em-border);margin:4px 0;}
 
 /* Recurring pill next to title */
-.em-recur-pill{display:inline-flex;align-items:center;gap:2px;font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;background:#dbeafe;color:#1e40af;margin-left:6px;text-transform:uppercase;letter-spacing:.3px;}
-html.dark .em-recur-pill{background:#1e3a8a;color:#bfdbfe;}
+.em-recur-pill{display:inline-flex;align-items:center;gap:2px;font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;background:var(--color-primary-light);color:var(--color-primary-ink);margin-left:6px;text-transform:uppercase;letter-spacing:.3px;}
 
 /* Key Result pill — tinted with the parent goal's color */
 .em-kr-pill{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;padding:2px 7px;border-radius:10px;margin-left:6px;letter-spacing:.2px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--kr-color,#10b981);background:color-mix(in srgb,var(--kr-color,#10b981) 12%,transparent);border:1px solid color-mix(in srgb,var(--kr-color,#10b981) 30%,transparent);}
@@ -323,7 +328,7 @@ html.dark .em-recur-pill{background:#1e3a8a;color:#bfdbfe;}
 .em-select-mode .em-task .em-task-actions{display:none !important;}
 .em-select-mode .em-task{cursor:pointer;user-select:none;}
 .em-select-mode .em-task.em-selected{
-  background:#eff6ff;
+  background:var(--color-primary-light);
   border-color:var(--q-schedule);
   box-shadow:0 0 0 2px rgba(37,99,235,.25);
 }
@@ -332,7 +337,6 @@ html.dark .em-recur-pill{background:#1e3a8a;color:#bfdbfe;}
   border-color:var(--q-schedule);
 }
 .em-select-mode .em-task.em-selected .em-sel-check::after{content:"✓";}
-html.dark .em-select-mode .em-task.em-selected{background:#172554;}
 
 /* Non-matrix rows (events, project tasks) can't be bulk-edited — dim them */
 .em-select-mode .em-task[data-source="event"],
@@ -362,7 +366,7 @@ html.dark .em-select-mode .em-task.em-selected{background:#172554;}
   cursor:pointer;transition:background .12s;white-space:nowrap;
 }
 .em-action-dock button:hover{background:rgba(255,255,255,.12);}
-.em-action-dock button.danger:hover{background:#b91c1c;}
+.em-action-dock button.danger:hover{background:var(--color-danger-strong);}
 .em-action-dock .sep{width:1px;height:22px;background:rgba(255,255,255,.2);margin:0 2px;}
 
 /* Action popover (Status / Priority) — appears above the dock */
@@ -414,15 +418,12 @@ html.dark .em-select-mode .em-task.em-selected{background:#172554;}
 .em-prio-pill:active{transform:scale(.94);}
 .em-prio-pill::after{content:"⇅";font-size:8px;opacity:.5;margin-left:2px;font-weight:700;}
 .em-prio-pill::before{content:"";width:6px;height:6px;border-radius:50%;display:inline-block;}
-.em-prio-pill.high{background:#fee2e2;color:#b91c1c;}
-.em-prio-pill.high::before{background:#dc2626;box-shadow:0 0 0 2px rgba(220,38,38,.25);}
-.em-prio-pill.medium{background:#fef3c7;color:#b45309;}
-.em-prio-pill.medium::before{background:#f59e0b;box-shadow:0 0 0 2px rgba(245,158,11,.25);}
-.em-prio-pill.low{background:#d1fae5;color:#166534;}
-.em-prio-pill.low::before{background:#10b981;box-shadow:0 0 0 2px rgba(16,185,129,.25);}
-html.dark .em-prio-pill.high{background:#3b1111;color:#fca5a5;}
-html.dark .em-prio-pill.medium{background:#451a03;color:#fcd34d;}
-html.dark .em-prio-pill.low{background:#064e3b;color:#6ee7b7;}
+.em-prio-pill.high{background:var(--color-danger-light);color:var(--color-danger-on-tint);}
+.em-prio-pill.high::before{background:var(--color-danger);box-shadow:0 0 0 2px rgba(220,38,38,.25);}
+.em-prio-pill.medium{background:var(--color-warning-light);color:var(--color-warning-on-tint);}
+.em-prio-pill.medium::before{background:var(--color-warning);box-shadow:0 0 0 2px rgba(245,158,11,.25);}
+.em-prio-pill.low{background:#d1fae5;color:var(--color-success-on-tint);}
+.em-prio-pill.low::before{background:var(--color-success);box-shadow:0 0 0 2px rgba(16,185,129,.25);}
 
 /* ── Travel settings modal ── */
 .tv-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000;backdrop-filter:blur(2px);}
@@ -459,21 +460,19 @@ html.dark .em-prio-pill.low{background:#064e3b;color:#6ee7b7;}
 /* Inline confirm banner (replaces native confirm()) */
 .tv-confirm{
   display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-  background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;
+  background:var(--color-danger-light);border:1px solid var(--color-danger-border);border-left:4px solid var(--color-danger);
   border-radius:10px;padding:10px 14px;margin-bottom:14px;
   animation:tvSlideDown .18s ease;
 }
-html.dark .tv-confirm{background:#3b1111;border-color:#7f1d1d;border-left-color:#ef4444;}
 .tv-confirm-icon{font-size:18px;line-height:1;}
 .tv-confirm-text{flex:1;font-size:13px;color:var(--em-text);min-width:180px;}
-.tv-confirm-text strong{color:#b91c1c;}
-html.dark .tv-confirm-text strong{color:#fca5a5;}
+.tv-confirm-text strong{color:var(--color-danger-on-tint);}
 .tv-confirm-actions{display:flex;gap:6px;}
 .tv-confirm-actions button{padding:7px 14px;border-radius:7px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;border:1px solid var(--em-border);}
 .tv-confirm-actions .cancel{background:var(--em-surface);color:var(--em-text2);}
 .tv-confirm-actions .cancel:hover{background:var(--em-border);color:var(--em-text);}
-.tv-confirm-actions .confirm{background:#dc2626;border-color:#dc2626;color:#fff;}
-.tv-confirm-actions .confirm:hover{background:#b91c1c;border-color:#b91c1c;}
+.tv-confirm-actions .confirm{background:var(--color-danger);border-color:var(--color-danger);color:#fff;}
+.tv-confirm-actions .confirm:hover{background:var(--color-danger-strong);border-color:#b91c1c;}
 @keyframes tvSlideDown{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:translateY(0);}}
 
 /* Undo toast (custom, distinct from standard toast.js ones because we need an action button) */
@@ -1366,7 +1365,7 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
       <input type="hidden" name="year" value="{{ year }}">
       <input type="hidden" name="month" value="{{ month }}">
       <input type="hidden" name="day" value="{{ plan_date.day }}">
-      <button type="submit" class="em-action-btn" style="border-color:#dc2626;color:#dc2626;" title="Remove the unchanged Travel Mode tasks for this day">
+      <button type="submit" class="em-action-btn" style="border-color:var(--color-danger);color:var(--color-danger-on-tint);" title="Remove the unchanged Travel Mode tasks for this day">
         <i data-feather="navigation-2" style="width:14px;height:14px"></i> Disable Travel Mode
       </button>
       <button type="button" class="em-action-btn" onclick="openTravelSettings()" title="Manage travel tasks">
@@ -1866,25 +1865,25 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
       background: linear-gradient(90deg, rgba(239,68,68,.06), transparent 70%);
     }
     body:not([data-em-view="grid"]) .em-task[data-quadrant="do"] .em-task-text {
-      font-size: 16px; font-weight: 700; color: #b91c1c; line-height: 1.35;
+      font-size: 16px; font-weight: 700; color: var(--color-danger-on-tint); line-height: 1.35;
     }
     body:not([data-em-view="grid"]) .em-task[data-quadrant="schedule"] {
       border-left-color: #3b82f6;
     }
     body:not([data-em-view="grid"]) .em-task[data-quadrant="schedule"] .em-task-text {
-      font-size: 14px; font-weight: 600; color: #1e3a8a;
+      font-size: 14px; font-weight: 600; color: var(--color-primary-ink);
     }
     body:not([data-em-view="grid"]) .em-task[data-quadrant="delegate"] {
       border-left-color: #9ca3af; opacity: .92;
     }
     body:not([data-em-view="grid"]) .em-task[data-quadrant="delegate"] .em-task-text {
-      font-size: 13px; color: #4b5563;
+      font-size: 13px; color: var(--color-text-secondary);
     }
     body:not([data-em-view="grid"]) .em-task[data-quadrant="eliminate"] {
-      border-left-color: #d1d5db; opacity: .65;
+      border-left-color: var(--color-border-strong); opacity: .65;
     }
     body:not([data-em-view="grid"]) .em-task[data-quadrant="eliminate"] .em-task-text {
-      font-size: 12.5px; color: #6b7280; text-decoration: line-through;
+      font-size: 12.5px; color: var(--color-text-muted); text-decoration: line-through;
     }
 
     /* The legacy 2x2 grid mode keeps the existing styles — these only
@@ -2058,11 +2057,10 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     flex: 0 0 auto;
     padding: 2px 9px; border-radius: 999px;
     background: rgba(245,158,11,.18);
-    color: #92400e;
+    color: var(--color-warning-on-tint);
     font-size: 12px; font-weight: 700;
     font-variant-numeric: tabular-nums;
   }
-  html.dark .em-parked-count { background: rgba(245,158,11,.25); color: #fcd34d; }
   .em-parked-hint {
     font-size: 12.5px; color: var(--em-text2);
     flex: 1; min-width: 0;
@@ -2086,7 +2084,6 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     padding: 11px 16px;
     border-bottom: 1px solid var(--em-border-light, #f1f3f5);
   }
-  html.dark .em-parked-row { border-bottom-color: #1d2740; }
   .em-parked-row:last-child { border-bottom: none; }
   .em-parked-info { flex: 1; min-width: 0; }
   .em-parked-task {
@@ -2104,12 +2101,10 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     background: var(--em-border-light, #f1f3f5); color: var(--em-text2);
     font-weight: 600;
   }
-  html.dark .em-parked-chip { background: #1d2740; color: #cbd5e1; }
   .em-parked-overdue {
-    color: #b45309; font-weight: 700;
+    color: var(--color-warning-on-tint); font-weight: 700;
     font-variant-numeric: tabular-nums;
   }
-  html.dark .em-parked-overdue { color: #fcd34d; }
   .em-parked-orig { color: var(--em-text3, #94a3b8); }
 
   .em-parked-actions {
@@ -2127,9 +2122,8 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     transition: background .12s, border-color .12s, color .12s;
   }
   .em-parked-btn:hover {
-    background: rgba(37,99,235,.1); color: #1d4ed8; border-color: #2563eb;
+    background: rgba(37,99,235,.1); color: var(--color-primary-ink); border-color: var(--color-primary);
   }
-  html.dark .em-parked-btn:hover { background: rgba(37,99,235,.22); color: #93c5fd; border-color: #1d4ed8; }
   .em-parked-primary {
     background: var(--q-schedule); color: #fff; border-color: var(--q-schedule);
   }

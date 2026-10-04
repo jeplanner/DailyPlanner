@@ -257,7 +257,7 @@ html.dark .loading-overlay {
 }
 .form-input[aria-invalid="true"]:focus,
 .form-textarea[aria-invalid="true"]:focus {
-    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15);
+    box-shadow: 0 0 0 3px var(--color-danger-ring);
 }
 .form-textarea {
     min-height: 84px;
@@ -332,10 +332,14 @@ html.dark .loading-overlay {
     line-height: 1.6;
     border: 1px solid transparent;
 }
-.badge-primary { background: var(--color-primary-light); color: var(--color-primary); border-color: transparent; }
-.badge-success { background: var(--color-success-light); color: var(--color-success-strong); }
-.badge-warning { background: var(--color-warning-light); color: var(--color-warning-strong); }
-.badge-danger  { background: var(--color-danger-light);  color: var(--color-danger-strong); }
+/* Every variant pairs a *-light fill with its *-on-tint text, never with
+   the saturated hue. The saturated hue on the dark tint measured between
+   2.1:1 and 2.6:1 — all four badges were unreadable in dark mode. These
+   pairs clear 4.5:1 in both themes. */
+.badge-primary { background: var(--color-primary-light); color: var(--color-primary-on-tint); border-color: var(--color-primary-border); }
+.badge-success { background: var(--color-success-light); color: var(--color-success-on-tint); border-color: var(--color-success-border); }
+.badge-warning { background: var(--color-warning-light); color: var(--color-warning-on-tint); border-color: var(--color-warning-border); }
+.badge-danger  { background: var(--color-danger-light);  color: var(--color-danger-on-tint);  border-color: var(--color-danger-border); }
 .badge-neutral { background: var(--color-surface-secondary); color: var(--color-text-secondary); border-color: var(--color-border); }
 
 /* ── Cards ────────────────────────────────────── */

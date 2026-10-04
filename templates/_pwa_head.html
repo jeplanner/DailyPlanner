@@ -5,8 +5,22 @@
    prompt never fires. Scripts (sync-queue, push, pwa) stay in _top_nav.html
    since they don't need to be in head. #}
 <link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#6366f1" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+{# The status bar / browser chrome takes the page's own ground so the app
+   reads as one surface instead of a coloured bar sitting on top of a
+   page it does not match. Values are --color-bg from design-system.css;
+   keep them in step if that token changes. #}
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a1816" media="(prefers-color-scheme: dark)">
+
+{# ── Type ────────────────────────────────────────────────────────────────
+   Loaded here rather than per page: this partial is in every page's
+   <head>, so a page can never ship without its own typefaces again (ten
+   of them were falling back to system-ui). Inter sets the interface;
+   IBM Plex Mono sets quantities only — see --font-family-data. Two
+   weights of each, which is all the app uses. #}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">

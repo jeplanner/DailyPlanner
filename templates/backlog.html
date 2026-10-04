@@ -30,10 +30,8 @@
     .bk-tag{flex:none;font-size:10.5px;font-weight:800;border-radius:999px;padding:2px 7px;
       white-space:nowrap;background:var(--color-bg);border:1px solid var(--color-border);
       color:var(--color-text-secondary)}
-    .bk-tag.due{color:#b45309;border-color:#f59e0b;background:#fffbeb}
-    .bk-tag.overdue{color:#991b1b;border-color:#fca5a5;background:#fee2e2}
-    html.dark .bk-tag.due{background:#3a2a06;color:#fcd34d}
-    html.dark .bk-tag.overdue{background:#3f1d1d;color:#fca5a5}
+    .bk-tag.due{color:var(--color-warning-on-tint);border-color:var(--color-warning);background:var(--color-warning-light)}
+    .bk-tag.overdue{color:var(--color-danger-on-tint);border-color:var(--color-danger-border);background:var(--color-danger-light)}
 
     .bk-proj{margin-bottom:14px}
     .bk-proj-head{display:flex;align-items:baseline;gap:8px;margin:0 0 6px}
@@ -68,17 +66,14 @@
     /* THE DEADLINE, AND WHETHER IT HAS GONE. Late is the only state that
        gets a colour of its own — if "due in 6 days" were red too, red
        would stop meaning anything. */
-    .bk-tag.late{color:#991b1b;border-color:#fca5a5;background:#fee2e2}
-    .bk-tag.soon{color:#b45309;border-color:#f59e0b;background:#fffbeb}
-    html.dark .bk-tag.late{background:#3f1d1d;color:#fca5a5}
-    html.dark .bk-tag.soon{background:#3a2a06;color:#fcd34d}
-    .bk-item.is-late{border-color:#fca5a5;
-      background:color-mix(in srgb,#ef4444 6%,var(--color-surface))}
+    .bk-tag.late{color:var(--color-danger-on-tint);border-color:var(--color-danger-border);background:var(--color-danger-light)}
+    .bk-tag.soon{color:var(--color-warning-on-tint);border-color:var(--color-warning);background:var(--color-warning-light)}
+    .bk-item.is-late{border-color:var(--color-danger-border);
+      background:color-mix(in srgb,var(--color-danger) 6%,var(--color-surface))}
     /* AN ANNOUNCEMENT IS NOT A DESTINATION, it is something the item now
        does — so it reads as a property of the row rather than as a place
        the row has gone. */
-    .bk-tag.say{color:#3730a3;border-color:#a5b4fc;background:#eef2ff}
-    html.dark .bk-tag.say{background:#1e1b4b;color:#a5b4fc;border-color:#3730a3}
+    .bk-tag.say{color:var(--color-primary-ink);border-color:#a5b4fc;background:var(--color-primary-light)}
     .bk-mins{flex:none;font-size:10.5px;font-weight:700;
       color:var(--color-text-secondary);white-space:nowrap;
       font-variant-numeric:tabular-nums}
@@ -115,10 +110,8 @@
     .bk-msg{margin:0 0 14px;font-size:13px;font-weight:600;border-radius:9px;
       padding:9px 11px;display:none}
     .bk-msg.show{display:block}
-    .bk-msg.ok{background:#ecfdf5;color:#065f46;border:1px solid #6ee7b7}
-    .bk-msg.err{background:#fef2f2;color:#991b1b;border:1px solid #fca5a5}
-    html.dark .bk-msg.ok{background:#052e21;color:#6ee7b7}
-    html.dark .bk-msg.err{background:#3f1d1d;color:#fca5a5}
+    .bk-msg.ok{background:var(--color-success-light);color:#065f46;border:1px solid var(--color-success-border)}
+    .bk-msg.err{background:var(--color-danger-light);color:var(--color-danger-on-tint);border:1px solid var(--color-danger-border)}
     .bk-item.going{opacity:.4}
 
     /* THE CAPTURE DIALOG.
@@ -155,7 +148,7 @@
     .bk-two > .bk-fld{flex:1;min-width:0}
     .bk-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
     .bk-modal .bk-err{margin:0 0 10px;font-size:12.5px;font-weight:600;
-      color:#991b1b;display:none}
+      color:var(--color-danger-on-tint);display:none}
     .bk-modal .bk-err.show{display:block}
     @media (pointer: coarse){
       .bk-fld input, .bk-fld select, .bk-fld textarea{font-size:16px;
