@@ -2225,7 +2225,45 @@ def tpm_rounds_pdf():
 # in a background thread (services/thoughts_service.py) and the page polls.
 
 _THOUGHT_COLS = ("id,parent_id,root_id,question,context,answer,status,model,error,"
-                 "understood,pinned,tags,created_at,updated_at")
+                 "understood,pinned,tags,images,created_at,updated_at")
+
+
+def _thought_get(params):
+    """get() on prep_thoughts that tolerates a table created before the
+    images column existed (the first version of the migration)."""
+    try:
+        return get(thoughts_service.TABLE, params) or []
+    except Exception as exc:
+        if "images" not in str(exc) or "select" not in params:
+            raise
+        params = dict(params, select=params["select"].replace(",images", ""))
+        return get(thoughts_service.TABLE, params) or []
+
+
+def _read_images(files):
+    """Validate uploaded images -> [(bytes, mime, name)] or raise ValueError."""
+    out = []
+    for f in files[:thoughts_service.MAX_IMAGES]:
+        if not f or not f.filename:
+            continue
+        mime = (f.mimetype or "").lower()
+        if mime not in thoughts_service.IMAGE_MIMES:
+            raise ValueError("Only PNG, JPG, WebP or GIF images can be attached.")
+        data = f.read()
+        if not data:
+            continue
+        if len(data) > thoughts_service.MAX_IMAGE:
+            raise ValueError("Each image must be 5 MB or smaller.")
+        out.append((data, "image/jpeg" if mime == "image/jpg" else mime, f.filename[:120]))
+    return out
+
+
+def _store_images(user_id, files):
+    stored = []
+    for data, mime, name in files:
+        key = thoughts_service.store_image(user_id, data, mime)
+        stored.append({"key": key, "mime": mime, "name": name, "size": len(data)})
+    return stored
 
 
 def _thoughts_missing(exc):
@@ -2260,10 +2298,10 @@ def thoughts_list():
             if _thoughts_missing(exc):
                 raise
             logger.warning("thoughts: could not add the starter questions", exc_info=True)
-        rows = get(thoughts_service.TABLE, {
+        rows = _thought_get({
             "user_id": f"eq.{session['user_id']}", "deleted_at": "is.null",
             "select": _THOUGHT_COLS, "order": "created_at.desc", "limit": "500",
-        }) or []
+        })
     except Exception as exc:
         if _thoughts_missing(exc):
             # Show the shipped answers read-only until the table exists.
@@ -2285,7 +2323,17 @@ def thoughts_list():
 def thoughts_ask():
     """Body: {question, context?, parent_id?}. Saves it and starts the answer."""
     user_id = session["user_id"]
-    data = request.get_json(silent=True) or {}
+    # JSON, or multipart when images are attached (fields + files "images").
+    if request.files:
+        data = {k: request.form.get(k) for k in ("question", "context", "parent_id")}
+        data["tags"] = [t for t in (request.form.get("tags") or "").split(",") if t.strip()]
+        try:
+            files = _read_images(request.files.getlist("images"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+    else:
+        data = request.get_json(silent=True) or {}
+        files = []
     question = (data.get("question") or "").strip()[:thoughts_service.MAX_QUESTION]
     context = (data.get("context") or "").strip()[:thoughts_service.MAX_CONTEXT]
     if not question:
@@ -2317,7 +2365,19 @@ def thoughts_ask():
             item["root_id"] = item["id"]
         except Exception:
             pass
-    thoughts_service.answer_in_background(item["id"], user_id, question, context, parent)
+    if files:
+        try:
+            item["images"] = _store_images(user_id, files)
+            update(thoughts_service.TABLE, params={"id": f"eq.{item['id']}", "user_id": f"eq.{user_id}"},
+                   json={"images": item["images"]})
+        except Exception:
+            logger.warning("thoughts: image upload failed", exc_info=True)
+            item["images"] = []
+            item["image_error"] = ("The question was saved, but the images could not be "
+                                   "stored. Check that the user-photos storage bucket exists "
+                                   "(see MIGRATION_USER_PHOTOS.sql) and attach them again.")
+    thoughts_service.answer_in_background(item["id"], user_id, question, context, parent,
+                                          item.get("images") or None)
     return jsonify({"item": item}), 201
 
 
@@ -2338,6 +2398,9 @@ def thoughts_edit(tid):
     if "answer" in data:
         patch["answer"] = (data.get("answer") or "")[:60000]
         patch["status"] = "ready"
+        # Marks it as yours, so a later improvement to a shipped answer
+        # never overwrites your edit.
+        patch["model"] = "edited by you"
     if "context" in data:
         patch["context"] = (data.get("context") or "").strip()[:thoughts_service.MAX_CONTEXT] or None
     if "tags" in data:
@@ -2362,9 +2425,8 @@ def thoughts_retry(tid):
     """Write the answer again (after a failure, or to get a fresh take)."""
     user_id = session["user_id"]
     try:
-        rows = get(thoughts_service.TABLE, {"id": f"eq.{tid}", "user_id": f"eq.{user_id}",
-                                            "deleted_at": "is.null", "select": _THOUGHT_COLS,
-                                            "limit": "1"}) or []
+        rows = _thought_get({"id": f"eq.{tid}", "user_id": f"eq.{user_id}",
+                             "deleted_at": "is.null", "select": _THOUGHT_COLS, "limit": "1"})
         if not rows:
             return jsonify({"error": "Not found."}), 404
         t = rows[0]
@@ -2375,8 +2437,71 @@ def thoughts_retry(tid):
         if _thoughts_missing(exc):
             return _thought_missing_resp()
         raise
-    thoughts_service.answer_in_background(tid, user_id, t["question"], t.get("context") or "", parent)
+    thoughts_service.answer_in_background(tid, user_id, t["question"], t.get("context") or "",
+                                          parent, t.get("images") or None)
     return jsonify({"status": "pending"})
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/images", methods=["POST"])
+@login_required
+@limiter.limit("60 per hour")
+def thoughts_add_images(tid):
+    """Attach images (multipart "images") to an existing question."""
+    user_id = session["user_id"]
+    try:
+        files = _read_images(request.files.getlist("images"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not files:
+        return jsonify({"error": "Choose an image first."}), 400
+    rows = _thought_get({"id": f"eq.{tid}", "user_id": f"eq.{user_id}",
+                         "deleted_at": "is.null", "select": "id,images", "limit": "1"})
+    if not rows:
+        return jsonify({"error": "Not found."}), 404
+    have = rows[0].get("images") or []
+    if len(have) + len(files) > thoughts_service.MAX_IMAGES:
+        return jsonify({"error": f"Up to {thoughts_service.MAX_IMAGES} images per question."}), 400
+    try:
+        images = have + _store_images(user_id, files)
+        update(thoughts_service.TABLE, params={"id": f"eq.{tid}", "user_id": f"eq.{user_id}"},
+               json={"images": images, "updated_at": _now_iso()})
+    except Exception:
+        logger.warning("thoughts: image upload failed", exc_info=True)
+        return jsonify({"error": "Could not store the image. Check that the user-photos "
+                                 "storage bucket exists (see MIGRATION_USER_PHOTOS.sql)."}), 502
+    return jsonify({"images": images})
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/images/delete", methods=["POST"])
+@login_required
+def thoughts_remove_image(tid):
+    """Body: {key}. Removes one attached image."""
+    user_id = session["user_id"]
+    key = ((request.get_json(silent=True) or {}).get("key") or "").strip()
+    rows = _thought_get({"id": f"eq.{tid}", "user_id": f"eq.{user_id}",
+                         "select": "id,images", "limit": "1"})
+    if not rows:
+        return jsonify({"error": "Not found."}), 404
+    images = [im for im in (rows[0].get("images") or []) if im.get("key") != key]
+    update(thoughts_service.TABLE, params={"id": f"eq.{tid}", "user_id": f"eq.{user_id}"},
+           json={"images": images, "updated_at": _now_iso()})
+    if key.startswith(thoughts_service.owner_prefix(user_id)):
+        thoughts_service.remove_image(key)
+    return jsonify({"images": images})
+
+
+@interview_prep_bp.route("/interview-prep/thoughts/img/<path:key>", methods=["GET"])
+@login_required
+def thoughts_image(key):
+    """Serve an attached image to its owner only (the bucket is private)."""
+    if not key.startswith(thoughts_service.owner_prefix(session["user_id"])) or ".." in key:
+        return jsonify({"error": "Not found."}), 404
+    data, ctype = thoughts_service.fetch_image(key)
+    if data is None:
+        return jsonify({"error": "Not found."}), 404
+    return Response(data, mimetype=ctype, headers={
+        # Keys embed a random id and never change, so the browser can keep them.
+        "Cache-Control": "private, max-age=31536000, immutable"})
 
 
 @interview_prep_bp.route("/api/prep/thoughts/<tid>/delete", methods=["POST"])
@@ -2402,15 +2527,17 @@ def thoughts_delete(tid):
 def thoughts_pdf(tid):
     """One thread (the question and its follow-ups) as a phone-readable PDF."""
     user_id = session["user_id"]
-    rows = get(thoughts_service.TABLE, {"root_id": f"eq.{tid}", "user_id": f"eq.{user_id}",
-                                        "deleted_at": "is.null", "select": _THOUGHT_COLS,
-                                        "order": "created_at.asc", "limit": "50"}) or []
+    rows = _thought_get({"root_id": f"eq.{tid}", "user_id": f"eq.{user_id}",
+                         "deleted_at": "is.null", "select": _THOUGHT_COLS,
+                         "order": "created_at.asc", "limit": "50"})
     if not rows:
         return jsonify({"error": "Not found."}), 404
     sections = [{
         "title": ("Follow-up: " if r.get("parent_id") else "") + r["question"],
         "cat": (r.get("created_at") or "")[:10],
         "fields": [("What prompted it", r.get("context")),
+                   ("Images", (f"{len(r['images'])} image(s) attached - view them in the app"
+                               if r.get("images") else None)),
                    ("Answer", _md_plain(r.get("answer") or r.get("error") or "Not answered yet."))],
         "arch": None, "tags": r.get("tags") or None,
     } for r in rows]
@@ -2425,8 +2552,18 @@ def _md_plain(text):
     """Markdown answer -> plain text for the PDF: headings in capitals,
     emphasis markers and code fences dropped, lists kept."""
     out = []
+    in_mermaid = False
     for line in (text or "").split("\n"):
-        if line.strip().startswith("```"):
+        st = line.strip()
+        if st.startswith("```mermaid"):
+            in_mermaid = True
+            out.append("[Diagram - open this question in the app to see it]")
+            continue
+        if in_mermaid:
+            if st.startswith("```"):
+                in_mermaid = False
+            continue
+        if st.startswith("```"):
             continue
         m = re.match(r"^\s*#{1,6}\s+(.*)$", line)
         if m:

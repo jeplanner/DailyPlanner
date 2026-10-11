@@ -18,9 +18,11 @@ import os
 import threading
 from datetime import datetime, timezone
 
+import base64
+
 import requests
 
-from supabase_client import get, update
+from supabase_client import SUPABASE_KEY, SUPABASE_URL, get, update
 
 logger = logging.getLogger("daily_plan")
 
@@ -47,8 +49,19 @@ first time you use it.
 
 ## How it actually works
 Step by step, in depth. Use numbered steps or sub-headings. Include the real \
-mechanics, numbers and trade-offs. If a picture helps, draw a small ASCII \
-diagram inside a ``` code block (under 70 characters wide).
+mechanics, numbers and trade-offs. Include ONE diagram that makes the idea \
+visible, as a Mermaid block:
+
+```mermaid
+flowchart LR
+  A[Checkout] -->|OrderPlaced| B[(Kafka)]
+  B --> C[Inventory]
+```
+
+Use flowchart (LR or TD) for architecture and flows, or sequenceDiagram for \
+interactions over time. Keep it under 15 nodes, use short plain labels \
+(letters, digits, spaces and simple punctuation; no quotes, parentheses or \
+semicolons inside labels), and put the code block on its own lines.
 
 ## A worked example
 A concrete, realistic example - from large-scale e-commerce, payments, \
@@ -68,6 +81,10 @@ Five to eight bullets worth remembering.
 Three questions to test understanding, each followed by its answer on the \
 next line starting with "Answer:".
 
+If images are attached (his whiteboard sketches, screenshots or diagrams), \
+look at them carefully, refer to what they show, and correct anything in \
+them that is wrong.
+
 Be accurate. If something is uncertain, debated or depends on context, say \
 so plainly. Prefer clarity over jargon. Use **bold** for the few phrases that \
 matter most. Do not add any preamble before the first section."""
@@ -77,6 +94,72 @@ question and answer are given for context. Answer the follow-up itself, \
 building on what was already explained rather than repeating it. Use the same \
 section structure, but keep sections short where the earlier answer already \
 covered the ground."""
+
+
+# Reuses the existing `user-photos` bucket (the Photos page's, see
+# MIGRATION_USER_PHOTOS.sql) under its own "thoughts/" folder, so no new
+# bucket is needed. The Photos page lists from its own table, so these
+# never show up there. Its limit is 5 MB per file.
+BUCKET = os.getenv("THOUGHTS_BUCKET", "user-photos")
+KEY_PREFIX = "thoughts"
+MAX_IMAGE = 5 * 1024 * 1024
+MAX_IMAGES = 6
+IMAGE_MIMES = {"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg",
+               "image/webp": "webp", "image/gif": "gif"}
+
+
+def _storage_headers(extra=None):
+    h = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    h.update(extra or {})
+    return h
+
+
+def owner_prefix(user_id):
+    """Every image key a user may read or delete starts with this."""
+    return f"{KEY_PREFIX}/{user_id}/"
+
+
+def store_image(user_id, data, mime):
+    """Upload one image to the private bucket; returns its storage key."""
+    import uuid
+    key = f"{KEY_PREFIX}/{user_id}/{uuid.uuid4().hex}.{IMAGE_MIMES[mime]}"
+    r = requests.post(f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{key}",
+                      headers=_storage_headers({"Content-Type": mime, "x-upsert": "false",
+                                                "Cache-Control": "public, max-age=31536000, immutable"}),
+                      data=data, timeout=60)
+    if not r.ok:
+        raise RuntimeError(f"storage {r.status_code}: {r.text[:200]}")
+    return key
+
+
+def fetch_image(key):
+    """(bytes, content_type) of a stored image, or (None, None)."""
+    r = requests.get(f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{key}",
+                     headers=_storage_headers(), timeout=60)
+    if not r.ok:
+        return None, None
+    return r.content, r.headers.get("Content-Type") or "application/octet-stream"
+
+
+def remove_image(key):
+    try:
+        requests.delete(f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{key}",
+                        headers=_storage_headers(), timeout=30)
+    except Exception:
+        logger.warning("thoughts: could not delete image %s", key)
+
+
+def _load_images(images):
+    """[(mime, base64)] for the images attached to a question, best effort."""
+    out = []
+    for im in (images or [])[:MAX_IMAGES]:
+        data, ctype = fetch_image(im.get("key", ""))
+        if data:
+            mime = (im.get("mime") or ctype or "image/png").split(";")[0]
+            if mime == "image/jpg":
+                mime = "image/jpeg"
+            out.append((mime, base64.b64encode(data).decode("ascii")))
+    return out
 
 
 def _now():
@@ -95,7 +178,7 @@ def _prompt(question, context, parent):
     return "\n\n".join(parts)
 
 
-def _anthropic(prompt):
+def _anthropic(prompt, images=()):
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         return None, None
@@ -105,7 +188,9 @@ def _anthropic(prompt):
         headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                  "content-type": "application/json"},
         json={"model": model, "max_tokens": 8000, "system": SYSTEM,
-              "messages": [{"role": "user", "content": prompt}]},
+              "messages": [{"role": "user", "content": [
+                  {"type": "image", "source": {"type": "base64", "media_type": m, "data": b}}
+                  for m, b in images] + [{"type": "text", "text": prompt}]}]},
         timeout=180,
     )
     if r.status_code != 200:
@@ -116,7 +201,7 @@ def _anthropic(prompt):
     return (text or None), model
 
 
-def _gemini(prompt):
+def _gemini(prompt, images=()):
     key = os.getenv("GOOGLE_API_KEY")
     if not key:
         return None, None
@@ -125,7 +210,8 @@ def _gemini(prompt):
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         params={"key": key},
         json={"systemInstruction": {"parts": [{"text": SYSTEM}]},
-              "contents": [{"parts": [{"text": prompt}]}],
+              "contents": [{"parts": [{"inline_data": {"mime_type": m, "data": b}}
+                                      for m, b in images] + [{"text": prompt}]}],
               "generationConfig": {"maxOutputTokens": 8192, "temperature": 0.4}},
         timeout=120,
     )
@@ -139,11 +225,16 @@ def _gemini(prompt):
         return None, None
 
 
-def _groq(prompt):
+def _groq(prompt, images=()):
     key = os.getenv("GROQ_API_KEY")
     if not key:
         return None, None
     model = os.getenv("THOUGHTS_GROQ_MODEL", "llama-3.3-70b-versatile")
+    if images:
+        # This model reads text only; say so rather than answer as if it saw them.
+        prompt += (f"\n\n(Note: {len(images)} image(s) were attached but this model "
+                   "cannot see images. Answer from the text, and say that the "
+                   "images were not reviewed.)")
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -168,12 +259,13 @@ def any_provider():
     return any(os.getenv(k) for k in ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY"))
 
 
-def generate(question, context="", parent=None):
-    """(answer, model) from the first provider that answers, else (None, None)."""
+def generate(question, context="", parent=None, images=()):
+    """(answer, model) from the first provider that answers, else (None, None).
+    `images` is [(mime, base64)] - shown to providers that can see them."""
     prompt = _prompt(question, context, parent)
     for fn in PROVIDERS:
         try:
-            text, model = fn(prompt)
+            text, model = fn(prompt, images) if images else fn(prompt)
         except Exception:
             logger.warning("thoughts: %s failed", fn.__name__, exc_info=True)
             continue
@@ -182,11 +274,13 @@ def generate(question, context="", parent=None):
     return None, None
 
 
-def answer_in_background(row_id, user_id, question, context="", parent=None):
-    """Answer one saved question and write the result back to its row."""
+def answer_in_background(row_id, user_id, question, context="", parent=None, images=None):
+    """Answer one saved question and write the result back to its row.
+    `images` is the row's image list ([{key, mime}]); loaded in the thread."""
     def run():
         try:
-            text, model = generate(question, context, parent)
+            loaded = _load_images(images) if images else []
+            text, model = generate(question, context, parent, loaded)
             patch = ({"answer": text, "model": model, "status": "ready", "error": None}
                      if text else
                      {"status": "failed",
@@ -212,6 +306,7 @@ def answer_in_background(row_id, user_id, question, context="", parent=None):
 SEED_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                          "prep_thoughts_seed.json")
 _seeded = set()          # user ids already checked in this process
+SEED_MODEL = "written for you"
 
 
 def seeds():
@@ -233,12 +328,20 @@ def ensure_seeds(user_id):
     from supabase_client import post
     for sd in seeds():
         have = get(TABLE, {"user_id": f"eq.{user_id}", "question": f"eq.{sd['question']}",
-                           "select": "id", "limit": "1"}) or []
+                           "select": "id,answer,model,deleted_at", "limit": "1"}) or []
         if have:
+            # Refresh a shipped answer that was improved later (diagrams were
+            # added after the first version) - but only while it is still
+            # untouched: an edit sets model to "edited by you".
+            h = have[0]
+            if (not h.get("deleted_at") and h.get("model") == SEED_MODEL
+                    and (h.get("answer") or "") != sd["answer"]):
+                update(TABLE, params={"id": f"eq.{h['id']}", "user_id": f"eq.{user_id}"},
+                       json={"answer": sd["answer"], "updated_at": _now()})
             continue
         rows = post(TABLE, {"user_id": user_id, "question": sd["question"],
                             "answer": sd["answer"], "status": "ready",
-                            "model": "written for you", "tags": sd.get("tags") or []})
+                            "model": SEED_MODEL, "tags": sd.get("tags") or []})
         if rows and rows[0].get("id"):
             update(TABLE, params={"id": f"eq.{rows[0]['id']}", "user_id": f"eq.{user_id}"},
                    json={"root_id": rows[0]["id"]})

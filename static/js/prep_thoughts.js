@@ -54,9 +54,15 @@
       var l = lines[i];
       if (/^\s*```/.test(l)) {
         para(buf); buf = [];
+        var isMermaid = /^\s*```\s*mermaid\b/i.test(l);
         var code = []; i++;
         while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; }
-        out.push('<pre class="th-code">' + code.join("\n") + "</pre>"); i++; continue;
+        // A ```mermaid block is drawn as a diagram after render (drawDiagrams);
+        // the source stays inside as the fallback if it can't be drawn.
+        out.push(isMermaid
+          ? '<div class="th-mermaid"><pre class="th-code">' + code.join("\n") + "</pre></div>"
+          : '<pre class="th-code">' + code.join("\n") + "</pre>");
+        i++; continue;
       }
       var h = l.match(/^\s*(#{1,6})\s+(.*)$/);
       if (h) { para(buf); buf = []; var lv = Math.min(5, h[1].length + 2); out.push("<h" + lv + ">" + inline(h[2]) + "</h" + lv + ">"); i++; continue; }
@@ -99,6 +105,130 @@
     }
     para(buf);
     return out.join("");
+  }
+
+  /* ── Diagrams (Mermaid, self-hosted, loaded only when needed) ──────── */
+  var MERMAID_SRC = "/static/js/vendor/mermaid-10.9.1.min.js";
+  var mermaidReady = null, mmCount = 0;
+  function isDark() {
+    var h = document.documentElement;
+    if (h.classList.contains("dark")) return true;
+    if (h.classList.contains("light")) return false;
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
+  function loadMermaid() {
+    if (mermaidReady) return mermaidReady;
+    mermaidReady = new Promise(function (res, rej) {
+      if (window.mermaid) return res(window.mermaid);
+      var sc = document.createElement("script");
+      sc.src = MERMAID_SRC; sc.async = true;
+      sc.onload = function () { res(window.mermaid); };
+      sc.onerror = function () { mermaidReady = null; rej(new Error("diagram library failed to load")); };
+      document.head.appendChild(sc);
+    }).then(function (m) {
+      // "strict" escapes labels and disables click handlers: answers are
+      // AI-written text, so nothing in a diagram may run script.
+      // Label backgrounds match the diagram panel, so arrow labels don't sit
+      // in grey boxes on either theme.
+      // The token is a light-dark() pair, so resolve it to a real colour by
+      // painting it on a throwaway element.
+      var panelBg = "";
+      try {
+        var probe = document.createElement("div");
+        probe.style.background = "var(--color-surface-secondary)";
+        document.body.appendChild(probe);
+        panelBg = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+      } catch (_) {}
+      m.initialize({ startOnLoad: false, securityLevel: "strict",
+                     theme: isDark() ? "dark" : "neutral", fontFamily: "inherit",
+                     themeVariables: /^rgb/.test(panelBg) ? { edgeLabelBackground: panelBg } : {} });
+      return m;
+    });
+    return mermaidReady;
+  }
+  function drawDiagrams(root) {
+    var blocks = (root || document).querySelectorAll(".th-mermaid:not([data-drawn])");
+    if (!blocks.length) return;
+    loadMermaid().then(function (m) {
+      Array.prototype.forEach.call(blocks, function (b) {
+        if (b.getAttribute("data-drawn")) return;
+        b.setAttribute("data-drawn", "1");
+        var src = (b.querySelector("pre") || b).textContent;
+        m.render("thmm" + (++mmCount), src).then(function (out) {
+          b.innerHTML = '<div class="th-svg">' + out.svg + "</div>" +
+            '<div class="th-mm-bar"><button type="button" class="th-mm-full">Open full size</button>' +
+            '<details class="th-src"><summary>Diagram source</summary><pre class="th-code"></pre></details></div>';
+          b.querySelector(".th-src pre").textContent = src;
+        }).catch(function () {
+          b.classList.add("bad");
+          var note = document.createElement("div");
+          note.className = "th-mm-note";
+          note.textContent = "This diagram couldn't be drawn, so its text is shown. Use Edit to fix it.";
+          b.appendChild(note);
+          // Mermaid leaves an error element in the page on failure.
+          var junk = document.getElementById("dthmm" + mmCount); if (junk) junk.remove();
+        });
+      });
+    }).catch(function () { /* offline: the source stays readable */ });
+  }
+
+  // "Open full size": the diagram as its own page, for pinch-zoom on a phone.
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest(".th-mm-full");
+    if (!btn) return;
+    var svg = btn.closest(".th-mermaid").querySelector(".th-svg svg");
+    if (!svg) return;
+    var bg = getComputedStyle(document.body).backgroundColor;
+    var html = '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<body style="margin:0;padding:16px;background:' + bg + '">' + svg.outerHTML + "</body>";
+    var url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    window.open(url, "_blank", "noopener");
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  });
+
+  /* ── Images ──────────────────────────────────────────────────────── */
+  var MAX_IMAGES = 6, MAX_BYTES = 5 * 1024 * 1024;
+  var pendingFiles = [];          // attached in the ask box, not yet sent
+  function imgUrl(im) { return "/interview-prep/thoughts/img/" + im.key; }
+  function imagesBlock(t) {
+    var ims = t.images || [];
+    if (!ims.length) return "";
+    return '<div class="th-imgs">' + ims.map(function (im) {
+      return '<figure class="th-img"><a href="' + imgUrl(im) + '" target="_blank" rel="noopener">' +
+        '<img loading="lazy" src="' + imgUrl(im) + '" alt="' + esc(im.name || "attached image") + '"></a>' +
+        '<button class="th-img-x" type="button" data-th="img-del" data-key="' + esc(im.key) + '" aria-label="Remove image">×</button></figure>';
+    }).join("") + "</div>";
+  }
+  function goodFiles(list) {
+    var out = [];
+    Array.prototype.forEach.call(list || [], function (f) {
+      if (!/^image\/(png|jpe?g|webp|gif)$/i.test(f.type)) { H().say(f.name + ": only PNG, JPG, WebP or GIF", "error"); return; }
+      if (f.size > MAX_BYTES) { H().say(f.name + " is over 5 MB", "error"); return; }
+      out.push(f);
+    });
+    return out;
+  }
+  function paintPending() {
+    var box = $("th-files");
+    if (!box) return;
+    box.hidden = !pendingFiles.length;
+    box.innerHTML = pendingFiles.map(function (f, i) {
+      return '<span class="th-chip"><img alt="" src="' + URL.createObjectURL(f) + '">' + esc(f.name || "pasted image") +
+        '<button type="button" data-th="unattach" data-i="' + i + '" aria-label="Remove">×</button></span>';
+    }).join("");
+  }
+  function upload(path, fields, files) {
+    var fd = new FormData();
+    Object.keys(fields || {}).forEach(function (k) { if (fields[k] != null) fd.append(k, fields[k]); });
+    files.forEach(function (f, i) { fd.append("images", f, f.name || ("image-" + (i + 1) + ".png")); });
+    return fetch(path, { method: "POST", credentials: "same-origin", headers: { "X-CSRFToken": CSRF }, body: fd })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok) throw new Error(j.error || "Upload failed");
+          return j;
+        });
+      });
   }
 
   /* ── Data ────────────────────────────────────────────────────────── */
@@ -146,10 +276,13 @@
       '<div class="th-more" id="th-more" hidden>' +
       '<textarea id="th-ctx" rows="2" maxlength="4000" placeholder="What prompted it? (optional) — where you saw it, what confused you"></textarea>' +
       '<input id="th-tags" maxlength="120" placeholder="Tags, comma-separated (optional) — kafka, leadership"></div>' +
+      '<div class="th-files" id="th-files" hidden></div>' +
+      '<input type="file" id="th-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>' +
       '<div class="th-ask-row"><button class="btn sm ghost" id="th-more-btn" type="button">+ Context &amp; tags</button>' +
+      '<button class="btn sm ghost" id="th-attach" type="button">+ Image</button>' +
       '<span class="mini-lbl th-hint">Ctrl/⌘ + Enter to ask</span>' +
       '<button class="btn primary" id="th-go" type="button">Ask</button></div>' +
-      '<p class="mini-lbl th-how">Every answer comes back the same way: the short answer, the intuition, how it actually works, a worked example, common misconceptions, how to say it in an interview, key takeaways, and three questions to check yourself.</p>' +
+      '<p class="mini-lbl th-how">Every answer comes back the same way: the short answer, the intuition, how it actually works, a worked example, common misconceptions, how to say it in an interview, key takeaways, and three questions to check yourself — with a diagram. Attach or paste a screenshot or whiteboard photo and it will be explained too.</p>' +
       "</div>" +
       '<div class="sync-note" id="th-note" hidden></div>' +
       '<div class="toolbar" style="margin-top:14px"><input type="search" id="th-search" placeholder="Search your questions and answers…" aria-label="Search thoughts">' +
@@ -184,6 +317,7 @@
     $("th-list").innerHTML = list.map(thread).join("") ||
       '<div class="card"><div class="empty">' + (rs.length ? "Nothing matches." :
         "No questions yet. The next time something doesn't quite make sense — a concept, a design choice, a leadership situation — write it above.") + "</div></div>";
+    drawDiagrams($("th-list"));
     if (window.feather) window.feather.replace();
   }
 
@@ -196,7 +330,10 @@
   function answerBlock(t) {
     if (editing === t.id) {
       return '<div class="th-edit"><textarea data-th-edit rows="16">' + esc(t.answer || "") + "</textarea>" +
+        '<p class="mini-lbl">Markdown works: ## headings, **bold**, lists, tables. A ```mermaid block becomes a diagram.</p>' +
         '<div class="q-actions"><button class="btn sm primary" data-th="save-edit" type="button">Save answer</button>' +
+        '<button class="btn sm" data-th="insert-flow" type="button">+ Flow diagram</button>' +
+        '<button class="btn sm" data-th="insert-seq" type="button">+ Sequence diagram</button>' +
         '<button class="btn sm" data-th="cancel-edit" type="button">Cancel</button></div></div>';
     }
     if (t.status === "pending") {
@@ -225,9 +362,11 @@
     if (!isOpen) return '<div class="q-card th-card' + (r.understood ? " done" : "") + '" data-id="' + r.id + '">' + head + "</div>";
 
     var body = (r.context ? '<div class="th-ctx"><b>What prompted it</b>' + esc(r.context) + "</div>" : "") +
+      imagesBlock(r) +
       answerBlock(r) +
       kids.map(function (k) {
         return '<div class="th-follow" data-id="' + k.id + '"><div class="th-fq"><span class="th-fq-k">Follow-up</span>' + esc(k.question) + "</div>" +
+          imagesBlock(k) +
           answerBlock(k) +
           (k.status !== "pending" && editing !== k.id ? '<div class="q-actions th-small"><button class="btn sm ghost" data-th="retry" type="button">Rewrite</button>' +
             '<button class="btn sm ghost" data-th="edit" type="button">Edit</button><button class="btn sm ghost" data-th="delete" type="button">Delete</button></div>' : "") +
@@ -245,6 +384,7 @@
           '<button class="btn sm" data-th="follow" type="button">Ask a follow-up</button>' +
           '<span class="th-sep"></span>' +
           '<button class="btn sm ghost" data-th="pin" type="button">' + (r.pinned ? "Unpin" : "Pin") + "</button>" +
+          '<button class="btn sm ghost" data-th="add-img" type="button">Add image</button>' +
           '<button class="btn sm ghost" data-th="retry" type="button">Rewrite</button>' +
           '<button class="btn sm ghost" data-th="edit" type="button">Edit</button>' +
           '<a class="btn sm ghost" href="/interview-prep/thoughts/' + r.id + '/pdf" target="_blank" rel="noopener">PDF</a>' +
@@ -255,9 +395,18 @@
   }
 
   /* ── Actions ─────────────────────────────────────────────────────── */
-  async function ask(question, extra) {
+  async function ask(question, extra, files) {
     var body = Object.assign({ question: question }, extra || {});
-    var r = await api("/api/prep/thoughts", { method: "POST", body: JSON.stringify(body) });
+    var r;
+    if (files && files.length) {
+      r = await upload("/api/prep/thoughts", {
+        question: question, context: body.context || "", parent_id: body.parent_id || null,
+        tags: (body.tags || []).join(","),
+      }, files);
+      if (r && r.item && r.item.image_error) H().say(r.item.image_error, "error");
+    } else {
+      r = await api("/api/prep/thoughts", { method: "POST", body: JSON.stringify(body) });
+    }
     if (r && r.item) {
       ITEMS.unshift(r.item);
       open[r.item.root_id || r.item.id] = true;
@@ -272,8 +421,9 @@
     var btn = $("th-go"); btn.disabled = true;
     var tags = ($("th-tags").value || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean);
     open = {};
-    ask(q, { context: $("th-ctx").value.trim(), tags: tags }).then(function () {
+    ask(q, { context: $("th-ctx").value.trim(), tags: tags }, pendingFiles.slice()).then(function () {
       $("th-q").value = ""; $("th-ctx").value = ""; $("th-tags").value = "";
+      pendingFiles = []; paintPending();
       $("th-more").hidden = true;
       H().say("Saved — the answer is being written", "success");
       window.scrollTo({ top: $("th-list").getBoundingClientRect().top + window.scrollY - 120, behavior: "smooth" });
@@ -293,6 +443,7 @@
     if (!panel) return;
     if (e.target.id === "th-go") { submitMain(); return; }
     if (e.target.id === "th-more-btn") { $("th-more").hidden = !$("th-more").hidden; return; }
+    if (e.target.id === "th-attach") { $("th-file").click(); return; }
     var f = e.target.closest("[data-thf]");
     if (f) {
       view.filter = f.dataset.thf;
@@ -326,6 +477,35 @@
           await api("/api/prep/thoughts/" + id + "/retry", { method: "POST" });
           t.status = "pending"; t.error = null; render(); schedulePoll(); break;
         case "edit": editing = id; render(); break;
+        case "insert-flow": case "insert-seq": {
+          var ed = document.querySelector("[data-th-edit]");
+          var tpl = a.dataset.th === "insert-flow"
+            ? "\n```mermaid\nflowchart LR\n  A[Client] --> B[Service]\n  B --> C[(Database)]\n```\n"
+            : "\n```mermaid\nsequenceDiagram\n  participant U as User\n  participant S as Service\n  U->>S: request\n  S-->>U: response\n```\n";
+          var at = ed.selectionStart || ed.value.length;
+          ed.value = ed.value.slice(0, at) + tpl + ed.value.slice(at);
+          ed.focus(); break;
+        }
+        case "unattach": pendingFiles.splice(+a.dataset.i, 1); paintPending(); break;
+        case "add-img": {
+          var picker = document.createElement("input");
+          picker.type = "file"; picker.accept = "image/png,image/jpeg,image/webp,image/gif"; picker.multiple = true;
+          picker.onchange = function () {
+            var fs = goodFiles(picker.files);
+            if (!fs.length) return;
+            H().say("Uploading…", "info");
+            upload("/api/prep/thoughts/" + rootId + "/images", {}, fs).then(function (j) {
+              root.images = j.images; render(); H().say("Image added", "success");
+            }).catch(function (err) { H().say(err.message, "error"); });
+          };
+          picker.click(); break;
+        }
+        case "img-del": {
+          var owner = a.closest(".th-follow") ? find(a.closest(".th-follow").dataset.id) : root;
+          if (!confirm("Remove this image?")) break;
+          var j = await api("/api/prep/thoughts/" + owner.id + "/images/delete", { method: "POST", body: JSON.stringify({ key: a.dataset.key }) });
+          owner.images = j.images; render(); break;
+        }
         case "cancel-edit": editing = null; render(); break;
         case "save-edit": {
           var ta = document.querySelector("[data-th-edit]");
@@ -355,6 +535,24 @@
       }
     }
   });
+  document.addEventListener("change", function (e) {
+    if (e.target.id !== "th-file") return;
+    pendingFiles = pendingFiles.concat(goodFiles(e.target.files)).slice(0, MAX_IMAGES);
+    e.target.value = "";
+    paintPending();
+  });
+  // Paste a screenshot straight into the question box.
+  document.addEventListener("paste", function (e) {
+    if (e.target.id !== "th-q" && e.target.id !== "th-ctx") return;
+    var items = (e.clipboardData && e.clipboardData.files) || [];
+    var fs = goodFiles(items);
+    if (!fs.length) return;
+    e.preventDefault();
+    pendingFiles = pendingFiles.concat(fs).slice(0, MAX_IMAGES);
+    paintPending();
+    H().say("Image attached", "success");
+  });
+
   document.addEventListener("input", function (e) {
     if (e.target.id === "th-search") { view.q = e.target.value; render(); }
     if (e.target.id === "th-q" || (e.target.matches && e.target.matches("[data-th-follow],[data-th-edit]"))) {
@@ -362,5 +560,5 @@
     }
   });
 
-  window.PrepThoughts = { load: load, _md: md };
+  window.PrepThoughts = { load: load, _md: md, _draw: drawDiagrams };
 })();

@@ -40,3 +40,13 @@ create index if not exists prep_thoughts_root
 -- The app uses the service key (bypasses RLS); with RLS on and no
 -- policies, the public anon key can read nothing here.
 alter table prep_thoughts enable row level security;
+
+-- ── Diagrams & images (added later; safe to re-run) ─────────────────
+-- Images you attach to a question or follow-up: [{key, name, mime, size}].
+alter table prep_thoughts add column if not exists images jsonb not null default '[]'::jsonb;
+
+-- The image files themselves go in the EXISTING `user-photos` storage
+-- bucket (the one the Photos page uses - see MIGRATION_USER_PHOTOS.sql),
+-- under a "thoughts/<your user id>/" folder. No new bucket is needed.
+-- The app reads them with the service key and serves each image only to
+-- its owner. That bucket's limit is 5 MB per image.

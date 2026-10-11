@@ -382,3 +382,53 @@ def test_every_shipped_thought_follows_the_answer_format():
                   "## How to say it in an interview", "## Key takeaways", "## Check yourself"):
             assert h in s["answer"], (s["question"], h)
         assert s["answer"].count("Answer:") >= 3
+
+
+def test_asking_with_an_image_stores_it_and_hands_it_to_the_answer(auth_client, thoughts, monkeypatch):
+    import io
+    from services import thoughts_service as ts
+    stored = []
+    monkeypatch.setattr(ts, "store_image", lambda u, data, mime: stored.append((u, mime)) or f"thoughts/{u}/k1.png")
+    r = auth_client.post("/api/prep/thoughts", data={
+        "question": "Explain my whiteboard", "tags": "kafka",
+        "images": (io.BytesIO(b"\x89PNG fake"), "wb.png", "image/png")},
+        content_type="multipart/form-data")
+    assert r.status_code == 201, r.get_data(as_text=True)
+    item = r.get_json()["item"]
+    assert item["images"][0]["key"] == "thoughts/test-user-id/k1.png" and stored == [("test-user-id", "image/png")]
+    assert thoughts["started"][-1][5][0]["key"] == "thoughts/test-user-id/k1.png", "the answer must see the image"
+    bad = auth_client.post("/api/prep/thoughts", data={
+        "question": "x", "images": (io.BytesIO(b"%PDF"), "a.pdf", "application/pdf")},
+        content_type="multipart/form-data")
+    assert bad.status_code == 400
+
+
+def test_images_are_served_only_to_their_owner(auth_client, monkeypatch):
+    from services import thoughts_service as ts
+    monkeypatch.setattr(ts, "fetch_image", lambda key: (b"img", "image/png"))
+    ok = auth_client.get("/interview-prep/thoughts/img/thoughts/test-user-id/abc.png")
+    assert ok.status_code == 200 and ok.data == b"img" and "private" in ok.headers["Cache-Control"]
+    assert auth_client.get("/interview-prep/thoughts/img/thoughts/someone-else/abc.png").status_code == 404
+    # A Photos-page file in the same bucket is not reachable through this route.
+    assert auth_client.get("/interview-prep/thoughts/img/test-user-id/photo.png").status_code == 404
+
+
+def test_pdf_replaces_diagrams_with_a_note():
+    from routes.interview_prep import _md_plain
+    out = _md_plain("Before\n```mermaid\nflowchart LR\n  A --> B\n```\nAfter")
+    assert "flowchart" not in out and "[Diagram" in out and "Before" in out and "After" in out
+
+
+def test_shipped_answers_have_diagrams_and_refresh_only_when_untouched(thoughts):
+    from services import thoughts_service as ts
+    seeds = ts.seeds()
+    assert all("```mermaid" in s["answer"] for s in seeds)
+    rows = thoughts["rows"]
+    rows.append({"id": "old", "user_id": "u9", "question": seeds[0]["question"],
+                 "answer": "old text", "model": ts.SEED_MODEL})
+    rows.append({"id": "mine", "user_id": "u9", "question": seeds[1]["question"],
+                 "answer": "my edit", "model": "edited by you"})
+    ts._seeded.clear()
+    ts.ensure_seeds("u9")
+    assert next(r for r in rows if r["id"] == "old")["answer"] == seeds[0]["answer"]
+    assert next(r for r in rows if r["id"] == "mine")["answer"] == "my edit"
