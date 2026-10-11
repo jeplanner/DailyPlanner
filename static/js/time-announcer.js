@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v286";
+  var BUILD = "v287";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -1614,6 +1614,25 @@
       "line-height:1.45;font-weight:700}",
       ".ta-health.good{color:#047857}",
       ".ta-health.bad{color:#b91c1c}",
+      ".ta-diag{font-weight:600 !important}",
+      ".ta-dverdict{padding:8px 10px;border-radius:8px;margin-bottom:6px;font-weight:800}",
+      ".ta-dverdict.ok{background:#e6f4ef;color:#065f46}",
+      ".ta-dverdict.bad{background:#fdecec;color:#991b1b}",
+      ".ta-dnote{margin:0 0 6px;color:var(--color-text-secondary,#6b7280);font-weight:600}",
+      ".ta-dnote.bad{color:#b91c1c}",
+      ".ta-dline{margin:3px 0;word-break:break-word}",
+      ".ta-dline.ok{color:#047857}.ta-dline.bad{color:#b91c1c}",
+      ".ta-me{font-size:10px;font-weight:800;padding:1px 6px;border-radius:999px;background:#e0e7ff;color:#3730a3}",
+      ".ta-dold{margin-top:8px}.ta-dold summary{cursor:pointer;color:var(--color-text-secondary,#6b7280);font-weight:700}",
+      ".ta-dold .ta-dline.bad{color:var(--color-text-secondary,#6b7280)}",
+      ".ta-dsub{margin:4px 0;color:var(--color-text-secondary,#6b7280);font-weight:500}",
+      "html.dark .ta-dverdict.ok{background:#0f2a20;color:#6ee7b7}",
+      "html.dark .ta-dverdict.bad{background:#2a1414;color:#fca5a5}",
+      "html.dark .ta-dline.ok{color:#6ee7b7}html.dark .ta-dline.bad,html.dark .ta-dnote.bad{color:#fca5a5}",
+      "html.dark .ta-me{background:#1e1b4b;color:#c7d2fe}",
+      "@media (prefers-color-scheme:dark){:root:not(.light) .ta-dverdict.ok{background:#0f2a20;color:#6ee7b7}",
+      ":root:not(.light) .ta-dverdict.bad{background:#2a1414;color:#fca5a5}",
+      ":root:not(.light) .ta-dline.ok{color:#6ee7b7}:root:not(.light) .ta-dline.bad{color:#fca5a5}}",
       ".ta-idle{margin:8px 0 0 !important;font-size:11px !important;",
       "line-height:1.45;font-weight:700;padding:8px 10px;border-radius:8px;",
       "background:#fdf1e3;color:#8a4b09 !important;",
@@ -2296,6 +2315,71 @@
      Both looked like server problems and were this. A response with no
      body is not an error, so it resolves to an empty object rather than
      rejecting. */
+  /* The diagnosis, read the way a person needs it.
+
+     It used to print every registration ever made, worst first, and colour
+     the whole block red if any line failed. Old registrations that the
+     phone itself revoked (a reinstall, cleared site data, a new Chrome) are
+     ALREADY switched off and nothing is sent to them, yet eight of them
+     made a working setup look broken. Now: one verdict line, this device
+     marked, the live devices listed, and the retired ones folded into a
+     single line with a button to clear them out. */
+  function renderDiag(outEl, results) {
+    function tailOf(ep) { return (ep || "").slice(-12); }
+    // serviceWorker.ready never settles on a page with no active worker, so
+    // race it: without this the verdict would wait forever.
+    var mineP = (navigator.serviceWorker && navigator.serviceWorker.ready)
+      ? Promise.race([
+          navigator.serviceWorker.ready.then(function (reg) { return reg.pushManager.getSubscription(); })
+            .then(function (sub) { return sub ? tailOf(sub.endpoint) : ""; }).catch(function () { return null; }),
+          new Promise(function (res) { setTimeout(function () { res(null); }, 1500); }),
+        ])
+      : Promise.resolve(null);
+    mineP.then(function (mine) {
+      var live = results.filter(function (x) { return x.was_active; });
+      var old = results.filter(function (x) { return !x.was_active; });
+      var bad = live.filter(function (x) { return x.status !== 201; });
+      var me = results.filter(function (x) { return mine && x.tail === mine; })[0];
+      function line(x) {
+        var ok = x.status === 201;
+        return '<div class="ta-dline ' + (ok ? "ok" : "bad") + '">' +
+          (ok ? "\u2713 " : "\u26a0 ") + "<b>" + x.device + "</b> \u2026" + x.tail +
+          (me === x ? ' <span class="ta-me">this device</span>' : "") + " \u2014 " +
+          x.outcome + (x.status ? " [" + x.status + "]" : "") +
+          (x.detail ? "<br><small>" + x.detail + "</small>" : "") + "</div>";
+      }
+      var verdict;
+      if (!live.length) {
+        verdict = '<div class="ta-dverdict bad">No device is switched on for reminders. Turn reminders on from the device you want them on.</div>';
+      } else if (bad.length) {
+        verdict = '<div class="ta-dverdict bad">' + bad.length + " of " + live.length +
+          " active device" + (live.length === 1 ? "" : "s") + " could not be reached \u2014 see the lines marked \u26a0.</div>";
+      } else {
+        verdict = '<div class="ta-dverdict ok">\u2713 All ' + live.length + " active device" + (live.length === 1 ? " was" : "s were") +
+          ' reached. Each was just sent a "DailyPlanner check" notification.</div>';
+      }
+      var mine_note = "";
+      if (me && me.was_active && me.status === 201) {
+        mine_note = '<div class="ta-dnote">This device was reached. If the "DailyPlanner check" notification did not appear here, the phone is hiding it: check that notifications are allowed for your browser and for this site, that Do Not Disturb is off, and that battery optimisation is not restricting the browser.</div>';
+      } else if (me && !me.was_active) {
+        mine_note = '<div class="ta-dnote bad">This device\u2019s registration was revoked. Turn reminders off and on again here to register it afresh.</div>';
+      } else if (!me && mine !== null) {
+        // null = could not tell which device this is; say nothing rather
+        // than accuse it. "" = the browser holds no subscription at all.
+        mine_note = '<div class="ta-dnote">This device is not registered for reminders. Turn reminders on here if you want them on this device.</div>';
+      }
+      var oldHtml = old.length
+        ? '<details class="ta-dold"><summary>' + old.length + " old registration" + (old.length === 1 ? "" : "s") +
+          " \u2014 already switched off, nothing is sent to " + (old.length === 1 ? "it" : "them") +
+          '</summary><div class="ta-dsub">Left behind when the browser replaced its subscription (a reinstall, cleared site data, an update). Harmless.</div>' +
+          old.map(line).join("") + "</details>" +
+          '<div class="ta-row"><button type="button" data-ta-prune>Remove old registrations</button></div>'
+        : "";
+      outEl.className = "ta-health ta-diag";
+      outEl.innerHTML = verdict + mine_note + live.map(line).join("") + oldHtml;
+    });
+  }
+
   function apiPost(url, body) {
     return fetch(url, {
       method: "POST",
@@ -2933,7 +3017,7 @@
         '<p class="ta-health" data-ta-fire></p>' +
         '<div class="ta-row"><button type="button" data-ta-diag>' +
           'Why is a device not receiving?</button></div>' +
-        '<p class="ta-health" data-ta-diagout hidden></p>' +
+        '<div class="ta-health" data-ta-diagout hidden></div>' +
         '<p class="ta-build" data-ta-build></p>' +
         '<p class="ta-auto">Everything saves as you type.</p>' +
       '</details>';
@@ -3116,6 +3200,17 @@
         return;
       }
       if (ev.target.closest("[data-ta-add]")) { addItem(); return; }
+      if (ev.target.closest("[data-ta-prune]")) {
+        var pb = ev.target.closest("[data-ta-prune]");
+        pb.disabled = true;
+        apiPost("/api/push/prune", {}).then(function (r) {
+          var box = pop.querySelector(".ta-dold");
+          if (box) box.outerHTML = '<div class="ta-dsub">Removed ' + ((r && r.removed) || 0) + " old registration" +
+            (((r && r.removed) === 1) ? "" : "s") + ".</div>";
+          pb.parentNode.remove();
+        }).catch(function () { pb.disabled = false; pb.textContent = "Could not remove \u2014 try again"; });
+        return;
+      }
       if (ev.target.closest("[data-ta-diag]")) {
         var outEl = pop.querySelector("[data-ta-diagout]");
         outEl.hidden = false;
@@ -3132,21 +3227,7 @@
             outEl.textContent = r.note || "No devices are registered.";
             return;
           }
-          // One line per registration, worst first — the reason a phone is
-          // silent is the line that failed, and it must not be buried under
-          // the ones that worked.
-          var rows = r.results.slice().sort(function (a, b) {
-            return (a.status === 201 ? 1 : 0) - (b.status === 201 ? 1 : 0);
-          });
-          var ok = rows.filter(function (x) { return x.status === 201; }).length;
-          outEl.className = "ta-health " + (ok === rows.length ? "good" : "bad");
-          outEl.innerHTML = rows.map(function (x) {
-            return "<b>" + x.device + "</b> \u2026" + x.tail +
-                   (x.was_active ? "" : " (retired)") + " \u2014 " +
-                   (x.status === 201 ? "\u2713 " : "\u26a0 ") +
-                   x.outcome + (x.status ? " [" + x.status + "]" : "") +
-                   (x.detail ? "<br><small>" + x.detail + "</small>" : "");
-          }).join("<br>");
+          renderDiag(outEl, r.results);
         }).catch(function () {
           outEl.className = "ta-health bad";
           outEl.textContent = "Could not reach the server.";

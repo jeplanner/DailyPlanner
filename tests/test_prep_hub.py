@@ -251,3 +251,15 @@ def test_deep_dives_can_be_scheduled():
     import sd_deep_bank as b
     assert "?" not in ip.PREP_BANKS["sddeep"]["page"]
     assert ip._prep_lookup("sddeep", "dd0", b.DESIGNS[0]["title"])[0] == b.DESIGNS[0]["title"]
+
+
+def test_push_prune_removes_only_retired_rows(auth_client, monkeypatch):
+    import routes.push as rp
+    calls = []
+    monkeypatch.setattr(rp, "get", lambda t, p=None, **k: [{"endpoint": "a"}, {"endpoint": "b"}])
+    monkeypatch.setattr(rp, "delete", lambda t, p: calls.append((t, p)))
+    j = auth_client.post("/api/push/prune").get_json()
+    assert j["removed"] == 2
+    (table, params), = calls
+    assert table == "push_subscriptions"
+    assert params == {"user_id": "eq.test-user-id", "is_active": "eq.false"}
