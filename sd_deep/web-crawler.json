@@ -1,0 +1,1148 @@
+{
+ "slug": "web-crawler",
+ "title": "Design a Web Crawler (search-engine scale)",
+ "prompt": "Design a web crawler.",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "A crawler looks like a simple BFS over links, but at billions of pages it becomes a scheduling problem: keep thousands of fetchers busy while never hammering any single host, never fetching the same content twice, and always spending the crawl budget on the pages that matter most. The core tension is throughput versus politeness and freshness versus coverage, all under adversarial input (spider traps, duplicate mirrors, spam).",
+ "framework": {
+  "clarify": [
+   "Purpose: is this for a search index, an archive, an ML training corpus, or price monitoring? I will assume a general search index.",
+   "Scale: assume 1 billion pages per month to start, growing to 5 billion, with re-crawl of popular pages.",
+   "Content types: HTML only, or also PDFs, images, JavaScript-rendered pages? Assume HTML first, PDFs as a stretch, JS rendering for a small allowlist.",
+   "Freshness: how stale may a page be? Assume news/home pages within hours, long tail within weeks.",
+   "Politeness: we must obey robots.txt and keep at most one open connection per host with a delay between requests.",
+   "Storage: do we keep raw HTML for re-processing? Assume yes, compressed, retained for 5 weeks of history.",
+   "Seed set: where do we start? Assume curated seed URLs plus sitemaps plus links found in previous crawls.",
+   "Deduplication: do we need near-duplicate detection or only exact? Assume both: exact by checksum, near by SimHash."
+  ],
+  "design": [
+   "Baseline: a single-process BFS loop - pop URL from queue, resolve DNS, fetch, parse, extract links, push unseen links. Then show why it breaks at scale.",
+   "URL Frontier split into front queues (priority) and back queues (one host per queue) with a min-heap of next-allowed-fetch time per host - the Mercator design.",
+   "Fetcher workers with async I/O and a local DNS cache; robots.txt cache per host; content stored in a blob store keyed by URL hash and fetch time.",
+   "Parser and link extractor normalise URLs, run them through a URL-seen Bloom filter and a content-seen fingerprint check before enqueueing.",
+   "Partition the frontier and URL-seen set by hash(host) across crawler nodes so politeness and dedup stay local to one node; hand off foreign URLs in batches.",
+   "Critical path: scheduler picks host whose next-fetch time is due -> fetcher downloads -> checksum -> store -> parse -> normalise -> dedupe -> priority score -> frontier."
+  ],
+  "defend": [
+   "Bottleneck is not bandwidth but per-host politeness and DNS: solve with many hosts in flight (tens of thousands of back queues per node) and a caching resolver.",
+   "Scaling writes into the frontier: the frontier lives mostly on disk with in-memory head/tail buffers, so it can hold billions of URLs per cluster.",
+   "Failure: fetchers are stateless; frontier state is checkpointed; a dead node's host partitions are reassigned via consistent hashing and re-read from its checkpoint.",
+   "Traps and abuse: cap URL length and depth per host, cap pages per host per crawl, detect repeating path segments, and SimHash near-duplicate pages.",
+   "Freshness: re-crawl scheduler estimates change rate per URL (Poisson model) and spends budget on pages that change often and matter (PageRank-like score).",
+   "Measure: pages/sec, bytes/sec, frontier size, per-host error rate, robots violations (must be zero), duplicate rate, freshness lag by tier."
+  ],
+  "script": "I will clarify purpose first - I am assuming a search-engine crawler doing about a billion pages a month, HTML first, obeying robots.txt. The naive design is a BFS loop with a queue and a visited set, and it fails for three reasons: it hammers individual hosts, the visited set does not fit in memory, and it spends effort on junk. So the heart of my design is the URL frontier: front queues ordered by priority and back queues that each hold one host, with a heap of next-allowed fetch times so we are polite but keep thousands of hosts in flight. Around that I put async fetchers with a DNS cache, a blob store for raw pages, a parser that normalises links, a Bloom filter for URLs we have seen, and a fingerprint check for content we have seen. I partition everything by host hash so politeness and dedup are node-local. Then I will defend it: traps, near-duplicates, re-crawl freshness, node failure, and the metrics I would watch, with robots violations as a hard zero."
+ },
+ "brd": {
+  "problem": "The search product can only rank what it has seen. Today coverage of the web is incomplete and stale: new pages take weeks to appear and important pages change faster than we re-fetch them. We need a crawler that discovers and refreshes billions of pages efficiently while being a good citizen to site owners.",
+  "goals": [
+   "Crawl 1 billion pages per month initially, scaling linearly to 5 billion by adding nodes.",
+   "Keep top-tier pages (news, popular home pages) fresh within 1-4 hours.",
+   "Zero robots.txt violations and bounded load on every host.",
+   "Store raw content so indexing and ML pipelines can reprocess without re-fetching.",
+   "Keep duplicate content below 5 percent of stored pages."
+  ],
+  "non_goals": [
+   "Ranking or serving search results - the crawler only feeds the indexer.",
+   "Crawling content behind logins or paywalls.",
+   "Full JavaScript rendering for every page (only an allowlisted set).",
+   "Real-time (sub-minute) freshness for the whole web."
+  ],
+  "stakeholders": [
+   {
+    "who": "Search indexing team",
+    "needs": "A steady, deduplicated stream of fresh documents with metadata."
+   },
+   {
+    "who": "Site owners / webmasters",
+    "needs": "Their robots.txt and crawl-delay respected, no outages caused by us, a contact URL in the User-Agent."
+   },
+   {
+    "who": "Infrastructure / finance",
+    "needs": "Predictable bandwidth and storage cost per million pages."
+   },
+   {
+    "who": "Trust and safety / legal",
+    "needs": "Ability to purge content on legal request and avoid crawling prohibited content."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Pages fetched per day",
+    "target": ">= 33 million at launch, 165 million at target scale"
+   },
+   {
+    "metric": "Freshness lag for tier-1 URLs",
+    "target": "p90 under 4 hours"
+   },
+   {
+    "metric": "Robots.txt violations",
+    "target": "0"
+   },
+   {
+    "metric": "Duplicate pages stored",
+    "target": "< 5 percent"
+   },
+   {
+    "metric": "Cost per million pages",
+    "target": "Tracked and trending down quarter on quarter"
+   }
+  ],
+  "constraints": [
+   "At most one concurrent connection per host and a default 1-second gap between requests unless crawl-delay says more.",
+   "Egress/ingress bandwidth is a paid resource - roughly 500 KB average page size budget.",
+   "Must handle hostile input: infinite calendars, session-ID URLs, malformed HTML, slow-loris servers.",
+   "Must honour legal takedown and data-protection deletion requests."
+  ],
+  "risks": [
+   {
+    "risk": "Crawler overloads a small site and causes an outage, leading to complaints or blocking.",
+    "mitigation": "Per-host politeness enforced in the frontier, adaptive backoff on 5xx/429 and slow responses."
+   },
+   {
+    "risk": "Spider traps burn the crawl budget.",
+    "mitigation": "Per-host page caps, URL length and depth limits, repeated-segment detection."
+   },
+   {
+    "risk": "Storage cost grows unbounded.",
+    "mitigation": "Compression, near-duplicate suppression, retention windows."
+   },
+   {
+    "risk": "Crawler IPs get blocklisted.",
+    "mitigation": "Identifiable User-Agent, published IP ranges, reverse DNS, respectful rate."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Indexer pipeline",
+    "needs": "Consumes newly fetched documents with URL, fetch time, HTTP status, content hash and outlinks."
+   },
+   {
+    "name": "Crawl operator (SRE)",
+    "needs": "Dashboards, ability to pause a host or domain, change priorities and inject seeds."
+   },
+   {
+    "name": "Webmaster",
+    "needs": "Crawl rate they can control via robots.txt, a way to report problems."
+   }
+  ],
+  "user_stories": [
+   "As the indexer, I want each fetched page delivered once with a content hash so that I do not index duplicates.",
+   "As an operator, I want to add seed URLs or sitemaps so that new sites get discovered quickly.",
+   "As an operator, I want to block or throttle a domain instantly so that I can respond to complaints.",
+   "As a webmaster, I want my robots.txt rules honoured within a day of changing them so that private paths stay uncrawled.",
+   "As the ranking team, I want important pages re-crawled more often so that results stay fresh.",
+   "As an ML team, I want raw HTML retained so that I can reprocess without re-fetching.",
+   "As legal, I want to purge every stored copy of a URL so that takedown requests are fulfilled."
+  ],
+  "functional": [
+   "Accept seed URLs and sitemaps; discover new URLs from fetched pages.",
+   "Fetch robots.txt per host, cache it for 24 hours, and filter URLs against it before fetching.",
+   "Enforce per-host politeness: one connection, minimum delay, honour crawl-delay and back off on 429/503.",
+   "Normalise URLs (lowercase host, drop fragments, sort known query params, strip session IDs).",
+   "Detect already-seen URLs and already-seen content (exact and near-duplicate).",
+   "Prioritise URLs by importance and change rate; schedule re-crawls.",
+   "Store raw responses compressed with metadata; emit a document event for indexers.",
+   "Operator controls: pause host, set host rate, inject seeds, purge URL."
+  ],
+  "non_functional": [
+   {
+    "name": "Throughput",
+    "target": "~400 pages/sec average at launch, 2,000 pages/sec at target, peak 2x"
+   },
+   {
+    "name": "Politeness",
+    "target": "Never more than 1 in-flight request per host; default >= 1s between requests"
+   },
+   {
+    "name": "Scalability",
+    "target": "Linear scale by adding crawler nodes; no single global lock"
+   },
+   {
+    "name": "Robustness",
+    "target": "Survives node loss with < 10 minutes of lost work; tolerant of malformed HTML and slow servers"
+   },
+   {
+    "name": "Durability",
+    "target": "Raw content stored with 3x replication or erasure coding in blob storage"
+   },
+   {
+    "name": "Extensibility",
+    "target": "New content-type processors (PDF, images) plug in without frontier changes"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "1 billion pages per month at launch, 5 billion at target.",
+    "Average page size 500 KB uncompressed HTML plus headers; ~100 KB after compression.",
+    "Average page has ~50 outlinks; ~20 percent of extracted URLs are new.",
+    "Average URL length 100 bytes.",
+    "Retention: keep 5 crawl cycles (about 5 months)."
+   ],
+   "math": [
+    "QPS: 1e9 / (30 * 86,400) = ~385 pages/sec average; peak ~800/sec. At 5e9/month, ~1,930/sec average.",
+    "Bandwidth: 385 pages/sec * 500 KB = ~190 MB/sec = ~1.5 Gbps inbound at launch; ~7.7 Gbps at target.",
+    "Storage per month: 1e9 * 100 KB compressed = 100 TB; 5 months retention = 500 TB (x replication factor).",
+    "URL-seen set: 10 billion known URLs * 8-byte fingerprint = 80 GB; a Bloom filter at 1 percent FPR needs ~9.6 bits per item = ~12 GB, shardable.",
+    "Links extracted: 385 * 50 = ~19,000 URLs/sec into dedup; ~3,800 new URLs/sec into the frontier.",
+    "Concurrency: if average fetch takes 1.5s including DNS and transfer, need ~600 concurrent fetches at launch - cheap with async I/O, 20 nodes x 30-100 sockets each."
+   ],
+   "summary": "About 400 pages/sec and 1.5 Gbps at launch, 100 TB compressed per month, a URL-seen set of tens of GB that must be sharded and Bloom-filtered, and a frontier that holds billions of URLs on disk. The limiting factor is politeness concurrency across hosts, not raw bandwidth."
+  },
+  "out_of_scope": [
+   "Indexing, ranking and query serving.",
+   "Login-gated or form-submission crawling (deep web).",
+   "Image and video content analysis.",
+   "Universal JavaScript rendering."
+  ]
+ },
+ "hld": {
+  "overview": "A cluster of crawler nodes, each owning a partition of hosts by consistent hashing on the host name. Each node runs a URL frontier (priority front queues feeding per-host back queues), async fetchers, a DNS cache, a robots cache, and parsers. Fetched content goes to a blob store and a document event goes to Kafka for indexers. A URL-seen service (Bloom filter plus exact fingerprint store) and a content-seen service (checksum and SimHash) prevent duplicate work. A re-crawl scheduler feeds known URLs back into the frontier based on importance and estimated change rate.",
+  "diagram": "  Seeds / Sitemaps / Re-crawl scheduler\n              |\n              v\n +---------------------------- Crawler node (owns hosts by hash) -------------------------+\n |  URL Frontier                                                                          |\n |   [Prioritizer] -> front queues F1..Fk (by priority)                                   |\n |        |  biased selector                                                              |\n |        v                                                                               |\n |   back queues B1..Bn (one host each) + min-heap(next_fetch_time, queue)                |\n |        |                                                                               |\n |        v                                                                               |\n |   Fetchers (async) --> DNS cache --> Robots cache                                      |\n |        |                                                                               |\n |        v                                                                               |\n |   Content-seen check (checksum, SimHash) --> Parser / link extractor --> URL filter    |\n |        |                                              |                                |\n +--------|----------------------------------------------|--------------------------------+\n          v                                              v\n   Blob store (raw pages)                    URL-seen (Bloom + KV) --> route by hash(host)\n          |                                              |        to owning node\n          v                                              v\n   Kafka: documents topic -> Indexers        URL metadata DB (last fetch, hash, score)\n",
+  "components": [
+   {
+    "name": "URL Frontier",
+    "responsibility": "Holds URLs to fetch; front queues encode priority, back queues enforce one-host-per-queue politeness; a heap selects the host whose next allowed fetch time is earliest."
+   },
+   {
+    "name": "Fetcher pool",
+    "responsibility": "Async HTTP clients with timeouts (connect 5s, total 30s), max page size 10 MB, redirect limit 5; records status, headers and body."
+   },
+   {
+    "name": "DNS resolver cache",
+    "responsibility": "Local caching resolver honouring TTL with a floor; DNS is a classic crawler bottleneck at 10-100ms per lookup."
+   },
+   {
+    "name": "Robots.txt cache",
+    "responsibility": "Fetches and parses robots.txt per host, caches 24h, exposes allow/deny and crawl-delay."
+   },
+   {
+    "name": "Content-seen service",
+    "responsibility": "Exact duplicate check by SHA-256/64-bit fingerprint, near-duplicate by 64-bit SimHash with Hamming distance <= 3."
+   },
+   {
+    "name": "Parser and link extractor",
+    "responsibility": "Parses HTML, extracts links, canonical tag, meta robots, and text; normalises URLs."
+   },
+   {
+    "name": "URL filter and URL-seen service",
+    "responsibility": "Drops disallowed schemes, blocked domains, traps; Bloom filter plus exact KV of URL fingerprints to skip known URLs."
+   },
+   {
+    "name": "Blob store",
+    "responsibility": "Stores compressed raw pages keyed by (url_hash, fetch_ts), WARC-like segments of ~1 GB."
+   },
+   {
+    "name": "URL metadata DB",
+    "responsibility": "Per-URL state: last fetch time, status, content hash, change history, priority score; drives re-crawl."
+   },
+   {
+    "name": "Re-crawl scheduler",
+    "responsibility": "Estimates per-URL change rate and importance and re-injects URLs into the frontier on schedule."
+   },
+   {
+    "name": "Coordinator",
+    "responsibility": "Membership and host-partition assignment (ZooKeeper/etcd), operator controls, config push."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Fetch and expand (critical path)",
+    "steps": [
+     "Scheduler thread pops the min-heap: host H whose next_fetch_time <= now.",
+     "Take head URL from back queue B(H); check robots cache (fetch robots.txt first if missing or expired).",
+     "Resolve H via DNS cache; fetch URL with timeouts; record latency.",
+     "Set next_fetch_time(H) = now + max(crawl_delay, k * last_response_time) and push H back into heap; if B(H) is empty, refill it from front queues.",
+     "Compute checksum and SimHash; if duplicate, record alias and stop.",
+     "Write compressed body to blob store; update URL metadata; publish document event to Kafka.",
+     "Parse links, normalise, filter, check URL-seen; route new URLs to the owning node by hash(host); owner adds them to front queues with a priority score."
+    ]
+   },
+   {
+    "name": "Re-crawl for freshness",
+    "steps": [
+     "Scheduler scans URL metadata by due_time partition.",
+     "For each due URL compute priority = importance * estimated change probability since last fetch.",
+     "Inject into frontier with conditional headers (If-Modified-Since, If-None-Match).",
+     "On 304 Not Modified, only update last_checked and lengthen the interval; on change, shorten it."
+    ]
+   },
+   {
+    "name": "Node failure",
+    "steps": [
+     "Coordinator notices missed heartbeats (session timeout ~10s).",
+     "Host partitions owned by the dead node are reassigned via consistent hashing to neighbours.",
+     "New owners load the dead node's last frontier checkpoint for those partitions from shared storage and resume.",
+     "Some URLs are re-fetched (at-least-once); content-seen check makes that harmless."
+    ]
+   }
+  ],
+  "data_flow": "URLs flow seeds -> frontier -> fetchers; bytes flow fetchers -> blob store and Kafka -> indexers; extracted links flow parser -> URL-seen -> owning node's frontier; metadata flows into the URL DB, which the re-crawl scheduler reads to push URLs back into the frontier. All routing keys on hash(host)."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/seeds",
+    "request": "{urls: [str], priority: int, source: 'manual'|'sitemap'}",
+    "response": "{accepted: int, rejected: [{url, reason}]}",
+    "notes": "Operator API; URLs are normalised and routed to owning node."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/hosts/{host}/policy",
+    "request": "{paused: bool, max_rps: float, priority_boost: int}",
+    "response": "{host, policy, effective_at}",
+    "notes": "Throttle or pause a host instantly; pushed to owner node via coordinator watch."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/urls/{url_hash}",
+    "request": "{reason: 'legal'|'gdpr'}",
+    "response": "{purged_copies: int}",
+    "notes": "Purges blob copies and metadata; adds URL to permanent block list."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/urls/{url_hash}",
+    "request": "-",
+    "response": "{url, last_fetch, status, content_hash, next_due, priority}",
+    "notes": "Debug view for operators."
+   },
+   {
+    "method": "RPC",
+    "path": "Frontier.EnqueueBatch",
+    "request": "{urls: [{url, priority, discovered_from}]}",
+    "response": "{enqueued, already_seen}",
+    "notes": "Node-to-node handoff of foreign URLs, batched every 100ms or 1,000 URLs."
+   },
+   {
+    "method": "EVENT",
+    "path": "kafka: crawl.documents",
+    "request": "-",
+    "response": "{url, fetch_ts, status, content_hash, blob_ref, outlinks_count, simhash}",
+    "notes": "Consumed by indexers; keyed by url_hash."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "UrlMeta",
+    "store": "Bigtable/HBase (wide-column)",
+    "fields": [
+     "url_hash (64-bit)",
+     "url",
+     "host",
+     "last_fetch_ts",
+     "last_status",
+     "content_hash",
+     "simhash",
+     "change_count",
+     "fetch_count",
+     "importance",
+     "next_due_ts"
+    ],
+    "keys": "Row key = reversed host + path (com.example.www/path) so a host's URLs are contiguous for scans",
+    "notes": "Reversed-host keys are the Bigtable webtable trick; enables per-site scans and compaction locality."
+   },
+   {
+    "entity": "Frontier queue segment",
+    "store": "Local disk (append-only files) + in-memory head/tail buffers",
+    "fields": [
+     "url",
+     "priority",
+     "enqueue_ts",
+     "depth"
+    ],
+    "keys": "One file set per back queue / front queue",
+    "notes": "Mercator keeps only queue heads and tails in memory; the middle lives on disk."
+   },
+   {
+    "entity": "RobotsEntry",
+    "store": "Redis / in-process LRU",
+    "fields": [
+     "host",
+     "rules (compiled)",
+     "crawl_delay",
+     "fetched_at",
+     "status"
+    ],
+    "keys": "host",
+    "notes": "TTL 24h; on 5xx fetching robots, treat as full disallow for a while; on 404, allow all."
+   },
+   {
+    "entity": "Raw page",
+    "store": "Blob store (S3/GCS/HDFS) in WARC segments",
+    "fields": [
+     "url",
+     "fetch_ts",
+     "headers",
+     "compressed body"
+    ],
+    "keys": "segment_id/offset; index from (url_hash, fetch_ts) to segment offset",
+    "notes": "Large sequential segments avoid the small-files problem."
+   },
+   {
+    "entity": "ContentFingerprint",
+    "store": "Sharded KV (RocksDB per node)",
+    "fields": [
+     "fingerprint",
+     "first_url_hash",
+     "seen_count"
+    ],
+    "keys": "fingerprint",
+    "notes": "SimHash near-dup lookup uses 4 permuted tables of 16-bit blocks."
+   }
+  ],
+  "classes": [
+   {
+    "name": "Frontier",
+    "responsibility": "Front/back queue management and politeness heap.",
+    "methods": [
+     "add(url, priority)",
+     "next() -> (host, url)",
+     "complete(host, response_time, status)",
+     "checkpoint()"
+    ]
+   },
+   {
+    "name": "Fetcher",
+    "responsibility": "Async fetch with timeouts, redirect handling, size caps.",
+    "methods": [
+     "fetch(url) -> Response",
+     "conditional_fetch(url, etag, last_modified)"
+    ]
+   },
+   {
+    "name": "RobotsCache",
+    "responsibility": "Get and evaluate robots.txt rules.",
+    "methods": [
+     "allowed(url) -> bool",
+     "crawl_delay(host) -> seconds"
+    ]
+   },
+   {
+    "name": "UrlNormalizer",
+    "responsibility": "Canonicalise URLs.",
+    "methods": [
+     "normalize(url, base) -> str",
+     "is_trap(url) -> bool"
+    ]
+   },
+   {
+    "name": "DedupService",
+    "responsibility": "URL-seen and content-seen checks.",
+    "methods": [
+     "seen_url(fp) -> bool",
+     "mark_url(fp)",
+     "near_duplicate(simhash) -> url_hash|None"
+    ]
+   },
+   {
+    "name": "RecrawlScheduler",
+    "responsibility": "Choose what to re-fetch.",
+    "methods": [
+     "due(now) -> iterator",
+     "update_rate(url_hash, changed: bool)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Mercator politeness scheduling",
+    "explain": "Front queues hold URLs by priority. Each back queue holds URLs of exactly one host. A min-heap keyed by the earliest time each back queue may be fetched again lets a fetcher thread block until the soonest host is ready. When a back queue empties, the selector pulls from front queues (biased toward high priority) until it finds a URL whose host has no back queue, and assigns it. Use about 3x as many back queues as fetcher threads.",
+    "pseudocode": "def next_url():\n    t, q = heap.pop_min()                # earliest allowed fetch\n    sleep_until(t)\n    url = back[q].pop()\n    return q, url\n\ndef complete(q, elapsed, status):\n    delay = max(robots.crawl_delay(host_of[q]), 10 * elapsed, 1.0)\n    if status in (429, 503): delay = backoff(host_of[q])   # exp, cap 1h\n    if back[q].empty(): refill(q)\n    heap.push(now() + delay, q)\n\ndef refill(q):\n    while True:\n        url = pick_front_queue_biased().pop()\n        h = host(url)\n        if h in host_to_q: back[host_to_q[h]].push(url)\n        else: host_to_q[h] = q; host_of[q] = h; back[q].push(url); return\n"
+   },
+   {
+    "name": "SimHash near-duplicate detection",
+    "explain": "Turn a document into weighted features (shingles), hash each to 64 bits, and for each bit position add the weight if the bit is 1 or subtract if 0. The sign of each sum gives the final 64-bit fingerprint. Similar documents differ in few bits. Google's 2007 web-scale study used k=3 differing bits on 64-bit fingerprints. To find neighbours fast, split the fingerprint into blocks and keep permuted tables so any match within 3 bits shares at least one exact block.",
+    "pseudocode": "def simhash(text):\n    v = [0] * 64\n    for shingle, w in features(text):     # e.g. 3-word shingles, tf weights\n        h = hash64(shingle)\n        for i in range(64):\n            v[i] += w if (h >> i) & 1 else -w\n    return sum(1 << i for i in range(64) if v[i] > 0)\n\ndef is_near_dup(fp):\n    for table in permuted_tables:          # 4 tables, 16-bit prefix each\n        for cand in table.lookup(prefix(table.permute(fp))):\n            if popcount(cand ^ fp) <= 3: return True\n    return False\n"
+   },
+   {
+    "name": "Re-crawl priority",
+    "explain": "Model page changes as a Poisson process with rate lambda estimated from history (changes observed / time). The probability a page has changed since last fetch is 1 - exp(-lambda * t). Multiply by importance (link-based score, traffic) to get the expected value of re-fetching now; schedule the highest values within the budget.",
+    "pseudocode": "def recrawl_score(meta, now):\n    lam = (meta.change_count + 1) / (meta.observed_seconds + PRIOR)\n    p_changed = 1 - exp(-lam * (now - meta.last_fetch_ts))\n    return meta.importance * p_changed\n"
+   }
+  ],
+  "sequence": "Scheduler   Frontier    Robots    DNS     Fetcher    Origin     Dedup    Blob   Kafka\n   |  next()   |          |        |         |          |          |        |       |\n   |---------->|          |        |         |          |          |        |       |\n   | host,url  |          |        |         |          |          |        |       |\n   |<----------|          |        |         |          |          |        |       |\n   | allowed?             |        |         |          |          |        |       |\n   |--------------------->|        |         |          |          |        |       |\n   | yes, delay=2s        |        |         |          |          |        |       |\n   |<---------------------|        |         |          |          |        |       |\n   | resolve(host)                 |         |          |          |        |       |\n   |------------------------------>|         |          |          |        |       |\n   |<------------------------------| ip      |          |          |        |       |\n   | fetch(url, ip)                          |          |          |        |       |\n   |---------------------------------------->| GET      |          |        |       |\n   |                                         |--------->|          |        |       |\n   |                                         |<---------| 200 body |        |       |\n   |                                         | checksum, simhash   |        |       |\n   |                                         |-------------------->|        |       |\n   |                                         |<--------------------| new    |       |\n   |                                         | put(segment)                 |       |\n   |                                         |----------------------------->|       |\n   |                                         | publish doc event                    |\n   |                                         |------------------------------------->|\n   | complete(host, elapsed) -> heap.push(now+delay)                                |\n   |---------->|                                                                    |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Spider trap: infinite calendar /cal?month=2026-11, 2026-12, ... or recursive /a/b/a/b/a/b paths.",
+   "handling": "Cap depth per host, cap pages per host per crawl cycle (e.g. 100k unless host is high-importance), max URL length 2,048, detect repeating path segments, and lower priority of URLs with many query params."
+  },
+  {
+   "case": "Session IDs in URLs make every link look new (?sid=abc123).",
+   "handling": "Normaliser strips known session params (sid, jsessionid, phpsessid, utm_*); learn per-host params whose removal does not change the content hash."
+  },
+  {
+   "case": "Same content on many URLs (www vs non-www, http vs https, mirrors, print versions).",
+   "handling": "Respect rel=canonical, exact checksum dedup, SimHash near-dup with Hamming distance <= 3; store alias mapping not a second copy."
+  },
+  {
+   "case": "Slow-loris server dribbles bytes forever and ties up a socket.",
+   "handling": "Total request deadline (30s), minimum transfer rate, max body size 10 MB; mark host slow and lengthen its delay."
+  },
+  {
+   "case": "robots.txt returns 5xx or times out.",
+   "handling": "Treat as temporary full disallow (Google's convention) and retry later; 4xx means no restrictions. Never crawl the host on a robots fetch error."
+  },
+  {
+   "case": "Host behind a CDN shares an IP with thousands of sites, or one site uses thousands of subdomains on one IP.",
+   "handling": "Politeness keyed by host normally, but also apply an IP-level cap so wildcard subdomains (a.spam.com, b.spam.com) cannot multiply load or budget."
+  },
+  {
+   "case": "Server returns 429 or 503 with Retry-After.",
+   "handling": "Honour Retry-After, apply exponential backoff with jitter on the host's next_fetch_time, cap at 1 hour, alert if a top-tier host stays degraded."
+  },
+  {
+   "case": "Redirect chains and loops (A -> B -> A).",
+   "handling": "Limit to 5 redirects, record final URL as canonical, and enqueue the redirect target through normal dedup so the loop is caught by URL-seen."
+  },
+  {
+   "case": "Bloom filter false positive skips a genuinely new URL.",
+   "handling": "Accept a 1 percent miss at worst; important URLs also come from sitemaps and re-discovery; size filter to keep FPR low and rebuild periodically."
+  },
+  {
+   "case": "Hot host: a huge site (wikipedia.org) has millions of URLs queued but can only be fetched at its polite rate.",
+   "handling": "Per-host queue caps and prioritise within the host; negotiate higher rate only via crawl-delay/allowlist; the frontier keeps other hosts busy meanwhile."
+  },
+  {
+   "case": "Node crash mid-crawl loses in-memory frontier heads.",
+   "handling": "Checkpoint frontier every few minutes to shared storage, reassign partitions, accept some re-fetches (at-least-once) neutralised by content dedup."
+  },
+  {
+   "case": "Content changes between crawls only in ads/timestamps.",
+   "handling": "Strip boilerplate before fingerprinting; SimHash tolerates small diffs so change-rate estimates are not inflated."
+  },
+  {
+   "case": "Malicious pages: decompression bombs, malformed HTML, huge headers.",
+   "handling": "Streaming decompression with output cap, robust parser with timeouts in a sandboxed worker process, header size limits."
+  },
+  {
+   "case": "DNS outage or slow resolver.",
+   "handling": "Local caching resolver with TTL floor (e.g. 5 minutes) and serve-stale on failure; per-resolver timeouts; DNS failures go to a retry queue, not dropped."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Go or Rust async fetchers (or Java Netty)",
+   "layer": "Fetch",
+   "overview": "Languages/runtimes with efficient non-blocking network I/O able to hold thousands of concurrent sockets per process.",
+   "why": "The work is I/O-bound; event-loop fetchers handle hundreds of concurrent hosts per core.",
+   "alternatives": "Python asyncio/Scrapy - fastest to build, lower per-node throughput; Apache Nutch (Hadoop batch) - mature but batch-oriented and slow to react."
+  },
+  {
+   "name": "Apache Kafka",
+   "layer": "Messaging",
+   "overview": "Partitioned, replicated append-only log with consumer groups.",
+   "why": "Decouples fetchers from indexers and lets several consumers (index, ML, analytics) read the same document stream; also carries cross-node URL handoffs.",
+   "alternatives": "Pulsar - tiered storage built in; SQS - simpler but no replay or ordering."
+  },
+  {
+   "name": "Bigtable / HBase",
+   "layer": "URL metadata",
+   "overview": "Wide-column store sorted by row key with automatic range splitting.",
+   "why": "Billions of rows, reversed-host keys keep a site's URLs together for scans; the original webtable use case.",
+   "alternatives": "Cassandra - hash partitioned so no per-site range scans; Postgres - does not scale to tens of billions of rows without heavy sharding."
+  },
+  {
+   "name": "S3 / GCS / HDFS",
+   "layer": "Raw content",
+   "overview": "Durable object or distributed file storage.",
+   "why": "Cheap, durable store for hundreds of TB of WARC segments; reprocessing reads sequentially.",
+   "alternatives": "Storing pages in the KV store - expensive and hurts compaction; local disks only - not durable."
+  },
+  {
+   "name": "RocksDB (embedded)",
+   "layer": "Per-node dedup and frontier spill",
+   "overview": "Embedded LSM-tree key-value store.",
+   "why": "Fast local lookups for URL fingerprints and content hashes owned by this node, no network hop.",
+   "alternatives": "Redis cluster - fast but RAM cost for billions of keys; a remote service - adds a hop per URL."
+  },
+  {
+   "name": "Unbound / dnsmasq caching resolver",
+   "layer": "DNS",
+   "overview": "Local recursive caching DNS resolver.",
+   "why": "DNS lookups are a known crawler bottleneck; local cache cuts most lookups to microseconds.",
+   "alternatives": "Public resolvers - rate-limit and add latency; OS resolver - often synchronous and blocking."
+  },
+  {
+   "name": "ZooKeeper / etcd",
+   "layer": "Coordination",
+   "overview": "Strongly consistent store for membership, leases and config.",
+   "why": "Assign host partitions to nodes, detect failures, push operator policies.",
+   "alternatives": "Static assignment - no automatic failover; gossip (Serf) - eventually consistent membership."
+  },
+  {
+   "name": "Headless Chromium pool",
+   "layer": "Rendering (allowlist)",
+   "overview": "Browser engine driven programmatically to execute JavaScript.",
+   "why": "Needed for JS-heavy sites; isolated and rate-limited because it is 10-100x costlier per page.",
+   "alternatives": "Prerender services; skip JS entirely and rely on server-rendered HTML."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "URL frontier and politeness scheduling",
+   "explain": "A crawler has more URLs than it can ever fetch, so the data structure that decides what to fetch next is the real brain of the system. A naive FIFO queue fails in two ways. First, links on a page mostly point to the same host, so a FIFO will fire hundreds of requests at one server in a burst, which is rude at best and a denial of service at worst. Second, a FIFO treats an important home page the same as a deep archive page. The Mercator crawler (Heydon and Najork) solved both with a two-level frontier. Front queues are a set of FIFO queues, one per priority level; a prioritizer assigns each URL to a front queue. Back queues are also FIFOs, but each holds URLs of exactly one host. A min-heap records for each back queue the earliest time it may be fetched again. A fetcher thread pops the heap, waits until that time, takes one URL, fetches it, and then pushes the queue back with time = now + delay. Delay is typically a multiple of how long the last fetch took (Mercator used 10x) with a floor, so slow servers automatically get more breathing room. When a back queue empties, it is refilled from the front queues, biased toward high priority, which marries priority and politeness. Most of each queue lives on disk with only head and tail buffers in memory, so the frontier can hold billions of URLs.",
+   "in_this_design": "Each crawler node owns a set of hosts by hash and runs its own frontier with about 3x as many back queues as fetcher coroutines. Crawl-delay from robots.txt, 429/503 backoff, and operator throttles all feed the same next_fetch_time, so there is exactly one place enforcing politeness.",
+   "key_points": [
+    "Front queues = priority, back queues = politeness, heap = when each host is next allowed.",
+    "One host per back queue guarantees at most one in-flight request per host.",
+    "Delay adapts to server speed (k x last response time) and to 429/503.",
+    "Queues spill to disk; only heads and tails are in memory.",
+    "Throughput comes from many hosts in parallel, never from hitting one host harder."
+   ],
+   "qa": [
+    {
+     "q": "Why not just rate-limit globally, say 2,000 requests per second?",
+     "a": "A global limit says nothing about distribution; you could still send all 2,000 to one host. Politeness must be per host (and per IP), which is what back queues plus the heap enforce."
+    },
+    {
+     "q": "How many back queues do you need?",
+     "a": "Enough that fetchers rarely wait: Mercator suggests about three times the number of fetcher threads. With 1,000 async fetches per node that is ~3,000 hosts active per node."
+    },
+    {
+     "q": "What happens to priority when a high-priority URL's host is still cooling down?",
+     "a": "It waits in its host's back queue; meanwhile fetchers serve other hosts. Priority decides which URLs enter back queues first, politeness decides when they leave."
+    }
+   ]
+  },
+  {
+   "name": "Bloom filters for URL-seen checks",
+   "explain": "A Bloom filter is a compact probabilistic set. It is a bit array of m bits and k hash functions. To add an item, hash it k times and set those k bits. To test membership, check whether all k bits are set: if any is zero the item is definitely not in the set; if all are one it is probably in the set. So there are no false negatives but there are false positives, whose rate is roughly (1 - e^(-kn/m))^k for n items. With the optimal k = (m/n) ln 2, about 9.6 bits per item gives a 1 percent false positive rate, and 14.4 bits gives 0.1 percent. You cannot delete from a plain Bloom filter (clearing a bit might remove other items); counting Bloom filters or cuckoo filters support deletion at higher cost. The appeal for a crawler is memory: storing 10 billion URLs as strings would take a terabyte; storing 8-byte fingerprints takes 80 GB; a 1 percent Bloom filter takes about 12 GB and can be sharded across nodes. The cost of a false positive in a crawler is that we skip a URL we have not actually seen, which is acceptable because important pages are re-discovered via many links and sitemaps.",
+   "in_this_design": "Each node keeps a Bloom filter for the URL fingerprints it owns (by host hash) in memory, backed by an exact fingerprint store in RocksDB for important hosts. Extracted URLs are checked here before entering any frontier, cutting ~19,000 extracted links/sec down to the ~3,800 that are new.",
+   "key_points": [
+    "No false negatives, tunable false positives.",
+    "~10 bits per item for 1 percent FPR; size it for expected growth or FPR explodes.",
+    "Plain Bloom filters cannot delete; rebuild periodically or use counting/cuckoo filters.",
+    "In a crawler, a false positive means a missed URL, not a correctness bug."
+   ],
+   "qa": [
+    {
+     "q": "What happens if you underestimate n?",
+     "a": "The filter fills up and the false positive rate climbs sharply, so you silently skip more and more new URLs. Monitor fill ratio and use scalable Bloom filters or rebuild larger."
+    },
+    {
+     "q": "Why not use a hash set of fingerprints?",
+     "a": "You can for an exact store on disk, but in memory a 64-bit fingerprint set is ~7x bigger than a 1 percent Bloom filter. Many designs use Bloom in RAM as a fast negative check and the exact set on disk for confirmation."
+    },
+    {
+     "q": "Would you use a Bloom filter for content dedup?",
+     "a": "For exact duplicates you could, but content dedup also needs near-duplicate detection, which needs SimHash with Hamming-distance lookups, not exact membership."
+    }
+   ]
+  },
+  {
+   "name": "Consistent hashing and partitioning by host",
+   "explain": "When work must be spread over many machines that join and leave, simple modulo hashing (hash(key) mod N) remaps almost every key when N changes. Consistent hashing places both nodes and keys on a ring of hash values; each key belongs to the first node clockwise from it. When a node joins or leaves, only the keys between it and its predecessor move, roughly 1/N of the total. Virtual nodes (each physical node owning many points on the ring) smooth the load and let stronger machines take more. Choosing the partition key is as important as the hashing scheme: the key should group together the things that must be coordinated, so the coordination stays local and does not need cross-node locks. In a crawler the thing that must be coordinated is load on a host, so the natural key is the host name (or registered domain). If two nodes both fetched from the same host they would have to agree on timing, which means distributed rate limiting; partitioning by host removes that problem.",
+   "in_this_design": "Every URL is routed to the node that owns hash(host) on the ring. Politeness, robots cache, URL-seen and frontier for that host all live on one node. Foreign links discovered by a node are batched and shipped to their owners. On node failure, its ring ranges move to neighbours, which load the latest checkpoint.",
+   "key_points": [
+    "Partition by the thing you must coordinate: here, the host.",
+    "Consistent hashing moves only ~1/N of keys on membership change.",
+    "Virtual nodes even out skew and allow heterogeneous hardware.",
+    "Cross-node traffic is limited to batched URL handoffs."
+   ],
+   "qa": [
+    {
+     "q": "Why not partition by URL hash for better balance?",
+     "a": "Then many nodes would fetch from the same host simultaneously and you would need a distributed per-host rate limiter. Host partitioning trades some balance for local politeness."
+    },
+    {
+     "q": "What about a giant host that overloads its owner?",
+     "a": "Politeness caps the fetch rate for any single host anyway, so one host cannot dominate fetch capacity; its queue just grows on disk. Virtual nodes spread many medium hosts evenly."
+    },
+    {
+     "q": "How do you handle many subdomains of one domain?",
+     "a": "Partition by registered domain (eTLD+1) instead of full host, or apply a second-level cap per domain and per IP, so a.spam.com and b.spam.com share a budget."
+    }
+   ]
+  },
+  {
+   "name": "Near-duplicate detection with SimHash",
+   "explain": "Roughly a third of the web is duplicate or near-duplicate content: mirrors, printer-friendly pages, the same article with different ads or timestamps. Exact checksums only catch byte-identical copies. Locality-sensitive hashing produces fingerprints where similar inputs collide or nearly collide. Charikar's SimHash works like this: break the document into features such as word shingles, give each a weight, hash each feature to 64 bits, and keep 64 counters; for each feature, add its weight to counter i if bit i of its hash is 1, otherwise subtract. The final fingerprint has bit i set when counter i is positive. Documents that share most features end up with fingerprints differing in only a few bits. Manku, Jain and Das Sarma at Google showed that for 8 billion pages, 64-bit SimHash with a threshold of 3 differing bits identifies near-duplicates well. Finding all stored fingerprints within Hamming distance 3 is solved by the pigeonhole principle: split the 64 bits into blocks; if two fingerprints differ in at most 3 bits, at least one of 4 blocks is identical, so keep tables indexed by each block and only compare candidates sharing a block. MinHash with Jaccard similarity is the main alternative.",
+   "in_this_design": "After fetch, the content-seen service computes a SHA-256 for exact match and a 64-bit SimHash over boilerplate-stripped text. A near-duplicate is stored as an alias to the canonical copy rather than a new document, and its outlinks get lower priority. This keeps duplicates below the 5 percent target.",
+   "key_points": [
+    "Checksums catch exact copies; SimHash catches near copies.",
+    "Similar docs give fingerprints with small Hamming distance (<= 3 of 64 bits).",
+    "Permuted block tables make Hamming lookups fast via pigeonhole.",
+    "Strip boilerplate first or ads and timestamps dominate the signal."
+   ],
+   "qa": [
+    {
+     "q": "Why not compare every new page with all stored pages?",
+     "a": "That is billions of comparisons per page. Block-indexed tables reduce candidates to a handful that share an exact 16-bit block."
+    },
+    {
+     "q": "SimHash or MinHash?",
+     "a": "SimHash gives a compact 64-bit fingerprint ideal for billions of web pages; MinHash estimates Jaccard similarity more directly and is common for smaller corpora or LLM dataset dedup. Both are LSH families."
+    },
+    {
+     "q": "What does a near-duplicate decision change downstream?",
+     "a": "We store an alias instead of a new copy, do not send it to the indexer as a separate document, and reduce crawl priority for its outlinks and for that URL pattern."
+    }
+   ]
+  },
+  {
+   "name": "At-least-once processing with idempotent consumers",
+   "explain": "In distributed pipelines you choose between at-most-once (may lose work), at-least-once (may repeat work), and effectively exactly-once (at-least-once plus idempotent or deduplicating consumers). Exactly-once delivery across independent failures is impossible in general, because a sender cannot distinguish 'the message was lost' from 'the acknowledgement was lost'; so practical systems retry and make the effect of a repeat harmless. A consumer is idempotent if applying the same message twice leaves the same state as applying it once, for example an upsert keyed by a natural id, or a check against a processed-id table. Checkpointing is the companion technique: periodically persist your progress (offsets, queue state) so that after a crash you resume from the checkpoint and replay only the work since then. The checkpoint interval is a trade-off between replay cost and the overhead of writing checkpoints.",
+   "in_this_design": "Frontier state is checkpointed every few minutes; after a crash some URLs are fetched again. Document events go to Kafka with url_hash as key and indexers upsert by (url_hash, content_hash), so duplicates have no effect. URL handoffs between nodes are retried and the receiving node's URL-seen check drops repeats.",
+   "key_points": [
+    "Exactly-once delivery is not achievable; exactly-once effect is.",
+    "Make consumers idempotent with natural keys (url_hash, content_hash).",
+    "Checkpoint interval bounds how much work is replayed after failure.",
+    "Re-fetching a page occasionally is cheap; losing frontier state is expensive."
+   ],
+   "qa": [
+    {
+     "q": "Why not make the crawler exactly-once?",
+     "a": "It would require distributed transactions between fetch, store and enqueue. Re-fetching a page after a crash costs one HTTP request; the dedup layers already make it harmless."
+    },
+    {
+     "q": "What is idempotent in your indexer contract?",
+     "a": "The indexer upserts by url_hash and ignores an event whose content_hash equals the stored one, so replays and duplicates do not create extra documents."
+    },
+    {
+     "q": "Can a retry violate politeness?",
+     "a": "Only if retries bypass the frontier. All retries, including after node failover, go back through the host's back queue, so timing rules still apply."
+    }
+   ]
+  },
+  {
+   "name": "Backpressure and bounded queues",
+   "explain": "Every pipeline has stages running at different speeds. If a producer is faster than its consumer and the queue between them is unbounded, memory grows until the process dies, and latency grows without limit. Backpressure means the slow stage signals the fast one to slow down, usually by bounding the queue so that a full queue blocks or rejects the producer. Alternatives when the queue is full are to drop (load shedding, acceptable for low-value work), to spill to disk, or to sample. Reactive streams formalise this as consumers requesting N items at a time. Kafka offers a natural form: consumers pull at their own pace and the log on disk absorbs bursts, with consumer lag as the visible signal. The design question is always which stage is allowed to fall behind and what is allowed to be dropped.",
+   "in_this_design": "Link extraction produces ~50 URLs per page, far faster than they can be fetched politely, so the frontier must spill to disk and apply caps: per-host queue limits, per-crawl host page caps, and dropping the lowest priority URLs when a node's frontier exceeds its disk budget. Parsers pull from fetchers through bounded channels; indexers consume Kafka at their own pace.",
+   "key_points": [
+    "Unbounded queues turn slowness into outages.",
+    "Choose per stage: block, spill to disk, or shed low-value work.",
+    "The frontier is a deliberate disk-backed buffer with priority-aware shedding.",
+    "Consumer lag and queue depth are first-class alerts."
+   ],
+   "qa": [
+    {
+     "q": "Your parser is slower than fetchers. What happens?",
+     "a": "The bounded channel fills, fetchers block on hand-off, so fewer fetches start; we then scale out parsers. We never let raw pages pile up unbounded in memory."
+    },
+    {
+     "q": "The frontier grows faster than we can crawl. Is that a problem?",
+     "a": "It is expected - the web is effectively infinite. We cap per host and evict the lowest priority URLs, so growth is bounded and the budget is spent on the best URLs."
+    },
+    {
+     "q": "Indexers are down for an hour. Does crawling stop?",
+     "a": "No. Kafka retains the document stream (days of retention), so crawling continues and indexers catch up from their offsets."
+    }
+   ]
+  },
+  {
+   "name": "Freshness and re-crawl scheduling",
+   "explain": "A crawl is never finished; pages change, so the crawler must decide how often to revisit each one. Cho and Garcia-Molina studied this and found pages change roughly as a Poisson process with a page-specific rate. Given a rate lambda, the probability the page changed since our last visit t seconds ago is 1 - e^(-lambda t). A surprising result is that revisiting proportionally to change rate is not optimal for average freshness: pages that change too often to ever keep fresh are not worth chasing, and a uniform or carefully tuned policy can beat a naive proportional one. In practice crawlers combine change rate with importance (link-based score, traffic, clicks) and use HTTP conditional requests (If-Modified-Since, ETag) so an unchanged page costs only a 304 response. Sitemaps with lastmod and push protocols like IndexNow let sites tell the crawler directly.",
+   "in_this_design": "URL metadata stores fetch history and change count; the re-crawl scheduler scores due URLs as importance times probability changed, keeps tier-1 pages within hours, and uses conditional GETs to make most re-checks cheap.",
+   "key_points": [
+    "Model change as Poisson; estimate lambda per URL from history.",
+    "Value of a re-crawl = importance x probability changed.",
+    "Conditional GET turns an unchanged re-crawl into a tiny 304.",
+    "Do not chase pages that change faster than you can ever revisit."
+   ],
+   "qa": [
+    {
+     "q": "How do you bootstrap change rate for a new URL?",
+     "a": "Use a prior based on its host and URL pattern (news sections change often, archives rarely) and update with each observation."
+    },
+    {
+     "q": "How do you split budget between discovery and refresh?",
+     "a": "Set a policy ratio (for example 60 percent refresh, 40 percent discovery) and tune it with metrics: freshness lag of top pages versus rate of new important URLs found."
+    },
+    {
+     "q": "What if a site lies with Last-Modified always set to now?",
+     "a": "Fall back to our own content hash comparison; learn per host whether its headers are trustworthy."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "BFS vs priority-driven crawl",
+   "options": "Pure BFS; priority by importance and freshness",
+   "choice": "Priority-driven with BFS-like discovery inside priority levels",
+   "why": "BFS finds important pages early by accident but wastes budget on junk; explicit priority spends the budget where it matters."
+  },
+  {
+   "decision": "Partition key",
+   "options": "hash(URL); hash(host); hash(registered domain)",
+   "choice": "hash(host) with per-domain and per-IP caps",
+   "why": "Keeps politeness node-local; caps stop subdomain abuse."
+  },
+  {
+   "decision": "URL-seen structure",
+   "options": "Exact set in RAM; Bloom filter; exact set on disk",
+   "choice": "Bloom filter in RAM plus exact set on disk for confirmation",
+   "why": "Memory-efficient negative check with an accurate fallback; occasional false positive costs little."
+  },
+  {
+   "decision": "Store raw HTML or only extracted text",
+   "options": "Raw; extracted only",
+   "choice": "Raw, compressed, 5-cycle retention",
+   "why": "Lets indexers and ML reprocess with new parsers without re-crawling; ~100 KB/page after compression is affordable."
+  },
+  {
+   "decision": "JavaScript rendering",
+   "options": "Render everything; render none; render allowlist",
+   "choice": "Render an allowlist of JS-dependent high-value hosts",
+   "why": "Rendering costs 10-100x more CPU per page; most pages have server-rendered HTML."
+  },
+  {
+   "decision": "Batch (Nutch-style) vs continuous crawl",
+   "options": "Generate-fetch-update batches; continuous streaming",
+   "choice": "Continuous",
+   "why": "Batch cycles add hours of latency to freshness; continuous scheduling reacts per URL."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Crawler node dies",
+   "behavior": "Coordinator reassigns its ring ranges in ~10s; neighbours load frontier checkpoint; a few minutes of URLs are re-fetched and deduped."
+  },
+  {
+   "failure": "Blob store slow or unavailable",
+   "behavior": "Fetchers write to a local disk buffer (hours of capacity) and pause new fetches when it is 80 percent full - backpressure rather than data loss."
+  },
+  {
+   "failure": "Kafka unavailable",
+   "behavior": "Document events are buffered locally with the blob reference; publishing resumes and indexers catch up; crawling continues."
+  },
+  {
+   "failure": "DNS resolver failure",
+   "behavior": "Serve stale cached entries; failed lookups go to a delayed retry queue; alert when resolution success drops below 98 percent."
+  },
+  {
+   "failure": "Bug causes the crawler to hammer a host",
+   "behavior": "Per-host hard ceiling in the fetcher as a second guard independent of the frontier, plus operator kill switch per host and global pause."
+  },
+  {
+   "failure": "Coordinator (ZooKeeper) loses quorum",
+   "behavior": "Nodes keep their current assignments and keep crawling (static stability) but no rebalancing happens until quorum returns."
+  }
+ ],
+ "metrics": [
+  "Pages fetched per second (cluster and per node) and bytes per second.",
+  "HTTP status mix per host tier (2xx, 3xx, 4xx, 5xx, timeouts).",
+  "Robots.txt violations (must be 0) and robots fetch error rate.",
+  "Frontier size, per-host queue depth, fetcher idle time (waiting on politeness).",
+  "Duplicate rate (exact and near) of fetched pages.",
+  "Freshness lag p50/p90 per tier, and percentage of re-crawls returning 304.",
+  "DNS cache hit rate and lookup latency.",
+  "Kafka consumer lag for indexers."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you crawl JavaScript-heavy single-page apps?",
+   "a": "A separate rendering tier of headless Chromium for an allowlist of hosts, with its own lower rate, caching static JS/CSS across pages, and a heuristic to detect pages whose HTML lacks content and promote the host to the allowlist."
+  },
+  {
+   "q": "How would you make it geo-distributed?",
+   "a": "Place crawler pools in several regions and assign hosts to the region nearest them (by IP geolocation) to cut latency and cross-region bandwidth; keep politeness per host within one region by still partitioning by host."
+  },
+  {
+   "q": "A webmaster complains we took down their site. What happened and what do you change?",
+   "a": "Check per-host logs: likely many subdomains on one IP or a crawl-delay we did not honour. Add per-IP caps, adaptive delay on rising latency, and a self-serve crawl-rate control."
+  },
+  {
+   "q": "How do you prioritise newly discovered URLs that have no history?",
+   "a": "Use signals at discovery time: importance of the linking page, number of distinct linking hosts, presence in a sitemap, URL depth and pattern, and the host's average quality."
+  },
+  {
+   "q": "How would you support 10x scale?",
+   "a": "Add nodes - the design is shared-nothing by host partition; move the URL metadata store and blob store to larger clusters; the frontier is per node so it scales linearly. Watch cross-node handoff bandwidth and DNS."
+  },
+  {
+   "q": "How do you avoid crawling the same page under http and https?",
+   "a": "Normalise to the scheme the site redirects to, honour canonical tags and HSTS, and rely on content dedup to merge any remaining aliases."
+  },
+  {
+   "q": "How do you handle legal takedowns?",
+   "a": "Purge API deletes blob copies and metadata, adds the URL pattern to a block list checked by the URL filter so it is never re-fetched, and emits a delete event for indexers."
+  }
+ ],
+ "key_points": [
+  "The frontier is the brain: front queues for priority, back queues for politeness, a heap of next-allowed times.",
+  "Throughput comes from parallelism across hosts, never from hitting one host harder.",
+  "Partition by host so politeness and dedup are local; consistent hashing for membership changes.",
+  "Two dedup layers: URL-seen (Bloom filter) and content-seen (checksum plus SimHash).",
+  "Capacity: ~400 pages/sec and ~1.5 Gbps per billion pages a month; 100 TB compressed a month.",
+  "Traps are inevitable: cap depth, URL length, pages per host; strip session params.",
+  "Freshness is a scheduling problem: importance x probability changed; conditional GETs make re-checks cheap.",
+  "At-least-once everywhere with idempotent consumers; re-fetching a page is cheap.",
+  "Robots.txt violations are a hard zero; robots fetch errors mean do not crawl."
+ ],
+ "quiz": [
+  {
+   "q": "Why does a crawler use one back queue per host in the Mercator frontier?",
+   "options": [
+    "To guarantee at most one in-flight request per host so politeness is enforced locally",
+    "To sort URLs by PageRank within each host",
+    "To make DNS resolution faster by grouping IP addresses",
+    "To allow multiple fetchers to share a host's connection pool"
+   ],
+   "answer": 0,
+   "why": "One host per back queue plus a heap of next-allowed times means a host is only ever being fetched by one thread at a time. Sorting by importance is the front queues' job, not the back queues'."
+  },
+  {
+   "q": "A crawler at 1 billion pages per month needs roughly what average fetch rate?",
+   "options": [
+    "About 40 pages/sec",
+    "About 400 pages/sec",
+    "About 4,000 pages/sec",
+    "About 40,000 pages/sec"
+   ],
+   "answer": 1,
+   "why": "1e9 / 2.6 million seconds is about 385 per second. 4,000/sec would be roughly 10 billion a month - an easy factor-of-ten slip."
+  },
+  {
+   "q": "Your Bloom filter for URL-seen was sized for 2 billion URLs and now holds 8 billion. What is the most likely symptom?",
+   "options": [
+    "The crawler re-fetches many pages it has already seen",
+    "Memory usage quadruples automatically",
+    "Many genuinely new URLs are silently skipped because the false positive rate rises",
+    "The filter starts returning false negatives for old URLs"
+   ],
+   "answer": 2,
+   "why": "An overfilled Bloom filter has a much higher false positive rate, which in a URL-seen check means skipping new URLs. Bloom filters never give false negatives, so re-fetching seen pages is not the symptom."
+  },
+  {
+   "q": "Which partition key best keeps politeness enforcement local to one crawler node?",
+   "options": [
+    "hash(full URL)",
+    "hash(content checksum)",
+    "Round-robin assignment",
+    "hash(host name)"
+   ],
+   "answer": 3,
+   "why": "If every URL of a host is owned by one node, that node alone controls the host's timing. hash(URL) balances load better but spreads a host over many nodes, which needs a distributed rate limiter."
+  },
+  {
+   "q": "robots.txt for a host returns HTTP 503. What should the crawler do?",
+   "options": [
+    "Treat the site as fully allowed since there is no rule file",
+    "Treat it as a temporary full disallow and retry robots.txt later",
+    "Crawl only the home page",
+    "Use the robots.txt from the parent domain"
+   ],
+   "answer": 1,
+   "why": "A server error on robots.txt means we do not know the rules, so the safe convention is to not crawl until we can read it. Treating it as allow-all is the convention for 404, not for 5xx."
+  },
+  {
+   "q": "Two pages are the same article but with different ads and timestamps. Which technique catches them?",
+   "options": [
+    "SHA-256 checksum of the HTML",
+    "A Bloom filter on the URL",
+    "SimHash with a small Hamming-distance threshold",
+    "Comparing Content-Length headers"
+   ],
+   "answer": 2,
+   "why": "SimHash fingerprints of near-identical text differ in only a few bits. A cryptographic checksum changes completely with one byte difference, so it only catches exact copies."
+  },
+  {
+   "q": "Fetchers are mostly idle even though the frontier holds billions of URLs. What is the most likely cause?",
+   "options": [
+    "Too few distinct hosts are active in back queues, so fetchers wait on politeness delays",
+    "The Bloom filter is too large",
+    "Kafka has too many partitions",
+    "The blob store compresses too aggressively"
+   ],
+   "answer": 0,
+   "why": "Billions of URLs on a few hosts still means waiting on per-host delays. You need many hosts in flight (about 3x back queues per fetcher). The other options do not cause fetcher idle time."
+  },
+  {
+   "q": "Mercator sets a host's next fetch time to now plus about 10 times the last fetch duration. Why scale with response time?",
+   "options": [
+    "To keep total bandwidth constant",
+    "Slow responses signal a loaded or small server, so it automatically gets more breathing room",
+    "To make the heap sort faster",
+    "Because robots.txt requires it"
+   ],
+   "answer": 1,
+   "why": "Adaptive delay is gentle on struggling servers and fast with strong ones. It is not a bandwidth control; that is managed separately."
+  },
+  {
+   "q": "An infinite calendar generates endless /cal?d=... URLs. Which defence is most effective?",
+   "options": [
+    "Increasing Bloom filter size",
+    "Rendering the page with JavaScript",
+    "Per-host page caps plus detecting URL patterns that keep producing new parameter values",
+    "Lowering fetch timeouts"
+   ],
+   "answer": 2,
+   "why": "Traps produce unique URLs, so dedup does not stop them; a budget per host and pattern detection do. A bigger Bloom filter just remembers more trap URLs."
+  },
+  {
+   "q": "Why store raw HTML instead of only extracted text?",
+   "options": [
+    "It is smaller than extracted text",
+    "Downstream teams can reprocess with improved parsers without re-crawling",
+    "Robots.txt requires it",
+    "It avoids the need for content dedup"
+   ],
+   "answer": 1,
+   "why": "Re-crawling billions of pages is expensive and impolite; reprocessing stored raw pages is cheap. Raw HTML is larger, not smaller, than text."
+  },
+  {
+   "q": "A crawler node crashes. Which property makes re-fetching its in-flight URLs harmless?",
+   "options": [
+    "Kafka exactly-once delivery",
+    "Two-phase commit between fetcher and blob store",
+    "TCP retransmission",
+    "Idempotent downstream processing keyed by url_hash and content_hash"
+   ],
+   "answer": 3,
+   "why": "At-least-once plus idempotent consumers gives an exactly-once effect. Distributed two-phase commit would work in theory but is costly and unnecessary here."
+  },
+  {
+   "q": "A site uses thousands of subdomains on one IP to get crawled harder. What stops it?",
+   "options": [
+    "Per-IP and per-registered-domain caps in addition to per-host politeness",
+    "A larger DNS cache",
+    "Shorter robots.txt TTL",
+    "Partitioning by URL hash"
+   ],
+   "answer": 0,
+   "why": "Per-host politeness alone treats each subdomain as separate. Adding domain and IP limits makes them share one budget. Partitioning by URL hash would make it worse."
+  },
+  {
+   "q": "Roughly how much memory does a 1 percent false-positive Bloom filter need for 10 billion URLs?",
+   "options": [
+    "About 1.2 GB",
+    "About 12 GB",
+    "About 120 GB",
+    "About 1.2 TB"
+   ],
+   "answer": 1,
+   "why": "About 9.6 bits per element: 10e9 x 9.6 / 8 bytes is about 12 GB. 120 GB is closer to storing 8-byte fingerprints plus overhead."
+  },
+  {
+   "q": "Which is the best use of HTTP conditional requests in a crawler?",
+   "options": [
+    "Skipping robots.txt checks",
+    "Detecting spider traps",
+    "Making re-crawls of unchanged pages cost a tiny 304 response",
+    "Compressing page bodies"
+   ],
+   "answer": 2,
+   "why": "If-Modified-Since and ETag let the server reply 304 Not Modified with no body. They do not help with traps or robots rules."
+  },
+  {
+   "q": "Pages that change every minute but have low importance - what should the re-crawl policy do?",
+   "options": [
+    "Re-crawl every minute to stay fresh",
+    "Never re-crawl them",
+    "Re-crawl them before any high-importance page",
+    "Give them a modest interval; chasing pages you can never keep fresh wastes budget"
+   ],
+   "answer": 3,
+   "why": "Cho and Garcia-Molina showed that chasing very fast-changing pages hurts average freshness. Never re-crawling is too extreme - they still need occasional refresh."
+  },
+  {
+   "q": "Where is the DNS bottleneck best solved?",
+   "options": [
+    "A local caching resolver on each node with a TTL floor and serve-stale",
+    "Using a public DNS provider for every lookup",
+    "Resolving DNS inside the parser",
+    "Disabling DNS and using IPs from links"
+   ],
+   "answer": 0,
+   "why": "DNS lookups at 10-100 ms each add up at thousands per second; a local cache makes most free. Public resolvers rate-limit heavy crawlers."
+  },
+  {
+   "q": "The indexer team is down for 2 hours. What is the best crawler behaviour?",
+   "options": [
+    "Pause crawling until they recover",
+    "Keep crawling; Kafka retains document events and indexers resume from their offsets",
+    "Drop documents produced during the outage",
+    "Switch to synchronous calls to the indexer"
+   ],
+   "answer": 1,
+   "why": "A durable log decouples producer and consumer availability. Pausing wastes crawl budget, and dropping loses data."
+  },
+  {
+   "q": "Why is the frontier mostly on disk rather than in memory?",
+   "options": [
+    "Disk is faster than memory for random access",
+    "It must survive crashes so in-memory is never allowed",
+    "It holds billions of URLs; only queue heads and tails need to be in memory",
+    "Kafka requires it"
+   ],
+   "answer": 2,
+   "why": "Queues are accessed only at the ends, so a disk-backed FIFO with memory buffers is cheap. Crash survival comes from checkpoints, not from keeping everything on disk."
+  },
+  {
+   "q": "Which metric must be a hard zero alert for a crawler?",
+   "options": [
+    "Duplicate rate",
+    "Robots.txt violations",
+    "Pages with 404 status",
+    "Kafka consumer lag"
+   ],
+   "answer": 1,
+   "why": "Violating robots.txt is a trust and legal problem. Duplicates, 404s and lag are normal and tracked against targets, not zero."
+  },
+  {
+   "q": "For finding SimHash fingerprints within 3 bits among billions, why split into 4 blocks of 16 bits?",
+   "options": [
+    "It makes the fingerprint more random",
+    "It reduces storage to 16 bits per page",
+    "It lets you use a Bloom filter",
+    "By pigeonhole, any two within 3 bits share at least one identical block, so exact block lookups find candidates"
+   ],
+   "answer": 3,
+   "why": "Three differing bits can touch at most three of four blocks, so one block matches exactly. Storage is still the full 64 bits per page."
+  },
+  {
+   "q": "A high-priority URL is discovered but its host's back queue is cooling down for 30 s. What happens?",
+   "options": [
+    "It waits; fetchers serve other hosts meanwhile",
+    "It preempts and is fetched immediately",
+    "It is dropped",
+    "It is sent to a different node to fetch"
+   ],
+   "answer": 0,
+   "why": "Priority decides order inside the host; politeness decides timing. Sending it to another node would break per-host politeness."
+  },
+  {
+   "q": "Which store fits per-URL metadata for 10+ billion URLs with per-site range scans?",
+   "options": [
+    "A single Postgres instance",
+    "Redis",
+    "Bigtable/HBase with reversed-host row keys",
+    "Cassandra with random partitioner"
+   ],
+   "answer": 2,
+   "why": "Sorted row keys with reversed hostnames keep a site's pages contiguous. Cassandra scales but hash partitioning prevents site range scans."
+  }
+ ],
+ "references": [
+  {
+   "title": "ByteByteGo - Design a Web Crawler",
+   "url": "https://bytebytego.com/courses/system-design-interview/design-a-web-crawler"
+  },
+  {
+   "title": "Mercator: A Scalable, Extensible Web Crawler (Heydon and Najork)",
+   "url": "https://courses.cs.washington.edu/courses/cse454/13wi/papers/mercator.pdf"
+  },
+  {
+   "title": "A Brief History of Web Crawlers (arXiv)",
+   "url": "https://arxiv.org/pdf/1405.0749"
+  },
+  {
+   "title": "AlgoMaster - Design a Web Crawler",
+   "url": "https://blog.algomaster.io/p/design-a-web-crawler-system-design-interview"
+  },
+  {
+   "title": "EnjoyAlgorithms - Web Crawler System Design",
+   "url": "https://enjoyalgorithms.com/blog/web-crawler"
+  }
+ ]
+}

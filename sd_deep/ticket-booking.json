@@ -1,0 +1,1213 @@
+{
+ "slug": "ticket-booking",
+ "title": "Design a ticket booking system (Ticketmaster / BookMyShow)",
+ "prompt": "Design a ticket booking system (Ticketmaster / BookMyShow).",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "Ticket booking looks like simple CRUD until a Taylor Swift or Coldplay on-sale sends 10-20 million people at 50,000 seats in the same minute. The core tension is strong consistency on a tiny, contended inventory (never sell a seat twice) versus massive, bursty read and write demand, plus a slow, unreliable payment step in the middle. The winning design separates browsing from booking, admits users through a virtual waiting room, uses short-lived seat holds with TTLs, and makes the hold-pay-confirm workflow idempotent and recoverable.",
+ "framework": {
+  "clarify": [
+   "Product: movies (BookMyShow: many shows, ~200 seats each) or stadium concerts (Ticketmaster: few events, 50k-90k seats, extreme spikes)? Design for both, optimise for the spike.",
+   "Reserved seating (pick seat A12) or general admission (quantity only)? Support both; seat maps are the harder case.",
+   "Hold duration before payment: assume 8-10 minutes, then the seat is released.",
+   "Scale: 50 million MAU, 2 million bookings/day normally; a mega on-sale has 10M+ users arriving within 10 minutes for 60k seats.",
+   "Consistency requirement: zero double-sold seats is non-negotiable; seat map freshness can lag a few seconds.",
+   "Payment: external gateway (Razorpay / Stripe / UPI) with 1-30 s latency and occasional timeouts; we must handle unknown outcomes.",
+   "Fairness and abuse: per-user ticket limits (e.g. 4 per account), bot protection, resale out of scope.",
+   "Multi-region? Assume one primary region per event's inventory with a global CDN for browse."
+  ],
+  "design": [
+   "Baseline: Event/catalog service (browse, search, read-heavy), Inventory/booking service (holds and sales, strongly consistent), Payment service, Notification and ticket issuance.",
+   "Virtual waiting room in front of hot events: users get a queue token, are admitted in batches at a rate the booking tier can absorb (e.g. 2,000 users/s).",
+   "Seat hold: atomic conditional update AVAILABLE -> HELD(user, expires_at) in the inventory DB (or Redis SET NX with TTL backed by DB), within one transaction for all seats in the cart.",
+   "Payment: create an order with an idempotency key, redirect to gateway, process webhook; on success atomically HELD -> SOLD if the hold is still ours, else refund.",
+   "Seat map reads served from a cache (Redis bitmap per show / section counts), refreshed by inventory change events; CDN for static event pages.",
+   "Expiry: holds carry expires_at; a sweeper and lazy checks release expired holds back to AVAILABLE.",
+   "Critical path: admit -> view seat map -> hold seats -> pay -> confirm -> issue ticket (QR) -> notify."
+  ],
+  "defend": [
+   "Bottleneck: write contention on the same few thousand seats at on-sale time; the waiting room converts an unbounded spike into a controlled admission rate.",
+   "Scale reads: seat maps from Redis and CDN with a few seconds staleness; the hold step is the only place correctness is enforced, so a stale map just means 'sorry, taken, pick another'.",
+   "Scale writes: partition inventory by event_id (and section for stadiums) so each event's seats live on one shard; conditional updates avoid long locks.",
+   "Failure: payment timeouts handled by idempotency keys and reconciliation against the gateway; a successful payment on an expired hold triggers auto-refund or re-hold if seats are still free.",
+   "Degradation: if the booking tier is hot, slow the admission rate instead of failing; keep browse up from cache even if booking is down.",
+   "Measure: hold success rate, oversell count (must be 0), hold-to-purchase conversion, payment success and latency, queue wait time, bot block rate."
+  ],
+  "script": "Let me clarify first: we sell seats for movies and big concerts, reserved seating, a ten minute hold, and we must never sell a seat twice. Scale is normally modest, but a big on-sale can bring ten million people for sixty thousand seats in minutes, so I will design for that spike. I will split the system into a read-heavy catalog and seat-map path served from cache and CDN, and a strongly consistent inventory service partitioned by event. Users for hot events pass through a virtual waiting room that admits them at a rate the inventory tier can handle. Booking is a hold-pay-confirm workflow: an atomic conditional update moves seats from available to held with an expiry, the payment step uses an idempotency key, and a webhook moves held to sold only if the hold is still ours. To defend it I will cover contention on hot seats, the waiting room, expiring holds, payment timeouts and reconciliation, bots, and the metrics I would alert on, especially oversell, which must be zero."
+ },
+ "brd": {
+  "problem": "Fans want a fair, fast way to get tickets; organisers want to sell out without overselling or losing sales to crashes and bots. Today's on-sales for popular events overwhelm systems (Ticketmaster's 2022 Eras Tour pre-sale saw about 3.5 billion system requests, four times its prior peak), causing outages, double sells and public backlash.",
+  "goals": [
+   "Never sell the same seat twice, under any failure or retry.",
+   "Survive on-sale spikes of 10M+ users with graceful queueing instead of errors.",
+   "Hold seats for the buyer during checkout (about 10 minutes) and release them reliably on abandonment.",
+   "Fair access: first come first served within the queue, per-user limits, bot mitigation.",
+   "High checkout conversion: payment success above 95 percent of attempts that reach the gateway.",
+   "Keep browsing and discovery available even when booking is saturated."
+  ],
+  "non_goals": [
+   "Secondary market / resale and dynamic pricing engines.",
+   "Venue management, show scheduling and seat-map authoring tools beyond import.",
+   "Food and beverage add-ons and loyalty programs.",
+   "Building our own payment processor."
+  ],
+  "stakeholders": [
+   {
+    "who": "Fans / customers",
+    "needs": "Fair chance, clear wait times, fast checkout, instant e-ticket."
+   },
+   {
+    "who": "Event organisers and venues",
+    "needs": "Accurate inventory, sell-through, anti-scalping, real-time sales reporting."
+   },
+   {
+    "who": "Finance",
+    "needs": "Correct settlement, refunds, reconciliation with the payment gateway."
+   },
+   {
+    "who": "SRE / on-call",
+    "needs": "Predictable load via admission control, kill switches, clear dashboards."
+   },
+   {
+    "who": "Trust and safety",
+    "needs": "Bot detection, purchase limits, fraud checks."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Oversold seats",
+    "target": "0"
+   },
+   {
+    "metric": "Booking API availability during on-sale",
+    "target": ">= 99.95 percent"
+   },
+   {
+    "metric": "Hold API latency",
+    "target": "p99 < 300 ms"
+   },
+   {
+    "metric": "Hold-to-purchase conversion",
+    "target": ">= 70 percent"
+   },
+   {
+    "metric": "Seats stuck in HELD after expiry",
+    "target": "0 older than expiry + 60 s"
+   },
+   {
+    "metric": "Tickets bought by detected bots",
+    "target": "< 1 percent"
+   }
+  ],
+  "constraints": [
+   "Payment gateways are external, slow (1-30 s) and sometimes return unknown outcomes.",
+   "Inventory per event is small and fixed; demand can exceed it 100x.",
+   "Regulatory: consumer protection on refunds; PCI-DSS means we never store card data.",
+   "Venue contracts may require holding back seats (VIP, production kills) that must not be sold."
+  ],
+  "risks": [
+   {
+    "risk": "Thundering herd at on-sale time takes down the booking DB.",
+    "mitigation": "Virtual waiting room with rate-limited admission; pre-scaled capacity; load tests at 2x expected."
+   },
+   {
+    "risk": "Payment succeeded but booking not confirmed (lost webhook).",
+    "mitigation": "Idempotent webhook handling, polling reconciliation, auto-refund for orphaned payments."
+   },
+   {
+    "risk": "Bots grab inventory to resell.",
+    "mitigation": "Verified fan pre-registration, CAPTCHA at queue entry, device fingerprinting, per-account and per-card limits."
+   },
+   {
+    "risk": "Seats locked forever by crashed workers.",
+    "mitigation": "Holds carry an expiry; sweeper and lazy expiry return them to AVAILABLE."
+   },
+   {
+    "risk": "Reputational damage from opaque failures.",
+    "mitigation": "Queue position and ETA shown to users; clear 'sold out' messaging."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Fan at a mega on-sale",
+    "needs": "Know where they are in the queue, pick seats fast, not lose them during payment."
+   },
+   {
+    "name": "Casual moviegoer",
+    "needs": "Find a nearby show tonight, pick seats, pay with UPI in under a minute."
+   },
+   {
+    "name": "Organiser",
+    "needs": "Load events and seat maps, set price tiers and limits, watch sales live."
+   },
+   {
+    "name": "Support agent",
+    "needs": "Look up a booking, see payment status, issue refunds."
+   }
+  ],
+  "user_stories": [
+   "As a fan, I want to join a waiting room and see my position so that I know the system is working.",
+   "As a fan, I want to see which seats are available on a seat map so that I can choose where to sit.",
+   "As a fan, I want selected seats held for me while I pay so that nobody else buys them mid-checkout.",
+   "As a fan, I want my booking confirmed exactly once even if I click pay twice so that I am not double charged.",
+   "As a fan, I want my e-ticket (QR) immediately by app, email and SMS so that I can enter the venue.",
+   "As a moviegoer, I want to search shows by city, date and cinema so that I can find a convenient slot.",
+   "As an organiser, I want to cap tickets per account so that scalpers cannot hoard inventory.",
+   "As a fan, I want an automatic refund if my payment went through but my seats were lost so that I am not out of pocket.",
+   "As a support agent, I want to cancel a booking and release seats so that they can be resold."
+  ],
+  "functional": [
+   "Browse and search events/shows by city, date, venue, genre; event detail pages.",
+   "Seat map with per-seat status (available, held, sold, blocked) and price tiers; general admission quantities.",
+   "Virtual waiting room for events flagged high-demand with queue tokens and admission rate control.",
+   "Hold up to N seats atomically (all or none) with a TTL of 10 minutes; extend once on payment start.",
+   "Checkout with an external payment gateway using idempotency keys; handle webhooks and redirects.",
+   "Confirm booking, issue signed QR tickets, send notifications.",
+   "Cancel and refund flows; release seats back to inventory.",
+   "Per-user, per-payment-instrument purchase limits and bot checks."
+  ],
+  "non_functional": [
+   {
+    "name": "Consistency",
+    "target": "Linearizable seat state transitions; zero double sells"
+   },
+   {
+    "name": "Hold latency",
+    "target": "p99 < 300 ms at 20k hold attempts/s per hot event"
+   },
+   {
+    "name": "Browse latency",
+    "target": "p99 < 200 ms; seat map staleness < 5 s"
+   },
+   {
+    "name": "Availability",
+    "target": "Booking 99.95 percent; browse 99.99 percent"
+   },
+   {
+    "name": "Durability",
+    "target": "Confirmed bookings never lost (synchronous replication, RPO 0)"
+   },
+   {
+    "name": "Scalability",
+    "target": "10M concurrent waiting-room users; 2,000-5,000 admissions/s"
+   },
+   {
+    "name": "Fairness",
+    "target": "FIFO admission within a randomised pre-queue window; 4 tickets per account default"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "BookMyShow-like steady state: 2 million bookings/day, average 2.5 seats each.",
+    "Browse:book ratio about 100:1 in steady state.",
+    "Mega on-sale: 10M users join in 10 minutes for a 60,000-seat stadium.",
+    "Average 3 seats per order at on-sale; about 20,000 orders sell it out.",
+    "Seat row about 100 bytes; booking row about 1 KB."
+   ],
+   "math": [
+    "Steady bookings: 2M / 86,400 s = about 23/s average, peak 5x = about 120 bookings/s; holds about 3x that = 350/s.",
+    "Steady browse: 100 x 120 = about 12k read QPS peak, mostly cacheable.",
+    "On-sale arrivals: 10M users / 600 s = about 17k joins/s; each polls queue status every 10 s -> 1M status reads/s, served by a stateless edge plus Redis.",
+    "Admission: if the booking tier handles 5k holds/s and each admitted user makes about 2 hold attempts, admit about 2,500 users/s; 20,000 orders sell out in well under a minute of admitted traffic.",
+    "Seat inventory storage: 1M shows/day (movies) x 200 seats x 100 B = 20 GB/day of seat rows; archived after the show.",
+    "Bookings: 2M x 1 KB = 2 GB/day, about 730 GB/year.",
+    "Seat-map cache per stadium: 60k seats x 2 bits status = 15 KB bitmap; trivially cacheable and pushable."
+   ],
+   "summary": "Steady state is small (hundreds of writes per second); the design is driven by on-sale spikes of 10M users chasing 60k seats, so admission control and contention handling matter far more than raw storage or throughput."
+  },
+  "out_of_scope": [
+   "Secondary ticket resale marketplace.",
+   "Dynamic pricing algorithms (only fixed price tiers).",
+   "Venue access-control hardware beyond QR validation API.",
+   "Recommendation and personalisation."
+  ]
+ },
+ "hld": {
+  "overview": "Two very different paths share the system. The read path (catalog, search, event pages, seat maps) is served by stateless services behind a CDN, backed by Elasticsearch and Redis, and tolerates seconds of staleness. The write path (holds, orders, payments, tickets) runs through the inventory and booking services against a strongly consistent relational store partitioned by event, and is protected by a virtual waiting room that issues signed admission tokens. Payment is orchestrated as a saga: hold, pay via external gateway with an idempotency key, confirm, issue ticket; with compensations (release hold, refund) on failure. Inventory changes are published as events that refresh seat-map caches and feed analytics.",
+  "diagram": "   Users (app / web)\n        |\n   +----v-----+        +-------------------+\n   |   CDN    |------->| Static event pages|\n   +----+-----+        +-------------------+\n        |\n   +----v-----------+   hot event?   +------------------+\n   | API Gateway /  |--------------->| Waiting Room     |\n   | WAF, bot check |<---------------| (Redis queue,    |\n   +--+---------+---+  signed token  |  admission ctl)  |\n      |         |                    +------------------+\n      | browse  | book (token required)\n      v         v\n +---------+ +-----------------+     +-----------------+   +-----------------+\n | Catalog | | Booking /       |---->| Payment service |-->| Payment gateway |\n | Search  | | Inventory svc   |<----| (idempotent)    |<--| (webhooks)      |\n +----+----+ +---+--------+----+     +-----------------+   +-----------------+\n      |          |        |\n      v          v        v\n +--------+ +---------+ +---------------------+\n | Elastic| | Redis   | | Inventory DB        |  (PostgreSQL, sharded by event_id,\n | search | | seatmap | | seats, holds, orders|   sync replica)\n +--------+ +----^----+ +----------+----------+\n                 |                 | CDC / outbox\n                 +------ Kafka <---+--> Ticketing (QR) --> Notifications\n                                   +--> Analytics, Reconciliation\n",
+  "components": [
+   {
+    "name": "CDN and static event pages",
+    "responsibility": "Serve event pages, images and seat-map layouts (geometry) from edge; absorb most read traffic."
+   },
+   {
+    "name": "API gateway / WAF / bot defence",
+    "responsibility": "Auth, rate limits per IP/user/device, CAPTCHA and bot scoring, token validation for hot events."
+   },
+   {
+    "name": "Virtual waiting room",
+    "responsibility": "Queue users for hot events, assign positions, admit at a controlled rate, issue short-lived signed admission tokens (JWT, 15 min)."
+   },
+   {
+    "name": "Catalog and search service",
+    "responsibility": "Events, venues, shows, prices; search by city/date/genre via Elasticsearch."
+   },
+   {
+    "name": "Inventory service",
+    "responsibility": "Authoritative seat state machine (AVAILABLE, HELD, SOLD, BLOCKED); atomic multi-seat holds; expiry."
+   },
+   {
+    "name": "Booking / order service",
+    "responsibility": "Order lifecycle (PENDING_PAYMENT, CONFIRMED, FAILED, CANCELLED, REFUNDED); orchestrates the saga."
+   },
+   {
+    "name": "Payment service",
+    "responsibility": "Creates payment intents with idempotency keys, handles webhooks, reconciliation, refunds."
+   },
+   {
+    "name": "Seat map cache",
+    "responsibility": "Redis bitmap / hash per show with seat statuses and section counts, refreshed from inventory events."
+   },
+   {
+    "name": "Ticketing service",
+    "responsibility": "Issue signed QR tickets, validate at gates, prevent reuse."
+   },
+   {
+    "name": "Notification service",
+    "responsibility": "Email, SMS, push, WhatsApp confirmations and reminders."
+   },
+   {
+    "name": "Expiry sweeper",
+    "responsibility": "Release expired holds periodically (every 5-10 s) and publish seat-released events."
+   },
+   {
+    "name": "Kafka event bus",
+    "responsibility": "Inventory and order events via transactional outbox, feeding caches, tickets, analytics and reconciliation."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Hold seats and pay (happy path)",
+    "steps": [
+     "User with an admission token opens the seat map; reads from Redis cache (status bitmap) plus CDN layout.",
+     "User selects 3 seats; client calls POST /holds with an idempotency key.",
+     "Inventory service runs one transaction on the event's shard: UPDATE seats SET status='HELD', hold_id=?, expires_at=now()+10min WHERE show_id=? AND seat_id IN (...) AND status='AVAILABLE'; commit only if 3 rows updated, else rollback.",
+     "Booking service creates order PENDING_PAYMENT; outbox event updates seat-map cache.",
+     "Payment service creates a payment intent with idempotency key = order_id; user completes UPI/card at the gateway.",
+     "Gateway webhook arrives: payment service verifies the signature, marks payment SUCCEEDED (idempotent upsert).",
+     "Booking service: UPDATE seats SET status='SOLD', order_id=? WHERE hold_id=? AND status='HELD'; order CONFIRMED.",
+     "Ticketing issues QR tickets; notifications sent; Kafka events refresh caches and analytics."
+    ]
+   },
+   {
+    "name": "Waiting room admission",
+    "steps": [
+     "Before on-sale, users land on a pre-queue page; at T0 everyone present is randomly ordered (fair to early arrivals) and later arrivals append FIFO.",
+     "Each user gets a queue ticket (event_id, position, signed). Position stored in a Redis sorted set by score.",
+     "Admission controller advances a 'now serving' pointer by N per second based on booking-tier health (holds/s, p99 latency, error rate).",
+     "Client polls (or SSE) every 10-15 s; when position <= now_serving, it receives a signed admission token valid for 15 minutes.",
+     "Booking APIs for the event reject requests without a valid token; tokens are single-use per session to stop sharing."
+    ]
+   },
+   {
+    "name": "Hold expiry and payment-after-expiry",
+    "steps": [
+     "User does not finish payment within 10 minutes; sweeper sets HELD -> AVAILABLE where expires_at < now() and order is not paid.",
+     "If a late payment success webhook arrives for an expired hold, booking tries to re-acquire the same seats; if still available, confirm; otherwise mark order FAILED and trigger automatic refund.",
+     "Seat-released event refreshes caches so other users can grab the seats."
+    ]
+   }
+  ],
+  "data_flow": "Reads: CDN -> catalog/search -> Elasticsearch; seat maps from Redis. Writes: gateway -> waiting-room token check -> inventory (PostgreSQL shard for the event) -> booking -> payment gateway -> webhook -> booking confirm. Every state change writes an outbox row in the same transaction; a relay publishes to Kafka, which updates seat-map caches, issues tickets, sends notifications, and feeds reconciliation and analytics."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/events?city=chennai&date=2026-10-12&q=coldplay",
+    "request": "query params, cursor",
+    "response": "list of events/shows with min price and availability band",
+    "notes": "Cached at CDN for 30-60 s; from Elasticsearch."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/shows/{showId}/seatmap",
+    "request": "admission token for hot events",
+    "response": "{layoutVersion, sections:[{id, price, available}], statusBitmap(base64), asOf}",
+    "notes": "Layout cached at CDN; status from Redis, may lag up to 5 s."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/shows/{showId}/holds",
+    "request": "Idempotency-Key header; {seatIds:[...]} or {sectionId, qty}",
+    "response": "201 {holdId, seats, expiresAt, orderId} or 409 {unavailableSeats}",
+    "notes": "All-or-nothing; enforces per-user limit; retries with the same key return the same hold."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/orders/{orderId}/payment",
+    "request": "{method: UPI|CARD|WALLET}",
+    "response": "{paymentIntentId, redirectUrl | upiIntent}",
+    "notes": "Extends hold by up to 5 minutes once; idempotency key = orderId."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/webhooks/payments",
+    "request": "gateway payload + HMAC signature",
+    "response": "200 always after durable record",
+    "notes": "Dedup by gateway event id; processing is idempotent."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/holds/{holdId}",
+    "request": "-",
+    "response": "204",
+    "notes": "User abandons; seats released immediately."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/queue/{eventId}/status",
+    "request": "queue ticket",
+    "response": "{position, nowServing, etaSeconds, admissionToken?}",
+    "notes": "Served from Redis; edge cached per ticket for a few seconds."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "seat_inventory",
+    "store": "PostgreSQL (Citus / sharded by show_id)",
+    "fields": [
+     "show_id",
+     "seat_id",
+     "section_id",
+     "price_tier",
+     "status (AVAILABLE|HELD|SOLD|BLOCKED)",
+     "hold_id",
+     "hold_user_id",
+     "expires_at",
+     "order_id",
+     "version"
+    ],
+    "keys": "PK (show_id, seat_id); index (show_id, status, expires_at)",
+    "notes": "All seats of a show on one shard so multi-seat holds are single-shard transactions."
+   },
+   {
+    "entity": "orders",
+    "store": "PostgreSQL (sharded by show_id, replicated by user_id view)",
+    "fields": [
+     "order_id",
+     "user_id",
+     "show_id",
+     "seat_ids",
+     "amount",
+     "status",
+     "idempotency_key",
+     "created_at",
+     "updated_at"
+    ],
+    "keys": "PK order_id; unique (user_id, idempotency_key)",
+    "notes": "Unique constraint makes create-order idempotent."
+   },
+   {
+    "entity": "payments",
+    "store": "PostgreSQL",
+    "fields": [
+     "payment_id",
+     "order_id",
+     "gateway",
+     "gateway_ref",
+     "status",
+     "amount",
+     "raw_events jsonb"
+    ],
+    "keys": "PK payment_id; unique (gateway, gateway_ref); unique order_id per attempt",
+    "notes": "Webhook events dedup on gateway event id."
+   },
+   {
+    "entity": "general_admission_counter",
+    "store": "PostgreSQL row + Redis mirror",
+    "fields": [
+     "show_id",
+     "section_id",
+     "capacity",
+     "sold",
+     "held"
+    ],
+    "keys": "PK (show_id, section_id)",
+    "notes": "UPDATE ... SET held = held + :n WHERE capacity - sold - held >= :n."
+   },
+   {
+    "entity": "queue",
+    "store": "Redis (per event)",
+    "fields": [
+     "ZSET queue:{event} member=ticketId score=position",
+     "STRING serving:{event}",
+     "HASH ticket:{id} user, device, issuedAt"
+    ],
+    "keys": "key per event, Redis Cluster hash tag {event}",
+    "notes": "Ephemeral; reconstructable from tickets if lost."
+   },
+   {
+    "entity": "seatmap_cache",
+    "store": "Redis",
+    "fields": [
+     "BITFIELD seats:{show} 2 bits per seat",
+     "HASH avail:{show} section -> count",
+     "asOf"
+    ],
+    "keys": "seats:{show_id}",
+    "notes": "Updated by Kafka consumer; 60k seats = 15 KB."
+   },
+   {
+    "entity": "tickets",
+    "store": "PostgreSQL + object storage for PDFs",
+    "fields": [
+     "ticket_id",
+     "order_id",
+     "seat_id",
+     "qr_payload (signed JWT)",
+     "scanned_at"
+    ],
+    "keys": "PK ticket_id",
+    "notes": "Gate scans set scanned_at with conditional update to block reuse."
+   }
+  ],
+  "classes": [
+   {
+    "name": "InventoryService",
+    "responsibility": "Seat state machine and atomic holds.",
+    "methods": [
+     "hold(showId, seatIds, userId, idemKey) -> Hold",
+     "release(holdId)",
+     "confirm(holdId, orderId) -> bool",
+     "expireHolds(now, batchSize)"
+    ]
+   },
+   {
+    "name": "BookingSaga",
+    "responsibility": "Orchestrates hold -> pay -> confirm -> ticket with compensations.",
+    "methods": [
+     "start(holdId)",
+     "onPaymentSucceeded(paymentId)",
+     "onPaymentFailed(paymentId)",
+     "compensate(orderId)"
+    ]
+   },
+   {
+    "name": "PaymentService",
+    "responsibility": "Gateway integration, idempotency, webhooks, reconciliation.",
+    "methods": [
+     "createIntent(orderId, amount)",
+     "handleWebhook(payload, sig)",
+     "reconcile(window)",
+     "refund(paymentId)"
+    ]
+   },
+   {
+    "name": "WaitingRoom",
+    "responsibility": "Queue positions and admission control.",
+    "methods": [
+     "join(eventId, userId) -> QueueTicket",
+     "status(ticket) -> Position",
+     "advance(eventId, n)",
+     "issueToken(ticket) -> JWT"
+    ]
+   },
+   {
+    "name": "AdmissionController",
+    "responsibility": "Feedback loop that sets admission rate from downstream health.",
+    "methods": [
+     "tick()",
+     "targetRate(metrics) -> int"
+    ]
+   },
+   {
+    "name": "SeatMapProjector",
+    "responsibility": "Kafka consumer that updates Redis seat bitmaps.",
+    "methods": [
+     "onSeatEvent(evt)",
+     "rebuild(showId)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Atomic all-or-nothing multi-seat hold",
+    "explain": "A conditional UPDATE guarded by status='AVAILABLE' is a compare-and-set on each row. Doing it for all requested seats in one transaction and checking the affected-row count gives all-or-nothing semantics without holding locks across user think time. Sorting seat IDs avoids deadlocks when two transactions overlap.",
+    "pseudocode": "def hold(show_id, seat_ids, user_id, idem_key):\n    if existing := holds.find(user_id, idem_key): return existing     // idempotent retry\n    if user_ticket_count(user_id, show_id) + len(seat_ids) > LIMIT: raise LimitExceeded\n    seat_ids = sorted(seat_ids)                     // consistent lock order, no deadlock\n    hold_id, exp = uuid(), now() + 10 * MINUTE\n    with db.tx(shard=show_id):\n        n = db.exec('''UPDATE seat_inventory\n                       SET status='HELD', hold_id=%s, hold_user_id=%s, expires_at=%s\n                       WHERE show_id=%s AND seat_id = ANY(%s) AND status='AVAILABLE' ''',\n                    hold_id, user_id, exp, show_id, seat_ids)\n        if n != len(seat_ids):\n            db.rollback(); raise SeatsTaken(find_taken(show_id, seat_ids))\n        holds.insert(hold_id, user_id, idem_key, exp)\n        outbox.insert('SeatsHeld', show_id, seat_ids, hold_id)\n    return Hold(hold_id, seat_ids, exp)\n"
+   },
+   {
+    "name": "Confirm on payment webhook (handles late payments)",
+    "explain": "The webhook may arrive twice, late, or after the hold expired. Dedup on the gateway event id, then try to move the seats from HELD-by-us to SOLD. If the hold expired, try to re-grab the same seats if still free; otherwise refund. Every branch is idempotent.",
+    "pseudocode": "def on_payment_succeeded(evt):\n    if not payments.record_event_once(evt.gateway_event_id): return     // duplicate\n    order = orders.get(evt.order_id)\n    if order.status == 'CONFIRMED': return\n    with db.tx(shard=order.show_id):\n        n = db.exec(\"UPDATE seat_inventory SET status='SOLD', order_id=%s\n                     WHERE hold_id=%s AND status='HELD'\", order.id, order.hold_id)\n        if n < len(order.seat_ids):\n            n2 = db.exec(\"UPDATE seat_inventory SET status='SOLD', order_id=%s\n                          WHERE show_id=%s AND seat_id=ANY(%s) AND status='AVAILABLE'\",\n                         order.id, order.show_id, remaining_seats(order))\n            if n + n2 < len(order.seat_ids):\n                db.rollback(); orders.set(order.id, 'FAILED'); refunds.enqueue(order.id); return\n        orders.set(order.id, 'CONFIRMED'); outbox.insert('OrderConfirmed', order.id)\n"
+   },
+   {
+    "name": "Adaptive admission rate (waiting room)",
+    "explain": "Treat the booking tier like a congestion-controlled link: additive increase while healthy, multiplicative decrease when p99 latency or error rate crosses a threshold. This keeps the inventory DB at a safe utilisation without a human tuning knobs during the on-sale.",
+    "pseudocode": "rate = 500                                   // users admitted per second\nevery 5 s:\n    m = metrics(event)                       // hold p99, 5xx rate, DB CPU\n    if m.p99_ms > 300 or m.err > 0.01 or m.db_cpu > 0.7:\n        rate = max(100, rate * 0.7)\n    elif inventory_remaining(event) == 0:\n        close_queue(event, 'SOLD_OUT')\n    else:\n        rate = min(MAX_RATE, rate + 200)\n    redis.incrby(f'serving:{event}', rate * 5)\n"
+   }
+  ],
+  "sequence": "User      Gateway   WaitingRoom  Inventory(DB)  Booking   Payment   PayGateway\n | join q    |          |             |           |         |           |\n |---------->|--------->| position    |           |         |           |\n |<----------|<---------| token (JWT) |           |         |           |\n | POST hold |          |             |           |         |           |\n |---------->|----------------------->| CAS AVAIL->HELD     |           |\n |           |          |             |---------->| order PENDING     |\n |<-------------------------------------------- holdId, expiresAt     |\n | pay       |          |             |           |-------->| intent    |\n |------------------------------------------------------------------>| UPI/card\n |           |          |             |           |         |<----------| webhook\n |           |          |             |           |<--------| SUCCEEDED |\n |           |          |             |<----------| HELD->SOLD          |\n |<-------------------------------------------------| CONFIRMED, QR ticket\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Two users click the same seat in the same millisecond.",
+   "handling": "Conditional UPDATE ... WHERE status='AVAILABLE' lets exactly one succeed; the other gets 409 with the taken seat and the map refreshes."
+  },
+  {
+   "case": "User double-clicks Pay or the app retries after a timeout.",
+   "handling": "Idempotency key on hold and payment; unique (user_id, idempotency_key) returns the original result, and the gateway intent is keyed by order_id."
+  },
+  {
+   "case": "Payment succeeds but the webhook is lost.",
+   "handling": "Reconciliation job polls the gateway for PENDING orders older than 2 minutes; client redirect also triggers a status check; outcome applied idempotently."
+  },
+  {
+   "case": "Payment succeeds after the hold expired and seats were resold.",
+   "handling": "Try to re-grab the same seats; if impossible, mark FAILED and auto-refund within minutes, notify the user with an apology and a priority link."
+  },
+  {
+   "case": "Bot farm opens 100k sessions to grab the queue.",
+   "handling": "Pre-registration with verified phone, CAPTCHA at queue join, device fingerprinting, one queue ticket per account and per device, per-card limits at checkout."
+  },
+  {
+   "case": "Admission token shared or replayed by a scalper's script.",
+   "handling": "Token bound to user id and session/device fingerprint, short TTL, single active session per token."
+  },
+  {
+   "case": "Hot section: everyone wants the front 500 seats.",
+   "handling": "Contention is localised; failures are cheap 409s. Offer 'best available' server-side allocation for those sections to avoid repeated conflicts."
+  },
+  {
+   "case": "Orphan holds after a service crash.",
+   "handling": "expires_at on every hold; sweeper releases; reads treat HELD with expires_at < now as available (lazy expiry) so no seat is stuck."
+  },
+  {
+   "case": "Seat-map cache shows a seat available that is already sold.",
+   "handling": "The cache is advisory; the hold transaction is authoritative. Staleness bounded at about 5 s and the 409 path updates the client."
+  },
+  {
+   "case": "Leaving a single orphan seat between two bookings.",
+   "handling": "Optional rule rejects selections that leave a single isolated seat in a row (common in cinemas), checked at hold time."
+  },
+  {
+   "case": "Event cancelled or rescheduled.",
+   "handling": "Bulk saga: mark show cancelled, refund all CONFIRMED orders via queued refund jobs with rate limiting toward the gateway, notify users."
+  },
+  {
+   "case": "Clock skew between app servers deciding expiry.",
+   "handling": "Use the database clock (now() in SQL) for expires_at and comparisons, never app server time."
+  },
+  {
+   "case": "Shard hosting a mega event fails during the on-sale.",
+   "handling": "Synchronous replica promotes (Patroni) in about 10-30 s; admission controller pauses the queue (rate to 0) instead of erroring; in-flight holds are durable."
+  },
+  {
+   "case": "UPI payment stuck in PENDING for many minutes.",
+   "handling": "Extend the hold once (up to +5 min) when payment is initiated; after that, release seats and refund if the payment later succeeds."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "PostgreSQL (sharded with Citus or app-level by show_id)",
+   "layer": "Inventory and orders",
+   "overview": "Relational ACID database with row-level locking and conditional updates.",
+   "why": "Seat state needs transactions and unique constraints; per-show data fits one shard so multi-seat holds are single-shard ACID.",
+   "alternatives": "DynamoDB with conditional writes and TransactWriteItems (serverless scale, 100-item tx limit); Spanner/CockroachDB (global consistency, higher latency and cost)."
+  },
+  {
+   "name": "Redis (Cluster)",
+   "layer": "Waiting room, seat-map cache, rate limits",
+   "overview": "In-memory data structure store with sorted sets, bitfields and atomic ops.",
+   "why": "Millions of queue status reads per second, 15 KB bitmaps per stadium, atomic INCR for admission pointers.",
+   "alternatives": "Memcached (no data structures); a managed queue product such as Queue-it or Cloudflare Waiting Room."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Event bus",
+   "overview": "Durable partitioned log.",
+   "why": "Outbox events fan out to caches, ticketing, notifications and analytics with replay.",
+   "alternatives": "SQS/SNS (simpler, no replay ordering), Pulsar."
+  },
+  {
+   "name": "Elasticsearch / OpenSearch",
+   "layer": "Search",
+   "overview": "Inverted-index search engine.",
+   "why": "Search by city, date, artist with facets and geo filters.",
+   "alternatives": "PostgreSQL full text (fine for small catalogs), Algolia (managed)."
+  },
+  {
+   "name": "CDN (CloudFront / Akamai) with edge workers",
+   "layer": "Edge",
+   "overview": "Edge caching and compute.",
+   "why": "Serve event pages and seat layouts, host the waiting-room page and validate tokens at the edge.",
+   "alternatives": "Origin-only serving (would melt during on-sale)."
+  },
+  {
+   "name": "Payment gateway (Razorpay, Stripe, Juspay router)",
+   "layer": "Payments",
+   "overview": "External PCI-compliant processors with idempotency keys and webhooks.",
+   "why": "We never touch card data; routers fail over between gateways for success rate.",
+   "alternatives": "Single gateway (simpler, single point of failure)."
+  },
+  {
+   "name": "Temporal or a custom saga orchestrator",
+   "layer": "Workflow",
+   "overview": "Durable workflow engine with timers and retries.",
+   "why": "Hold expiry timers, payment polling, refunds and compensations are long-running stateful workflows.",
+   "alternatives": "Kafka choreography plus cron sweepers (less visibility)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Optimistic vs pessimistic concurrency control",
+   "explain": "When many clients may update the same data, a system must prevent lost updates and conflicting writes. Pessimistic concurrency assumes conflicts are likely, so it locks the data before reading it (SELECT ... FOR UPDATE, or a distributed lock), does the work, then releases. It guarantees exclusivity but holds locks for the whole operation, which reduces throughput and risks deadlocks and stuck locks if a client dies. Optimistic concurrency assumes conflicts are rare: read freely, then write with a condition that the data has not changed, typically a version number or the expected current value (compare-and-set). If the condition fails, the write is rejected and the client retries or reports a conflict. Optimistic control has no locks to leak and scales well when conflicts are infrequent, but under heavy contention many attempts fail and retry, wasting work. A useful middle ground is a single conditional UPDATE statement: the database briefly locks the row only for the duration of the statement, so the check and the write are atomic, and no lock is held across user think time. The important design rule is never to hold a database lock while a human or a remote payment provider is doing something slow.",
+   "in_this_design": "Seat holds use a conditional UPDATE WHERE status='AVAILABLE' (compare-and-set) across all requested seats in one short transaction. The long user think time and payment are covered by a logical hold with an expiry, not a database lock. Under heavy contention for front-row seats, losers get an immediate 409 rather than waiting on locks.",
+   "key_points": [
+    "Never hold a DB lock across user think time or a payment call.",
+    "Conditional UPDATE is an atomic compare-and-set on the row.",
+    "Optimistic wins when conflicts are rare; contention turns it into fast failures, not waits.",
+    "Model long reservations as data (HELD with expires_at), not locks."
+   ],
+   "qa": [
+    {
+     "q": "Why not SELECT FOR UPDATE and keep the lock during payment?",
+     "a": "Payment can take minutes; holding row locks that long blocks other transactions, exhausts connections and leaves seats locked if the app crashes. A logical hold with TTL gives the same exclusivity safely."
+    },
+    {
+     "q": "What about a Redis lock with SET NX PX?",
+     "a": "Fine as a fast pre-filter, but Redis is not the source of truth; a failover can lose the key. The DB conditional update must still be authoritative, otherwise you risk double sells."
+    },
+    {
+     "q": "How do you avoid deadlocks when two users select overlapping seats?",
+     "a": "Lock rows in a consistent order (sort seat IDs) and keep transactions short; the conditional update then serialises cleanly and one side simply gets fewer affected rows and rolls back."
+    }
+   ]
+  },
+  {
+   "name": "Reservations with TTL (leases)",
+   "explain": "A lease is a grant of exclusive rights that automatically expires unless renewed. Leases are how distributed systems avoid resources being held forever by a client that crashed or disappeared: the holder gets time-bounded ownership and must finish or renew before expiry. Examples include lock services like Chubby, DHCP addresses, and cache leases. Designing with leases requires care on three fronts. First, time: the expiry should be judged by a single authority's clock (the database), not by each client's clock. Second, expiry enforcement: either an active sweeper releases expired leases, or readers treat expired leases as free (lazy expiry), or both. Third, the race at the boundary: a holder may try to use the lease just after it expired, so every use must re-check ownership atomically, typically with a condition on the lease id. Lease length is a trade-off between giving honest users enough time and not letting abandoned holds starve others.",
+   "in_this_design": "Each seat hold is a lease: status HELD with hold_id and expires_at set by the database clock (10 minutes). A sweeper releases expired holds every few seconds and reads treat expired holds as available. Confirmation re-checks ownership with WHERE hold_id = ? AND status = 'HELD', so a late payment cannot steal seats that were re-held by someone else.",
+   "key_points": [
+    "A hold is a lease: exclusive, time bounded, automatically released.",
+    "Judge expiry with one clock (the DB), never app servers.",
+    "Combine an active sweeper with lazy expiry on read.",
+    "Every use of a lease re-checks ownership atomically."
+   ],
+   "qa": [
+    {
+     "q": "How long should a hold be?",
+     "a": "Long enough for 90-95 percent of honest checkouts (data shows a few minutes for UPI/cards), typically 8-10 minutes, with one extension when payment starts. Too long starves other buyers at sell-out."
+    },
+    {
+     "q": "What happens if the sweeper is down?",
+     "a": "Lazy expiry: hold queries treat expires_at < now() as available, so seats are not stuck; the sweeper only tidies state and emits release events."
+    },
+    {
+     "q": "Can a user extend indefinitely?",
+     "a": "No, allow one bounded extension tied to payment initiation, otherwise a scalper could squat on inventory."
+    }
+   ]
+  },
+  {
+   "name": "Virtual waiting room (admission control and load shedding)",
+   "explain": "Every system has a throughput ceiling. If arrivals exceed it, queues build inside the system: thread pools fill, DB connections saturate, latency climbs and timeouts cause retries that add even more load, a collapse known as congestion collapse or a retry storm. Admission control stops this by deciding at the front door how much work to accept, and holding or rejecting the rest. A virtual waiting room is admission control made visible to humans: users are placed in a queue outside the critical system, shown a position and ETA, and admitted at the rate the backend can sustain. Queue state is cheap (a position number) and can be served from the edge, so millions of waiting users cost little. Fairness choices matter: pure FIFO rewards whoever has the fastest connection or bots; many systems randomise everyone present at the opening moment, then use FIFO for later arrivals. Admission rate should follow a feedback loop based on backend health, similar to TCP congestion control, rather than a fixed number.",
+   "in_this_design": "Hot events are flagged; all booking APIs require a signed admission token issued by the waiting room. The admission controller raises or lowers the admit rate (users per second) using hold p99, error rate and DB CPU. Queue status is served from Redis and edge caches. Inventory exhaustion closes the queue with a sold-out message instead of letting users wait for nothing.",
+   "key_points": [
+    "Shed or queue load at the edge, not inside the database.",
+    "A waiting room turns an unbounded spike into a controlled rate.",
+    "Randomise the opening cohort, FIFO thereafter, to blunt bot speed advantages.",
+    "Drive admission rate from backend health signals (AIMD)."
+   ],
+   "qa": [
+    {
+     "q": "Why not just autoscale the booking service?",
+     "a": "The bottleneck is contention on a few thousand seat rows in one shard and the payment gateway's limits; adding stateless servers does not help and can make DB contention worse."
+    },
+    {
+     "q": "How do you stop people bypassing the queue by calling APIs directly?",
+     "a": "Every booking API validates a signed, short-lived admission token bound to the user and session; without it requests are rejected at the gateway or edge."
+    },
+    {
+     "q": "What does the user see if the backend slows down?",
+     "a": "Their queue ETA grows; nothing errors. That is far better than 500s, which trigger refresh storms."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency keys",
+   "explain": "In a distributed system a client often cannot tell whether a request failed or only the response was lost. Retrying is necessary, but retrying a non-idempotent operation such as 'charge 5,000 rupees' or 'create order' can duplicate it. An idempotency key is a unique value the client generates for a logical operation and sends with every retry. The server stores the key with the result of the first successful execution, usually guarded by a unique constraint, and on any repeat returns the stored result instead of executing again. Keys must be scoped (per user or per merchant), stored at least as long as retries can happen (24 hours is common), and written atomically with the side effect. Concurrent duplicates need handling too: the second request should either wait for the first or get a 'request in progress' response. Payment providers such as Stripe expose idempotency keys for exactly this reason, and downstream webhooks must also be processed idempotently because gateways deliver them at least once.",
+   "in_this_design": "Hold creation, order creation and payment intents all carry idempotency keys (client-generated for holds, order_id for payments). Webhooks dedup on the gateway's event id. Confirmation is a conditional state transition, so applying it twice is harmless.",
+   "key_points": [
+    "A retry without an idempotency key is a potential duplicate charge.",
+    "Store key + result atomically with the side effect, under a unique constraint.",
+    "Webhooks are at-least-once; dedup on the provider's event id.",
+    "Make state transitions conditional so replays are no-ops."
+   ],
+   "qa": [
+    {
+     "q": "Where do you generate the key?",
+     "a": "On the client, once per user intent (e.g. per click of Pay), reused across retries. Server-generated keys cannot protect against a lost response to the first call."
+    },
+    {
+     "q": "What if two requests with the same key arrive concurrently?",
+     "a": "The unique insert succeeds for one; the other sees a conflict and either waits briefly and returns the first result or returns 409 'in progress' for the client to poll."
+    },
+    {
+     "q": "How long do you keep keys?",
+     "a": "At least the client retry window plus margin, typically 24-72 hours, then expire them."
+    }
+   ]
+  },
+  {
+   "name": "Saga pattern for distributed transactions",
+   "explain": "A business transaction often spans several services and an external provider, and a classic two-phase commit is impossible or undesirable across them: payment gateways do not participate in your 2PC, and holding locks across services harms availability. A saga breaks the transaction into a sequence of local transactions, each committed independently, with a compensating action defined for each step that semantically undoes it (release a hold, refund a charge). If a later step fails, the saga runs compensations for the completed steps in reverse. Sagas can be orchestrated, where a central coordinator tells each participant what to do and tracks state, or choreographed, where services react to each other's events. Orchestration is easier to reason about and monitor for a critical flow; choreography reduces coupling but can become hard to follow. Sagas give eventual consistency, not isolation: intermediate states (HELD, PENDING_PAYMENT) are visible, so the design must make them meaningful and safe. Every step and compensation must be idempotent and retryable, and the saga state itself must be durable so it survives crashes.",
+   "in_this_design": "Booking is an orchestrated saga: hold seats (compensate: release), create order, collect payment (compensate: refund), confirm seats SOLD, issue tickets, notify. The intermediate HELD state is visible to others as unavailable, which is the desired isolation. Saga state lives in the orders table or a Temporal workflow so it survives restarts.",
+   "key_points": [
+    "Replace 2PC with local transactions plus compensations.",
+    "Intermediate states are visible: design them to be meaningful (HELD).",
+    "Every step and compensation must be idempotent and retryable.",
+    "Orchestrate critical money flows for visibility and control."
+   ],
+   "qa": [
+    {
+     "q": "Why not two-phase commit between inventory and payments?",
+     "a": "The payment gateway is external and will not join our 2PC, and 2PC blocks if the coordinator fails. A saga with refund as compensation is the practical choice."
+    },
+    {
+     "q": "What if the compensation (refund) fails?",
+     "a": "Retry with backoff; it is idempotent. If it keeps failing, park it in a dead-letter queue with alerting and a manual finance workflow; never drop it."
+    },
+    {
+     "q": "Orchestration or choreography here?",
+     "a": "Orchestration, because the flow is money-critical, needs timeouts (hold expiry) and must be easy to audit and debug."
+    }
+   ]
+  },
+  {
+   "name": "Transactional outbox and change data capture",
+   "explain": "A common bug is the dual write: a service updates its database and then publishes an event to a message broker. If it crashes between the two, the DB and the event stream disagree, and caches or downstream services go stale forever. The transactional outbox pattern fixes this by writing the event into an outbox table in the same database transaction as the state change. A separate relay process reads the outbox (by polling or by tailing the database's write-ahead log with change data capture tools such as Debezium) and publishes to the broker, marking rows as sent. Because the relay can crash after publishing but before marking, delivery is at least once, so consumers must be idempotent, usually by tracking event ids or using versioned upserts. Ordering per entity is preserved by partitioning the topic by the entity key. The outbox makes the database the single source of truth and the event stream a reliable derivative of it.",
+   "in_this_design": "Every seat and order transition writes an outbox row in the same transaction. Debezium tails the PostgreSQL WAL and publishes to Kafka topics partitioned by show_id. Consumers update the Redis seat map (with version checks so out-of-order events do not regress state), issue tickets, send notifications and feed analytics.",
+   "key_points": [
+    "Never write DB then broker separately: that is a dual-write bug.",
+    "Write the event to an outbox in the same transaction.",
+    "Relay is at-least-once; consumers must be idempotent.",
+    "Partition by entity key to keep per-entity ordering."
+   ],
+   "qa": [
+    {
+     "q": "Why not publish to Kafka inside the DB transaction?",
+     "a": "Kafka is not part of the DB transaction; if the commit fails after publishing, consumers see an event that never happened."
+    },
+    {
+     "q": "How do you keep the seat-map cache from going backwards?",
+     "a": "Each event carries a per-show version (or the seat row version); the projector only applies events newer than what it has."
+    },
+    {
+     "q": "What if the outbox relay lags?",
+     "a": "Seat maps get staler, but correctness is unaffected because holds are checked in the DB. Alert on outbox lag beyond a few seconds."
+    }
+   ]
+  },
+  {
+   "name": "Sharding and hot partitions",
+   "explain": "Sharding spreads data across nodes by a key so that load and storage scale out. The ideal key keeps each transaction on one shard and spreads load evenly. Uneven load produces hot partitions: one shard saturated while others idle. Hot partitions come from skewed popularity (a celebrity, a viral product, a mega concert). Remedies depend on whether the hot key's operations must be serialised: if not, you can split the key (add a suffix, spread counters across N sub-keys and sum on read); if they must be serialised, you instead isolate the hot key on dedicated capacity, reduce the cost per operation, and control the arrival rate in front of it. Directory-based placement lets operators move a known hot tenant to its own node in advance, which is common for planned events.",
+   "in_this_design": "Seat inventory is sharded by show_id so a multi-seat hold is a single-shard transaction. A mega concert is known in advance, so its show is placed on a dedicated, pre-warmed shard. For general admission, a single counter row would be hot, so we split capacity into, say, 16 sub-counters and hold from a random one, falling back to others when it is empty. The waiting room bounds arrival rate.",
+   "key_points": [
+    "Shard by show/event so holds are single-shard ACID.",
+    "Known hot events get dedicated, pre-warmed shards.",
+    "Split hot counters (general admission) into sub-buckets.",
+    "When a hot key must serialise, control arrivals rather than split it."
+   ],
+   "qa": [
+    {
+     "q": "Why not shard by user_id?",
+     "a": "A hold touches seats of one show bought by many users; sharding by user would make every hold a cross-shard transaction."
+    },
+    {
+     "q": "How do you scale a single stadium beyond one shard?",
+     "a": "Shard by (show_id, section); most users pick seats within one section. Cross-section carts are rare and can be handled with a small saga."
+    },
+    {
+     "q": "What is the risk of split counters?",
+     "a": "A user may see 'sold out' in one bucket while another still has seats; fall back by scanning other buckets before declaring sold out."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Where to enforce seat exclusivity",
+   "options": "Redis lock only vs DB conditional update vs both",
+   "choice": "DB conditional update authoritative; Redis only as a cache",
+   "why": "Redis failover can drop locks; the DB gives durable, transactional truth. Contention is bounded by the waiting room so the DB can take it."
+  },
+  {
+   "decision": "Hold mechanism",
+   "options": "Pessimistic DB lock for checkout vs logical hold with TTL",
+   "choice": "Logical hold with TTL",
+   "why": "No locks across think time, survives crashes, explicit expiry semantics."
+  },
+  {
+   "decision": "Handling spikes",
+   "options": "Autoscale and hope vs rate-limit with errors vs virtual waiting room",
+   "choice": "Virtual waiting room with adaptive admission",
+   "why": "Errors cause refresh storms and anger; a queue gives fairness and protects the core."
+  },
+  {
+   "decision": "Seat map freshness",
+   "options": "Read from primary DB vs cache with seconds of lag vs push over WebSocket",
+   "choice": "Redis cache refreshed by CDC, optional push for admitted users",
+   "why": "Primary DB reads would multiply load 100x; staleness is safe because holds are authoritative."
+  },
+  {
+   "decision": "Booking workflow",
+   "options": "2PC vs choreographed events vs orchestrated saga",
+   "choice": "Orchestrated saga",
+   "why": "External payments cannot join 2PC; orchestration gives visibility, timeouts and clear compensations for money flows."
+  },
+  {
+   "decision": "Seat selection mode at mega on-sales",
+   "options": "User picks exact seats vs 'best available' allocation",
+   "choice": "Offer best available for hot sections, pick-your-seat elsewhere",
+   "why": "Server-side allocation avoids thousands of users colliding on the same seats and retrying."
+  },
+  {
+   "decision": "Database choice",
+   "options": "PostgreSQL sharded vs DynamoDB vs Spanner",
+   "choice": "PostgreSQL sharded by show",
+   "why": "Rich constraints and transactions, team familiarity, per-show data fits a shard; DynamoDB is a solid alternative with conditional writes."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Inventory DB primary fails mid on-sale",
+   "behavior": "Synchronous replica promoted in 10-30 s; admission controller drops rate to 0, users wait in queue rather than error; durable holds survive."
+  },
+  {
+   "failure": "Payment gateway degraded (high latency/timeouts)",
+   "behavior": "Payment router fails over to a secondary gateway; holds are extended once; pending payments reconciled by polling; admission slowed to match checkout capacity."
+  },
+  {
+   "failure": "Kafka / outbox relay down",
+   "behavior": "Bookings still succeed (DB is truth); seat maps stale and tickets delayed; relay catches up from WAL; alert on lag."
+  },
+  {
+   "failure": "Redis waiting-room cluster loses a node",
+   "behavior": "Replica promoted; queue positions are also derivable from signed tickets (position encoded and signed), so users keep their place."
+  },
+  {
+   "failure": "Sweeper stuck",
+   "behavior": "Lazy expiry on read keeps seats sellable; alert on count of expired-but-HELD rows."
+  },
+  {
+   "failure": "Bot attack at queue join",
+   "behavior": "WAF and bot scoring at edge; CAPTCHA step-up; suspicious tickets demoted or invalidated before admission."
+  },
+  {
+   "failure": "Notification provider outage",
+   "behavior": "Tickets are in the app and account; notifications retried from the queue; booking unaffected."
+  }
+ ],
+ "metrics": [
+  "Oversell detector: count of seats with more than one CONFIRMED order (must be 0, page immediately).",
+  "Hold attempts/s, success rate, 409 rate, p50/p99 latency per hot event.",
+  "Waiting room: queue length, admit rate, median and p95 wait, abandonment rate.",
+  "Hold-to-payment and payment-to-confirm conversion; payment success rate by gateway and method.",
+  "PENDING orders older than 5 minutes; orphaned payments awaiting refund; refund SLA.",
+  "Expired-but-HELD seat count; sweeper lag.",
+  "Outbox / CDC lag and seat-map cache staleness.",
+  "Bot score distribution, blocked sessions, tickets per account/card outliers."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you guarantee no double booking if Redis says a seat is free but it is not?",
+   "a": "Redis is only a view. The authoritative step is the DB conditional update on status='AVAILABLE'; only one transaction can flip a seat, so a stale cache just yields a 409."
+  },
+  {
+   "q": "How would you design general admission (no seat numbers)?",
+   "a": "A counter per section with UPDATE ... SET held = held + n WHERE capacity - sold - held >= n, split into sub-counters for hot events; holds still have TTLs."
+  },
+  {
+   "q": "How would you handle a 'pay later' or cash-at-venue option?",
+   "a": "Shorter hold with explicit confirmation deadline, stricter per-user limits, and release if unpaid; it is a lease with a different TTL."
+  },
+  {
+   "q": "How do you make the queue fair against bots?",
+   "a": "Pre-registration with verified identity, randomise everyone present at T0, one ticket per account/device, CAPTCHA at join, risk scoring before admission, and per-card limits at payment."
+  },
+  {
+   "q": "What changes for BookMyShow-scale (many small shows) versus Ticketmaster mega events?",
+   "a": "Many small shows spread naturally across shards and rarely need a waiting room; the mega event needs dedicated shard placement, a waiting room and best-available allocation."
+  },
+  {
+   "q": "What if the user's phone goes offline during payment?",
+   "a": "Webhooks and reconciliation complete the booking server-side; the app fetches order status on reconnect; the ticket is in the account and email."
+  },
+  {
+   "q": "How do you scan tickets at the gate if venue internet is poor?",
+   "a": "QR contains a signed JWT verifiable offline with the public key; scanners cache the list of valid ticket IDs and sync scans when connected; duplicate scans are reconciled with first-scan-wins."
+  },
+  {
+   "q": "How do you test this before a big on-sale?",
+   "a": "Load tests at 2x expected peak with realistic seat-choice skew, chaos tests failing the DB primary and payment gateway mid-test, and a dress rehearsal on a smaller event."
+  }
+ ],
+ "key_points": [
+  "Separate the read path (catalog, seat maps, cached, stale OK) from the write path (holds, strongly consistent).",
+  "A virtual waiting room converts a 10M-user spike into a controlled admission rate; driven by backend health.",
+  "Seat hold = conditional UPDATE WHERE status='AVAILABLE', all-or-nothing in one short transaction.",
+  "Holds are leases with a DB-clock expiry, swept actively and expired lazily.",
+  "Never hold a lock across payment; booking is an orchestrated saga with refunds as compensation.",
+  "Idempotency keys on hold, order and payment; webhooks deduped by provider event id.",
+  "Shard inventory by show/event; pre-place mega events on dedicated shards; split GA counters.",
+  "Transactional outbox + CDC keep caches and tickets in sync without dual writes.",
+  "Late payment after expiry: re-grab if possible, else auto-refund.",
+  "Oversell must be zero and is monitored continuously."
+ ],
+ "quiz": [
+  {
+   "q": "Why should a seat hold not be implemented as SELECT ... FOR UPDATE held during payment?",
+   "options": [
+    "Because PostgreSQL does not support row locks",
+    "Because holding DB locks across minutes of user and payment time blocks other transactions and leaks locks on crashes",
+    "Because row locks are slower than table locks",
+    "Because payment gateways require optimistic locking"
+   ],
+   "answer": 1,
+   "why": "Long-held locks exhaust connections and get stuck when clients die; a logical hold with TTL avoids that. PostgreSQL certainly supports row locks, so that distractor is simply wrong."
+  },
+  {
+   "q": "Two users try to hold seat A12 at the same instant. Which mechanism guarantees only one succeeds?",
+   "options": [
+    "Checking availability in the Redis cache before writing",
+    "Sorting requests by client timestamp",
+    "A CDN rule",
+    "A conditional UPDATE ... WHERE status='AVAILABLE' and checking the affected row count"
+   ],
+   "answer": 3,
+   "why": "The conditional update is an atomic compare-and-set in the database. Checking the cache first is tempting but there is a race between the check and the write."
+  },
+  {
+   "q": "What is the main purpose of a virtual waiting room?",
+   "options": [
+    "To control the admission rate so the booking tier is never overloaded and access is fair",
+    "To show ads while users wait",
+    "To cache seat maps",
+    "To replace the payment gateway"
+   ],
+   "answer": 0,
+   "why": "It is admission control: queue outside, admit at a sustainable rate. It does not replace caching; caching handles reads, not contended writes."
+  },
+  {
+   "q": "A payment-success webhook arrives after the user's hold expired and the seats were sold to someone else. Best behaviour?",
+   "options": [
+    "Confirm anyway and oversell",
+    "Ignore the webhook",
+    "Try to re-acquire the same seats; if impossible mark the order failed and auto-refund",
+    "Charge the second buyer's card back"
+   ],
+   "answer": 2,
+   "why": "Re-grab-or-refund keeps zero oversell and makes the user whole. Ignoring the webhook leaves a paid user with nothing."
+  },
+  {
+   "q": "Why use the database's now() rather than app server time for hold expiry?",
+   "options": [
+    "It is faster",
+    "SQL cannot accept parameters",
+    "App servers have skewed clocks; one authoritative clock avoids inconsistent expiry decisions",
+    "Regulations require it"
+   ],
+   "answer": 2,
+   "why": "Clock skew across servers can make one server consider a hold expired while another does not. Speed is not the reason."
+  },
+  {
+   "q": "Roughly how big is a 2-bit-per-seat status bitmap for a 60,000-seat stadium?",
+   "options": [
+    "About 15 KB",
+    "About 1.5 MB",
+    "About 150 KB",
+    "About 1.5 KB"
+   ],
+   "answer": 0,
+   "why": "60,000 x 2 bits = 120,000 bits = 15,000 bytes. The 150 KB answer is the common off-by-ten error."
+  },
+  {
+   "q": "Which pattern prevents the inventory DB and the Kafka seat events from diverging when a service crashes?",
+   "options": [
+    "Two-phase commit between PostgreSQL and Kafka",
+    "Writing to Kafka first, then the DB",
+    "Increasing Kafka replication factor",
+    "Transactional outbox with CDC relay"
+   ],
+   "answer": 3,
+   "why": "The outbox writes the event in the same DB transaction. Writing Kafka first just flips the dual-write problem; replication factor does not address it."
+  },
+  {
+   "q": "Why is the booking flow modelled as a saga rather than a distributed transaction?",
+   "options": [
+    "Sagas are always faster",
+    "The external payment gateway cannot participate in 2PC, so we use local transactions plus compensations like refunds",
+    "2PC does not exist in PostgreSQL",
+    "Sagas guarantee isolation"
+   ],
+   "answer": 1,
+   "why": "External participants and availability concerns rule out 2PC. Sagas do not guarantee isolation, which is why the HELD state is designed carefully."
+  },
+  {
+   "q": "A user taps Pay twice due to a slow network. What prevents a double charge?",
+   "options": [
+    "An idempotency key (order_id) on the payment intent and dedup of webhooks",
+    "The CDN",
+    "A longer hold TTL",
+    "Showing a spinner"
+   ],
+   "answer": 0,
+   "why": "Idempotency keys make retries return the original result. A spinner helps UX but does not stop duplicate requests from reaching the server."
+  },
+  {
+   "q": "During an on-sale, hold p99 latency climbs from 120 ms to 900 ms and DB CPU is at 85 percent. Best immediate action?",
+   "options": [
+    "Add more stateless booking pods",
+    "Increase hold TTL to 30 minutes",
+    "Disable the seat-map cache",
+    "Lower the waiting-room admission rate"
+   ],
+   "answer": 3,
+   "why": "The DB shard is saturated; reducing arrivals relieves it. More stateless pods add more concurrent DB load, the tempting but wrong instinct."
+  },
+  {
+   "q": "Why shard seat inventory by show_id rather than by user_id?",
+   "options": [
+    "user_id has low cardinality",
+    "Show IDs are numeric",
+    "A multi-seat hold touches one show's seats, so show_id keeps it a single-shard transaction",
+    "It reduces storage"
+   ],
+   "answer": 2,
+   "why": "Sharding by the transaction boundary avoids cross-shard transactions. user_id has high cardinality, so that distractor is false."
+  },
+  {
+   "q": "General admission sales use one counter row per section and it becomes a hot row. A good fix?",
+   "options": [
+    "Remove the counter and allow overselling",
+    "Split capacity across N sub-counters and hold from one, falling back to others",
+    "Move the counter to the CDN",
+    "Use eventual consistency with no checks"
+   ],
+   "answer": 1,
+   "why": "Sub-counters spread contention while preserving correctness. Allowing oversell violates the core requirement."
+  },
+  {
+   "q": "What is lazy expiry in this design?",
+   "options": [
+    "Never expiring holds",
+    "Expiring holds only on weekends",
+    "Letting the client decide expiry",
+    "Treating HELD rows with expires_at < now() as available at read/hold time, even before the sweeper runs"
+   ],
+   "answer": 3,
+   "why": "Lazy expiry guarantees seats are never stuck if the sweeper lags. Letting the client decide would allow abuse."
+  },
+  {
+   "q": "Why randomise everyone already in the pre-queue at the opening moment?",
+   "options": [
+    "To make the queue shorter",
+    "To confuse bots' timers and remove the advantage of whoever refreshes fastest at T0",
+    "Because Redis sorted sets need random scores",
+    "To improve cache hit ratio"
+   ],
+   "answer": 1,
+   "why": "Randomising the opening cohort blunts sub-second speed advantages that bots have. Queue length is unchanged."
+  },
+  {
+   "q": "Which store should be authoritative for seat state?",
+   "options": [
+    "The transactional database (PostgreSQL shard)",
+    "Redis, because it is fastest",
+    "Elasticsearch, because users search seats",
+    "The CDN edge cache"
+   ],
+   "answer": 0,
+   "why": "Correctness needs durable transactions; Redis is fast but can lose recent writes on failover, the most tempting wrong choice."
+  },
+  {
+   "q": "Webhooks from the payment gateway are delivered...",
+   "options": [
+    "Exactly once, guaranteed",
+    "At most once",
+    "At least once, so the handler must dedup by event id",
+    "Only if the user is online"
+   ],
+   "answer": 2,
+   "why": "Providers retry until they get a 2xx, so duplicates happen. Assuming exactly once is the classic bug."
+  },
+  {
+   "q": "Approximately how many users per second join the queue if 10 million arrive within 10 minutes?",
+   "options": [
+    "About 1,700/s",
+    "About 17,000/s",
+    "About 170,000/s",
+    "About 1.7 million/s"
+   ],
+   "answer": 1,
+   "why": "10,000,000 / 600 s is about 16,700/s. 170k/s would require them to arrive in about one minute."
+  },
+  {
+   "q": "Seat map shows A12 available but the hold returns 409. Is this a bug?",
+   "options": [
+    "Yes, cache and DB must always agree",
+    "Yes, the CDN must be purged on each hold",
+    "No, the cache is advisory with bounded staleness; the DB hold is authoritative",
+    "No, 409 means the payment failed"
+   ],
+   "answer": 2,
+   "why": "Read paths tolerate seconds of staleness by design. Forcing cache-DB agreement would require reading the primary on every map view."
+  },
+  {
+   "q": "Which is the best compensation if seat confirmation fails after payment success?",
+   "options": [
+    "Delete the payment record",
+    "Retry forever without telling the user",
+    "Mark the seat SOLD anyway",
+    "Issue a refund via the gateway, idempotently, and notify the user"
+   ],
+   "answer": 3,
+   "why": "A saga compensates with a refund. Deleting records hides money that actually moved."
+  },
+  {
+   "q": "For a mega on-sale, why might you offer 'best available' instead of letting everyone pick seats?",
+   "options": [
+    "Server-side allocation avoids thousands of users colliding on the same seats and retrying, improving throughput and fairness",
+    "It is cheaper to build",
+    "Seat maps cannot render 60k seats",
+    "Regulations require it"
+   ],
+   "answer": 0,
+   "why": "Allocation removes contention hotspots. Seat maps can render fine; that is not the reason."
+  },
+  {
+   "q": "Admission tokens should be...",
+   "options": [
+    "Long-lived and transferable",
+    "Stored only in browser localStorage without signature",
+    "Short-lived, signed, bound to user and session",
+    "Optional for API calls"
+   ],
+   "answer": 2,
+   "why": "Binding and short TTL stop sharing and replay. Unsigned tokens can be forged by scripts."
+  }
+ ],
+ "references": [
+  {
+   "title": "System Design Interview: Design a Ticket Booking System (techinterview.org)",
+   "url": "https://www.techinterview.org/post/3233461983/system-design-ticket-booking/"
+  },
+  {
+   "title": "Design Ticketmaster: ticket booking (System Design Nuggets, DesignGurus)",
+   "url": "https://designgurus.substack.com/p/design-ticketmaster-ticket-booking"
+  },
+  {
+   "title": "System Design: Design Ticketmaster - seat selection, virtual queue, flash sale (techinterview.org)",
+   "url": "https://www.techinterview.org/post/3233474396/system-design-design-ticketmaster-event-ticketing-seat-selection-virtual-queue-flash-sale-inventory-dynamic-pricing/"
+  },
+  {
+   "title": "Design a Ticket Booking System (Hello Interview)",
+   "url": "https://www.hellointerview.com/premium/questions/cm4szwvht003pnqlrkhad2xjd"
+  }
+ ]
+}

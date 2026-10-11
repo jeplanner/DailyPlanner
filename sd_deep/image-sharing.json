@@ -1,0 +1,1151 @@
+{
+ "slug": "image-sharing",
+ "title": "Design Instagram-style image sharing",
+ "prompt": "Design an image sharing service.",
+ "group": "classic",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 120,
+ "summary": "An image sharing service is a read-heavy media pipeline glued to a social graph: uploads are rare and large, views are constant and tiny-latency. The core tension is keeping petabytes of immutable blobs cheap and durable while serving the hot few percent from the edge in tens of milliseconds, and building feeds that do not melt when a celebrity with 50M followers posts.",
+ "framework": {
+  "clarify": [
+   "Scope: upload photos, view a home feed, view a profile grid, follow users, like/comment. Video, stories, DMs out of scope unless asked.",
+   "Scale assumption: 500M DAU, 100M new photos/day, each user views ~100 images/day -> roughly 50B image views/day.",
+   "Read:write ratio is about 500:1 on images, so the design is optimised for reads and edge delivery.",
+   "Latency targets: feed API p99 < 300 ms; image first byte from CDN p95 < 100 ms in-region; upload acknowledged < 2 s after bytes land.",
+   "Consistency: a user must see their own post immediately (read-your-writes); followers may see it within ~5 s (eventual).",
+   "Durability: never lose an uploaded original (11 nines object storage); derived thumbnails can be regenerated.",
+   "Are images public or can accounts be private? Private accounts mean signed, expiring URLs instead of plain public CDN links.",
+   "Do we need content moderation (CSAM, nudity) before the image is visible? Assume yes, async with a short hold for flagged classes."
+  ],
+  "design": [
+   "Baseline: client asks API for a presigned URL, uploads bytes directly to object storage, so the app tier never proxies multi-MB bodies.",
+   "Object-created event goes to Kafka; resize workers generate 4 variants (150px thumb, 320, 640, 1080 WebP/AVIF) and write them back under content-addressed keys.",
+   "Metadata (media, post, user, follow) lives in sharded relational/Cassandra stores keyed by user_id; post IDs are 64-bit time-sortable IDs.",
+   "Post creation publishes post.created; fan-out workers push post_id into followers' Redis feed ZSETs for normal users, and celebrity posts are pulled at read time (hybrid fan-out).",
+   "Reads: feed service merges the precomputed ZSET with celebrity pulls, hydrates post metadata from cache, and returns CDN URLs; images are served by CDN -> origin shield -> object store.",
+   "APIs: POST /v1/uploads, POST /v1/posts, GET /v1/feed?cursor=, GET /v1/users/{id}/posts, POST /v1/posts/{id}/likes."
+  ],
+  "defend": [
+   "Bottleneck is egress bandwidth and origin load, not the database: ~50B views/day at ~60 KB average is ~3 PB/day, so CDN hit ratio must be > 95% and origin shield collapses misses.",
+   "Scale reads: immutable content-addressed URLs with Cache-Control max-age=1 year, multi-tier caching (edge, regional shield), Redis for feed and post metadata, read replicas for profile grids.",
+   "Scale writes: direct-to-storage uploads, async processing via Kafka partitions keyed by media_id, sharded metadata by user_id, and fan-out capped at ~10k followers per author.",
+   "Failure: if resize workers lag, serve the original through an on-the-fly resizer with a short TTL; if feed cache is lost, rebuild by pull from followees' recent posts; retries use exponential backoff with full jitter and idempotency keys.",
+   "Measure: CDN hit ratio, origin egress, upload success rate by network type, time-to-ready (upload to READY p95), feed p99, fan-out lag, and moderation queue age."
+  ],
+  "script": "Let me start by clarifying. I will assume an Instagram-like service: users upload photos, follow people and scroll a home feed, at about 500 million DAU and 100 million uploads a day, so views outnumber uploads by roughly 500 to 1. That tells me this is a delivery problem first. Targets: feed p99 under 300 milliseconds, images from the edge under 100, originals never lost, and you always see your own post instantly while followers can lag a few seconds. For the design, clients upload straight to object storage with a presigned URL; an event triggers workers that make four resized variants under content-addressed keys, so URLs are immutable and cacheable for a year. Metadata is sharded by user ID with time-sortable post IDs. Feeds use hybrid fan-out: push into Redis timelines for normal authors, pull for celebrities. To defend it: the real bottleneck is egress, about 3 petabytes a day, so I live and die by CDN hit ratio and an origin shield. Writes scale because the app tier never touches bytes, failures degrade to on-the-fly resizing or pull-based feeds, and I would watch hit ratio, time-to-ready and fan-out lag."
+ },
+ "brd": {
+  "problem": "People want to share moments as photos with friends and followers instantly and reliably on any network, including flaky Indian 3G/4G. The business needs high engagement (daily scrolling) at a storage and bandwidth cost per user that stays below ad revenue per user, while keeping the platform safe from abusive content.",
+  "goals": [
+   "Make upload feel instant: post visible to the author within 2 s of bytes landing, even on mobile networks.",
+   "Deliver a smooth scrolling feed with images appearing in under 100 ms from the edge for 95% of views.",
+   "Keep cost per stored GB and per delivered GB low via tiered storage, modern codecs (WebP/AVIF) and high CDN offload.",
+   "Never lose a user's original photo (11 nines durability).",
+   "Detect and block illegal or policy-violating content before or shortly after it becomes visible.",
+   "Support growth to 1B users without re-architecture (horizontal sharding everywhere)."
+  ],
+  "non_goals": [
+   "Video and live streaming (separate pipeline).",
+   "Photo editing beyond basic filters applied on the client.",
+   "Ranking model quality itself; we provide the candidate feed and a hook for the ranker.",
+   "Direct messaging."
+  ],
+  "stakeholders": [
+   {
+    "who": "Consumers (posters and viewers)",
+    "needs": "Fast uploads, fast feed, privacy controls, never losing photos."
+   },
+   {
+    "who": "Creators / brands",
+    "needs": "Reach to all followers, analytics on views and likes, predictable delivery."
+   },
+   {
+    "who": "Trust and Safety",
+    "needs": "Moderation pipeline, hash matching, takedown within minutes, audit logs."
+   },
+   {
+    "who": "Finance / Infra",
+    "needs": "Predictable storage and CDN spend, unit cost per DAU dashboards."
+   },
+   {
+    "who": "Ads team",
+    "needs": "Feed slots and impression logging that are accurate and deduplicated."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Upload success rate (bytes to READY)",
+    "target": ">= 99.5% overall, >= 98% on 3G"
+   },
+   {
+    "metric": "Feed API latency",
+    "target": "p99 < 300 ms"
+   },
+   {
+    "metric": "CDN cache hit ratio (bytes)",
+    "target": ">= 95%"
+   },
+   {
+    "metric": "Time to ready (upload complete to variants available)",
+    "target": "p95 < 3 s"
+   },
+   {
+    "metric": "Durability of originals",
+    "target": "zero loss; 99.999999999% design target"
+   },
+   {
+    "metric": "Takedown time for confirmed illegal content",
+    "target": "< 15 minutes from report"
+   }
+  ],
+  "constraints": [
+   "Mobile-first users on variable networks; uploads must be resumable.",
+   "Data residency / IT rules may require Indian user data and takedown logs to stay in-country.",
+   "Storage grows by ~100+ TB/day; must use tiered storage and erasure coding to control cost.",
+   "Must integrate with existing identity and ads systems."
+  ],
+  "risks": [
+   {
+    "risk": "CDN cost explodes with growth",
+    "mitigation": "AVIF/WebP, right-sized variants per device DPR, multi-CDN with commit-based pricing, origin shield."
+   },
+   {
+    "risk": "Celebrity posts cause fan-out storms",
+    "mitigation": "Hybrid push/pull fan-out with a follower threshold."
+   },
+   {
+    "risk": "Illegal content goes viral before detection",
+    "mitigation": "PhotoDNA/pHash matching inline before READY, ML classifiers async, kill switch purges CDN."
+   },
+   {
+    "risk": "Metadata DB hot shards from viral accounts",
+    "mitigation": "Cache post metadata and counters, shard counters, read replicas."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Priya, casual sharer on a budget Android phone",
+    "needs": "Upload works on patchy 4G, low data use while scrolling."
+   },
+   {
+    "name": "Arjun, creator with 2M followers",
+    "needs": "Every follower sees his post quickly; accurate like counts."
+   },
+   {
+    "name": "Moderator",
+    "needs": "Queue of flagged images with context, one-click takedown that propagates to CDN."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want to upload a photo with a caption so that my followers can see it.",
+   "As a user on a weak network, I want my upload to resume after a drop so that I do not restart a 5 MB upload.",
+   "As a user, I want to see my post in my profile immediately after posting so that I know it worked.",
+   "As a follower, I want a home feed of recent posts from people I follow so that I stay up to date.",
+   "As a user, I want images to load quickly and in a size suited to my screen so that scrolling is smooth and cheap on data.",
+   "As a private account owner, I want only approved followers to see my photos so that my content stays private.",
+   "As a user, I want to like and comment on posts so that I can interact with friends.",
+   "As a moderator, I want flagged images hidden everywhere within minutes so that harm is contained."
+  ],
+  "functional": [
+   "Create upload session returning presigned, resumable upload URL(s) valid for 15 minutes.",
+   "Validate file type and size (JPEG/HEIC/PNG, <= 20 MB), strip EXIF GPS by default.",
+   "Generate resized variants (150, 320, 640, 1080 px) in WebP and AVIF, keep the original.",
+   "Create a post with 1-10 media items and caption; idempotent on client-supplied key.",
+   "Home feed with cursor pagination, 20 posts per page, newest-first candidate set for ranking.",
+   "Profile grid of a user's posts, reverse chronological.",
+   "Follow / unfollow, private account follow requests.",
+   "Likes and comments with counters.",
+   "Delete post: hide immediately, purge CDN, delete blobs after 30-day retention.",
+   "Moderation: hash match on upload, async ML classification, report flow and takedown."
+  ],
+  "non_functional": [
+   {
+    "name": "Availability",
+    "target": "99.95% for feed and image reads; 99.9% for uploads"
+   },
+   {
+    "name": "Feed latency",
+    "target": "p50 80 ms, p99 300 ms server side"
+   },
+   {
+    "name": "Image delivery latency",
+    "target": "CDN TTFB p95 < 100 ms in-region"
+   },
+   {
+    "name": "Durability",
+    "target": "Originals 11 nines (erasure coded, multi-AZ); metadata RPO < 1 min"
+   },
+   {
+    "name": "Consistency",
+    "target": "Read-your-writes for author; follower visibility within 5 s p95"
+   },
+   {
+    "name": "Scalability",
+    "target": "Linear horizontal scale to 1B DAU; no single-writer component"
+   },
+   {
+    "name": "Security / privacy",
+    "target": "Private media via signed URLs with 1 h expiry; EXIF location stripped"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "500M DAU; 100M photos uploaded/day (0.2 per DAU).",
+    "Original average 2 MB after client-side compression; variants total ~300 KB per photo.",
+    "Each DAU views ~100 images/day; average delivered variant ~60 KB.",
+    "Each DAU opens feed ~10 times/day, 20 posts per page.",
+    "Average 200 followers per user; 0.01% of users have > 100k followers."
+   ],
+   "math": [
+    "Upload QPS: 100M / 86,400 = ~1,160/s average, ~3,500/s peak (3x).",
+    "Raw ingest: 100M x 2 MB = 200 TB/day; variants add 30 TB/day; ~230 TB/day, ~84 PB/year before erasure coding.",
+    "With RS(10,4) erasure coding overhead 1.4x: ~118 PB/year raw disk; cold tier after 90 days cuts cost ~60%.",
+    "Image views: 500M x 100 = 50B/day = ~580k/s average, ~1.5M/s peak.",
+    "Egress: 50B x 60 KB = 3 PB/day = ~280 Gbps average, ~700 Gbps peak; at 95% CDN hit ratio origin sees ~35 Gbps peak.",
+    "Feed API: 500M x 10 = 5B/day = ~58k QPS average, ~150k peak.",
+    "Fan-out writes: 100M posts x 200 followers = 20B timeline inserts/day = ~230k/s; capped celebrity fan-out keeps peak bounded.",
+    "Feed cache: keep 500 post IDs per active user x 8 bytes x 500M = 2 TB plus ZSET overhead (~3x) = ~6 TB of Redis."
+   ],
+   "summary": "About 1.2k uploads/s, 580k image views/s, 58k feed requests/s and ~230 TB/day of new storage. Egress (~3 PB/day) dominates cost, so CDN offload and codecs matter more than DB tuning; feed cache needs ~6 TB of Redis."
+  },
+  "out_of_scope": [
+   "Video, Reels and Stories pipelines.",
+   "Ranking/recommendation model training.",
+   "Ads auction and billing.",
+   "Search and hashtag indexing (mentioned as a follow-up only)."
+  ]
+ },
+ "hld": {
+  "overview": "Three planes. The media plane moves bytes: presigned direct uploads into object storage, an event-driven resize and moderation pipeline, and a CDN with origin shield serving immutable, content-addressed variants. The metadata plane stores users, posts, media and the follow graph in stores sharded by user_id with time-sortable IDs. The feed plane precomputes home timelines in Redis via hybrid fan-out and hydrates posts at read time. The app tier never handles image bytes.",
+  "diagram": "\n Mobile / Web clients\n   |  (1) POST /uploads -> presigned URL      (5) GET feed / GET image\n   v                                            |\n +-----------+     +------------------+         v\n | API GW +  |---->| Upload Service   |    +-----------+  miss  +---------------+\n | Auth/Rate |     | (presign, meta)  |    |   CDN     |------->| Image Proxy / |\n +-----------+     +------------------+    | (edge PoP)|        | Origin Shield |\n   |   |                 |                 +-----------+        +---------------+\n   |   |  (2) PUT bytes  v                                             |\n   |   +--------->+------------------+  (3) object-created event       v\n   |              | Object Store     |----------------------+   +-------------+\n   |              | raw/ + derived/  |<---------+           |   | Object Store|\n   |              +------------------+          |           v   +-------------+\n   |                                            |   +----------------+\n   |                                   writes   |   | Kafka: media.* |\n   |                                   variants |   +----------------+\n   |                                            |      |        |\n   v                                   +---------------+ +--------------+\n +-------------+   +-------------+     | Transcode /   | | Moderation + |\n | Post Svc    |-->| Metadata DB |     | Resize Workers| | Hash (pHash) |\n | Feed Svc    |   | (sharded    |     +---------------+ +--------------+\n | Graph Svc   |   |  Postgres / |              |               |\n +-------------+   |  Cassandra) |<-------------+---------------+\n      |            +-------------+   (4) mark READY, store variant keys\n      v\n +-------------+   +-------------+\n | Fan-out     |-->| Feed Cache  |\n | workers     |   | (Redis ZSET)|\n +-------------+   +-------------+\n",
+  "components": [
+   {
+    "name": "API Gateway",
+    "responsibility": "TLS termination, auth token validation, per-user rate limiting (token bucket), routing."
+   },
+   {
+    "name": "Upload Service",
+    "responsibility": "Creates media rows in PENDING, issues presigned multipart/resumable URLs, validates completion."
+   },
+   {
+    "name": "Object Store (blob tier)",
+    "responsibility": "Durable storage of originals and variants, erasure coded, lifecycle rules to cold tier after 90 days."
+   },
+   {
+    "name": "Media Pipeline (Kafka + workers)",
+    "responsibility": "Consumes object-created events, decodes, strips EXIF, resizes to 4 variants, encodes WebP/AVIF, marks READY."
+   },
+   {
+    "name": "Moderation Service",
+    "responsibility": "Perceptual hash match against known-bad lists inline, async ML classifiers, takedown and CDN purge."
+   },
+   {
+    "name": "Post Service",
+    "responsibility": "Creates posts referencing READY media, enforces idempotency, emits post.created via outbox."
+   },
+   {
+    "name": "Graph Service",
+    "responsibility": "Follow edges, follower counts, private account approvals; answers 'followers of X' in pages."
+   },
+   {
+    "name": "Fan-out Workers",
+    "responsibility": "Pushes post IDs into followers' Redis timelines for authors under the celebrity threshold."
+   },
+   {
+    "name": "Feed Service",
+    "responsibility": "Reads the timeline ZSET, merges celebrity posts by pull, calls ranker, hydrates posts, returns cursor."
+   },
+   {
+    "name": "CDN + Origin Shield + Image Proxy",
+    "responsibility": "Edge caching with 1-year TTL, shield collapses misses, proxy can resize on the fly as fallback."
+   },
+   {
+    "name": "Metadata stores",
+    "responsibility": "Sharded Postgres (users, posts) and Cassandra (likes, timelines backup), Redis caches for hot objects and counters."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Upload and publish",
+    "steps": [
+     "Client POST /v1/uploads with size, mime, sha256; Upload Service writes media(PENDING) and returns presigned URL.",
+     "Client PUTs bytes in 5 MB parts directly to object storage; resumes failed parts.",
+     "Object store emits object-created to Kafka topic media.uploaded keyed by media_id.",
+     "Worker downloads raw, verifies checksum, computes pHash and checks block list, strips EXIF, generates variants, writes derived/{hash}_{w}.avif.",
+     "Worker marks media READY with variant keys (conditional update: only if PENDING).",
+     "Client POST /v1/posts with media_ids and Idempotency-Key; Post Service inserts post and outbox row in one transaction.",
+     "Outbox relay publishes post.created; author's own profile cache is updated synchronously for read-your-writes."
+    ]
+   },
+   {
+    "name": "Home feed read",
+    "steps": [
+     "Client GET /v1/feed?cursor=; Feed Service reads ZREVRANGEBYSCORE timeline:{uid} below cursor, limit 200 candidates.",
+     "Fetch followed celebrities list (cached) and pull their last N posts from per-author recent-post caches.",
+     "Merge, drop deleted/blocked, pass candidates to ranker (timeout 50 ms, fallback to chronological).",
+     "Hydrate top 20 post objects via multi-get from Redis post cache, misses from sharded DB.",
+     "Return posts with CDN URLs chosen by device DPR and Accept header (AVIF/WebP/JPEG)."
+    ]
+   },
+   {
+    "name": "Image fetch",
+    "steps": [
+     "Client GETs https://cdn.example.com/m/{content_hash}_640.avif.",
+     "Edge PoP hit: served in ~20 ms. Miss: request goes to regional origin shield (request collapsing).",
+     "Shield miss: fetch from object store; if variant missing, image proxy resizes from original and backfills."
+    ]
+   }
+  ],
+  "data_flow": "Bytes flow client -> object store -> workers -> object store -> CDN -> client and never pass through API servers. Metadata flows client -> API -> sharded DB, with events (media.uploaded, post.created, post.deleted) on Kafka driving the pipeline, fan-out, search indexing, notifications and analytics. Reads are served from Redis caches and the CDN, with the DB as source of truth."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/uploads",
+    "request": "{mime:'image/jpeg', size_bytes:2048000, sha256:'...'}",
+    "response": "{media_id, upload_url | parts:[{n,url}], expires_at}",
+    "notes": "Rate limited 60/h per user; rejects > 20 MB; dedups on sha256 per user."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/uploads/{media_id}/complete",
+    "request": "{parts:[{n,etag}]}",
+    "response": "{status:'PROCESSING'}",
+    "notes": "Optional for multipart; single PUT relies on object-created event."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/posts",
+    "request": "Idempotency-Key header; {media_ids:[...], caption, visibility}",
+    "response": "201 {post_id, created_at}",
+    "notes": "Rejects media not owned or not READY (409, client retries after 1 s)."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/feed?cursor=&limit=20",
+    "request": "-",
+    "response": "{posts:[{post_id, author, media:[{urls by width}], caption, like_count}], next_cursor}",
+    "notes": "Cursor is the last post_id (time-sortable)."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/users/{id}/posts?cursor=",
+    "request": "-",
+    "response": "{posts:[...], next_cursor}",
+    "notes": "Private accounts require approved follow."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/posts/{id}/likes",
+    "request": "-",
+    "response": "204",
+    "notes": "Idempotent: like is a set membership (user_id, post_id)."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/posts/{id}",
+    "request": "-",
+    "response": "204",
+    "notes": "Soft delete, emits post.deleted, CDN purge of variants."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "media",
+    "store": "Sharded Postgres (by owner_id)",
+    "fields": [
+     "media_id bigint",
+     "owner_id",
+     "status PENDING|READY|BLOCKED|DELETED",
+     "content_hash",
+     "width",
+     "height",
+     "variants jsonb",
+     "created_at"
+    ],
+    "keys": "PK media_id; shard = hash(owner_id) % 4096 logical shards",
+    "notes": "media_id embeds shard id so lookups need no directory."
+   },
+   {
+    "entity": "post",
+    "store": "Sharded Postgres (by author_id)",
+    "fields": [
+     "post_id bigint (time-sortable)",
+     "author_id",
+     "caption",
+     "media_ids",
+     "visibility",
+     "deleted_at"
+    ],
+    "keys": "PK post_id; index (author_id, post_id desc)",
+    "notes": "Profile grid is a range scan on the author's shard."
+   },
+   {
+    "entity": "follow",
+    "store": "Cassandra / TAO-like graph store",
+    "fields": [
+     "follower_id",
+     "followee_id",
+     "created_at",
+     "state"
+    ],
+    "keys": "Two tables: followers_by_user (PK followee_id, CK follower_id) and following_by_user (PK follower_id, CK followee_id)",
+    "notes": "Denormalised both directions; celebrities' partitions split by bucket."
+   },
+   {
+    "entity": "timeline",
+    "store": "Redis ZSET (+ Cassandra backup)",
+    "fields": [
+     "key timeline:{user_id}",
+     "member post_id",
+     "score post_id"
+    ],
+    "keys": "Redis Cluster slot by user_id",
+    "notes": "Trimmed to 500 entries (ZREMRANGEBYRANK)."
+   },
+   {
+    "entity": "like",
+    "store": "Cassandra",
+    "fields": [
+     "post_id",
+     "user_id",
+     "created_at"
+    ],
+    "keys": "PK post_id, CK user_id",
+    "notes": "Counter kept separately in sharded Redis counters, reconciled hourly."
+   },
+   {
+    "entity": "outbox",
+    "store": "Same Postgres shard as post",
+    "fields": [
+     "id",
+     "aggregate_id",
+     "event_type",
+     "payload",
+     "published_at"
+    ],
+    "keys": "PK id",
+    "notes": "Relay polls/CDC and publishes to Kafka."
+   }
+  ],
+  "classes": [
+   {
+    "name": "UploadSessionManager",
+    "responsibility": "Issue presigned URLs, track parts, dedup by hash.",
+    "methods": [
+     "createSession(userId, mime, size, sha256)",
+     "completeSession(mediaId, parts)",
+     "expireStaleSessions()"
+    ]
+   },
+   {
+    "name": "MediaProcessor",
+    "responsibility": "Consume events and produce variants idempotently.",
+    "methods": [
+     "onObjectCreated(event)",
+     "generateVariants(raw, widths)",
+     "markReady(mediaId, variants)"
+    ]
+   },
+   {
+    "name": "FanoutWorker",
+    "responsibility": "Push post IDs into follower timelines in batches.",
+    "methods": [
+     "onPostCreated(post)",
+     "pushBatch(followerIds, postId)",
+     "shouldFanout(authorId)"
+    ]
+   },
+   {
+    "name": "FeedAssembler",
+    "responsibility": "Merge push and pull candidates, rank, hydrate.",
+    "methods": [
+     "getFeed(userId, cursor, limit)",
+     "pullCelebrityPosts(userId, since)",
+     "hydrate(postIds)"
+    ]
+   },
+   {
+    "name": "IdGenerator",
+    "responsibility": "Generate 64-bit time-sortable IDs per shard.",
+    "methods": [
+     "nextId(shardId)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Hybrid fan-out",
+    "explain": "On post.created, if author follower count <= 10k, page through followers and ZADD post_id into each timeline in pipelined batches of 1,000, trimming to 500. Above the threshold, only write to the author's recent-posts list; readers who follow celebrities merge those at read time. Inactive followers (no login in 30 days) are skipped and rebuilt on next login.",
+    "pseudocode": "def on_post_created(post):\n    author = post.author_id\n    recent_posts(author).lpush(post.id); recent_posts(author).ltrim(0, 99)\n    if follower_count(author) > 10_000:\n        return                      # celebrity: pulled at read time\n    for page in followers(author, page_size=1000):\n        active = [f for f in page if last_seen(f) < 30*DAY]\n        with redis.pipeline() as p:\n            for f in active:\n                p.zadd(f\"timeline:{f}\", {post.id: post.id})\n                p.zremrangebyrank(f\"timeline:{f}\", 0, -501)\n            p.execute()"
+   },
+   {
+    "name": "Time-sortable 64-bit ID (Instagram-style)",
+    "explain": "41 bits of milliseconds since a custom epoch (~69 years), 13 bits logical shard id (8192 shards), 10 bits per-shard sequence (1024 IDs per ms per shard). IDs sort by time, and the shard is derivable from the ID.",
+    "pseudocode": "def next_id(shard_id):\n    now = current_millis() - EPOCH\n    if now == last_ms[shard_id]:\n        seq[shard_id] = (seq[shard_id] + 1) & 0x3FF\n        if seq[shard_id] == 0: now = wait_next_ms(now)\n    else:\n        seq[shard_id] = 0\n    last_ms[shard_id] = now\n    return (now << 23) | (shard_id << 10) | seq[shard_id]"
+   },
+   {
+    "name": "Idempotent variant generation",
+    "explain": "Kafka delivers at least once, so the worker writes variants to deterministic keys derived from content hash and width, then performs a conditional status update. Re-processing overwrites identical bytes and the update is a no-op.",
+    "pseudocode": "def on_object_created(evt):\n    m = db.get_media(evt.media_id)\n    if m.status in (\"READY\", \"BLOCKED\", \"DELETED\"): return  # already done\n    raw = store.get(evt.key)\n    if sha256(raw) != m.sha256: return mark_failed(m)\n    if phash_blocklist.match(phash(raw)): return mark_blocked(m)\n    img = strip_exif(decode(raw))\n    keys = {}\n    for w in (150, 320, 640, 1080):\n        k = f\"derived/{m.content_hash}_{w}.avif\"\n        store.put(k, encode_avif(resize(img, w)))\n        keys[w] = k\n    db.update(\"UPDATE media SET status='READY', variants=%s WHERE id=%s AND status='PENDING'\", keys, m.id)"
+   }
+  ],
+  "sequence": "\nClient        APIGW       UploadSvc      ObjStore      Kafka      Worker      MetaDB    FeedSvc\n  |  POST /uploads |            |             |           |          |           |         |\n  |--------------->|----------->| create media row (PENDING) ---------------------->|        |\n  |                |            | presign PUT (15 min)    |          |           |         |\n  |<---------------|<-----------| {upload_url, media_id}  |          |           |         |\n  |  PUT bytes (multipart, resumable) ------>|           |          |           |         |\n  |<------------------------------------------ 200 ETag  |          |           |         |\n  |                |            |             |--event--->|          |           |         |\n  |                |            |             |           |--consume->|          |         |\n  |                |            |             |<--GET raw-------------|           |         |\n  |                |            |             |<--PUT 4 variants------|           |         |\n  |                |            |             |           |          |--READY--->|         |\n  |  POST /posts {media_ids, caption} ->|     |           |          |           |         |\n  |--------------->|----------->|-- insert post (idempotency key) ------------->|         |\n  |                |            |-- publish post.created ->|          |           |         |\n  |                |            |             |           |--fan-out (followers<10k) ----->|\n  |<---------------| 201 {post_id}            |           |          |           |         |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Client retries POST /posts after a timeout and creates duplicate posts.",
+   "handling": "Idempotency-Key stored with the post in the same transaction (unique index on author_id, key) for 24 h; retry returns the original 201 body."
+  },
+  {
+   "case": "User posts before media is READY.",
+   "handling": "Return 409 with retry-after 1 s, or accept the post in PENDING state and publish it when all media flip to READY via event."
+  },
+  {
+   "case": "Upload interrupted halfway on 3G.",
+   "handling": "Multipart/resumable uploads with 5 MB parts; client stores session and resumes missing parts; stale sessions aborted after 24 h by lifecycle rule."
+  },
+  {
+   "case": "Same photo uploaded twice (or a meme uploaded by millions).",
+   "handling": "Content-addressed variant keys dedupe storage and CDN cache; per-user sha256 dedup short-circuits processing."
+  },
+  {
+   "case": "Celebrity with 50M followers posts.",
+   "handling": "No push fan-out above 10k followers; followers pull from a hot, replicated recent-posts cache; CDN absorbs the image burst."
+  },
+  {
+   "case": "Viral image creates a hot key at the origin.",
+   "handling": "Origin shield request collapsing means one fetch per region; CDN serves the rest; edge prefetch for trending posts."
+  },
+  {
+   "case": "Post deleted but still cached at the CDN.",
+   "handling": "Metadata stops returning the URL immediately; issue CDN purge by surrogate key; private media use signed URLs that expire in 1 h."
+  },
+  {
+   "case": "Private account switches to public or vice versa.",
+   "handling": "Visibility checked on metadata reads; signed URLs for private media mean old public links stop working when the URL scheme changes on next fetch."
+  },
+  {
+   "case": "Clock skew between ID generator hosts.",
+   "handling": "IDs are only per-shard monotonic; generator refuses to issue if the clock moves backwards (waits or fails over); ordering across shards is approximate, which is acceptable for feeds."
+  },
+  {
+   "case": "Duplicate Kafka delivery after worker crash.",
+   "handling": "Deterministic output keys plus conditional status update make processing idempotent."
+  },
+  {
+   "case": "Malicious file: decompression bomb or polyglot image.",
+   "handling": "Decode in a sandboxed worker with pixel limits (e.g. max 100 MP), memory caps, and re-encode everything so no original bytes are served."
+  },
+  {
+   "case": "Unfollow after fan-out already pushed posts.",
+   "handling": "Feed Service filters candidates against the current following set at read time; background job removes entries lazily."
+  },
+  {
+   "case": "Region loss.",
+   "handling": "Objects are replicated cross-region asynchronously; metadata has a standby region with RPO < 1 min; CDN keeps serving cached content while origin fails over."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Amazon S3 / GCS (or Haystack-style blob store)",
+   "layer": "Blob storage",
+   "overview": "Object store with 11 nines durability, lifecycle tiers and event notifications.",
+   "why": "Petabyte scale without managing disks; presigned URLs let clients upload directly.",
+   "alternatives": "Self-built Haystack/f4 saves cost at huge scale by packing small files and avoiding per-file metadata IO, but needs a storage team; Ceph/MinIO on-prem trades ops effort for cost."
+  },
+  {
+   "name": "CDN (Akamai / CloudFront / Fastly) with origin shield",
+   "layer": "Edge delivery",
+   "overview": "Geo-distributed caches that serve content close to users.",
+   "why": "Egress is the dominant cost and latency factor; immutable URLs give > 95% hit ratio.",
+   "alternatives": "Own edge PoPs (like Netflix OCA) only pay off at extreme scale; multi-CDN adds resilience but complicates purges."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Event bus",
+   "overview": "Partitioned, replicated append-only log.",
+   "why": "Decouples upload from processing, fan-out, search and notifications; replay on bugs.",
+   "alternatives": "SQS is simpler but lacks replay and ordering per key; Pulsar has tiered storage but smaller ecosystem."
+  },
+  {
+   "name": "PostgreSQL (sharded, logical shards on physical hosts)",
+   "layer": "Metadata",
+   "overview": "Relational DB with strong consistency per shard.",
+   "why": "Posts, users and media need transactions (post + outbox) and secondary indexes; Instagram ran exactly this pattern.",
+   "alternatives": "Cassandra gives easier horizontal writes but weaker transactions; Vitess/MySQL is similar; Spanner removes manual sharding at higher cost."
+  },
+  {
+   "name": "Cassandra",
+   "layer": "Wide-column store",
+   "overview": "Leaderless, partitioned, tunable-consistency store.",
+   "why": "Write-heavy append data like likes, follow edges and timeline backups.",
+   "alternatives": "DynamoDB is managed but costs more at very high write rates; HBase needs HDFS ops."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Cache / timelines",
+   "overview": "In-memory data structures with sharding across 16384 slots.",
+   "why": "ZSET timelines, post object cache and counters at sub-ms latency.",
+   "alternatives": "Memcached is simpler for plain object caching but lacks sorted sets; Aerospike uses SSD for larger datasets."
+  },
+  {
+   "name": "libvips / imgproxy workers",
+   "layer": "Image processing",
+   "overview": "Fast, low-memory image processing library.",
+   "why": "4-8x faster and lighter than ImageMagick for resize/encode; good AVIF/WebP support.",
+   "alternatives": "ImageMagick is more featureful but slower and has a large attack surface; GPU encoding helps only at very high volumes."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Blob storage, small-file packing and erasure coding",
+   "explain": "Storing billions of small files on ordinary filesystems fails not on bytes but on metadata: each file read needs an inode lookup, directory lookup and then the data read, often three disk seeks. Facebook's Haystack paper showed that for photos the metadata IO dominated. The fix is to pack many photos into large append-only volume files (around 100 GB) and keep a compact in-memory index mapping photo id to (volume, offset, size), so a read is one seek. Durability is the second problem. Triple replication costs 3x storage. Erasure coding such as Reed-Solomon RS(10,4) splits data into 10 data chunks and computes 4 parity chunks; any 10 of the 14 recover the data, so it tolerates 4 lost chunks at 1.4x overhead instead of 3x. The cost is reconstruction CPU and network when a chunk is lost, and slower small reads, so systems keep hot recent data replicated and move warm data into erasure-coded tiers (Facebook's f4 did this for data older than a few months). Managed object stores like S3 hide all of this behind a key-value API with lifecycle policies that move objects between hot, infrequent and archive tiers automatically.",
+   "in_this_design": "Originals and variants are written to object storage with content-addressed keys. Lifecycle rules move originals to an infrequent-access tier after 90 days, since access drops sharply with age, while variants remain hot behind the CDN. If built in-house, a Haystack-like store packs photos into volumes.",
+   "key_points": [
+    "Small-file problem is a metadata IO problem, not a capacity problem.",
+    "Pack blobs into large volumes with an in-memory index for one-seek reads.",
+    "RS(10,4) gives 4-failure tolerance at 1.4x versus 3x for replication.",
+    "Tier by age: hot replicated, warm erasure-coded, cold archive."
+   ],
+   "qa": [
+    {
+     "q": "Why not just store images in the database as BLOBs?",
+     "a": "It bloats the DB, wrecks buffer cache hit rates for metadata, makes backups and replication slow, and you cannot serve it from a CDN cheaply. Store bytes in object storage and keep only keys in the DB."
+    },
+    {
+     "q": "When would you choose replication over erasure coding?",
+     "a": "For hot, frequently read and recently written data where read latency and fast recovery matter; EC for warm and cold data where storage cost dominates."
+    },
+    {
+     "q": "How do you compute storage cost growth?",
+     "a": "230 TB/day raw x 365 = ~84 PB/year logical; with 1.4x EC overhead ~118 PB of disk, then apply tiering discounts for data older than 90 days."
+    }
+   ]
+  },
+  {
+   "name": "CDN caching, immutable URLs and origin shielding",
+   "explain": "A CDN is a hierarchy of caches placed near users. A request hits an edge PoP; on a miss it goes to a regional or shield tier, and only then to the origin. The economics depend on hit ratio: at 95% hit ratio origin sees 5% of traffic, at 90% it sees double that. The cleanest way to get very high hit ratios is to make content immutable: if the bytes at a URL can never change, you can cache with Cache-Control max-age of a year and never invalidate. Changes produce a new URL (for example including a content hash or version). Origin shielding funnels all edge misses for a region through one shield cache, so a newly viral object triggers one origin fetch, not one per PoP; request collapsing ensures concurrent misses for the same key wait on a single upstream fetch. Purge APIs exist for takedowns but are slow and eventually consistent across PoPs, so do not design correctness around them. Variant selection (size, format by Accept header, device pixel ratio) should be part of the URL or a well-defined Vary header, or you fragment the cache.",
+   "in_this_design": "Variant URLs are /m/{content_hash}_{width}.{fmt}, cached for 1 year. The feed API chooses the width and format, so the CDN never needs Vary on Accept. A regional shield sits in front of object storage. Takedowns use surrogate-key purges plus metadata removal.",
+   "key_points": [
+    "Hit ratio is the cost lever: every point of miss is origin egress.",
+    "Immutable, versioned URLs remove invalidation from the critical path.",
+    "Origin shield plus request collapsing protects origin from viral misses.",
+    "Put variant choice in the URL to avoid cache fragmentation."
+   ],
+   "qa": [
+    {
+     "q": "Your CDN hit ratio dropped from 96% to 85% overnight. What do you check?",
+     "a": "A change that fragmented keys: new query parameters, a Vary header, cache-busting tokens on public URLs, or a new client requesting odd widths. Also a TTL regression or signed URLs with per-request signatures being treated as distinct keys."
+    },
+    {
+     "q": "How do you serve private photos through a CDN?",
+     "a": "Signed URLs or signed cookies with short expiry (e.g. 1 h) validated at the edge; the cache key excludes the signature so cached bytes are shared, but access requires a valid signature."
+    },
+    {
+     "q": "Why not purge on every update?",
+     "a": "Purges take seconds to minutes to propagate and are rate limited; with immutable URLs there is nothing to purge except deletions."
+    }
+   ]
+  },
+  {
+   "name": "Sharding and time-sortable ID generation",
+   "explain": "Sharding splits data across many databases by a key so each holds a fraction of the rows and traffic. Choosing the key decides which queries are cheap: queries that include the key go to one shard, those that do not scatter across all. A common trick is logical sharding: create thousands of logical shards (for example 4096 Postgres schemas) mapped onto a smaller number of physical hosts, so rebalancing means moving whole logical shards rather than re-hashing rows. IDs must be unique across shards without a central counter. Twitter's Snowflake and Instagram's scheme pack a timestamp, a shard or worker id, and a sequence into 64 bits. Because the timestamp is in the high bits, IDs sort by creation time, which makes them usable as pagination cursors and as ZSET scores, and because the shard id is embedded, any service can route a lookup by id alone. The trade-offs: reliance on reasonably synchronised clocks, a limited per-millisecond sequence, and ordering that is only approximate across shards. UUIDv4 avoids coordination but is 128 bits, random (bad B-tree locality) and not time-sortable; UUIDv7 fixes the ordering but is still twice the size.",
+   "in_this_design": "Users, posts and media are sharded by owner/author id into 4096 logical shards. Post and media IDs are 64-bit with 41 bits time, 13 bits shard, 10 bits sequence, generated inside each shard. Feed cursors and timeline scores are simply post IDs.",
+   "key_points": [
+    "Shard by the key in your hottest query; here author_id for profile grids.",
+    "Many logical shards on few hosts makes rebalancing a move, not a rehash.",
+    "Time-in-high-bits IDs give free chronological ordering and cursors.",
+    "Embedding shard id in the ID removes a lookup directory."
+   ],
+   "qa": [
+    {
+     "q": "What happens when a single user's shard gets hot?",
+     "a": "Reads are absorbed by caches (post objects, profile grid first page). If one logical shard is still hot, move it to its own physical host; the logical shard boundary makes that a migration, not a re-key."
+    },
+    {
+     "q": "Why not use auto-increment IDs?",
+     "a": "They require a single writer per sequence, leak business volume, and collide across shards. Snowflake-style IDs are generated locally and sort by time."
+    },
+    {
+     "q": "How many IDs per second can one shard generate?",
+     "a": "10-bit sequence gives 1024 per millisecond, about 1M per second per shard, far above need."
+    }
+   ]
+  },
+  {
+   "name": "Feed fan-out: push vs pull vs hybrid",
+   "explain": "A home feed is the merge of recent posts from everyone you follow. Fan-out on write (push) copies each new post id into every follower's precomputed timeline at write time; reads become a single range read, which is fast and predictable. The cost is write amplification proportional to follower count: an account with 50M followers produces 50M writes per post, and many of those followers will never open the app that day. Fan-out on read (pull) stores posts only under the author and assembles the feed when the reader opens it by querying each followee's recent posts and merging; writes are cheap but reads are expensive and latency grows with the number of followees. The hybrid approach used by Twitter and Instagram pushes for ordinary authors and pulls for high-follower authors, merging both at read time. Extra optimisations: skip pushing to inactive users and rebuild their timeline lazily on login, cap timeline length (e.g. 500 ids), and store only ids so hydration uses shared post caches rather than duplicated objects.",
+   "in_this_design": "Authors with <= 10k followers are pushed into Redis ZSET timelines; above that, posts go into a per-author recent list that Feed Service pulls for users who follow them. Inactive users (30 days) are skipped and rebuilt on demand.",
+   "key_points": [
+    "Push = cheap reads, expensive writes; pull = the reverse.",
+    "Hybrid with a follower threshold bounds worst-case write amplification.",
+    "Store ids, not objects, in timelines.",
+    "Skip inactive followers; rebuild lazily."
+   ],
+   "qa": [
+    {
+     "q": "How do you pick the celebrity threshold?",
+     "a": "From the cost curve: compare fan-out writes per post against extra read-time merge cost for followers; typical values are 10k-100k and it can be tuned per region based on fan-out lag."
+    },
+    {
+     "q": "What if the Redis timeline cluster loses a node?",
+     "a": "Replica promotes; if data is lost, timelines are rebuilt by pull from followees' recent posts on next read, which is slower but correct."
+    },
+    {
+     "q": "How do you handle unfollows and blocks?",
+     "a": "Filter at read time against the current follow set and block list; lazily remove stale ids. Do not try to synchronously scrub every timeline."
+    }
+   ]
+  },
+  {
+   "name": "Async pipelines, at-least-once delivery and idempotency",
+   "explain": "Message queues and logs like Kafka let producers hand off work without waiting for consumers. Delivery guarantees come in three flavours. At-most-once may drop messages; at-least-once never drops but can redeliver after a crash between doing the work and committing the offset; exactly-once is only achievable end to end when the side effects participate in the same transaction as the offset commit, which external systems like object stores do not. The practical approach is at-least-once delivery plus idempotent consumers: design each handler so running it twice has the same effect as once. Techniques include deterministic output keys (re-writing the same bytes), conditional updates (only move PENDING to READY), dedup tables keyed by event id with a TTL, and upserts. Ordering in Kafka is per partition, so keying by entity id gives per-entity ordering. Consumers should handle poison messages by retrying a bounded number of times with backoff and then sending to a dead-letter topic, so one bad image does not block a partition.",
+   "in_this_design": "media.uploaded events are keyed by media_id; resize workers write to deterministic keys and use a conditional status update. post.created uses a transactional outbox so a post is never committed without its event. Poison images go to a DLQ after 5 attempts.",
+   "key_points": [
+    "Assume at-least-once; make every consumer idempotent.",
+    "Deterministic keys and conditional updates are the cheapest idempotency.",
+    "Partition by entity id for per-entity ordering.",
+    "Bound retries and use a dead-letter queue for poison messages."
+   ],
+   "qa": [
+    {
+     "q": "Why use an outbox instead of publishing to Kafka after the DB commit?",
+     "a": "If the process crashes after commit but before publish, the event is lost; publishing before commit can emit events for rolled-back posts. The outbox writes both atomically and a relay publishes later."
+    },
+    {
+     "q": "How do you keep one slow image from delaying others?",
+     "a": "Many partitions, per-message timeouts, sandboxed decode limits, and DLQ after N attempts; consumer lag alerts per partition."
+    },
+    {
+     "q": "Can Kafka give exactly-once here?",
+     "a": "Kafka transactions give exactly-once between Kafka topics, but writes to object storage and Postgres are outside that, so idempotency is still required."
+    }
+   ]
+  },
+  {
+   "name": "Replication and read-your-writes consistency",
+   "explain": "Replicating data to followers or replicas increases read capacity and availability but introduces lag: a write acknowledged by the leader may not be visible on a replica for milliseconds to seconds. Eventual consistency promises replicas converge, not when. Many product guarantees sit between strong and eventual. Read-your-writes guarantees a user sees their own writes; monotonic reads guarantee a user never sees time go backwards between requests. Common implementations: route a user's reads to the leader for a short window after they write (e.g. 10-30 s), track the write's log position (LSN) in the session and only read from a replica that has caught up to it, or update caches synchronously on the write path for the author. Under CAP, during a partition you choose between availability and consistency; PACELC adds that even without partitions you trade latency against consistency, which is why most social systems choose low latency and eventual consistency for others' content while protecting the author's own view.",
+   "in_this_design": "Profile and post reads go to replicas, but after a user posts, the API sets a 30 s 'recent writer' flag so that user's profile reads hit the leader, and the author's own timeline and profile cache are updated synchronously. Followers see posts via async fan-out within ~5 s.",
+   "key_points": [
+    "Replicas trade freshness for read capacity.",
+    "Read-your-writes is a per-user guarantee, cheap to provide selectively.",
+    "Use session LSN tokens or leader-pinning windows.",
+    "PACELC: we choose latency over consistency for other people's content."
+   ],
+   "qa": [
+    {
+     "q": "A user posts, refreshes and the post is missing. Why?",
+     "a": "Their read went to a lagging replica or a stale cache. Fix with leader-pinning after writes, LSN-aware routing, or write-through to the author's cache."
+    },
+    {
+     "q": "Is it acceptable for like counts to be eventually consistent?",
+     "a": "Yes. Counters can lag by seconds; show the user's own like optimistically and reconcile the count asynchronously."
+    },
+    {
+     "q": "What does PACELC say about this system?",
+     "a": "Under partition it prefers availability for reads (PA), and in normal operation it prefers latency over consistency (EL) for feeds and counts."
+    }
+   ]
+  },
+  {
+   "name": "Rate limiting with token buckets",
+   "explain": "Rate limiting protects services from abuse and overload by capping how often a client can perform an action. The token bucket algorithm holds up to B tokens and refills at rate r per second; each request consumes a token and is rejected (HTTP 429) if none remain. This permits bursts up to B while enforcing an average rate r. The leaky bucket smooths output at a fixed rate; fixed windows are simple but allow double bursts at window edges; sliding window logs are accurate but memory heavy; sliding window counters approximate them cheaply. In a distributed system the counters live in a shared store like Redis using an atomic Lua script that computes refilled tokens from the last timestamp, or are kept locally per gateway node with a share of the global limit to avoid a network hop. Limits are layered: per IP for anonymous traffic, per user, per device, and global concurrency limits per backend to shed load. Responses should include Retry-After so well-behaved clients back off.",
+   "in_this_design": "API gateway enforces per-user limits: 60 upload sessions/hour, 500 likes/hour, and per-IP limits on signup. Upload Service also caps concurrent pending sessions per user at 20 to stop storage abuse via abandoned uploads.",
+   "key_points": [
+    "Token bucket = burst capacity B plus sustained rate r.",
+    "Atomic Redis Lua script for distributed counters.",
+    "Layer limits: IP, user, device, and per-backend concurrency.",
+    "Return 429 with Retry-After."
+   ],
+   "qa": [
+    {
+     "q": "Why token bucket over fixed window for uploads?",
+     "a": "Users legitimately upload bursts (an album of 10), and token bucket allows that burst while capping the hourly average; fixed windows allow 2x bursts at boundaries."
+    },
+    {
+     "q": "How do you avoid Redis becoming a bottleneck for rate limits?",
+     "a": "Local token buckets per gateway with periodic sync, or shard counters by user id; fail open for non-critical limits if Redis is down."
+    },
+    {
+     "q": "How do you rate limit abuse through presigned URLs?",
+     "a": "Presigned URLs are scoped to one key, size range and 15-minute expiry; the session creation call is the rate-limited choke point."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Upload path",
+   "options": "Proxy bytes through API servers vs presigned direct-to-storage upload",
+   "choice": "Presigned direct upload",
+   "why": "Removes multi-MB bodies from the app tier, scales with the object store, supports resumable multipart; cost is a slightly more complex client and an async completion signal."
+  },
+  {
+   "decision": "Feed construction",
+   "options": "Push, pull, hybrid",
+   "choice": "Hybrid with 10k follower threshold",
+   "why": "Fast reads for the common case with bounded write amplification for celebrities."
+  },
+  {
+   "decision": "Variant generation",
+   "options": "Pre-generate all variants vs on-the-fly resizing at the edge",
+   "choice": "Pre-generate 4 common sizes, on-the-fly as fallback",
+   "why": "Predictable latency and high hit ratio for common sizes; on-the-fly handles new device sizes without reprocessing billions of images."
+  },
+  {
+   "decision": "Metadata store",
+   "options": "Sharded Postgres vs Cassandra vs Spanner",
+   "choice": "Sharded Postgres for posts/users, Cassandra for likes/edges",
+   "why": "Transactions and indexes where needed; high write throughput where data is append-only."
+  },
+  {
+   "decision": "Image format",
+   "options": "JPEG only vs WebP vs AVIF",
+   "choice": "AVIF with WebP and JPEG fallback",
+   "why": "AVIF is ~30-50% smaller than JPEG at similar quality, cutting egress; encode CPU is higher but paid once per image."
+  },
+  {
+   "decision": "Moderation timing",
+   "options": "Block until ML scan vs publish then scan",
+   "choice": "Inline hash match, async ML with short hold for high-risk signals",
+   "why": "Hash match is cheap and catches known illegal content; ML adds seconds and would slow every upload."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Resize worker backlog (Kafka lag grows)",
+   "behavior": "Posts still publish; image proxy resizes on demand from original with short TTL; autoscale workers on consumer lag; alert if time-to-ready p95 > 10 s."
+  },
+  {
+   "failure": "CDN provider outage in a region",
+   "behavior": "DNS-based multi-CDN steering shifts traffic within minutes; origin shield capacity planned for 2x normal miss traffic."
+  },
+  {
+   "failure": "Redis timeline cluster partial loss",
+   "behavior": "Feed falls back to pull-based assembly for affected users with smaller candidate sets; timelines rebuilt lazily."
+  },
+  {
+   "failure": "Metadata shard primary fails",
+   "behavior": "Automated failover to sync replica in ~30 s; writes to that shard return 503 with retry-after; reads served from replicas and cache."
+  },
+  {
+   "failure": "Ranker times out",
+   "behavior": "50 ms timeout, fall back to chronological ordering; circuit breaker opens after 50% errors in 10 s."
+  },
+  {
+   "failure": "Object store throttling (503 SlowDown)",
+   "behavior": "Clients retry part uploads with exponential backoff and full jitter; keys use hash prefixes to spread partitions."
+  }
+ ],
+ "metrics": [
+  "Upload success rate by network type and app version",
+  "Time to ready p50/p95/p99 and Kafka consumer lag per partition",
+  "CDN hit ratio (requests and bytes), origin egress Gbps, shield hit ratio",
+  "Feed API latency p50/p99 and error rate; ranker timeout rate",
+  "Fan-out lag (post created to last follower timeline write) and fan-out writes/s",
+  "Redis memory, evictions and hot key alerts",
+  "Moderation queue age and takedown time",
+  "Storage growth per day and cost per DAU"
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you add hashtag and user search?",
+   "a": "Consume post.created into an Elasticsearch/OpenSearch index sharded by time; search is eventually consistent by a few seconds. Hashtag pages are a separate index by tag with recency and engagement scoring."
+  },
+  {
+   "q": "How do you count likes accurately on a viral post?",
+   "a": "Store like edges in Cassandra as the truth; maintain sharded counters (N sub-counters per hot post) in Redis that are summed on read and reconciled from the edge table periodically."
+  },
+  {
+   "q": "How do you reduce storage costs by 30%?",
+   "a": "Move originals older than 90 days to infrequent or archive tiers, erasure code instead of replicate, drop rarely used variants and generate on demand, and switch to AVIF to shrink variants."
+  },
+  {
+   "q": "How would you support a new 2160px variant for tablets?",
+   "a": "Do not reprocess the archive; serve it via the on-the-fly resizer, which caches results at the CDN, and generate it eagerly only for new uploads."
+  },
+  {
+   "q": "What changes for a multi-region active-active setup?",
+   "a": "Each user has a home region for writes; media replicated cross-region asynchronously; feeds built in the reader's region from replicated events; IDs already carry shard id so no global sequencer."
+  },
+  {
+   "q": "How would you detect and remove a known illegal image across the platform?",
+   "a": "Perceptual hash index (PhotoDNA-like) queried on upload, plus a backfill job scanning existing hashes when a new hash is added; on match, mark BLOCKED, remove from feeds, purge CDN by surrogate key, and log for legal reporting."
+  },
+  {
+   "q": "How do you handle a user deleting their account?",
+   "a": "Soft delete immediately (hide everywhere), then an async workflow deletes posts, media blobs, likes and edges across shards with a 30-day grace period, tracked by a durable job so partial failures resume."
+  }
+ ],
+ "key_points": [
+  "This is an egress problem: ~3 PB/day of reads, so CDN hit ratio is the number I protect.",
+  "Bytes never touch the app tier: presigned direct uploads, async processing via Kafka.",
+  "Content-addressed, immutable variant URLs cached for a year; no invalidation in the normal path.",
+  "Sharded metadata by user id with 64-bit time-sortable IDs that double as cursors.",
+  "Hybrid fan-out: push under 10k followers, pull for celebrities, skip inactive users.",
+  "At-least-once everywhere with idempotent consumers and a transactional outbox.",
+  "Read-your-writes for the author, eventual for followers within ~5 s.",
+  "Graceful degradation: on-the-fly resize when workers lag, chronological feed when the ranker fails, pull feed when Redis is lost.",
+  "Cost levers: AVIF, tiered storage after 90 days, erasure coding at 1.4x."
+ ],
+ "quiz": [
+  {
+   "q": "Why should clients upload image bytes directly to object storage via a presigned URL?",
+   "options": [
+    "It makes the image automatically available on the CDN without processing",
+    "It removes large request bodies from the API tier so app servers scale with metadata, not bytes",
+    "It guarantees exactly-once processing of the upload event",
+    "It avoids the need for authentication on uploads"
+   ],
+   "answer": 1,
+   "why": "Presigning moves multi-MB transfers to the object store, which scales them natively. It does not give exactly-once processing (events are still at-least-once), the tempting but wrong option."
+  },
+  {
+   "q": "Roughly how much egress does 50B image views/day at 60 KB each produce?",
+   "options": [
+    "3 PB/day",
+    "300 TB/day",
+    "30 TB/day",
+    "30 PB/day"
+   ],
+   "answer": 0,
+   "why": "50e9 x 60e3 bytes = 3e15 bytes = 3 PB/day. 300 TB would be the answer if you slipped a factor of 10 on the views."
+  },
+  {
+   "q": "Which URL scheme gives the highest CDN hit ratio for image variants?",
+   "options": [
+    "/img?id=123&w=640 with Vary: Accept",
+    "/img/123 with format negotiated by Accept header and max-age=60",
+    "/img/123?v={timestamp_of_request}",
+    "/m/{content_hash}_640.avif with max-age=31536000"
+   ],
+   "answer": 3,
+   "why": "Immutable, content-addressed URLs with long TTL never need invalidation and avoid Vary fragmentation. Accept-header negotiation looks elegant but fragments the cache by browser."
+  },
+  {
+   "q": "A celebrity with 40M followers posts. With pure push fan-out, the main problem is:",
+   "options": [
+    "Read latency for the celebrity's profile",
+    "CDN cache misses for the image",
+    "Write amplification of ~40M timeline inserts for one post",
+    "ID collisions in the post table"
+   ],
+   "answer": 2,
+   "why": "Push copies the id to every follower timeline. CDN misses are real but absorbed by shield and caching; the fan-out storm is the design issue."
+  },
+  {
+   "q": "Kafka redelivers a media.uploaded event after a worker crash. What makes this safe?",
+   "options": [
+    "Enabling Kafka idempotent producers",
+    "Deterministic variant keys plus a conditional PENDING to READY update",
+    "Committing the offset before processing",
+    "Using a single partition for all uploads"
+   ],
+   "answer": 1,
+   "why": "Consumer-side idempotency makes redelivery harmless. Idempotent producers only stop duplicate writes into Kafka, not duplicate consumption; committing first risks losing work."
+  },
+  {
+   "q": "In a Snowflake-style 64-bit ID with 41 time bits, 13 shard bits and 10 sequence bits, what is the max IDs per ms per shard?",
+   "options": [
+    "1024",
+    "256",
+    "8192",
+    "4096"
+   ],
+   "answer": 0,
+   "why": "10 sequence bits give 2^10 = 1024. 8192 is the number of shards from 13 bits, a common mix-up."
+  },
+  {
+   "q": "A user posts and then sees an empty profile on refresh. Most likely cause?",
+   "options": [
+    "Fan-out workers have not reached the user's followers",
+    "The ID generator produced a duplicate id",
+    "The CDN has not cached the image yet",
+    "The read went to a lagging replica or stale cache"
+   ],
+   "answer": 3,
+   "why": "Profile reads of your own content need read-your-writes; replica lag breaks it. Fan-out affects followers' feeds, not the author's profile."
+  },
+  {
+   "q": "RS(10,4) erasure coding stores data at what overhead and tolerates how many lost chunks?",
+   "options": [
+    "3x, 2",
+    "1.4x, 10",
+    "1.4x, 4",
+    "2x, 4"
+   ],
+   "answer": 2,
+   "why": "14 chunks for 10 of data = 1.4x and any 4 can be lost. 3x/2 describes triple replication."
+  },
+  {
+   "q": "CDN hit ratio fell from 96% to 85% after a release. Best first suspect?",
+   "options": [
+    "Object store durability dropped",
+    "New client adds a per-request query parameter that the CDN includes in the cache key",
+    "Kafka consumer lag increased",
+    "Redis evictions on the timeline cluster"
+   ],
+   "answer": 1,
+   "why": "Key fragmentation is the classic cause of sudden hit-ratio drops. Kafka lag could cause misses for new images only, a small fraction of traffic."
+  },
+  {
+   "q": "Why is an outbox table used when creating a post?",
+   "options": [
+    "To atomically record the post and the post.created event so neither is lost",
+    "To store post captions for search",
+    "To rate limit post creation",
+    "To guarantee followers see the post in order"
+   ],
+   "answer": 0,
+   "why": "The outbox solves the dual-write problem. It does not give global ordering, which is a tempting but wrong belief."
+  },
+  {
+   "q": "Which data structure best fits a capped, time-ordered home timeline of post ids?",
+   "options": [
+    "Redis LIST",
+    "Redis HASH",
+    "Redis SET",
+    "Redis ZSET scored by post id"
+   ],
+   "answer": 3,
+   "why": "ZSET supports range-by-score for cursors and trimming by rank. A LIST works for append order but cannot range by cursor value efficiently or dedupe."
+  },
+  {
+   "q": "Feed p99 jumps from 250 ms to 900 ms while p50 is flat. Which is most likely?",
+   "options": [
+    "All Redis nodes are slow",
+    "CDN latency increased",
+    "The ranker is intermittently slow and there is no timeout fallback",
+    "Upload traffic doubled"
+   ],
+   "answer": 2,
+   "why": "Tail-only regressions point to an intermittent slow dependency; a 50 ms ranker timeout with chronological fallback fixes it. A uniformly slow Redis would move p50 too."
+  },
+  {
+   "q": "What is the main reason to skip fan-out to users inactive for 30 days?",
+   "options": [
+    "Their timelines are always consistent",
+    "It saves a large share of fan-out writes and memory for users who may never read them",
+    "Inactive users cannot follow celebrities",
+    "It improves CDN hit ratio"
+   ],
+   "answer": 1,
+   "why": "Most fan-out writes go to people who will not open the app; rebuild on login instead. CDN is unrelated."
+  },
+  {
+   "q": "Which approach serves private photos through a CDN correctly?",
+   "options": [
+    "Signed URLs with short expiry validated at the edge, signature excluded from cache key",
+    "Public URLs with unguessable random names only",
+    "Disable CDN for private accounts",
+    "Use Cache-Control: private on public CDN"
+   ],
+   "answer": 0,
+   "why": "Signed URLs give access control and still share cached bytes. Unguessable names are security by obscurity; links leak and never expire."
+  },
+  {
+   "q": "Upload sessions per user are limited with a token bucket of B=20, r=1/min. What does this allow?",
+   "options": [
+    "Exactly 20 uploads per hour, no bursts",
+    "20 uploads per minute",
+    "Unlimited uploads as long as they are spaced 1 s apart",
+    "A burst of 20 then about one per minute sustained"
+   ],
+   "answer": 3,
+   "why": "Bucket size is the burst; refill rate is the sustained rate. The 'no bursts' option describes a fixed window misunderstanding."
+  },
+  {
+   "q": "Why is sharding by author_id good for this system?",
+   "options": [
+    "It spreads a single post's likes across all shards",
+    "It makes the home feed a single-shard query",
+    "Profile grid queries and post creation hit a single shard",
+    "It removes the need for caching"
+   ],
+   "answer": 2,
+   "why": "Author-scoped queries are single-shard. The home feed spans many authors, which is exactly why we precompute timelines."
+  },
+  {
+   "q": "The resize workers fall 10 minutes behind. Best degradation?",
+   "options": [
+    "Reject new uploads until caught up",
+    "Publish posts and serve images via an on-the-fly resizer from originals with short TTL",
+    "Serve raw originals of 2 MB to all clients",
+    "Disable the CDN"
+   ],
+   "answer": 1,
+   "why": "On-the-fly resizing keeps UX acceptable while workers catch up. Serving 2 MB originals would explode egress and mobile data use."
+  },
+  {
+   "q": "Which statement about exactly-once in this design is correct?",
+   "options": [
+    "Exactly-once is achieved by at-least-once delivery plus idempotent side effects",
+    "Kafka transactions make writes to S3 exactly-once",
+    "At-most-once is preferred for uploads",
+    "Exactly-once requires a single consumer"
+   ],
+   "answer": 0,
+   "why": "Effective exactly-once comes from idempotency. Kafka transactions cover Kafka-to-Kafka only, the tempting wrong answer."
+  },
+  {
+   "q": "About how much Redis does a 500-id timeline for 500M users need, with ~3x structure overhead?",
+   "options": [
+    "60 GB",
+    "600 GB",
+    "60 TB",
+    "6 TB"
+   ],
+   "answer": 3,
+   "why": "500 x 8 B x 500M = 2 TB raw, ~6 TB with ZSET overhead. 600 GB forgets the 500M multiplier scale."
+  },
+  {
+   "q": "What does an origin shield primarily prevent?",
+   "options": [
+    "DDoS attacks on the API",
+    "Users seeing stale images",
+    "Many edge PoPs fetching the same miss from origin simultaneously",
+    "Upload failures on mobile"
+   ],
+   "answer": 2,
+   "why": "The shield collapses misses from many PoPs into one origin fetch. It is not primarily a DDoS defence, though it helps origin capacity."
+  },
+  {
+   "q": "Which is the best reason to use AVIF for variants?",
+   "options": [
+    "It decodes fastest on all old phones",
+    "It is 30-50% smaller than JPEG at similar quality, cutting egress cost",
+    "It removes the need for multiple widths",
+    "It is required for CDN caching"
+   ],
+   "answer": 1,
+   "why": "Size reduction drives egress savings. Older devices may lack AVIF support, which is why WebP/JPEG fallbacks remain."
+  }
+ ],
+ "references": [
+  {
+   "title": "Sharding & IDs at Instagram",
+   "url": "https://instagram-engineering.com/1cf5a71e5a5c"
+  },
+  {
+   "title": "Finding a needle in Haystack: Facebook's photo storage (paper)",
+   "url": "https://web.stanford.edu/class/cs240/old/sp2014/readings/haystack.pdf"
+  },
+  {
+   "title": "Finding a needle in Haystack - Meta Research",
+   "url": "https://research.fb.com/publications/finding-a-needle-in-haystack-facebooks-photo-storage"
+  },
+  {
+   "title": "How Instagram scaled to 14 million users with only 3 engineers",
+   "url": "https://read.engineerscodex.com/p/how-instagram-scaled-to-14-million"
+  },
+  {
+   "title": "How to design Instagram in a system design interview (DesignGurus)",
+   "url": "https://www.designgurus.io/blog/how-to-design-instagram-in-system-design-interview"
+  }
+ ]
+}

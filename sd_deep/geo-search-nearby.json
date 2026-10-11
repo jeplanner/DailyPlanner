@@ -1,0 +1,1083 @@
+{
+ "slug": "geo-search-nearby",
+ "title": "Design geo search for nearby locations (Yelp / Google Maps nearby)",
+ "prompt": "Design geo search for nearby locations.",
+ "group": "search",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 120,
+ "summary": "Given a user's latitude and longitude and a radius, return the best nearby places (stores, restaurants, pickup points) in under 100 ms. The core tension is that two-dimensional proximity does not fit a one-dimensional B-tree, so you map the earth onto cells (geohash, S2 or H3), turn a circle into a small set of cell lookups, then filter by exact distance and rank. The data is read-heavy and changes slowly, which lets you replicate the whole index into memory everywhere instead of sharding it.",
+ "framework": {
+  "clarify": [
+   "Are the places mostly static (restaurants, stores, ~200M rows) or moving (drivers, riders)? I will assume static places with a few thousand edits per minute; moving objects are a different design.",
+   "What is the query shape: radius search (within 5 km), k-nearest (the 20 closest), or a viewport (map bounding box)? I will support radius and viewport, with k-nearest via expanding rings.",
+   "Do we need filters and ranking (category, open now, rating) or pure distance order? I will assume filters plus a blended score of distance, rating and popularity.",
+   "Scale: assume 100M daily active users, ~5 searches each at peak hours, so ~5,000 average and ~25,000 peak QPS globally.",
+   "Latency and freshness targets: p99 under 100 ms server side; a new or edited place visible within a few minutes is fine, not milliseconds.",
+   "Is it global or one country? Global but traffic is regional (India, US, EU), so I can serve from regional deployments with a full copy of the index.",
+   "Is straight-line (haversine) distance good enough or do we need road / travel-time distance? I will rank by haversine and treat ETA as a later re-ranking step."
+  ],
+  "design": [
+   "Baseline: a single Postgres table with lat and lng indexed separately and a WHERE lat BETWEEN and lng BETWEEN query. Explain why it fails: each index narrows only one dimension, so the intersection scans a huge band of rows.",
+   "Introduce a spatial cell index: compute a geohash (or S2/H3 cell id) per place at write time; a circle query becomes the covering set of cells (center cell plus 8 neighbours at the right precision) and each cell is a key lookup.",
+   "Components: Location Query Service (stateless, does covering + filter + rank), Geo Index (in-memory cell -> place ids, replicated), Place Service + Place DB (source of truth for details), Change pipeline (CDC to Kafka to index builders), Cache (hot cells and popular queries), API gateway.",
+   "API: GET /v1/nearby?lat=&lng=&radius_m=&category=&open_now=&limit=&cursor= returning place ids, names, distance and score; GET /v1/places/{id} for details; owner-side POST/PATCH /v1/places for edits.",
+   "Critical path: gateway -> query service -> choose cell precision from radius -> fetch candidate ids for ~9 cells from local in-memory index -> exact haversine filter -> attribute filter -> rank -> top-k -> batch-get details from cache -> respond. Target p99 under 100 ms with the index read under 5 ms.",
+   "Write path: owner edits go to Place DB; CDC publishes to Kafka; index builders update every regional in-memory replica within ~1 minute; nightly full rebuild snapshots guard against drift."
+  ],
+  "defend": [
+   "Bottleneck: dense cells. A geohash-6 cell in central Mumbai can hold 20k places while one in Rajasthan desert holds 0. Fix with adaptive cells (quadtree split at 100-500 items, or choose precision per query) and by capping candidates per cell sorted by a static rank.",
+   "Scale reads: the full index is small (200M places x ~40 bytes = ~8 GB), so replicate it into memory on every query node instead of sharding; add nodes for QPS. Cache popular (cell, category) results for 30-60 s.",
+   "Scale writes: edits are tiny (a few thousand per minute); batch them through Kafka, apply in micro-batches, and rebuild snapshots nightly. Writes never touch the hot read path synchronously.",
+   "Failure: if the geo index on a node is stale or rebuilding, serve from the previous snapshot; if the details cache misses, degrade to name plus distance; timeouts 50 ms on the index, retries with jitter only to a different replica; bulkhead viewport map queries from list queries.",
+   "Measure: p50/p99 latency per region, candidates scanned per query, empty-result rate, index lag (CDC offset to applied), click-through on top-3 results, and hot-cell size distribution.",
+   "Boundary correctness: always query neighbours because a point near a cell edge has its true nearest neighbour in the adjacent cell; never rely on prefix match alone."
+  ],
+  "script": "Let me clarify first. I am assuming static places like restaurants and stores, about 200 million of them worldwide, queried by radius or by map viewport, with filters like category and open now. Traffic is roughly 25 thousand QPS at peak, and I want p99 under 100 milliseconds, with edits visible within a minute or two. The naive approach of indexing latitude and longitude separately fails because a B-tree narrows only one dimension. So I map the earth into cells, using geohash or Google S2, and store a cell-to-places index. A radius query becomes about nine cell lookups, the center plus its neighbours, followed by an exact haversine filter and a ranking step. The index is only about 8 gigabytes, so I replicate it into memory on every query node rather than sharding, which makes reads embarrassingly parallel. Writes flow from the place database through CDC and Kafka into the index builders. To defend it: dense cities create hot cells, which I handle with adaptive quadtree splits and per-cell caps. Neighbour cells handle edge cases at cell borders. If an index replica is stale I serve the last snapshot, and I watch index lag, p99, and empty-result rate."
+ },
+ "brd": {
+  "problem": "Users on a commerce or local-discovery app need to find relevant places close to them (stores, restaurants, pickup points, service providers) instantly. Today a slow or inaccurate 'near me' result drives users to competitors and loses orders, and merchants complain that new outlets take hours to appear.",
+  "goals": [
+   "Return relevant nearby places in under 100 ms p99 server time so the screen feels instant on 4G.",
+   "Make new or edited places discoverable within 2 minutes of the merchant saving them.",
+   "Support radius search, map viewport search and k-nearest in one service used by many product teams.",
+   "Improve conversion from search to visit/order by ranking on distance plus quality, not distance alone.",
+   "Run on commodity infrastructure with predictable cost that scales linearly with QPS."
+  ],
+  "non_goals": [
+   "Real-time tracking of moving objects such as drivers (a separate high-write design).",
+   "Turn-by-turn routing and travel-time computation (consumed from a routing service).",
+   "Full-text search over place descriptions and reviews (owned by the text search platform).",
+   "Map tile rendering."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users",
+    "needs": "Fast, accurate, relevant nearby results that work on flaky mobile networks."
+   },
+   {
+    "who": "Merchants / place owners",
+    "needs": "Their place appears quickly and correctly after onboarding or edits."
+   },
+   {
+    "who": "Product teams (food, grocery, ads)",
+    "needs": "A reusable geo query API with filters and pluggable ranking."
+   },
+   {
+    "who": "SRE / infra",
+    "needs": "Predictable capacity, simple failover, clear SLOs."
+   },
+   {
+    "who": "Trust and safety",
+    "needs": "Ability to hide fraudulent or closed places within minutes."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Server p99 latency for /nearby",
+    "target": "< 100 ms; index lookup < 5 ms"
+   },
+   {
+    "metric": "Availability",
+    "target": "99.99% monthly per region"
+   },
+   {
+    "metric": "Index freshness",
+    "target": "95% of edits searchable within 60 s, 99.9% within 2 min"
+   },
+   {
+    "metric": "Empty-result rate in served cities",
+    "target": "< 1%"
+   },
+   {
+    "metric": "Top-3 click-through rate",
+    "target": "+5% vs distance-only baseline"
+   }
+  ],
+  "constraints": [
+   "Must run on the existing Kubernetes and Kafka platform.",
+   "Location data is personal data: queries must not be logged with precise coordinates beyond 30 days (DPDP / GDPR).",
+   "Mobile clients send GPS that can be off by 10-50 m in dense cities and 100+ m indoors.",
+   "Budget assumes no proprietary geospatial database licence."
+  ],
+  "risks": [
+   {
+    "risk": "Hot cells in dense urban cores blow latency",
+    "mitigation": "Adaptive quadtree cells, per-cell candidate caps by static rank, caching popular cells."
+   },
+   {
+    "risk": "Index drift from missed CDC events",
+    "mitigation": "Nightly full rebuild and checksum comparison per cell against Place DB."
+   },
+   {
+    "risk": "Fake or spam places harm trust",
+    "mitigation": "Moderation flag that removes a place from the index through the same pipeline within a minute."
+   },
+   {
+    "risk": "Privacy exposure of user locations",
+    "mitigation": "Coarsen logged coordinates to geohash-5 (~5 km) and enforce retention."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Shopper Priya on mobile",
+    "needs": "Open the app and see stores and restaurants near her in under a second, filtered by open now."
+   },
+   {
+    "name": "Merchant Ravi",
+    "needs": "Add a new outlet and see it on the map within minutes."
+   },
+   {
+    "name": "Product engineer on the ads team",
+    "needs": "Query nearby inventory with a custom ranking function and stable pagination."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want to see places within 2 km sorted by relevance so that I can choose quickly.",
+   "As a shopper, I want to pan and zoom the map and see places in the visible area so that I can explore.",
+   "As a shopper, I want to filter by category and open now so that I do not waste a trip.",
+   "As a shopper, I want the radius to widen automatically when nothing is nearby so that I never see an empty screen.",
+   "As a merchant, I want my new outlet searchable within 2 minutes so that I can start receiving customers.",
+   "As a moderator, I want to hide a fraudulent place immediately so that users are protected.",
+   "As a product engineer, I want cursor-based pagination so that page 2 does not repeat page 1 results."
+  ],
+  "functional": [
+   "Radius search: given lat, lng, radius (100 m to 50 km), return up to N places ordered by score.",
+   "Viewport search: given a bounding box and zoom, return up to N places, clustered when dense.",
+   "K-nearest: return the closest K places by expanding search rings until K are found or a 50 km cap.",
+   "Filters: category, open now (time zone aware), min rating, price level, tags.",
+   "Ranking: blended score of distance decay, rating, popularity and business boosts; pluggable per caller.",
+   "Place CRUD for owners and moderation hide/unhide, propagated to the index within 2 minutes.",
+   "Stable cursor pagination for a given query snapshot."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "p50 < 30 ms, p99 < 100 ms server side for /nearby"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% per region; survives loss of an AZ with no user impact"
+   },
+   {
+    "name": "Freshness",
+    "target": "Edits searchable within 60 s p95, 2 min p99.9"
+   },
+   {
+    "name": "Consistency",
+    "target": "Eventual between Place DB and index; read-your-writes for the owner via DB read"
+   },
+   {
+    "name": "Scalability",
+    "target": "Linear horizontal scaling to 100k QPS by adding replicas"
+   },
+   {
+    "name": "Accuracy",
+    "target": "No place within the requested radius is missed due to cell boundaries (recall 100% before caps)"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "200M places globally, average 1 KB of details, 40 bytes in the geo index (id 8 B, cell id 8 B, lat/lng 8 B, static rank and flags 16 B).",
+    "100M DAU, 5 nearby queries per user per day.",
+    "Peak-to-average ratio of 5x (lunch and dinner).",
+    "Edits: 1% of places change per day, so 2M edits per day.",
+    "Each query returns 20 results and touches ~9 cells with ~200 candidates on average."
+   ],
+   "math": [
+    "Queries: 100M x 5 = 500M per day / 86,400 s = ~5,800 QPS average, ~29,000 QPS peak.",
+    "Geo index size: 200M x 40 B = 8 GB, fits in RAM on a 32 GB node with room for the JVM or process overhead.",
+    "Details store: 200M x 1 KB = 200 GB, sharded KV or Postgres with a cache; hot 10% = 20 GB in Redis.",
+    "Edits: 2M per day / 86,400 = ~23 writes/s average, ~100/s peak - trivially small.",
+    "Per-node throughput: an in-memory lookup of 9 cells + 200 haversine checks is ~50 microseconds of CPU; with ranking and serialization ~1 ms CPU, so one 16-core node does ~10,000 QPS. Peak 29k QPS needs ~3 nodes; run 6 per region for N+2 and AZ spread.",
+    "Egress: 29k QPS x 20 results x 200 B = ~116 MB/s at peak globally."
+   ],
+   "summary": "A read-heavy, small-index problem: about 30k peak QPS over an 8 GB index with only ~100 writes per second. Replicate the full index in memory per node and scale by adding replicas; shard only the 200 GB details store."
+  },
+  "out_of_scope": [
+   "Live driver/courier positions and dispatch.",
+   "Route-based or isochrone search (places within 10 minutes drive).",
+   "Indoor positioning and floor-level search.",
+   "Review text search and personalised recommendations beyond simple boosts."
+  ]
+ },
+ "hld": {
+  "overview": "Stateless Location Query Services sit behind a regional gateway. Each holds (or is co-located with) a full in-memory geo index mapping cell ids to place ids sorted by static rank. A query computes the covering cells for the circle or viewport, pulls candidates, applies an exact distance and attribute filter, ranks, and hydrates the top results from a details cache backed by the Place DB. Writes go to the Place DB; a CDC stream through Kafka feeds index builders that apply deltas to every replica and produce a nightly snapshot to object storage used for bootstrapping new nodes.",
+  "diagram": "\n Mobile/Web\n     |\n [CDN / API Gateway] -- auth, rate limit, coarse geo routing to region\n     |\n [Location Query Service] x N (stateless)\n     |  1. cover(lat,lng,r) -> cells\n     |  2. lookup cells ------------> [Geo Index replica (in-memory, 8 GB)]\n     |  3. haversine + filters + rank       ^            ^\n     |  4. hydrate top-k ---> [Details Cache: Redis]     |            |\n     |                             | miss               | deltas     | snapshot\n     |                             v                    |            |\n     |                      [Place DB (Postgres,  ]  [Index Builder] [S3 snapshots]\n     |                      [sharded by place_id) ]        ^\n     |                             |  CDC (Debezium)       |\n Merchant/Moderation --> [Place Service] --> Place DB --> [Kafka: place-changes]\n",
+  "components": [
+   {
+    "name": "API Gateway",
+    "responsibility": "TLS, auth, rate limiting per client, routes users to the nearest regional deployment."
+   },
+   {
+    "name": "Location Query Service",
+    "responsibility": "Stateless; computes cell cover, queries the geo index, exact filters, ranks, paginates and hydrates results."
+   },
+   {
+    "name": "Geo Index",
+    "responsibility": "In-memory map from cell id (geohash or S2 at several levels) to a list of (place id, lat, lng, static rank, category bitmask, open-hours bucket). Replicated to every query node."
+   },
+   {
+    "name": "Place Service and Place DB",
+    "responsibility": "Source of truth for place details and edits; Postgres sharded by place_id with PostGIS for admin tooling."
+   },
+   {
+    "name": "CDC + Kafka (place-changes topic)",
+    "responsibility": "Captures every committed change, partitioned by place_id to preserve per-place order."
+   },
+   {
+    "name": "Index Builder",
+    "responsibility": "Consumes changes, computes cell ids, applies upserts and deletes to replicas, and writes nightly full snapshots to object storage."
+   },
+   {
+    "name": "Details Cache",
+    "responsibility": "Redis cluster holding hot place details keyed by place_id with TTL 10 min and invalidation on change."
+   },
+   {
+    "name": "Ranking module",
+    "responsibility": "Computes blended score: distance decay, rating, popularity, business boosts; per-caller profiles."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Nearby radius search (read path)",
+    "steps": [
+     "Client sends GET /v1/nearby?lat=19.07&lng=72.87&radius_m=2000&category=grocery.",
+     "Gateway authenticates, rate limits, routes to the India region.",
+     "Query service picks geohash precision 6 (cell ~1.2 km x 0.6 km) so 9 cells cover a 2 km circle; computes the center cell and 8 neighbours.",
+     "Looks up the 9 cells in the in-memory index; each list is sorted by static rank and capped at 500 entries.",
+     "Exact haversine filter drops candidates outside 2,000 m; category bitmask and open-now bucket filters apply.",
+     "Ranks the survivors, takes top 20, builds a cursor (query hash + last score + last id).",
+     "Batch-gets details for 20 ids from Redis (misses go to Place DB and populate cache).",
+     "Returns JSON; total server time ~15 ms typical, < 100 ms p99."
+    ]
+   },
+   {
+    "name": "Place edit propagation (write path)",
+    "steps": [
+     "Merchant updates the location of an outlet via Place Service; the row commits in Place DB.",
+     "Debezium captures the change and publishes to Kafka place-changes keyed by place_id.",
+     "Index Builder computes old and new cell ids; emits remove(old cell, id) and add(new cell, entry).",
+     "Every query node's index replica consumes the delta stream and applies it atomically per place (copy-on-write on the cell list).",
+     "Details cache entry for the place is invalidated.",
+     "End-to-end lag is typically 5-30 s; alert if consumer lag exceeds 60 s."
+    ]
+   },
+   {
+    "name": "Empty area k-nearest fallback",
+    "steps": [
+     "Radius search returns fewer than K results.",
+     "Query service drops precision by one level (cells 4-8x bigger) and queries the ring of new cells only.",
+     "Repeats until K results or 50 km cap, then ranks by distance."
+    ]
+   }
+  ],
+  "data_flow": "Writes: Place Service -> Place DB (source of truth) -> CDC -> Kafka (place-changes) -> Index Builder -> in-memory index replicas; nightly Place DB scan -> full snapshot in S3 -> new nodes bootstrap from snapshot then replay Kafka from the snapshot's offset. Reads: client -> gateway -> query service -> local index -> Redis details -> client. Analytics: coarsened query logs -> Kafka -> warehouse for ranking training."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/nearby",
+    "request": "lat, lng, radius_m (100-50000), category?, open_now?, min_rating?, limit (<=50), cursor?",
+    "response": "{results:[{place_id, name, lat, lng, distance_m, score, rating}], next_cursor}",
+    "notes": "Idempotent; cacheable for 30 s by (rounded lat/lng to geohash-7, params)."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/viewport",
+    "request": "min_lat, min_lng, max_lat, max_lng, zoom, category?, limit",
+    "response": "{results:[...], clusters:[{lat, lng, count}]}",
+    "notes": "Returns clusters when more than limit places fall in view."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/places/{place_id}",
+    "request": "path param",
+    "response": "full place details",
+    "notes": "Served from Redis, fallback Place DB."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/places",
+    "request": "{name, lat, lng, category, hours, ...}, Idempotency-Key header",
+    "response": "{place_id, status: pending_review|live}",
+    "notes": "Owner only; idempotency key stored 24 h."
+   },
+   {
+    "method": "PATCH",
+    "path": "/v1/places/{place_id}",
+    "request": "partial fields, If-Match version",
+    "response": "{place_id, version}",
+    "notes": "Optimistic concurrency via version column."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/places/{place_id}/hide",
+    "request": "{reason}",
+    "response": "{status: hidden}",
+    "notes": "Moderation; high-priority Kafka topic for faster propagation."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Place",
+    "store": "Postgres (sharded by place_id, 64 logical shards)",
+    "fields": [
+     "place_id BIGINT",
+     "name TEXT",
+     "lat DOUBLE",
+     "lng DOUBLE",
+     "geohash CHAR(9)",
+     "category_ids INT[]",
+     "hours JSONB",
+     "tz TEXT",
+     "rating REAL",
+     "status ENUM(live,hidden,closed)",
+     "version INT",
+     "updated_at TIMESTAMPTZ"
+    ],
+    "keys": "PK place_id; secondary index on geohash for admin queries; GiST index on geography point for ops tooling",
+    "notes": "Source of truth; CDC enabled."
+   },
+   {
+    "entity": "CellEntry",
+    "store": "In-memory geo index (per node)",
+    "fields": [
+     "cell_id UINT64",
+     "place_id UINT64",
+     "lat FLOAT32",
+     "lng FLOAT32",
+     "static_rank UINT16",
+     "category_mask UINT64",
+     "open_bitmap UINT32"
+    ],
+    "keys": "HashMap cell_id -> sorted array by static_rank desc",
+    "notes": "Built at geohash levels 4, 5, 6, 7; ~8 GB per level set; copy-on-write arrays for lock-free reads."
+   },
+   {
+    "entity": "PlaceDetailsCache",
+    "store": "Redis Cluster",
+    "fields": [
+     "key place:{id}",
+     "value serialized details",
+     "TTL 600 s"
+    ],
+    "keys": "place_id hashed to 16384 slots",
+    "notes": "Invalidated by Index Builder on change."
+   },
+   {
+    "entity": "IndexSnapshot",
+    "store": "S3",
+    "fields": [
+     "snapshot_id",
+     "kafka_offsets per partition",
+     "cell files",
+     "checksums per cell"
+    ],
+    "keys": "snapshots/{date}/",
+    "notes": "Used to bootstrap nodes and detect drift."
+   }
+  ],
+  "classes": [
+   {
+    "name": "CellCoverer",
+    "responsibility": "Turns a circle or bounding box into a minimal set of cell ids at the right level.",
+    "methods": [
+     "cover_circle(lat, lng, radius_m) -> [cell_id]",
+     "cover_box(box, zoom) -> [cell_id]",
+     "precision_for_radius(radius_m) -> int",
+     "neighbors(cell_id) -> [cell_id]"
+    ]
+   },
+   {
+    "name": "GeoIndex",
+    "responsibility": "Lock-free in-memory cell -> entries store with delta application.",
+    "methods": [
+     "get(cell_id, cap) -> [CellEntry]",
+     "apply(delta)",
+     "load_snapshot(uri)",
+     "checksum(cell_id) -> uint64"
+    ]
+   },
+   {
+    "name": "NearbySearcher",
+    "responsibility": "Orchestrates cover, fetch, filter, rank, paginate.",
+    "methods": [
+     "search(req) -> Page",
+     "expand_until_k(req, k) -> [CellEntry]"
+    ]
+   },
+   {
+    "name": "Ranker",
+    "responsibility": "Computes blended score and supports caller-specific profiles.",
+    "methods": [
+     "score(entry, req) -> float",
+     "top_k(entries, k) -> [entry]"
+    ]
+   },
+   {
+    "name": "IndexBuilder",
+    "responsibility": "Consumes CDC, emits per-cell deltas, writes snapshots.",
+    "methods": [
+     "on_change(event)",
+     "build_snapshot()",
+     "verify_against_db(sample)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Geohash encoding and radius cover",
+    "explain": "Geohash interleaves the bits of longitude and latitude obtained by repeated halving of the ranges, then base32-encodes them. Each extra character adds 5 bits and shrinks the cell by ~4-8x. Pick the precision where a cell is at least as large as the radius so the 3x3 block around the center covers the whole circle, then filter exactly.",
+    "pseudocode": "def encode(lat, lng, precision):\n    lat_r, lng_r = [-90, 90], [-180, 180]\n    bits, even = [], True\n    while len(bits) < precision * 5:\n        r, v = (lng_r, lng) if even else (lat_r, lat)\n        mid = (r[0] + r[1]) / 2\n        if v >= mid: bits.append(1); r[0] = mid\n        else:        bits.append(0); r[1] = mid\n        even = not even\n    return base32(bits)\n\ndef cover_circle(lat, lng, radius_m):\n    p = max(lv for lv in range(1, 10) if cell_min_side_m(lv) >= radius_m)\n    c = encode(lat, lng, p)\n    return [c] + neighbors(c)          # 9 cells\n\ndef search(lat, lng, radius_m, k):\n    cands = []\n    for cell in cover_circle(lat, lng, radius_m):\n        cands += index.get(cell, cap=500)\n    hits = [e for e in cands if haversine(lat, lng, e.lat, e.lng) <= radius_m]\n    return top_k(hits, k, key=score)"
+   },
+   {
+    "name": "Haversine distance",
+    "explain": "Great-circle distance on a sphere; accurate to ~0.5% which is fine for ranking. Use an equirectangular approximation as a cheap pre-filter for very large candidate sets.",
+    "pseudocode": "def haversine(lat1, lng1, lat2, lng2):\n    R = 6371000.0\n    p1, p2 = radians(lat1), radians(lat2)\n    dp, dl = p2 - p1, radians(lng2 - lng1)\n    a = sin(dp/2)**2 + cos(p1)*cos(p2)*sin(dl/2)**2\n    return 2 * R * asin(sqrt(a))"
+   },
+   {
+    "name": "Expanding ring k-nearest",
+    "explain": "Start at fine precision; if fewer than k hits, go one level coarser and query only cells not already visited. Stop when k results are found AND the k-th distance is less than the distance to the nearest unvisited cell edge, guaranteeing correctness.",
+    "pseudocode": "def knn(lat, lng, k, max_m=50000):\n    level, seen, hits = 7, set(), []\n    while level >= 3:\n        for cell in cover_level(lat, lng, level):\n            if cell in seen: continue\n            seen.add(cell); hits += index.get(cell)\n        hits.sort(key=lambda e: dist(e))\n        if len(hits) >= k and dist(hits[k-1]) <= min_edge_dist(lat, lng, level):\n            return hits[:k]\n        level -= 1\n    return [h for h in hits if dist(h) <= max_m][:k]"
+   },
+   {
+    "name": "Ranking score",
+    "explain": "Blend distance decay with quality so a 4.8-star place at 900 m can beat a 3.1-star place at 300 m.",
+    "pseudocode": "def score(e, req):\n    d = haversine(req.lat, req.lng, e.lat, e.lng)\n    dist_term = exp(-d / req.radius_m)          # 1.0 at 0 m, 0.37 at radius\n    return 0.5*dist_term + 0.3*(e.rating/5) + 0.2*e.popularity + boost(e, req)"
+   }
+  ],
+  "sequence": "\nClient      Gateway     QuerySvc       GeoIndex(local)   Redis        PlaceDB\n  |  GET /nearby  |            |                |             |             |\n  |------------->|            |                |             |             |\n  |              |---search-->|                |             |             |\n  |              |            |-cover(9 cells) |             |             |\n  |              |            |--get cells---->|             |             |\n  |              |            |<--~1800 cands--|             |             |\n  |              |            |-haversine+filter+rank (top 20)             |\n  |              |            |--MGET place:{ids}----------->|             |\n  |              |            |<--18 hits, 2 misses----------|             |\n  |              |            |--SELECT 2 ids------------------------------>|\n  |              |            |<--------------------------------------------|\n  |              |<--results--|                |             |             |\n  |<--200 JSON---|            |                |             |             |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "User near a cell boundary: the nearest place sits 50 m away in an adjacent geohash with a completely different prefix.",
+   "handling": "Always query the center cell plus its 8 neighbours and filter by exact distance; never rely on prefix match alone."
+  },
+  {
+   "case": "Crossing the antimeridian (lng 180 / -180) or near the poles.",
+   "handling": "Neighbour calculation wraps longitude; S2 handles this natively. Clamp latitude and expand longitude span near poles where cells become narrow."
+  },
+  {
+   "case": "Hot cell in a dense core (Connaught Place, Times Square) with 20k entries.",
+   "handling": "Cells are sorted by static rank and capped at 500 candidates; adaptive quadtree split at 500 entries; popular (cell, category) results cached for 30 s."
+  },
+  {
+   "case": "Empty rural area returns zero results.",
+   "handling": "Expanding-ring kNN to coarser levels up to 50 km, then show the nearest results with distance shown clearly."
+  },
+  {
+   "case": "Place moves (merchant corrects pin by 2 km).",
+   "handling": "Index Builder emits remove from old cell and add to new cell; per-place ordering in Kafka (keyed by place_id) prevents the add being applied before the remove."
+  },
+  {
+   "case": "Out-of-order or duplicate CDC events after a consumer restart.",
+   "handling": "Each delta carries the row version; replicas apply only if version > stored version, making apply idempotent."
+  },
+  {
+   "case": "GPS jitter: a stationary user's location jumps 80 m between calls, reordering results.",
+   "handling": "Client snaps to the last location if movement < 50 m and accuracy is poor; server rounds cache keys to geohash-7 (~150 m)."
+  },
+  {
+   "case": "Open-now across time zones and midnight-spanning hours (6 pm to 2 am).",
+   "handling": "Store hours in the place's local time zone; evaluate open-now with the place tz, splitting intervals that cross midnight."
+  },
+  {
+   "case": "Pagination while the index changes underneath (a place added between page 1 and page 2).",
+   "handling": "Cursor encodes last (score, place_id); page 2 continues strictly after that tuple so duplicates are impossible; small drift accepted."
+  },
+  {
+   "case": "Abuse: scrapers sweep a grid of coordinates to dump the database.",
+   "handling": "Per-client rate limits, anomaly detection on query-centroid spread, cap results per query, and require auth for deep pagination."
+  },
+  {
+   "case": "Very large radius (50 km) query asking for 'all' places.",
+   "handling": "Cap radius and limit; for large radii use a coarser level and rely on static rank caps; force viewport clustering at low zoom."
+  },
+  {
+   "case": "Region failover: India region down.",
+   "handling": "Gateway routes to the nearest healthy region, which already holds a full global index replica; latency rises by ~60-100 ms but results stay correct."
+  },
+  {
+   "case": "Hidden or fraudulent place still in cache after moderation.",
+   "handling": "Moderation events use a priority topic and invalidate Redis; query service also checks a small in-memory denylist refreshed every 5 s."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Geohash / Google S2 / Uber H3",
+   "layer": "Spatial indexing",
+   "overview": "Schemes that map lat/lng to hierarchical cell ids. Geohash uses a Z-order curve with base32 strings; S2 projects onto a cube and uses a Hilbert curve; H3 uses hexagons with uniform neighbour distance.",
+   "why": "Turns a 2D proximity query into a handful of exact key lookups that any hash map or KV store can serve.",
+   "alternatives": "Quadtree (adaptive to density but harder to shard and replicate); R-tree via PostGIS (great for polygons and ad hoc queries, slower at 30k QPS); H3 when you need uniform neighbours for analytics like surge pricing."
+  },
+  {
+   "name": "In-memory index in the query service (Go or Java)",
+   "layer": "Serving",
+   "overview": "A process-local hash map from cell id to arrays of compact entries, loaded from snapshot and updated from Kafka.",
+   "why": "8 GB fits in RAM; local lookups take microseconds and avoid a network hop on the hottest path.",
+   "alternatives": "Redis GEO (GEOSEARCH over sorted sets with 52-bit geohash scores) - easy, but adds a network hop and single-threaded hot shards; Elasticsearch geo_point - rich filtering, higher latency and ops cost."
+  },
+  {
+   "name": "PostgreSQL + PostGIS",
+   "layer": "Source of truth",
+   "overview": "Relational database with the PostGIS spatial extension providing GiST/R-tree indexes and geography types.",
+   "why": "Transactions and constraints for place data; PostGIS is handy for admin queries and audits.",
+   "alternatives": "MySQL with spatial indexes; DynamoDB or Cassandra keyed by place_id if you do not need relational features."
+  },
+  {
+   "name": "Debezium + Kafka",
+   "layer": "Change propagation",
+   "overview": "Debezium reads the database write-ahead log and publishes row changes to Kafka topics.",
+   "why": "Avoids dual writes; preserves per-key ordering; lets many consumers (index, cache, analytics) subscribe.",
+   "alternatives": "Transactional outbox table polled by a relay; application-level dual writes (risk of divergence)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Cache",
+   "overview": "In-memory key-value store sharded across 16,384 hash slots.",
+   "why": "Sub-millisecond batch gets for place details; simple invalidation.",
+   "alternatives": "Memcached (simpler, no replication); local LRU cache in the query service (fastest but harder to invalidate)."
+  },
+  {
+   "name": "S3 / object storage",
+   "layer": "Snapshots",
+   "overview": "Durable blob storage.",
+   "why": "Holds nightly index snapshots for fast node bootstrap and rollback.",
+   "alternatives": "HDFS; a shared NFS volume (worse durability)."
+  },
+  {
+   "name": "Envoy / API gateway with GeoDNS",
+   "layer": "Edge",
+   "overview": "L7 proxy and DNS steering users to the nearest region.",
+   "why": "Rate limiting, auth and regional routing in one place.",
+   "alternatives": "Cloud load balancers with latency-based routing."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Geospatial indexing with space-filling curves (geohash, S2, H3)",
+   "explain": "A normal database index is a sorted one-dimensional structure. Proximity on a map is two-dimensional, so an index on latitude narrows a horizontal band around the earth and an index on longitude narrows a vertical band; their intersection is cheap to describe but expensive to compute because each band contains millions of rows. Spatial indexing solves this by recursively dividing the plane into cells and giving every cell an id. Geohash does this by alternately halving the longitude and latitude ranges, writing a 1 or 0 for which half the point falls in, and interleaving the bits. The interleaving traces a Z-order space-filling curve, so points with a long common prefix are usually close together. Each base32 character adds 5 bits: precision 5 is roughly 4.9 x 4.9 km, precision 6 about 1.2 x 0.6 km, precision 7 about 153 x 153 m. Google S2 projects the sphere onto the six faces of a cube and orders cells with a Hilbert curve, which preserves locality better than Z-order and gives 31 levels of 64-bit cell ids with less area distortion. Uber's H3 tiles the earth with hexagons at 16 resolutions; every neighbour of a hexagon is the same distance from its center, which is convenient for smoothing and aggregation. The common idea is the same: convert a geometric question into lookups on discrete cell ids that any key-value store or hash map can answer quickly.",
+   "in_this_design": "Every place is assigned cell ids at several precisions at write time. A radius query picks the precision whose cell side is at least the radius, looks up the center cell and its 8 neighbours in the in-memory index, then filters candidates with haversine. Viewport queries cover the bounding box with cells at a level derived from zoom.",
+   "key_points": [
+    "A one-dimensional B-tree cannot efficiently answer two-dimensional proximity; cells convert it to key lookups.",
+    "Shared prefix implies closeness, but closeness does not imply shared prefix - always query neighbours.",
+    "Geohash is simple strings; S2 uses a Hilbert curve with better locality and 64-bit ids; H3 hexagons give uniform neighbour distance.",
+    "Choose cell size relative to the query radius so about 9 cells cover the circle.",
+    "Cells give candidates; exact distance filtering gives correctness."
+   ],
+   "qa": [
+    {
+     "q": "Why not just put a composite index on (lat, lng)?",
+     "a": "A composite B-tree sorts by lat first, so it narrows a latitude band efficiently but then has to scan every longitude in that band. For a 2 km radius in a city that band spans the whole globe east to west and can hold millions of rows. Cell ids collapse both dimensions into one key, so the lookup touches only nearby cells."
+    },
+    {
+     "q": "When would you pick S2 or H3 over geohash?",
+     "a": "S2 when you need accurate covering of arbitrary regions (polygons, circles) with few cells and less distortion near the poles - its RegionCoverer is excellent. H3 when you aggregate or smooth over neighbours, such as demand heatmaps or surge pricing, because hexagon neighbours are equidistant. Geohash when you want simplicity and human-readable string prefixes, for example in Redis or Elasticsearch."
+    },
+    {
+     "q": "Two points 10 m apart have geohashes with no common prefix. How?",
+     "a": "They straddle a major division line, such as the equator or prime meridian, or any coarse cell boundary. The Z-order curve jumps at those boundaries. That is exactly why the search always includes the 8 neighbouring cells and then filters by real distance."
+    },
+    {
+     "q": "How do you choose precision for a 500 m radius?",
+     "a": "Use precision 7 cells (~153 m) and a larger ring, or precision 6 (~1.2 km x 0.6 km) with 9 cells. I prefer the smallest precision where the cell side is at least the radius, so the 3x3 block fully contains the circle, which with geohash means precision 6 for 500 m."
+    }
+   ]
+  },
+  {
+   "name": "Quadtree (adaptive spatial partitioning)",
+   "explain": "A quadtree starts with one node covering the whole map. When a node holds more than a threshold of points, say 100 or 500, it splits into four children - north-west, north-east, south-west, south-east - and redistributes its points. Splitting continues recursively, so dense downtown areas end up with many small leaves while oceans and deserts remain single large leaves. A search for nearby points walks from the root down to the leaf containing the query point, then examines that leaf and neighbouring leaves whose bounding boxes intersect the search circle. Because leaf size adapts to density, the number of candidates per lookup stays roughly constant regardless of where the user stands, which is the main advantage over fixed-size grids like a single geohash precision. The costs are that the structure is a pointer-based tree, so it is usually held in memory and rebuilt or incrementally updated on each server, and that it is harder to shard by key than flat cell ids. For 200 million points with leaf capacity 100 there are roughly 2 million leaves and a tree depth around 20, and building it from scratch takes minutes, so servers load it at startup from a snapshot and apply deltas afterward. Real systems often combine both ideas: a fixed cell id scheme for storage and sharding, plus adaptive splitting when a cell becomes too dense.",
+   "in_this_design": "The in-memory index is keyed by geohash cells, but any cell exceeding 500 entries is split into child cells at the next precision for lookups, which is a quadtree-like adaptation that bounds per-query candidates in dense cities.",
+   "key_points": [
+    "Split on density, not on fixed size: dense areas get small cells, empty areas big ones.",
+    "Keeps candidates per query roughly constant (hundreds), which bounds p99.",
+    "In-memory and per-server; load from snapshot and apply deltas.",
+    "Fixed cells are easier to shard and cache; quadtrees adapt better to skew."
+   ],
+   "qa": [
+    {
+     "q": "How long does building a quadtree for 200M places take and how do you avoid it on every deploy?",
+     "a": "Building in memory is a few minutes of CPU since it is O(n log n). We avoid rebuilding on deploy by serializing the built index to a snapshot in object storage; a new node downloads it, memory maps it, and replays Kafka deltas from the snapshot's recorded offsets."
+    },
+    {
+     "q": "How do you update a quadtree when a place is added in an already full leaf?",
+     "a": "Insert into the leaf; if it exceeds capacity, split into four and redistribute. Under concurrent reads I use copy-on-write for the affected path, swapping the parent pointer atomically, so readers never see a half-split node."
+    },
+    {
+     "q": "Quadtree or geohash for this design?",
+     "a": "Geohash cells as the keying scheme because they are trivially serializable, cacheable and shardable, with quadtree-style splitting of overloaded cells. That hybrid gets the operational simplicity of fixed keys and the density adaptivity of a tree."
+    }
+   ]
+  },
+  {
+   "name": "Replication vs sharding for read-heavy indexes",
+   "explain": "There are two basic ways to scale a dataset across machines. Sharding (partitioning) splits the data so each node holds a slice; capacity grows with node count, but every query must find the right shard and queries spanning shards need scatter-gather, which increases tail latency because the slowest shard decides the response time. Replication copies the same data to several nodes; any replica can answer any query, so read throughput scales linearly, failover is trivial, and there is no fan-out. The cost is that each replica must hold the entire dataset and every write must reach every replica. The decision rule is about data size versus memory and write rate versus read rate. If the dataset fits comfortably in one machine's memory and writes are rare relative to reads, full replication wins on latency and simplicity. If the dataset is too large, shard it and then replicate each shard. Geographic sharding is tempting for location data, but it creates hot shards because population is extremely uneven - a shard for Mumbai would carry orders of magnitude more traffic than one for a rural district - and queries near shard borders must hit two shards. A practical rule of thumb: replicate until the data no longer fits, then shard by a key that spreads load evenly.",
+   "in_this_design": "The geo index is ~8 GB, so every query node holds a full copy and reads never fan out. Writes are ~100/s, cheap to broadcast through Kafka. The 200 GB place details store is sharded by place_id hash and fronted by Redis.",
+   "key_points": [
+    "Replicate when the dataset fits in RAM and the read/write ratio is high.",
+    "Shard when data outgrows a node; then replicate each shard.",
+    "Geographic sharding creates hot shards and border fan-out.",
+    "Scatter-gather tail latency is governed by the slowest shard."
+   ],
+   "qa": [
+    {
+     "q": "When would you be forced to shard the geo index?",
+     "a": "If it grew past what a node can hold with headroom, say beyond 64 GB, for example by storing many attributes or billions of POIs. Then I would shard by S2 cell at a coarse level combined with hashing to spread dense cities, and accept scatter-gather to 2-4 shards for border queries."
+    },
+    {
+     "q": "Why not shard by city?",
+     "a": "City sizes differ by 1000x, so shards would be wildly unbalanced and one big-city shard becomes the bottleneck. Users near city boundaries also require queries to two shards. Full replication avoids both."
+    },
+    {
+     "q": "How do you keep 50 replicas consistent?",
+     "a": "They all consume the same Kafka topic with per-place ordering and apply versioned deltas idempotently. They converge to the same state; we accept seconds of lag and verify with per-cell checksums against the nightly snapshot."
+    }
+   ]
+  },
+  {
+   "name": "Change data capture and eventual consistency of derived indexes",
+   "explain": "A derived index, like a search index or cache, is a copy of data organised for a specific query. Keeping it in sync with the source of truth is the hard part. The naive approach is a dual write: the application writes to the database and then to the index. If the process crashes between the two, or the second write fails, the two stores diverge silently, and concurrent writers can apply updates to the stores in different orders. Change data capture (CDC) fixes this by treating the database's own commit log - the Postgres write-ahead log or MySQL binlog - as the single ordered record of changes. A connector such as Debezium tails that log and publishes each committed row change to a stream like Kafka. Consumers rebuild derived views from the stream. Because the log contains only committed transactions, in commit order, nothing is published for a rolled-back write, and per-key ordering is preserved when the topic is partitioned by primary key. The resulting system is eventually consistent: the index lags the database by the pipeline delay, typically seconds. Consumers must be idempotent because Kafka delivers at least once, usually by comparing a version number. A periodic full rebuild or reconciliation catches any drift caused by bugs.",
+   "in_this_design": "Place edits commit to Postgres; Debezium publishes them to Kafka keyed by place_id; Index Builders and every query node apply versioned deltas. Nightly snapshots and per-cell checksums catch drift. Owners get read-your-writes by reading their own place from the DB, not the index.",
+   "key_points": [
+    "Dual writes diverge on partial failure; CDC uses the DB log as the single source of order.",
+    "Partition the change topic by primary key to keep per-entity ordering.",
+    "At-least-once delivery means apply must be idempotent - use row versions.",
+    "Reconcile periodically; streams fix the future, rebuilds fix the past."
+   ],
+   "qa": [
+    {
+     "q": "A merchant edits a place and immediately searches for it but does not see the change. What do you do?",
+     "a": "Give the owner read-your-writes on their own place by reading from the Place DB in the merchant app, and show a 'changes go live in about a minute' hint. Consumer search tolerates seconds of lag."
+    },
+    {
+     "q": "How do you handle a CDC consumer that was down for 6 hours?",
+     "a": "Kafka retains 7 days, so it resumes from its committed offset and catches up; applying is idempotent so overlap is harmless. If it fell outside retention, it bootstraps from the latest snapshot and replays from that snapshot's offsets."
+    },
+    {
+     "q": "Why not have the Place Service publish to Kafka directly after the DB commit?",
+     "a": "That is a dual write; a crash between commit and publish loses the event, and the index never learns of the change. CDC or a transactional outbox makes the publish part of the commit."
+    }
+   ]
+  },
+  {
+   "name": "Caching with spatial keys",
+   "explain": "Caching stores the result of an expensive computation keyed by its inputs so repeated requests skip the work. The cache-aside pattern has the application check the cache, and on a miss compute or fetch the value and populate the cache with a TTL. The difficulty with location queries is that raw coordinates are almost never repeated exactly - two users standing in the same mall send coordinates that differ in the sixth decimal place - so a cache keyed on raw lat/lng has a near-zero hit rate. The fix is to quantise the key: round the location to a cell (for example geohash precision 7, about 150 m) and combine it with the other query parameters. Everyone in that cell shares one cached result, and the cost is a small inaccuracy of up to the cell size in distances and ordering, which is acceptable for discovery but not for, say, exact delivery fees. Hit rates then follow population density, which is exactly where load is highest. Cached values should be short-lived (30-60 s) because opening hours, availability and moderation change. Separately, per-entity caches for details (place_id -> details) have high hit rates because popular places are requested repeatedly, and they can be invalidated precisely on change events. Two-level caches, an in-process LRU for the hottest keys plus a shared Redis tier, cut both latency and Redis load.",
+   "in_this_design": "Result cache keyed by (geohash-7, radius bucket, category, open_now) with TTL 30 s for the busiest cells; details cache keyed by place_id with TTL 10 min invalidated by CDC; a small in-process LRU in front of Redis.",
+   "key_points": [
+    "Raw coordinates never repeat; quantise them to a cell to get hits.",
+    "Cell size is the accuracy-vs-hit-rate dial.",
+    "Short TTLs for result caches, event-driven invalidation for entity caches.",
+    "Cache the details per entity, not just whole result pages."
+   ],
+   "qa": [
+    {
+     "q": "What hit rate do you expect from the result cache?",
+     "a": "In dense urban cells at peak, 40-70%, because thousands of users share a 150 m cell; in rural areas near zero, but those cells are cheap anyway. The details cache usually sees above 90% because place popularity is heavily skewed."
+    },
+    {
+     "q": "How do you prevent a stampede when a hot cell's cache entry expires?",
+     "a": "Request coalescing (single-flight) per key in each query node, plus probabilistic early refresh so the entry is recomputed slightly before expiry by one request."
+    },
+    {
+     "q": "Does caching break 'open now' correctness?",
+     "a": "With a 30 s TTL a place could appear open for up to 30 s after closing. That is acceptable; for stricter needs, include the minute bucket in the key or re-check open status on the hydrated top-k."
+    }
+   ]
+  },
+  {
+   "name": "Tail latency control: timeouts, retries with jitter, hedging and load shedding",
+   "explain": "In a service that calls other services, the end-user latency is set by the slowest dependency on each request, so the 99th percentile matters more than the average. Timeouts bound how long one call can consume; they should be set from measured percentiles of the dependency, for example slightly above its p99.9, and the sum along the critical path must fit the overall budget. Retries recover from transient faults, but naive immediate retries multiply load exactly when a system is struggling and can cause a retry storm. Good retries are bounded (one or two), use exponential backoff with random jitter so clients do not synchronise, go to a different replica, and are governed by a retry budget, such as allowing retries for at most 10% of requests. Hedged requests send a second copy of a slow request after a short delay (for example at the p95 latency) to another replica and take whichever finishes first; this cuts tail latency for a few percent extra load. Load shedding rejects work early when a server is saturated, returning a fast error or a degraded answer instead of queueing requests that will time out anyway. Bulkheads isolate thread pools or connection pools per dependency or traffic class so one slow dependency cannot exhaust resources for all. Together these keep p99 stable when parts of the system misbehave.",
+   "in_this_design": "Index lookup is local so it has no network timeout; Redis batch-get has a 20 ms timeout with one hedged retry to a replica, falling back to returning names and distance from the index entry. Place DB misses have a 50 ms timeout. Map viewport and list queries use separate pools.",
+   "key_points": [
+    "Budget timeouts along the critical path from measured percentiles.",
+    "Retry at most once or twice, with exponential backoff and jitter, under a retry budget.",
+    "Hedge reads that are idempotent to cut tail latency.",
+    "Shed load early and degrade gracefully instead of queueing."
+   ],
+   "qa": [
+    {
+     "q": "Redis p99 suddenly jumps to 80 ms. What happens to nearby search?",
+     "a": "The 20 ms timeout fires, a hedged request goes to a replica, and if both are slow we return results with the minimal fields stored in the index entry (name, lat/lng, rating). Users see slightly sparser cards instead of a spinner, and an alert fires on degraded-response rate."
+    },
+    {
+     "q": "Why add jitter to retries?",
+     "a": "Without jitter, all clients that failed at the same moment retry at the same moment, creating synchronized waves that re-overload the dependency. Random jitter spreads them out."
+    },
+    {
+     "q": "When are hedged requests dangerous?",
+     "a": "For non-idempotent writes, and when the system is overloaded, because they add load. Cap hedging to a few percent of requests and disable it when the dependency's error rate rises."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Cell scheme",
+   "options": "Geohash vs S2 vs H3 vs quadtree",
+   "choice": "Geohash (or S2) keys with adaptive splitting of dense cells",
+   "why": "Fixed keys are simple to serialise, cache and replicate; splitting overloaded cells keeps candidate counts bounded in dense cities."
+  },
+  {
+   "decision": "Replicate vs shard the index",
+   "options": "Full replica per node vs geo-sharded vs hash-sharded",
+   "choice": "Full in-memory replica per node",
+   "why": "8 GB fits in RAM; no fan-out, linear read scaling, trivial failover; writes are only ~100/s."
+  },
+  {
+   "decision": "Where the index lives",
+   "options": "In-process memory vs Redis GEO vs Elasticsearch",
+   "choice": "In-process memory",
+   "why": "Lowest latency and no network hop; Redis GEO is a good MVP but its single-threaded shards become hot; Elasticsearch adds latency and ops cost for features we do not need."
+  },
+  {
+   "decision": "Freshness model",
+   "options": "Synchronous index update on write vs async CDC",
+   "choice": "Async CDC with ~seconds lag",
+   "why": "Keeps writes simple and reliable; users tolerate minute-level freshness for place data; owners get read-your-writes from DB."
+  },
+  {
+   "decision": "Distance metric",
+   "options": "Haversine vs road-network ETA",
+   "choice": "Haversine for retrieval, optional ETA re-rank for top 20",
+   "why": "ETA for thousands of candidates is too expensive; re-ranking only the top results captures most of the benefit."
+  },
+  {
+   "decision": "Cache key granularity",
+   "options": "Raw lat/lng vs geohash-7 vs geohash-6",
+   "choice": "Geohash-7 (~150 m)",
+   "why": "Good hit rate in dense areas with acceptable distance error; geohash-6 errs up to ~1 km which users notice."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Kafka consumer lag grows (index builder stuck)",
+   "behavior": "Search keeps serving the last applied state; freshness SLO alert at 60 s lag; owners still see their edits via DB."
+  },
+  {
+   "failure": "Query node crashes or is replaced",
+   "behavior": "Load balancer removes it; a new node bootstraps from the S3 snapshot (~2-3 minutes for 8 GB) and replays Kafka before joining."
+  },
+  {
+   "failure": "Redis details cache cluster down",
+   "behavior": "Return minimal fields from the index entry; rate-limited fallback reads to Place DB for top results; no full outage."
+  },
+  {
+   "failure": "Bad snapshot (bug produced empty cells)",
+   "behavior": "Nodes validate snapshot checksums and counts against expected ranges before loading; on failure keep the previous snapshot; versioned rollback."
+  },
+  {
+   "failure": "Regional outage",
+   "behavior": "GeoDNS shifts traffic to the next region holding a full global replica; latency rises but results remain correct."
+  },
+  {
+   "failure": "Hot-cell traffic spike (festival, stadium event)",
+   "behavior": "Result cache with single-flight absorbs repeats; candidate caps bound CPU; load shedding returns cached or degraded results above 85% CPU."
+  }
+ ],
+ "metrics": [
+  "p50/p95/p99 latency of /nearby and /viewport per region and per radius bucket.",
+  "Candidates scanned per query and the max cell size (detects hot cells).",
+  "Index apply lag: Kafka consumer lag in seconds per node.",
+  "Empty-result rate and expansion-ring depth distribution.",
+  "Cache hit rates for result cache and details cache.",
+  "Degraded-response rate (fallback without details) and timeout counts per dependency.",
+  "Top-3 click-through and search-to-order conversion for ranking quality.",
+  "Per-cell checksum mismatch count from nightly reconciliation."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would this change for moving objects like drivers updating every 4 seconds?",
+   "a": "Writes jump from ~100/s to hundreds of thousands per second, so the index must be write-optimised: keep driver locations in memory sharded by city or H3 cell, with TTL so stale drivers expire, and avoid durable writes on every ping. That is a different design, like Uber's, built around H3 cells and in-memory shards."
+  },
+  {
+   "q": "What if the index grows to 5 billion POIs?",
+   "a": "At ~40 bytes each that is 200 GB, beyond comfortable RAM. I would shard by S2 cell at a coarse level using a mapping table so dense cells can be split across shards, replicate each shard 3x, and use scatter-gather to the 1-4 shards covering a query."
+  },
+  {
+   "q": "Why not use Elasticsearch geo queries for everything?",
+   "a": "It works and is a fine choice if you also need full-text search with geo filters. But at 30k QPS with simple proximity plus filters, a custom in-memory index gives single-digit-ms lookups at a fraction of the hardware, and fewer moving parts to operate."
+  },
+  {
+   "q": "How do you return results ordered by travel time rather than straight-line distance?",
+   "a": "Retrieve candidates by straight-line distance with a generous radius, then call the routing service in batch for the top 50 to get ETAs and re-rank. Cache ETAs per (origin cell, place) for a few minutes."
+  },
+  {
+   "q": "How do you make pagination stable?",
+   "a": "Use a keyset cursor encoding the last (score, place_id) and the query parameters; page 2 returns items strictly after that tuple. Offsets would duplicate or skip items when the index changes."
+  },
+  {
+   "q": "How do you test that you never miss a place inside the radius?",
+   "a": "Property-based tests that generate random points including cell boundaries, the antimeridian and poles, compare results against a brute-force scan, and assert identical sets before caps are applied."
+  },
+  {
+   "q": "How do you handle a viewport zoomed out to show a whole country?",
+   "a": "Return clusters rather than individual places: pre-aggregate counts per cell at coarse levels, and return the top-ranked few places per cluster."
+  }
+ ],
+ "key_points": [
+  "Two-dimensional proximity does not fit a one-dimensional index; map lat/lng to cells (geohash, S2, H3) and turn a circle into ~9 key lookups.",
+  "Cells give candidates; exact haversine filtering gives correctness - always include neighbouring cells.",
+  "Capacity: ~30k peak QPS over an 8 GB index with ~100 writes/s, so replicate the full index in memory and scale by replicas.",
+  "Hot cells in dense cities are the real bottleneck: adaptive splitting, per-cell caps sorted by static rank, and short-TTL caching.",
+  "Writes flow through CDC and Kafka keyed by place_id with versioned idempotent apply; snapshots for bootstrap and drift repair.",
+  "Owners get read-your-writes from the DB; consumers accept seconds of lag.",
+  "Quantise cache keys to geohash-7 to make location caching work.",
+  "Degrade gracefully: stale snapshot over no answer, minimal fields over timeouts, other region over outage.",
+  "Measure p99, candidates per query, index lag and empty-result rate."
+ ],
+ "quiz": [
+  {
+   "q": "Why does a composite B-tree index on (lat, lng) perform poorly for a 2 km radius query?",
+   "options": [
+    "B-trees cannot store floating point values",
+    "It narrows latitude well but must scan a wide band of all longitudes at that latitude",
+    "It returns incorrect results near the equator",
+    "Composite indexes are not supported in Postgres"
+   ],
+   "answer": 1,
+   "why": "The index orders by lat first, so it efficiently finds a latitude band but that band spans the whole globe in longitude. The tempting 'floating point' answer is wrong; B-trees index doubles fine."
+  },
+  {
+   "q": "A user stands 30 m from a place, but their geohash-7 cells share only 2 characters. What is the best explanation?",
+   "options": [
+    "The place coordinates are corrupted",
+    "Geohash precision 7 is too coarse",
+    "The two points straddle a coarse cell boundary on the Z-order curve",
+    "Geohash only works in the northern hemisphere"
+   ],
+   "answer": 2,
+   "why": "Z-order curves jump at cell boundaries, so nearby points can have different prefixes. That is why neighbour cells are always queried. Corruption is tempting but unnecessary to explain it."
+  },
+  {
+   "q": "Roughly how large is a geo index of 200M places at ~40 bytes per entry?",
+   "options": [
+    "8 GB",
+    "800 MB",
+    "80 GB",
+    "800 GB"
+   ],
+   "answer": 0,
+   "why": "200M x 40 B = 8 GB, small enough to replicate in RAM. 80 GB is a tempting slip of a zero and would push you to sharding."
+  },
+  {
+   "q": "For this read-heavy service, why replicate the whole index rather than shard by city?",
+   "options": [
+    "Sharding is impossible with geohash",
+    "Replication gives stronger consistency",
+    "Replication uses less memory in total",
+    "The index fits in RAM and replication avoids hot shards and scatter-gather"
+   ],
+   "answer": 3,
+   "why": "City shards would be very unbalanced and border queries fan out. Replication actually uses more total memory and does not strengthen consistency - those are the tempting wrong ideas."
+  },
+  {
+   "q": "Which geo cell system has equidistant neighbours, making it attractive for heatmaps and surge pricing?",
+   "options": [
+    "Geohash",
+    "H3",
+    "S2",
+    "Quadtree"
+   ],
+   "answer": 1,
+   "why": "H3 hexagons have six neighbours all at the same center distance. S2 is tempting because it is also hierarchical and from a big company, but its cells are quadrilaterals."
+  },
+  {
+   "q": "p99 latency spikes only for queries in central Mumbai at dinner time. Most likely cause?",
+   "options": [
+    "Kafka consumer lag",
+    "Hot cells with too many candidates to scan and rank",
+    "Redis cluster resharding",
+    "DNS misrouting"
+   ],
+   "answer": 1,
+   "why": "Localized, time-of-day spikes point to dense cells causing large candidate sets. Kafka lag affects freshness, not latency."
+  },
+  {
+   "q": "What is the main reason to use CDC instead of having the service write to the DB and then publish to Kafka?",
+   "options": [
+    "CDC is faster",
+    "Kafka cannot accept writes from services",
+    "A crash between DB commit and publish loses the event; CDC derives events from the commit log",
+    "CDC gives exactly-once delivery end to end"
+   ],
+   "answer": 2,
+   "why": "Dual writes diverge on partial failure. CDC is not faster and does not give end-to-end exactly-once; consumers still need idempotency."
+  },
+  {
+   "q": "Best cache key for nearby results?",
+   "options": [
+    "Raw lat/lng to 6 decimals",
+    "User id",
+    "Country code plus category",
+    "Geohash-7 cell plus radius bucket, category and filters"
+   ],
+   "answer": 3,
+   "why": "Quantising to a ~150 m cell lets nearby users share results. Raw coordinates almost never repeat; user id defeats sharing."
+  },
+  {
+   "q": "An index delta for place 42 version 7 arrives after version 8 was applied. What should the replica do?",
+   "options": [
+    "Ignore it because its version is older",
+    "Apply it, since Kafka order is always correct",
+    "Crash and rebuild from snapshot",
+    "Apply it and then re-apply version 8"
+   ],
+   "answer": 0,
+   "why": "Version-gated idempotent apply discards stale deltas. Trusting delivery order is tempting but redeliveries after restarts can reorder what a node sees."
+  },
+  {
+   "q": "A query for k=20 nearest finds 20 hits at precision 7. When is it safe to stop?",
+   "options": [
+    "Immediately, 20 hits is enough",
+    "When the 20th hit is closer than the nearest unvisited cell edge",
+    "Only after scanning precision 3",
+    "After querying exactly 9 cells"
+   ],
+   "answer": 1,
+   "why": "An unvisited cell might hold a closer point than the 20th hit. Stopping immediately is tempting but can miss true nearest neighbours."
+  },
+  {
+   "q": "Roughly how many peak QPS for 100M DAU x 5 queries/day with 5x peak factor?",
+   "options": [
+    "~3,000",
+    "~290,000",
+    "~29,000",
+    "~2.9 million"
+   ],
+   "answer": 2,
+   "why": "500M/86,400 = ~5,800 average, x5 = ~29,000 peak. 290,000 is an order-of-magnitude slip."
+  },
+  {
+   "q": "Why sort entries inside each cell by static rank?",
+   "options": [
+    "So the cap of 500 keeps the most relevant candidates in dense cells",
+    "To make haversine faster",
+    "Required by geohash spec",
+    "To keep the cells sorted by distance"
+   ],
+   "answer": 0,
+   "why": "Capping is safe only if you keep the best entries. Distance order is impossible to pre-sort since it depends on the query point."
+  },
+  {
+   "q": "Which statement about Redis GEO is most accurate?",
+   "options": [
+    "It uses an R-tree internally",
+    "It cannot do radius queries",
+    "It encodes locations as 52-bit geohash scores in a sorted set",
+    "It shards automatically by geography"
+   ],
+   "answer": 2,
+   "why": "GEOADD stores a geohash-derived score in a sorted set and GEOSEARCH scans ranges. It does radius search, and Redis Cluster shards by key hash, not geography."
+  },
+  {
+   "q": "Moderation hides a fraudulent place. Which mechanism removes it fastest from results?",
+   "options": [
+    "Waiting for the nightly snapshot",
+    "Lowering its rating",
+    "Increasing TTL on the results cache",
+    "Priority topic plus an in-memory denylist checked at query time"
+   ],
+   "answer": 3,
+   "why": "A denylist applied at serving time takes effect within seconds. The nightly snapshot is correct eventually but far too slow."
+  },
+  {
+   "q": "Why include the 8 neighbour cells even when the radius is smaller than one cell?",
+   "options": [
+    "The user may be near an edge so the circle spills into adjacent cells",
+    "To increase recall of irrelevant places",
+    "Geohash requires querying at least 9 keys",
+    "To warm the cache"
+   ],
+   "answer": 0,
+   "why": "A small circle near a cell edge crosses into neighbours. It is not a spec requirement."
+  },
+  {
+   "q": "Redis p99 rises to 80 ms. Which response best protects the nearby API's p99?",
+   "options": [
+    "Retry Redis up to 5 times immediately",
+    "Increase the Redis timeout to 500 ms",
+    "Short timeout, one hedged read to a replica, then return minimal fields from the index entry",
+    "Fail the request with 503"
+   ],
+   "answer": 2,
+   "why": "Bounded timeouts with hedging and graceful degradation keep latency bounded. Immediate retries amplify load - the most tempting bad answer."
+  },
+  {
+   "q": "Which is the strongest argument for S2 over geohash?",
+   "options": [
+    "S2 strings are human readable",
+    "S2's Hilbert curve preserves locality better and its region coverer fits shapes with fewer cells",
+    "S2 does not need neighbour lookups",
+    "S2 is the only scheme with hierarchy"
+   ],
+   "answer": 1,
+   "why": "Hilbert ordering and accurate covering are S2's strengths. It still needs neighbour handling; geohash is also hierarchical."
+  },
+  {
+   "q": "A new node joins. What is the fastest correct way to make it serve?",
+   "options": [
+    "Scan the whole Place DB",
+    "Copy memory from a peer over SSH",
+    "Start serving empty and fill lazily",
+    "Load the latest snapshot and replay Kafka from the snapshot's recorded offsets"
+   ],
+   "answer": 3,
+   "why": "Snapshot plus replay gives a consistent state quickly. A full DB scan works but hammers the DB and is slow; empty serving returns wrong results."
+  },
+  {
+   "q": "Which metric best detects that the index has drifted from the database?",
+   "options": [
+    "Per-cell checksum mismatches from reconciliation",
+    "p99 latency",
+    "Cache hit rate",
+    "CPU usage"
+   ],
+   "answer": 0,
+   "why": "Checksums compare content directly. Latency and CPU can look normal while data is wrong."
+  },
+  {
+   "q": "Why is haversine acceptable for ranking even though the earth is not a perfect sphere?",
+   "options": [
+    "It is exact for an ellipsoid",
+    "Errors around 0.5% do not change relative order meaningfully at city scales",
+    "Users cannot see distances",
+    "GPS is perfectly accurate"
+   ],
+   "answer": 1,
+   "why": "Small relative errors barely affect ordering. Haversine is a spherical, not ellipsoidal, formula; GPS noise (10-50 m) dominates anyway."
+  },
+  {
+   "q": "Which pagination approach avoids duplicates when places are added between pages?",
+   "options": [
+    "OFFSET 20 LIMIT 20",
+    "Random sampling",
+    "Keyset cursor on (score, place_id)",
+    "Re-running page 1 and skipping"
+   ],
+   "answer": 2,
+   "why": "Keyset cursors continue strictly after the last returned tuple. OFFSET is tempting but shifts when rows are inserted."
+  }
+ ],
+ "references": [
+  {
+   "title": "H3: Uber's Hexagonal Hierarchical Spatial Index",
+   "url": "https://www.uber.com/en-US/blog/h3/"
+  },
+  {
+   "title": "System Design Interview: Design a Geo-Proximity Service (Yelp / Nearby)",
+   "url": "https://techinterview.org/system-design-proximity-service/"
+  },
+  {
+   "title": "System Design: Location Service - Proximity Search, Geohashing, and Real-Time Tracking",
+   "url": "https://techinterview.org/system-design-location-service/"
+  },
+  {
+   "title": "Design a Proximity Service (Codemia)",
+   "url": "https://codemia.io/practice/design-a-proximity-service"
+  }
+ ]
+}

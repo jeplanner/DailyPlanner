@@ -1,0 +1,1215 @@
+{
+ "slug": "realtime-analytics-ingestion",
+ "title": "Design a real-time analytics ingestion pipeline",
+ "prompt": "Design a real-time analytics ingestion pipeline.",
+ "group": "messaging",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 100,
+ "summary": "Billions of small events per day must become queryable dashboards within seconds, while also staying correct when events arrive late, duplicated or out of order from flaky mobile networks. The core tension is freshness versus correctness versus cost: a streaming path that answers in seconds, a batch path that fixes history, and a storage layout (columnar, pre-aggregated, partitioned by time) that keeps sub-second queries affordable.",
+ "framework": {
+  "clarify": [
+   "What events and volume? I will assume web/app clickstream plus server and order events: about 5 billion events/day, average 1 KB, peak 4x average during sale events.",
+   "What freshness is needed: seconds for live dashboards and alerts (e.g. GMV per minute during a sale), or minutes is fine? I will target event-to-queryable p95 under 10 s.",
+   "Who queries and how: a few hundred internal analysts and dashboards with filters and group-bys, or user-facing analytics with thousands of QPS? This drives the OLAP store choice.",
+   "Correctness bar: are approximate counts acceptable for live views (HyperLogLog for uniques), with exact numbers reconciled later from batch? Finance numbers need exactness.",
+   "How late can events arrive? Mobile clients can be offline for hours. I will accept late events up to 24 h in streaming and fix the rest in batch.",
+   "Schema governance: is there a schema registry and who owns event definitions? Unvalidated schemas are the top cause of broken dashboards.",
+   "Retention and raw access: raw events kept for replay and ML (e.g. 13 months in the lake), aggregates kept longer.",
+   "Privacy: PII in events (phone, address)? It needs hashing or tokenising at ingest and deletion support for consent requests."
+  ],
+  "design": [
+   "Baseline: SDK posts events to a collector that writes rows into a single database; dashboards run SQL on it. Explain why it fails: row stores cannot ingest 200k rows/s and scan billions of rows in under a second.",
+   "Collection tier: SDKs batch events (up to 50 events or 10 s), compress, include a client-generated event_id and client timestamp; stateless collectors validate against the schema registry, enrich with server time and geo, and produce to Kafka with acks=all, returning 202.",
+   "Durable log: Kafka raw.events topic partitioned by user_id (or session) for per-user ordering, 256 partitions, RF 3, 3-day retention, plus CDC topics from order/inventory databases via Debezium.",
+   "Stream processing: Flink jobs with checkpointed state do quality gating, dedup by event_id over 24 h, enrichment via broadcast dimension tables, event-time windowed aggregation with watermarks and allowed lateness, and write enriched events plus aggregates to Kafka with exactly-once (two-phase commit sinks).",
+   "Serving: a real-time OLAP store (Apache Pinot or Druid, or ClickHouse) ingests enriched topics directly into realtime segments queryable within seconds, with star-tree/rollup indexes; offline segments built hourly from the lake replace realtime ones (hybrid tables).",
+   "Lake and batch: every raw event lands in Parquet on object storage via an Iceberg table, partitioned by event date and hour; Spark backfills and corrections rebuild offline segments, giving a lambda-style correction path while the main path is kappa-style.",
+   "Query layer: a query API with a result cache (TTL 5-10 s for live tiles), per-team quotas and query timeouts protects the OLAP cluster from heavy ad-hoc scans."
+  ],
+  "defend": [
+   "Bottleneck 1 is the stream processor's state (dedup and windows): we key by user/event id, size RocksDB state per task, use incremental checkpoints every 30 s, and scale by raising parallelism up to partition count.",
+   "Bottleneck 2 is OLAP query fan-out: we pre-aggregate common rollups (minute x category x city), use star-tree or materialised views, partition segments by time, and keep raw-detail queries on the lake engine (Trino) rather than the live store.",
+   "Scaling writes: collectors scale horizontally behind the load balancer; Kafka scales by partitions; Pinot/Druid ingestion scales by consuming partitions in parallel across servers.",
+   "Failure behaviour: if Flink is down, Kafka retains 3 days so we resume from the last checkpoint; if OLAP is down, ingestion continues and catches up from Kafka offsets; collectors have bounded buffers and return 503 with Retry-After; SDKs retry with jitter and persist unsent batches on device.",
+   "Correctness: at-least-once from SDKs, dedup on event_id, event-time windows with watermarks, late data updates prior windows via upserts, and nightly reconciliation of streaming totals vs batch totals with a published delta (target < 0.5%).",
+   "Measure: event-to-queryable latency (p50/p95), consumer lag, dropped/invalid event rate by schema, dedup rate, late-event rate, query p95 and error rate, and stream vs batch reconciliation delta."
+  ],
+  "script": "A real-time analytics pipeline has to turn billions of tiny, messy events into numbers people trust within seconds. First I will clarify volume, freshness, query patterns, how late events can arrive, and whether live numbers can be approximate. I will assume five billion events a day, peaking around 250 thousand per second during a sale, a ten-second freshness target for dashboards, and exact numbers reconciled from batch by the next morning. The design has four layers. SDKs batch and send events with a unique id to stateless collectors, which validate against a schema registry and write to Kafka. Flink consumes with event-time semantics: it deduplicates on event id, enriches with dimension data, and computes windowed aggregates using watermarks and allowed lateness, writing exactly-once back to Kafka. A real-time OLAP store like Pinot or Druid ingests those topics into columnar segments that are queryable within a couple of seconds. In parallel, everything lands in an Iceberg lake for replay and batch correction. To defend it, I will talk about state size and checkpointing, hot keys during sales, late and duplicate events, the replay story when logic changes, and how I reconcile stream versus batch so finance can trust the numbers."
+ },
+ "brd": {
+  "problem": "Business teams run high-stakes events (flash sales, festive campaigns, new launches) where decisions about pricing, inventory allocation, ad spend and incident response must be made minute by minute. Today analytics come from nightly batch jobs, so problems like a broken payment method in one city or a viral product going out of stock are noticed hours late. Teams also build ad-hoc pipelines, producing inconsistent numbers and high cost.",
+  "goals": [
+   "Make core business metrics (GMV, orders, conversion funnel, traffic by source) queryable within 10 seconds of the event during peaks.",
+   "Provide one governed, schema-managed event pipeline that all teams publish to and query from.",
+   "Ensure live numbers converge to finance-grade batch numbers within 0.5% and are corrected automatically.",
+   "Keep raw events replayable for reprocessing, backfills and ML training.",
+   "Support anomaly alerting (drop in conversion, spike in payment failures) within one minute."
+  ],
+  "non_goals": [
+   "Replacing the finance ledger as system of record for revenue.",
+   "Serving per-user personalisation features at sub-10 ms latency (that is a feature store).",
+   "Arbitrary joins across all historical raw data in sub-second time.",
+   "Building the BI visualisation product itself."
+  ],
+  "stakeholders": [
+   {
+    "who": "Category and sale-event managers",
+    "needs": "Live GMV, conversion and stock-outs by category and city to act during the event."
+   },
+   {
+    "who": "Product analysts and data scientists",
+    "needs": "Trustworthy, documented events and raw replay for experiments and models."
+   },
+   {
+    "who": "Engineering teams emitting events",
+    "needs": "Simple SDK, schema validation feedback, and no impact on their app latency."
+   },
+   {
+    "who": "SRE / incident response",
+    "needs": "Minute-level business health signals to detect outages that technical metrics miss."
+   },
+   {
+    "who": "Finance and compliance",
+    "needs": "Reconciled numbers, PII handling and deletion for consent requests."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Event-to-queryable latency",
+    "target": "p95 < 10 s, p99 < 30 s at peak"
+   },
+   {
+    "metric": "Stream vs batch reconciliation delta for GMV and orders",
+    "target": "< 0.5% daily"
+   },
+   {
+    "metric": "Dashboard query latency",
+    "target": "p95 < 1 s for standard tiles"
+   },
+   {
+    "metric": "Ingestion availability",
+    "target": "99.95% (collector accepts and persists)"
+   },
+   {
+    "metric": "Event loss (accepted but never stored)",
+    "target": "< 0.01%"
+   },
+   {
+    "metric": "Time to detect business anomalies",
+    "target": "< 2 minutes"
+   }
+  ],
+  "constraints": [
+   "Mobile users on 3G/4G with intermittent connectivity; SDK must be light on battery and data.",
+   "Infra budget: storage and compute should cost well under 1% of GMV analytics value; favour columnar compression and tiering.",
+   "Data residency and privacy regulations (India DPDP): PII must be minimised, tokenised and deletable.",
+   "Must integrate with existing Kafka platform and object storage lake."
+  ],
+  "risks": [
+   {
+    "risk": "Schema drift breaks downstream jobs silently.",
+    "mitigation": "Schema registry with compatibility rules (backward), CI checks on event definitions, quarantine topic for invalid events with alerting."
+   },
+   {
+    "risk": "Live numbers disagree with finance and lose trust.",
+    "mitigation": "Clearly label live vs reconciled, publish reconciliation delta daily, automatically replace realtime segments with batch-corrected offline segments."
+   },
+   {
+    "risk": "Peak traffic overwhelms stream jobs and freshness collapses during the sale itself.",
+    "mitigation": "Load test at 5x, pre-scale before events, autoscale on lag, degrade by sampling low-value events before high-value ones."
+   },
+   {
+    "risk": "Runaway ad-hoc queries take down the OLAP cluster.",
+    "mitigation": "Query quotas, timeouts, separate tenants/brokers for dashboards vs ad-hoc, push heavy exploration to the lake engine."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Sale war-room manager",
+    "needs": "Live tiles (GMV/min, orders/min, conversion) by category and city refreshing every 10 s."
+   },
+   {
+    "name": "Product analyst",
+    "needs": "Slice funnels by app version, source and cohort; drill to raw events for debugging."
+   },
+   {
+    "name": "Event producer engineer",
+    "needs": "An SDK that never blocks the UI, clear schema errors, and a test sandbox."
+   },
+   {
+    "name": "On-call SRE",
+    "needs": "Alerts when business metrics deviate from forecast and visibility into pipeline lag."
+   }
+  ],
+  "user_stories": [
+   "As a war-room manager, I want GMV per minute by category within 10 seconds so that I can react to drops during a sale.",
+   "As an analyst, I want unique users per funnel step so that I can measure conversion.",
+   "As an engineer, I want invalid events rejected with a clear error in staging so that I fix schemas before release.",
+   "As an SRE, I want an alert when payment success rate drops 20% below forecast in any city so that I can start an incident.",
+   "As a data scientist, I want to replay a month of raw events with new logic so that I can backfill a new metric.",
+   "As a compliance officer, I want to delete a user's identifiable data on request so that we meet privacy law.",
+   "As a mobile user, I want analytics to not slow down the app or burn my data so that my experience is unaffected.",
+   "As a finance analyst, I want the reconciled daily totals to match the order ledger so that reports are trustworthy."
+  ],
+  "functional": [
+   "Accept batched events over HTTPS from SDKs and server libraries; validate against registered schemas (Avro/Protobuf).",
+   "Assign server receive time, attach geo/IP-derived fields, hash or tokenise PII fields at ingest.",
+   "Persist raw events durably before acknowledgement and archive all raw events to the lake.",
+   "Deduplicate events by event_id within a 24 h window in the stream processor.",
+   "Enrich events with dimension data (product category, seller, campaign) via streaming joins.",
+   "Compute event-time windowed aggregates (1 min, 5 min, 1 h tumbling; sliding for alerts) with late-data handling.",
+   "Ingest enriched events and aggregates into a real-time OLAP store queryable within seconds.",
+   "Provide a SQL query API with caching, quotas and timeouts, plus a metrics catalog of certified definitions.",
+   "Run anomaly detection on key metrics and raise alerts.",
+   "Support replay/backfill from Kafka (3 days) or the lake (13 months) and replace affected OLAP segments."
+  ],
+  "non_functional": [
+   {
+    "name": "Freshness",
+    "target": "p95 event-to-queryable < 10 s; aggregates final within window + 5 min lateness"
+   },
+   {
+    "name": "Throughput",
+    "target": "Sustain 250k events/s peak (approx 250 MB/s raw) with 2x headroom"
+   },
+   {
+    "name": "Query latency",
+    "target": "p95 < 1 s for dashboards on 30 days of data; p99 < 3 s"
+   },
+   {
+    "name": "Durability",
+    "target": "Accepted events survive single broker and single AZ loss; lake copy within 1 h"
+   },
+   {
+    "name": "Correctness",
+    "target": "Exactly-once aggregates within the stream; daily stream vs batch delta < 0.5%"
+   },
+   {
+    "name": "Availability",
+    "target": "Collectors 99.95%; query layer 99.9%"
+   },
+   {
+    "name": "SDK overhead",
+    "target": "< 1% CPU, < 50 KB/session data on mobile"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "5 billion events/day average, 1 KB raw JSON (about 300 bytes after Avro + compression).",
+    "Average 58k events/s; peak 4x = ~230k events/s, design for 250k.",
+    "SDK batches 20-50 events per request, so peak request rate ~10k req/s.",
+    "Raw retention: Kafka 3 days, lake 13 months; OLAP detail 30 days, rollups 2 years."
+   ],
+   "math": [
+    "Average rate: 5e9 / 86,400 = ~58k events/s; peak ~250k events/s.",
+    "Ingest bandwidth: peak 250k x 1 KB = 250 MB/s raw JSON into collectors; after Avro + lz4 in Kafka ~75 MB/s; x3 replication = 225 MB/s broker writes.",
+    "Kafka storage: 5e9 x 300 B = 1.5 TB/day compressed; x3 RF x 3 days = 13.5 TB.",
+    "Lake: Parquet with columnar compression ~150 B/event => 0.75 TB/day; 13 months ~ 300 TB on object storage (cheap tier after 90 days).",
+    "OLAP detail: columnar with dictionary encoding ~100 B/event => 0.5 TB/day; 30 days x 2 replicas = 30 TB across servers; rollups (minute x category x city x platform) are tiny, about 50M rows/day.",
+    "Partitions: 75 MB/s compressed peak / ~2 MB/s per partition target for comfortable Flink and Pinot consumption => ~40 needed; use 256 to allow scale-out and absorb hot users.",
+    "Flink dedup state: unique event ids in 24 h = 5e9 x 16 B id + overhead ~ 40 B => ~200 GB of RocksDB state across tasks; with 128 task slots ~1.6 GB each. A Bloom-filter-plus-exact-recent-window hybrid cuts it 5x."
+   ],
+   "summary": "At about 250k events per second peak and 5 billion per day, the pipeline moves ~75 MB/s of compressed data through Kafka, keeps ~200 GB of dedup state in Flink, and stores ~0.5 TB/day of columnar detail in the OLAP store, which is well within a few dozen nodes if rollups absorb most dashboard queries."
+  },
+  "out_of_scope": [
+   "BI front-end design and chart rendering.",
+   "Online feature store for ML serving.",
+   "Cross-company data sharing and clean rooms.",
+   "Ad attribution modelling logic (consumes this pipeline)."
+  ]
+ },
+ "hld": {
+  "overview": "The pipeline follows a kappa-style architecture with a batch correction path. SDKs batch events and send them to a stateless collector fleet that validates schemas, enriches with server-side context, tokenises PII and appends to Kafka with acks=all. Flink jobs consume raw topics with event-time semantics: they deduplicate on event_id, enrich with broadcast dimension tables (and CDC streams from transactional databases), compute windowed aggregates with watermarks and allowed lateness, and publish enriched events and aggregates to Kafka using exactly-once transactional sinks. A real-time OLAP store (Pinot or Druid) consumes these topics directly into realtime segments that are queryable within seconds, with inverted, range and star-tree indexes. A connector archives raw events into an Iceberg table on object storage; Spark batch jobs build corrected offline segments that replace realtime segments for closed hours, and reconciliation compares streaming and batch totals. A query API with caching, quotas and a certified metrics catalog fronts the OLAP store; anomaly detection runs as a streaming job on aggregates.",
+  "diagram": "\n Web / App SDKs      Backend services      CDC (Debezium)\n (batch 50 ev/10s)   (server events)       (orders, inventory DB binlogs)\n        |                  |                        |\n        v                  v                        |\n +------------------------------+                   |\n | Collector fleet (stateless)  |  validate, enrich |\n | L7 LB, gzip, schema check,   |  geo/IP, dedup id |\n | 202 after Kafka ack          |                   |\n +--------------+---------------+                   |\n                | produce (key = user_id / session)  |\n                v                                    v\n +---------------------------------------------------------------+\n | Kafka: raw.events (256 partitions, RF3, 3d)  cdc.* topics      |\n +-----------+-----------------------------------+---------------+\n             |                                   |\n             v                                   v\n +-------------------------+         +---------------------------+\n | Flink jobs (stateful)   |         | Kafka Connect / Spark     |\n | - schema/quality gate   |         | -> Object store raw zone  |\n | - dedup (event_id, 24h) |         |    (Parquet/Iceberg, hourly)|\n | - enrich (dim joins)    |         +-------------+-------------+\n | - windowed aggregates   |                       |\n | - watermarks, late data |                       v\n +-----+-------------+-----+         +---------------------------+\n       |             |               | Batch / backfill (Spark)  |\n       v             v               | reprocess, corrections    |\n enriched.events  agg.minute         +-------------+-------------+\n       |             |                             |\n       v             v                             v\n +--------------------------------------------------------------+\n | Real-time OLAP: Pinot / Druid / ClickHouse                   |\n | realtime segments from Kafka + offline segments from lake    |\n +--------------------------+-----------------------------------+\n                            |  SQL, p95 < 1 s\n                            v\n          Query API + cache  -->  Dashboards, alerts, anomaly detection\n",
+  "components": [
+   {
+    "name": "Client SDK",
+    "responsibility": "Generates event_id (UUIDv7), client_ts, session id; batches 50 events or 10 s; gzip; persists unsent batches on device; retries with jitter; sampling config pulled remotely."
+   },
+   {
+    "name": "Collector fleet",
+    "responsibility": "Stateless HTTP service: auth, schema validation via registry, server_ts, geo-IP, PII tokenisation, bounded buffer, produce to Kafka (idempotent, acks=all), 202 response."
+   },
+   {
+    "name": "Schema Registry",
+    "responsibility": "Stores Avro/Protobuf schemas with compatibility rules; collectors and processors resolve schema ids; CI gate on changes."
+   },
+   {
+    "name": "Kafka",
+    "responsibility": "Durable, replayable log for raw, enriched, aggregate, quarantine and CDC topics; partitioned by user_id or entity."
+   },
+   {
+    "name": "Flink stream processing",
+    "responsibility": "Dedup, enrichment, windowed aggregation, sessionisation, quality metrics; RocksDB state with incremental checkpoints to object storage; exactly-once sinks."
+   },
+   {
+    "name": "CDC (Debezium)",
+    "responsibility": "Streams order, payment and inventory changes from OLTP databases so GMV comes from the source of truth, not just client events."
+   },
+   {
+    "name": "Real-time OLAP store (Pinot/Druid)",
+    "responsibility": "Ingests from Kafka into columnar realtime segments, serves low-latency slice-and-dice; hybrid tables merge realtime and offline segments."
+   },
+   {
+    "name": "Data lake (Iceberg on S3/GCS)",
+    "responsibility": "Immutable raw archive and curated tables for batch, ML and replay; supports row-level deletes for privacy."
+   },
+   {
+    "name": "Batch correction (Spark)",
+    "responsibility": "Hourly/daily recompute from lake, builds offline OLAP segments, reconciles with streaming totals."
+   },
+   {
+    "name": "Query API and cache",
+    "responsibility": "SQL gateway with per-team quotas, timeouts, result cache (5-10 s for live tiles), routes heavy queries to Trino on the lake."
+   },
+   {
+    "name": "Anomaly detection and alerting",
+    "responsibility": "Compares live aggregates to seasonal forecasts and raises alerts (e.g. payment success down 20% in a city)."
+   },
+   {
+    "name": "Metrics catalog / governance",
+    "responsibility": "Certified metric definitions, ownership, lineage and data quality SLAs."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Event to live dashboard",
+    "steps": [
+     "User adds item to cart; SDK records event with event_id and client_ts, adds to batch.",
+     "After 10 s or 50 events, SDK POSTs gzipped batch to the nearest collector.",
+     "Collector validates each event, rejects invalid ones to a quarantine topic, tokenises PII, stamps server_ts, produces to raw.events keyed by user_id with acks=all, returns 202.",
+     "Flink job reads raw.events, checks event_id against keyed dedup state (24 h TTL), drops duplicates.",
+     "Enriches with product category and campaign from broadcast state, emits to enriched.events.",
+     "Pinot realtime table consumes enriched.events; the row is queryable in ~1-2 s.",
+     "Dashboard tile queries GMV per minute by category through the query API, cached 5 s; total event-to-tile latency ~5-8 s."
+    ]
+   },
+   {
+    "name": "Late and out-of-order events",
+    "steps": [
+     "A phone offline in a tunnel sends events 40 minutes late.",
+     "Flink assigns them to their event-time window; watermark (max event time minus 2 min bounded out-of-orderness) has passed, but allowed lateness is 24 h for aggregates.",
+     "The window fires an updated result; the aggregate sink upserts by (window_start, dims) so the OLAP row is corrected.",
+     "Events later than 24 h go to a late side output, stored in the lake and fixed by the nightly batch rebuild."
+    ]
+   },
+   {
+    "name": "Logic change and backfill",
+    "steps": [
+     "Analysts redefine 'qualified session'; a new Flink job version is deployed reading from the earliest Kafka offset (3 days) into a new topic and new Pinot table.",
+     "For older history, Spark recomputes from the Iceberg lake and builds offline segments.",
+     "Dashboards switch to the new table once reconciliation passes; old job is retired."
+    ]
+   }
+  ],
+  "data_flow": "Events flow SDK -> collector -> Kafka raw -> Flink (dedup, enrich, aggregate) -> Kafka enriched/aggregate -> OLAP realtime segments -> query API -> dashboards and alerts. In parallel raw -> lake (Iceberg) -> Spark -> OLAP offline segments, which replace realtime segments once an hour is closed. CDC streams from OLTP databases join the Flink path so revenue metrics use authoritative order data. Quality signals (invalid, duplicate, late rates) flow into monitoring; reconciliation compares stream and batch totals daily."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/collect",
+    "request": "Headers: X-App-Key, Content-Encoding: gzip. Body: {sdk_version, device_id, events:[{event_id, name, schema_version, client_ts, session_id, user_id?, props{}}] (<=50)}",
+    "response": "202 {accepted: n, rejected:[{index, reason}]} | 413 | 429/503 {retry_after_ms}",
+    "notes": "Partial acceptance; invalid events returned with reason in non-prod, quarantined in prod. Max body 1 MB."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/query",
+    "request": "{sql | metric_id + dims + filters + time_range, freshness: live|reconciled, timeout_ms}",
+    "response": "{columns, rows, freshness_ts, is_reconciled, cache_hit}",
+    "notes": "Query API rewrites certified metrics into SQL; enforces quotas and max scan; live results cached 5 s."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/schemas/{event_name}",
+    "request": "{schema (Avro/Protobuf), owner, compatibility: BACKWARD}",
+    "response": "201 {schema_id, version} | 409 incompatible",
+    "notes": "CI-driven; incompatible changes require a new event name or major version."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/backfills",
+    "request": "{job, source: kafka|lake, from_ts, to_ts, target_table}",
+    "response": "202 {backfill_id}",
+    "notes": "Runs isolated compute; swaps segments atomically on success."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/privacy/erasure",
+    "request": "{user_id | token, request_id}",
+    "response": "202 {request_id}",
+    "notes": "Deletes token mapping (crypto-shredding) immediately; lake row deletes via Iceberg within 30 days; OLAP segments rebuilt."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/pipeline/health",
+    "request": "?topic=raw.events",
+    "response": "{lag_s, invalid_rate, dup_rate, late_rate, freshness_p95_s}",
+    "notes": "Feeds the pipeline SLO dashboard."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Raw event",
+    "store": "Kafka raw.events (Avro) and Iceberg raw table",
+    "fields": [
+     "event_id (UUIDv7)",
+     "event_name",
+     "schema_id",
+     "user_token",
+     "device_id",
+     "session_id",
+     "client_ts",
+     "server_ts",
+     "geo_city",
+     "app_version",
+     "props (map)"
+    ],
+    "keys": "Kafka key user_token (per-user order); Iceberg partitioned by days(event_date), hour, bucket(64, user_token)",
+    "notes": "PII tokenised at collector; raw retained 13 months in lake."
+   },
+   {
+    "entity": "Enriched event (detail table)",
+    "store": "Pinot realtime + offline (hybrid table)",
+    "fields": [
+     "event_ts",
+     "event_name",
+     "user_token",
+     "category_l1",
+     "category_l2",
+     "seller_id",
+     "city",
+     "platform",
+     "price",
+     "qty",
+     "campaign_id"
+    ],
+    "keys": "Time column event_ts; segments by hour; sorted by event_name; inverted index on city, category, platform",
+    "notes": "Realtime segments flushed at 6 h or 500M rows; offline segments replace them after batch correction."
+   },
+   {
+    "entity": "Minute aggregate",
+    "store": "Kafka agg.minute (compacted) and Pinot upsert table",
+    "fields": [
+     "window_start",
+     "category_l1",
+     "city",
+     "platform",
+     "orders",
+     "gmv",
+     "sessions_hll (sketch)",
+     "add_to_cart",
+     "updated_at"
+    ],
+    "keys": "Primary key (window_start, category_l1, city, platform); upsert on late updates",
+    "notes": "Star-tree index; HLL sketches merge for unique users across dims."
+   },
+   {
+    "entity": "Dedup state",
+    "store": "Flink keyed state (RocksDB)",
+    "fields": [
+     "event_id -> first_seen_ts"
+    ],
+    "keys": "Keyed by event_id (or user_token with set of recent ids)",
+    "notes": "State TTL 24 h; incremental checkpoints every 30 s to object storage."
+   },
+   {
+    "entity": "Dimension tables",
+    "store": "Flink broadcast state from compacted Kafka topics (CDC)",
+    "fields": [
+     "product_id -> category, seller, brand",
+     "campaign_id -> attributes"
+    ],
+    "keys": "product_id / campaign_id",
+    "notes": "Compacted topics give latest value per key; very large dims use async lookup to a KV store with cache."
+   },
+   {
+    "entity": "Reconciliation record",
+    "store": "Postgres",
+    "fields": [
+     "date",
+     "metric_id",
+     "stream_value",
+     "batch_value",
+     "delta_pct",
+     "status"
+    ],
+    "keys": "PK (date, metric_id)",
+    "notes": "Alert when delta > 0.5%."
+   }
+  ],
+  "classes": [
+   {
+    "name": "EventBatcher (SDK)",
+    "responsibility": "Buffers events on device, flushes by size/time, persists to disk, retries with backoff.",
+    "methods": [
+     "track(name, props)",
+     "flush()",
+     "on_network_change()",
+     "persist_pending()"
+    ]
+   },
+   {
+    "name": "CollectorHandler",
+    "responsibility": "Validate, enrich, tokenise and produce to Kafka.",
+    "methods": [
+     "handle(request) -> Response",
+     "validate(event, schema) -> Result",
+     "tokenise_pii(event)",
+     "produce(batch) -> Future"
+    ]
+   },
+   {
+    "name": "DedupFunction (Flink KeyedProcessFunction)",
+    "responsibility": "Drop events already seen in the TTL window.",
+    "methods": [
+     "processElement(event, ctx, out)",
+     "open(config)  # ValueState with TTL"
+    ]
+   },
+   {
+    "name": "EnrichmentFunction (BroadcastProcessFunction)",
+    "responsibility": "Join events with dimension state updated via broadcast stream.",
+    "methods": [
+     "processElement(event)",
+     "processBroadcastElement(dim_update)"
+    ]
+   },
+   {
+    "name": "MinuteAggregator (window function)",
+    "responsibility": "Event-time tumbling window aggregation with HLL sketches and late-firing upserts.",
+    "methods": [
+     "add(acc, event)",
+     "merge(a, b)",
+     "getResult(acc)",
+     "onLate(event) -> side output"
+    ]
+   },
+   {
+    "name": "SegmentSwapper",
+    "responsibility": "Replaces realtime OLAP segments with corrected offline ones after batch and reconciliation.",
+    "methods": [
+     "build_offline(hour)",
+     "validate(hour)",
+     "swap(hour)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Event-time windowing with watermarks and allowed lateness",
+    "explain": "A watermark is the processor's assertion that no events older than time T are expected. With bounded out-of-orderness of 2 minutes, watermark = max event time seen - 2 min (per partition, taking the minimum across partitions). A window [t, t+1min) fires a first result when the watermark passes t+1min, then fires updated results for late events until watermark passes t+1min+allowed lateness. Results are upserts keyed by window and dims, so downstream simply overwrites.",
+    "pseudocode": "WM_DELAY = 2 min; LATENESS = 24 h\nfor event in stream:\n    wm = min_over_partitions(max_event_ts) - WM_DELAY\n    w = floor(event.ts, 1 min)\n    if w.end + LATENESS < wm:\n        side_output('too_late', event); continue\n    state[w, dims].add(event)\n    if w.end <= wm:            # window already fired once: late update\n        emit_upsert(w, dims, state[w, dims].result())\non_watermark(wm):\n    for w in windows where w.end <= wm and not fired:\n        emit_upsert(w, dims, state[w, dims].result()); mark_fired(w)\n    for w in windows where w.end + LATENESS <= wm:\n        clear_state(w)"
+   },
+   {
+    "name": "Dedup with TTL state and Bloom pre-filter",
+    "explain": "Keep exact event ids for recent hours in keyed RocksDB state with TTL; optionally front it with a per-task Bloom filter so most new ids are confirmed new without a state lookup. A Bloom 'maybe seen' falls through to exact state. Memory: 1% false-positive Bloom costs ~9.6 bits per element.",
+    "pseudocode": "def process(event):\n    if not bloom.might_contain(event.id):\n        bloom.add(event.id); seen.put(event.id, now); emit(event); return\n    if seen.get(event.id) is not None:\n        metrics.dup += 1; return          # true duplicate\n    seen.put(event.id, now); bloom.add(event.id); emit(event)\n# seen has TTL 24h; bloom rotated hourly as a ring of 24 filters"
+   },
+   {
+    "name": "HyperLogLog unique counts",
+    "explain": "Count distinct users per dimension with ~1-2% error using fixed memory (about 12 KB per sketch at p=14 gives ~0.8% standard error). Sketches merge with a register-wise max, so minute sketches roll up into hours and across cities without recounting.",
+    "pseudocode": "def add(hll, user):\n    h = hash64(user)\n    idx = h >> (64 - p)              # first p bits pick register\n    rank = leading_zeros(h << p) + 1\n    hll.reg[idx] = max(hll.reg[idx], rank)\ndef merge(a, b): return [max(x, y) for x, y in zip(a.reg, b.reg)]\ndef estimate(hll): return alpha * m*m / sum(2**-r for r in hll.reg)  # + corrections"
+   }
+  ],
+  "sequence": "\nSDK        Collector      Kafka(raw)     Flink          Kafka(enr)    Pinot RT seg   Dashboard\n |  POST batch  |             |             |               |              |             |\n |------------->| validate    |             |               |              |             |\n |              |-- produce ->| acks=all    |               |              |             |\n |<--- 202 -----|<------------|             |               |              |             |\n |              |             |-- consume ->| dedup state   |              |             |\n |              |             |             | enrich (dims) |              |             |\n |              |             |             | assign window |              |             |\n |              |             |             |-- produce --->|              |             |\n |              |             |             | ckpt barrier  |-- consume -->| index row   |\n |              |             |             | (every 30s,   |              | (queryable  |\n |              |             |             |  2PC commit)  |              |  in ~2s)    |\n |              |             |             |               |              |<-- SQL -----|\n |              |             |             |               |              |-- rows ---->|\n |              |             | watermark passes window end + 5 min allowed lateness       |\n |              |             |             |-- final agg ->| (upsert by window key)     |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Duplicate events from SDK retries after a timed-out but successful POST.",
+   "handling": "Client-generated event_id per event; Flink dedup over 24 h; OLAP upsert tables keyed on event_id for critical tables; duplicates counted as a quality metric."
+  },
+  {
+   "case": "Device clock wrong by hours or years.",
+   "handling": "Record both client_ts and server_ts; if client_ts deviates more than 24 h from server_ts (adjusted by device-reported offset), use server_ts as event time and flag the event."
+  },
+  {
+   "case": "Late events after the window is finalised (phone offline for two days).",
+   "handling": "Events beyond allowed lateness go to a side output and the lake; nightly batch recomputes the affected day and replaces offline segments, so reconciled numbers include them."
+  },
+  {
+   "case": "Hot key during a flash sale: one product or one bot user generates a large share of events.",
+   "handling": "Partition raw topics by user_token, not product, so product hotness spreads; for aggregates use two-phase (local pre-aggregation per task, then global); detect and rate-limit bot users at the collector."
+  },
+  {
+   "case": "Idle Kafka partition stalls the watermark, so windows never fire.",
+   "handling": "Configure watermark idleness timeout (e.g. 1 min) so idle partitions are excluded from the minimum watermark computation."
+  },
+  {
+   "case": "Schema change by a producer team breaks the enrichment job.",
+   "handling": "Registry enforces backward compatibility; incompatible events go to quarantine with alert to owning team; Flink jobs use schema evolution-aware deserialisers."
+  },
+  {
+   "case": "Bot or abusive traffic inflates metrics and load.",
+   "handling": "Collector-level rate limits per device/IP, bot scoring (user agent, velocity), flag rather than drop so analysts can filter; separate bot traffic metrics."
+  },
+  {
+   "case": "Flink job restarts and replays from last checkpoint, producing duplicate outputs.",
+   "handling": "Exactly-once two-phase commit Kafka sink with read_committed consumers (Pinot reads committed only); upsert semantics in aggregate tables make replays idempotent."
+  },
+  {
+   "case": "Dimension data arrives after the event (new product created seconds before first view).",
+   "handling": "Enrichment holds events briefly in state (up to 30 s) waiting for the dim, then emits with 'unknown' and a later correction via batch; or use an async lookup with fallback."
+  },
+  {
+   "case": "Privacy erasure request for a user whose data is in Kafka, lake and OLAP.",
+   "handling": "Crypto-shredding: delete the user's token key so tokenised values become unlinkable immediately; Iceberg row-level deletes and OLAP segment rebuilds complete within the legal SLA."
+  },
+  {
+   "case": "Daylight-saving or timezone boundaries for daily metrics.",
+   "handling": "Store all times in UTC; compute 'day' in business timezone (IST) at query time or in rollups keyed by local date explicitly."
+  },
+  {
+   "case": "Massive backfill competes with live ingestion for OLAP and Kafka resources.",
+   "handling": "Backfills run on separate compute and write offline segments uploaded via deep store, not through realtime consumption; throttled and scheduled off-peak."
+  },
+  {
+   "case": "Collector region outage during a sale.",
+   "handling": "GeoDNS fails over to another region; SDKs keep batches on device (up to N MB) and retry; Kafka in that region uses MirrorMaker or cluster linking to the central cluster."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Kafka + Schema Registry",
+   "layer": "Transport and durable log",
+   "overview": "Partitioned, replicated log with schemas managed centrally for Avro/Protobuf/JSON Schema.",
+   "why": "Decouples collectors from processing, allows replay for 3 days, and is natively consumed by Flink, Pinot and Druid; registry prevents schema drift.",
+   "alternatives": "Pulsar (tiered storage and geo-replication built in); Kinesis (managed, shard limits); Pub/Sub (managed, no per-key ordering by default without ordering keys)."
+  },
+  {
+   "name": "Apache Flink",
+   "layer": "Stream processing",
+   "overview": "Stateful stream processor with event-time semantics, watermarks, RocksDB state backend, checkpoints and exactly-once sinks.",
+   "why": "Best-in-class event-time and state handling for dedup, windowing and joins at hundreds of thousands of events per second.",
+   "alternatives": "Kafka Streams (library, simpler ops, tied to Kafka); Spark Structured Streaming (micro-batch, higher latency, unified with batch); Materialize/RisingWave (streaming SQL databases)."
+  },
+  {
+   "name": "Apache Pinot (or Druid)",
+   "layer": "Real-time OLAP serving",
+   "overview": "Distributed columnar store that ingests directly from Kafka and serves low-latency aggregations with inverted, range and star-tree indexes; hybrid realtime+offline tables.",
+   "why": "Purpose-built for user- and dashboard-facing analytics with seconds of freshness and high QPS; used at LinkedIn and Uber for exactly this.",
+   "alternatives": "Druid (similar, strong rollup at ingest, more node types); ClickHouse (very fast, simpler, excellent compression, Kafka engine; upserts and high-concurrency serving need more care); Elasticsearch (good for search-style, costlier for aggregations)."
+  },
+  {
+   "name": "Apache Iceberg on object storage",
+   "layer": "Data lake",
+   "overview": "Open table format with snapshots, schema evolution, partition evolution and row-level deletes on Parquet files.",
+   "why": "Cheap, replayable raw archive with ACID semantics, time travel for audits and deletes for privacy compliance.",
+   "alternatives": "Delta Lake (similar, Spark-centric); Hudi (strong upsert and incremental pull); plain Parquet in Hive layout (no ACID, painful deletes)."
+  },
+  {
+   "name": "Apache Spark",
+   "layer": "Batch correction and backfill",
+   "overview": "Distributed batch engine.",
+   "why": "Recomputes days or months from the lake to correct late data and build offline OLAP segments.",
+   "alternatives": "Flink batch mode (one engine for both); Trino for SQL-only transforms; dbt on a warehouse."
+  },
+  {
+   "name": "Debezium CDC",
+   "layer": "Source of truth ingestion",
+   "overview": "Reads database transaction logs (MySQL binlog, Postgres WAL) and emits change events to Kafka.",
+   "why": "Revenue and order metrics come from authoritative OLTP changes, not from client events that can be lost or blocked by ad blockers.",
+   "alternatives": "Application-level outbox events; periodic snapshots (simpler, not real-time)."
+  },
+  {
+   "name": "Trino",
+   "layer": "Ad-hoc query on lake",
+   "overview": "Distributed SQL engine over object storage tables.",
+   "why": "Keeps heavy exploratory scans off the low-latency OLAP cluster.",
+   "alternatives": "BigQuery/Snowflake (managed warehouse, cost per scan); Spark SQL."
+  },
+  {
+   "name": "Redis / query result cache",
+   "layer": "Serving cache",
+   "overview": "In-memory cache for query results.",
+   "why": "Hundreds of war-room screens refreshing the same tiles every 10 s collapse into one OLAP query per tile per TTL.",
+   "alternatives": "OLAP broker-level cache; CDN caching of JSON tiles."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Event time vs processing time, watermarks and late data",
+   "explain": "Every event has at least two timestamps: event time, when it actually happened on the device or server, and processing time, when the pipeline sees it. In a perfect world they would be close, but mobile networks, retries, offline devices and backlogs mean events can arrive minutes or days late and out of order. If you aggregate by processing time, a backlog during a sale shifts orders into the wrong minute and dashboards show fake dips and spikes. Aggregating by event time gives correct answers but raises a question: when is a window complete? Watermarks answer it. A watermark is a monotonically increasing timestamp W flowing with the data that asserts that events with event time earlier than W are not expected any more. A common heuristic is bounded out-of-orderness: W equals the maximum event time seen minus a fixed delay, such as 2 minutes. When W passes the end of a window, the window fires. Events that still arrive later are late data; systems handle them with allowed lateness (keep window state and emit updated results), side outputs (route them elsewhere), or batch correction. This is the core of the Dataflow model: a trade-off between completeness, latency and cost, chosen per use case.",
+   "in_this_design": "Flink assigns event time from client_ts (sanity-checked against server_ts), uses a 2-minute bounded out-of-orderness watermark with idle-partition timeout, fires minute windows when the watermark passes, keeps state for 24 h of allowed lateness emitting upserts, and sends anything later to a side output that the nightly batch rebuild absorbs.",
+   "key_points": [
+    "Aggregate by event time; processing time lies during backlogs.",
+    "A watermark is a claim of completeness, not a guarantee.",
+    "Watermark delay trades latency for completeness.",
+    "Late data: allowed lateness with upserts, side outputs, or batch correction.",
+    "Idle partitions can freeze watermarks; configure idleness."
+   ],
+   "qa": [
+    {
+     "q": "Why not just aggregate by server receive time?",
+     "a": "During a backlog or a mobile reconnect burst, events land in the wrong window, producing fake drops followed by fake spikes, which is exactly when the war room is watching. Event time gives stable, correct curves."
+    },
+    {
+     "q": "What happens if the watermark delay is too small?",
+     "a": "Windows fire early and many events become late, so results are revised more often (or dropped if lateness is zero). Too large and dashboards lag. We pick it from the observed lateness distribution, e.g. the p99 delay."
+    },
+    {
+     "q": "How do downstream stores handle a window that fires multiple times?",
+     "a": "Results are keyed by window and dimensions and written as upserts (Pinot upsert table, compacted Kafka topic), so a later firing simply replaces the earlier value."
+    }
+   ]
+  },
+  {
+   "name": "Exactly-once processing (checkpoints and two-phase commit sinks)",
+   "explain": "Distributed stream processors restart after failures, which means some input will be processed more than once unless the system is careful. Exactly-once processing means the effect on state and output is as if each input was processed once, even though physically it may be replayed. Flink achieves this internally with distributed snapshots based on the Chandy-Lamport algorithm: the job manager periodically injects checkpoint barriers into the sources; when an operator has received a barrier on all inputs, it snapshots its state to durable storage and forwards the barrier. A completed checkpoint is a consistent cut of source offsets and all operator state. On failure, the job resets to the last checkpoint and re-reads sources from the saved offsets. To extend exactly-once to external outputs, sinks must participate: the two-phase commit sink writes output in a transaction (for Kafka, a producer transaction), pre-commits at the checkpoint barrier, and commits only when the checkpoint completes globally. Downstream consumers using read_committed isolation never see uncommitted or aborted output. The cost is latency: output becomes visible only at checkpoint boundaries, so checkpoint interval directly sets the minimum freshness. Where sinks cannot participate in transactions, idempotent writes (upserts keyed by a deterministic id) achieve effectively-once.",
+   "in_this_design": "Flink checkpoints every 30 s (incremental RocksDB) and writes enriched and aggregate topics with transactional Kafka sinks; Pinot consumes with read_committed. Aggregates are upserts keyed by window and dims, so even a replay through a non-transactional path is idempotent. Collectors are at-least-once; dedup on event_id turns that into effectively-once.",
+   "key_points": [
+    "Exactly-once means exactly-once effect, not exactly-once delivery.",
+    "Checkpoint barriers create consistent snapshots of offsets plus state.",
+    "Two-phase commit sinks make outputs visible only after checkpoint success.",
+    "Checkpoint interval is a floor on output latency for transactional sinks.",
+    "Idempotent upserts are the practical alternative for external stores."
+   ],
+   "qa": [
+    {
+     "q": "If you checkpoint every 30 s with a transactional sink, what is the minimum freshness?",
+     "a": "Committed output appears up to 30 s after it was produced, plus processing time. If we need 5 s, we shorten the interval (cost: more checkpoint overhead) or use an idempotent at-least-once sink with upserts, which is visible immediately."
+    },
+    {
+     "q": "Does exactly-once in Flink prevent duplicates sent by the SDK?",
+     "a": "No. The SDK retry creates a second, distinct input record. Flink guarantees it processes each input record once; we still need dedup on event_id to collapse the logical duplicates."
+    },
+    {
+     "q": "What happens to an open Kafka transaction when Flink crashes?",
+     "a": "It is never committed; after the transaction timeout it is aborted, and read_committed consumers never see it. On restart Flink replays from the checkpoint and produces the data again in a new transaction."
+    }
+   ]
+  },
+  {
+   "name": "Lambda vs Kappa architecture",
+   "explain": "Lambda architecture, popularised by Nathan Marz, runs two parallel paths: a batch layer that periodically recomputes accurate views from the full immutable master dataset, and a speed layer that processes recent data in real time with approximate or incremental logic. A serving layer merges both: batch views for older data, speed views for the gap since the last batch run. Its strength is correctness and easy reprocessing; its weakness is maintaining the same business logic in two code bases and two engines, which tends to drift. Kappa architecture, proposed by Jay Kreps, removes the batch layer: everything is a stream, the log is retained long enough to replay, and reprocessing means starting a new version of the streaming job from the beginning of the log, writing to a new output, and switching readers when it catches up. Its strength is one code path; its weakness is that very long histories are expensive to keep in the log and replays can be slow. Modern practice is often a hybrid: the stream path is the primary one, a lake holds the long history in cheap open table formats, and the same logic (or SQL) runs in batch mode over the lake for backfills and corrections. Hybrid OLAP tables that merge realtime and offline segments implement the serving side of this cleanly.",
+   "in_this_design": "Primary path is kappa: Kafka plus Flink plus Pinot realtime segments. Kafka keeps 3 days for quick replays. Long history lives in Iceberg; Spark (or Flink batch with the same code) rebuilds offline segments hourly and daily, which replace realtime segments in Pinot hybrid tables. That correction path is the lambda element, used for late data and logic changes.",
+   "key_points": [
+    "Lambda: batch for truth, speed layer for freshness, merged at serving.",
+    "Kappa: one streaming code path, reprocess by replaying the log.",
+    "Lambda's cost is duplicated logic; Kappa's cost is long log retention and replay time.",
+    "Hybrid: stream-first with lake-based batch correction and the same logic in both.",
+    "Hybrid realtime/offline OLAP tables are the serving-side glue."
+   ],
+   "qa": [
+    {
+     "q": "Why not pure Kappa with 13 months in Kafka?",
+     "a": "At 1.5 TB/day compressed with RF 3, 13 months is about 1.8 PB on broker disks, far more expensive than object storage, and replaying a year through Flink takes very long. Tiered storage helps, but the lake is cheaper and serves ML too."
+    },
+    {
+     "q": "How do you avoid logic drift between stream and batch?",
+     "a": "Use one definition: either the same Flink job in batch mode or the same SQL in a metrics layer compiled for both engines, plus daily reconciliation that alerts on deltas."
+    },
+    {
+     "q": "When would you choose pure Lambda today?",
+     "a": "When the real-time path can be approximate and cheap while correctness comes from an existing warehouse, for example, sketches in a small streaming job plus nightly warehouse jobs, and the team lacks stateful streaming expertise."
+    }
+   ]
+  },
+  {
+   "name": "Columnar storage, segments and pre-aggregation (OLAP)",
+   "explain": "Row-oriented databases store all fields of a record together, which is ideal for transactions that read or write whole rows, but terrible for analytics that scan billions of rows and only a few columns. Columnar stores lay out each column contiguously. Queries read only the columns they touch, and similar values sit next to each other, so compression works extremely well: dictionary encoding replaces strings with small integers, run-length encoding collapses repeats in sorted columns, and bit-packing shrinks integers. Vectorised execution then processes columns in CPU-cache-friendly batches with SIMD. Real-time OLAP systems like Pinot and Druid organise data in immutable segments, each covering a time range, with per-column indexes: inverted indexes for filters on low-cardinality columns, sorted indexes, range indexes and bloom filters. Time-partitioning lets queries prune segments outside the requested time range. Pre-aggregation goes further: Druid's rollup merges rows with identical dimensions at ingest, and Pinot's star-tree index pre-computes aggregates for combinations of dimensions up to a threshold, turning a scan of millions of rows into a lookup of a few hundred. The trade-off is ingest cost, storage and loss of detail versus orders of magnitude faster queries for known patterns.",
+   "in_this_design": "Detail events are stored in Pinot hybrid tables with hourly segments, sorted by event_name and with inverted indexes on city, category and platform. Minute aggregates live in a smaller upsert table with a star-tree index on (category, city, platform), so war-room tiles hit pre-aggregated data while ad-hoc drill-downs scan detail segments pruned by time.",
+   "key_points": [
+    "Columnar layout reads only needed columns and compresses 5-20x.",
+    "Segments partitioned by time allow pruning.",
+    "Inverted indexes speed filters; star-tree pre-aggregates dimension combos.",
+    "Rollup at ingest trades detail for speed and storage.",
+    "Keep heavy ad-hoc scans off the serving cluster."
+   ],
+   "qa": [
+    {
+     "q": "Why not serve dashboards from the data lake with Trino?",
+     "a": "Trino over Parquet is great for ad-hoc, but typically seconds to minutes per query and not designed for hundreds of concurrent, sub-second, constantly refreshing tiles over data that is seconds old. The OLAP store ingests in real time and keeps indexes hot."
+    },
+    {
+     "q": "What does a star-tree index cost?",
+     "a": "Extra storage and ingest-time computation proportional to dimension combinations (bounded by a max leaf records threshold). It pays off for repeated group-bys on known dimensions, not for arbitrary high-cardinality filters."
+    },
+    {
+     "q": "ClickHouse vs Pinot here?",
+     "a": "ClickHouse has excellent compression and raw scan speed and simpler operations; Pinot excels at high-QPS, low-latency serving with upserts and native Kafka ingestion into realtime segments. For a war room with hundreds of concurrent tiles and upserted aggregates I lean Pinot; for an internal analyst tool ClickHouse is a strong, simpler choice."
+    }
+   ]
+  },
+  {
+   "name": "Deduplication and idempotency in event pipelines",
+   "explain": "In any pipeline built from unreliable networks, duplicates are unavoidable. A mobile SDK sends a batch, the server stores it, but the response is lost, so the SDK retries and the server stores it again. A stream job crashes and replays from its last checkpoint. A connector restarts and re-reads a file. Rather than trying to prevent duplicates at the transport level, which is impossible end to end, robust systems make every event identifiable and every write idempotent. The producer assigns a globally unique id at creation time, ideally time-ordered like UUIDv7 or ULID so it also helps indexing. Downstream, deduplication keeps a set of recently seen ids within a time window bounded by the maximum realistic retry delay; anything older is assumed unique. The memory of that set is the main cost: exact sets in RocksDB scale with unique ids per window, while probabilistic filters such as Bloom or cuckoo filters cut memory with a small false-positive rate that can be resolved by an exact check. Sinks complete the picture with idempotent writes: upserts keyed by event id or by deterministic aggregate keys mean replays overwrite rather than add. The combination, at-least-once delivery plus dedup plus idempotent sinks, is what people usually mean when they say effectively-once.",
+   "in_this_design": "SDK generates UUIDv7 event_id; Flink keys by event_id with 24 h TTL state (fronted by rotating Bloom filters) and drops repeats, emitting a duplicate-rate metric; aggregate tables are upserts by window and dims; the lake batch uses DISTINCT on event_id when rebuilding, so both paths agree.",
+   "key_points": [
+    "Duplicates are inevitable; make them harmless.",
+    "Assign ids at the source, not at the server.",
+    "Dedup window must cover the maximum realistic retry delay.",
+    "Bloom filters reduce state; exact state resolves maybes.",
+    "At-least-once + dedup + idempotent sinks = effectively-once."
+   ],
+   "qa": [
+    {
+     "q": "Why must the event id be generated on the client, not at the collector?",
+     "a": "A retry sends the same logical event again; if the collector assigned ids, the two copies would get different ids and look unique. Only a client-side id ties the copies together."
+    },
+    {
+     "q": "How large is the dedup state and how do you shrink it?",
+     "a": "About 5 billion ids per day at ~40 bytes is ~200 GB. Shrink with a shorter window based on actual retry delay distribution, Bloom pre-filters, or keying by user with small per-user sets."
+    },
+    {
+     "q": "What if a duplicate arrives after the dedup TTL?",
+     "a": "It passes the stream dedup; the nightly batch dedups on event_id across the whole day, and reconciled offline segments replace realtime ones, so reconciled numbers stay correct."
+    }
+   ]
+  },
+  {
+   "name": "Partitioning, hot keys and stream parallelism",
+   "explain": "Streaming systems scale by splitting data into partitions and processing them in parallel, with each key consistently routed to one partition by hashing. This gives ordering per key and lets stateful operators keep state local to the task that owns the key. The choice of key decides everything: it fixes the maximum parallelism (no more consumers than partitions), the unit of ordering, and the distribution of load. If the key distribution is skewed, a single partition or task becomes a hot spot: during a flash sale, keying by product id would send a huge share of traffic for the hero product to one task, which then lags while others idle. Mitigations include choosing a higher-cardinality key (user id instead of product id), salting keys (append a random suffix 0..N-1 and merge results downstream), and two-phase aggregation, where each task pre-aggregates locally across whatever keys it sees for a short interval and then a second stage combines the partial results by the real key, which is far less data. Partition count is hard to change later because changing it re-maps keys and breaks ordering and state locality, so teams over-provision partitions up front. Rebalancing and state redistribution cost also grows with state size, which matters when scaling Flink jobs.",
+   "in_this_design": "Raw events are keyed by user_token, which has very high cardinality and is natural for dedup and sessions. Aggregations by category or product use two-phase aggregation (local combine then keyed by dims) to absorb hot products during sales. 256 partitions leave room to scale Flink parallelism and Pinot consumers without re-partitioning.",
+   "key_points": [
+    "Key choice sets parallelism, ordering and load balance.",
+    "Partitions cap consumer parallelism; over-provision early.",
+    "Skewed keys create hot tasks that lag the whole job.",
+    "Fix skew with higher-cardinality keys, salting, or two-phase aggregation.",
+    "Repartitioning breaks per-key ordering and moves state."
+   ],
+   "qa": [
+    {
+     "q": "Why key raw events by user rather than product?",
+     "a": "User keys are high cardinality and evenly spread, keep a user's session ordered, and suit dedup and sessionisation. Product keys are heavily skewed during sales, creating hot partitions."
+    },
+    {
+     "q": "How does two-phase aggregation help a hot product?",
+     "a": "Each of 128 tasks sums that product's events locally for a second, then emits one partial per second; the global stage handles 128 small records instead of hundreds of thousands of raw events."
+    },
+    {
+     "q": "Can you add partitions to a Kafka topic later?",
+     "a": "Yes, but the hash mapping changes, so keys move to new partitions and per-key ordering is broken across the change, and Flink keyed state is redistributed by key groups. Plan for it or create a new topic and migrate."
+    }
+   ]
+  },
+  {
+   "name": "Approximate algorithms and sketches (HyperLogLog, Count-Min, t-digest)",
+   "explain": "Some analytics questions are expensive to answer exactly at scale. Counting distinct users per city per minute exactly requires storing every user id seen for every combination, and those sets cannot be added across dimensions, so rolling minutes into hours requires reprocessing. Sketches are compact probabilistic summaries that answer such questions with bounded error and, crucially, can be merged. HyperLogLog estimates cardinality: it hashes each item, uses the first bits to pick a register and records the maximum number of leading zeros in the rest; the harmonic mean across registers estimates the count. With 16,384 registers (about 12 KB) the standard error is roughly 0.8%, regardless of whether there are a thousand or a billion items, and two sketches merge by taking register-wise maxima. Count-Min sketch estimates frequencies of items, useful for heavy hitters and top-k, with overestimates bounded by the sketch width. T-digest and KLL sketches estimate quantiles like p95 latency with good accuracy at the tails. Theta sketches support set operations like intersections for funnels. The trade-off is explicit: small, mergeable, fast summaries in exchange for a known error, which is usually acceptable for live dashboards while exact numbers come from batch.",
+   "in_this_design": "Minute aggregates store HLL sketches for unique sessions and users per (category, city, platform), which Pinot merges at query time for any roll-up; latency percentiles for app performance use t-digest. Live tiles are labelled approximate; reconciled daily uniques come from exact batch counts in the lake.",
+   "key_points": [
+    "Sketches trade a small, known error for huge memory savings.",
+    "Mergeability is the key property for roll-ups across time and dims.",
+    "HLL: ~12 KB gives ~0.8% error at any cardinality.",
+    "Count-Min for heavy hitters; t-digest/KLL for percentiles.",
+    "Label approximate numbers and reconcile exact ones in batch."
+   ],
+   "qa": [
+    {
+     "q": "Why not sum per-minute unique users to get hourly uniques?",
+     "a": "A user active in many minutes would be counted many times. Distinct counts are not additive; HLL sketches merge correctly by register-wise max."
+    },
+    {
+     "q": "What error would you quote to a business user for HLL uniques?",
+     "a": "About 1% at standard configuration, independent of scale, and the reconciled daily number from batch is exact. For finance-grade numbers we never use sketches."
+    },
+    {
+     "q": "Can you compute a funnel conversion with HLL?",
+     "a": "Union is easy, intersections are inaccurate with HLL. For funnels use theta sketches that support intersection, or compute exact funnels in batch on sessions."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Kappa-first vs full Lambda",
+   "options": [
+    "Two separate batch and speed code bases",
+    "Stream-first with lake-based batch correction using the same logic"
+   ],
+   "choice": "Stream-first hybrid",
+   "why": "One logic definition reduces drift; batch correction handles very late data and backfills cheaply from the lake. Cost: need discipline to share code/SQL across engines."
+  },
+  {
+   "decision": "Pinot/Druid vs ClickHouse for serving",
+   "options": [
+    "Pinot or Druid",
+    "ClickHouse"
+   ],
+   "choice": "Pinot for the war-room serving tier",
+   "why": "Native realtime segment ingestion from Kafka, upserts, star-tree pre-aggregation and high-QPS serving. ClickHouse is simpler and faster on raw scans, and a good choice for analyst workloads; we may run both."
+  },
+  {
+   "decision": "Transactional exactly-once sinks vs idempotent at-least-once",
+   "options": [
+    "2PC Kafka sink with read_committed",
+    "At-least-once with upserts"
+   ],
+   "choice": "2PC for enriched/aggregate topics, upserts in OLAP",
+   "why": "2PC prevents duplicates in shared topics consumed by many teams; its 30 s checkpoint latency is acceptable for most tiles. Alert-critical metrics use an at-least-once fast path with upserts for sub-10 s freshness."
+  },
+  {
+   "decision": "Exact vs approximate uniques in live views",
+   "options": [
+    "Exact distinct sets",
+    "HLL sketches"
+   ],
+   "choice": "HLL live, exact in batch",
+   "why": "Exact sets for every dims combination are unaffordable and not mergeable; 1% error is fine for live decisions, finance uses reconciled exact numbers."
+  },
+  {
+   "decision": "Client events vs CDC for revenue metrics",
+   "options": [
+    "Client purchase events",
+    "CDC from order database"
+   ],
+   "choice": "CDC for GMV and orders, client events for funnel",
+   "why": "Client events can be lost, blocked or forged; the order DB is the truth. Client events still drive funnel and engagement metrics."
+  },
+  {
+   "decision": "Watermark delay",
+   "options": [
+    "Short (10 s)",
+    "Medium (2 min)",
+    "Long (10 min)"
+   ],
+   "choice": "2 minutes plus 24 h allowed lateness with upserts",
+   "why": "Most events arrive within seconds; 2 min captures ~99% so first results are nearly final, and upserts fix the rest without delaying dashboards by 10 minutes."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Flink job failure or bad deploy.",
+   "behavior": "Job restarts from last successful checkpoint; Kafka retains 3 days so no data is lost; lag spikes then drains; dashboards show a 'stale since' banner; bad deploy rolled back via savepoint."
+  },
+  {
+   "failure": "Pinot server loss.",
+   "behavior": "Segments replicated (replication 2-3) so queries continue; realtime consumption for affected partitions resumes on replicas from committed offsets."
+  },
+  {
+   "failure": "Kafka cluster degraded.",
+   "behavior": "Collectors' bounded buffers fill and they return 503 with Retry-After; SDKs keep batches on device and retry with jitter; server-side producers spool to local disk; no acknowledged event is lost."
+  },
+  {
+   "failure": "Schema registry unavailable.",
+   "behavior": "Collectors and Flink cache schemas by id; new schema versions cannot be registered but existing traffic flows."
+  },
+  {
+   "failure": "Dimension CDC stream stalls (enrichment data stale).",
+   "behavior": "Enrichment continues with last known dims; staleness metric alerts; new products appear as 'unknown' until corrected by batch rebuild."
+  },
+  {
+   "failure": "Reconciliation shows a 3% gap.",
+   "behavior": "Alert to data on-call; live tiles keep serving but marked 'unreconciled'; investigation compares quarantine, dedup and late side-output counts to localise the loss."
+  }
+ ],
+ "metrics": [
+  "Event-to-queryable latency p50/p95/p99 (synthetic canary events injected every second and read back).",
+  "Kafka consumer lag in seconds for Flink and Pinot consumers.",
+  "Collector accept rate, reject rate by reason, 503 rate, request p99.",
+  "Invalid/quarantined event rate per schema and producer team.",
+  "Duplicate rate and late-event rate (beyond watermark, beyond allowed lateness).",
+  "Flink checkpoint duration, size and failures; backpressure ratio per operator.",
+  "OLAP query p95/p99, QPS, timeouts, segment count and size per table.",
+  "Stream vs batch reconciliation delta per certified metric.",
+  "Cost per billion events (compute + storage)."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you prove the data is complete?",
+   "a": "Canary events injected at the collector every second and measured end to end; counts reconciled per hop (accepted at collector = raw topic = processed + quarantined + duplicates); daily stream vs batch reconciliation against CDC order counts. Each hop's count is a published SLI."
+  },
+  {
+   "q": "A dashboard shows a 40% drop in orders in one city. Real or pipeline problem?",
+   "a": "Check pipeline health first: lag, canary freshness, and per-collector-region accept rates. Then compare client order events with CDC orders for the same city; if CDC is normal, it is an instrumentation or SDK issue (maybe a bad app release); if CDC also drops, it is a real business incident, likely payments or delivery serviceability."
+  },
+  {
+   "q": "How do you handle a 10x traffic surge at the start of a sale?",
+   "a": "Pre-scale collectors and Flink before the event based on forecast, keep 256 partitions so parallelism can rise, autoscale on lag, use two-phase aggregation for hot products, and degrade by sampling low-value events (scroll, impressions) at the SDK through remote config before touching purchase events."
+  },
+  {
+   "q": "How would you reprocess the last 30 days with a corrected metric definition?",
+   "a": "Run the same logic in batch over Iceberg partitions for those days on isolated compute, build offline segments into a new table version, reconcile, then atomically swap. Last 3 days can also be replayed from Kafka into a parallel streaming job if we need the live path to adopt the change."
+  },
+  {
+   "q": "How do you support GDPR/DPDP deletion when Kafka is immutable?",
+   "a": "PII is tokenised at the collector, and the token-to-identity mapping lives in a separate vault; deleting the key (crypto-shredding) makes all copies unlinkable immediately. Kafka data ages out in 3 days; Iceberg supports row-level deletes; OLAP segments are rebuilt from the cleaned lake."
+  },
+  {
+   "q": "What would change if this were customer-facing analytics (sellers seeing their own dashboard)?",
+   "a": "Much higher QPS with strict per-tenant filters: partition and sort OLAP segments by seller_id, enforce row-level security in the query API, cache aggressively per seller, set per-tenant quotas, and consider pre-aggregated per-seller tables. Freshness can relax to a minute."
+  },
+  {
+   "q": "Why not have the collector write directly into Pinot or ClickHouse?",
+   "a": "It couples ingest availability to the OLAP store, loses replay, and prevents multiple consumers (lake, Flink, ML). Kafka in between gives buffering, replay and fan-out. ClickHouse in particular prefers large batched inserts, which Kafka consumers provide naturally."
+  }
+ ],
+ "key_points": [
+  "Separate collection, durable log, stream processing, serving and lake; each scales and fails independently.",
+  "Generate event_id on the client; dedup in the stream; idempotent upserts in sinks.",
+  "Aggregate by event time with watermarks; handle late data with allowed lateness, upserts and batch correction.",
+  "Real-time OLAP (Pinot/Druid) for seconds-fresh, sub-second queries; lake (Iceberg) for history and replay.",
+  "Stream-first hybrid: one logic definition, batch correction from the lake, hybrid realtime/offline tables.",
+  "Use CDC from the order DB for revenue; client events for funnels.",
+  "Sketches (HLL, t-digest) for live uniques and percentiles; exact numbers in batch.",
+  "Key by high-cardinality user id; two-phase aggregation for hot products during sales.",
+  "Measure freshness with canary events, reconcile counts per hop, publish stream vs batch delta.",
+  "Govern schemas with a registry and quarantine, or dashboards will break silently."
+ ],
+ "quiz": [
+  {
+   "q": "A sale causes a 5-minute processing backlog. Dashboards aggregated by processing time will most likely show:",
+   "options": [
+    "Correct numbers, just delayed",
+    "A fake dip followed by a fake spike",
+    "Duplicated orders",
+    "No change at all"
+   ],
+   "answer": 1,
+   "why": "Events from the backlog land in later processing-time windows, so a window looks empty and a later one overflows. With event-time windows, numbers would be correct but delayed."
+  },
+  {
+   "q": "Watermark = max event time seen minus 2 minutes. A window [10:00, 10:01) first fires when:",
+   "options": [
+    "The first event after 10:01 arrives",
+    "Processing time reaches 10:01",
+    "The watermark passes 10:01, i.e. an event with time >= 10:03 has been seen",
+    "After the checkpoint completes"
+   ],
+   "answer": 2,
+   "why": "The window fires when the watermark crosses its end; with a 2-minute delay that needs max event time >= 10:03. Processing time does not drive event-time windows."
+  },
+  {
+   "q": "Why must event_id be generated on the client?",
+   "options": [
+    "Servers cannot generate UUIDs fast enough",
+    "So that retries of the same logical event share an id and can be deduplicated",
+    "To save server CPU",
+    "Because Kafka requires client ids"
+   ],
+   "answer": 1,
+   "why": "Retries create physical duplicates; only a source-assigned id links them. Server-assigned ids would make each copy look unique."
+  },
+  {
+   "q": "Flink exactly-once with a Kafka 2PC sink and 30 s checkpoints. Roughly when do downstream read_committed consumers see results?",
+   "options": [
+    "Immediately on processing",
+    "Only after the next successful checkpoint commits the transaction",
+    "After the watermark passes",
+    "After Kafka retention expires"
+   ],
+   "answer": 1,
+   "why": "Output is pre-committed at the barrier and committed when the checkpoint completes, so visibility lags by up to the checkpoint interval. Watermarks govern window firing, not transaction visibility."
+  },
+  {
+   "q": "Hourly unique users computed by summing 60 per-minute unique counts will be:",
+   "options": [
+    "Exact",
+    "Underestimated",
+    "Overestimated, because active users are counted in many minutes",
+    "Exact if HLL is used per minute and summed"
+   ],
+   "answer": 2,
+   "why": "Distinct counts are not additive. Summing HLL estimates has the same problem; you must merge sketches (register max), not sum their estimates."
+  },
+  {
+   "q": "Roughly what standard error does an HLL with 16,384 registers (~12 KB) give?",
+   "options": [
+    "About 0.8%",
+    "About 10%",
+    "About 0.01%",
+    "It depends on the cardinality, growing with size"
+   ],
+   "answer": 0,
+   "why": "Standard error is about 1.04/sqrt(m) = 1.04/128 = ~0.8%, independent of cardinality, which is why HLL is so useful."
+  },
+  {
+   "q": "One Kafka partition receives no data for 10 minutes. What problem can this cause in Flink?",
+   "options": [
+    "Duplicate outputs",
+    "Checkpoint failures",
+    "Schema errors",
+    "The overall watermark stalls, so windows stop firing"
+   ],
+   "answer": 3,
+   "why": "The operator watermark is the minimum across inputs; an idle partition holds it back. Configure idleness so it is ignored. It does not by itself cause duplicates."
+  },
+  {
+   "q": "5 billion events/day at 300 bytes compressed with replication factor 3 and 3-day retention needs about how much Kafka disk?",
+   "options": [
+    "4.5 TB",
+    "13.5 TB",
+    "45 TB",
+    "1.5 TB"
+   ],
+   "answer": 1,
+   "why": "5e9 x 300 B = 1.5 TB/day; x3 replicas x3 days = 13.5 TB. 4.5 TB forgets either replication or retention."
+  },
+  {
+   "q": "Why use CDC from the orders database for GMV rather than client 'purchase' events?",
+   "options": [
+    "CDC is faster",
+    "Client events cost more",
+    "The order DB is the source of truth; client events can be lost, blocked or duplicated",
+    "Client events cannot carry prices"
+   ],
+   "answer": 2,
+   "why": "Revenue must match the ledger; client telemetry is best-effort. CDC is not necessarily faster; the point is authority."
+  },
+  {
+   "q": "During a sale, one Flink subtask aggregating by product_id lags while others are idle. Best fix?",
+   "options": [
+    "Increase checkpoint interval",
+    "Two-phase aggregation: pre-aggregate locally, then combine by product",
+    "Reduce the number of partitions",
+    "Switch to processing-time windows"
+   ],
+   "answer": 1,
+   "why": "Local pre-aggregation spreads the hot key's work across all subtasks and sends only partials to the keyed stage. Checkpoint interval does not address skew."
+  },
+  {
+   "q": "In Kappa architecture, how do you reprocess data after a logic change?",
+   "options": [
+    "Run a separate batch job in a different codebase",
+    "Edit outputs in place",
+    "Start a new version of the streaming job from the beginning of the retained log and switch readers when caught up",
+    "Restore a database backup"
+   ],
+   "answer": 2,
+   "why": "Kappa replays the log with the new job into a new output. A separate batch codebase is Lambda, which Kappa avoids."
+  },
+  {
+   "q": "Which is the main downside of classic Lambda architecture?",
+   "options": [
+    "Cannot handle late data",
+    "The same business logic is implemented twice and drifts",
+    "Cannot use Kafka",
+    "Requires exactly-once delivery"
+   ],
+   "answer": 1,
+   "why": "Maintaining parallel batch and speed code bases is the well-known cost. Lambda handles late data well via the batch layer."
+  },
+  {
+   "q": "A Pinot star-tree index is most useful for:",
+   "options": [
+    "Full-text search on product titles",
+    "Point lookups by event_id",
+    "Repeated group-by aggregations over a known set of dimensions",
+    "Storing raw JSON payloads"
+   ],
+   "answer": 2,
+   "why": "Star-tree pre-aggregates dimension combinations so group-bys become small lookups. Point lookups and text search need other index types."
+  },
+  {
+   "q": "Why front Flink dedup state with a Bloom filter?",
+   "options": [
+    "Bloom filters give exact answers",
+    "Most new ids are confirmed unseen without a state lookup, reducing RocksDB reads",
+    "To replace TTL",
+    "To guarantee ordering"
+   ],
+   "answer": 1,
+   "why": "A Bloom 'definitely not seen' is reliable and cheap; 'maybe seen' falls back to exact state. Bloom filters have false positives, so they are not exact."
+  },
+  {
+   "q": "An event arrives 30 hours late; allowed lateness is 24 h. In this design it is:",
+   "options": [
+    "Dropped forever",
+    "Added to the current window",
+    "Rejected at the collector",
+    "Sent to a side output and included by the nightly batch rebuild"
+   ],
+   "answer": 3,
+   "why": "Too-late events go to the side output and lake, and reconciled batch segments include them. Adding to the current window would corrupt event-time correctness."
+  },
+  {
+   "q": "Hundreds of war-room screens refresh the same 20 tiles every 10 s. The cheapest protection for the OLAP cluster is:",
+   "options": [
+    "A short-TTL result cache in the query API",
+    "More OLAP replicas",
+    "Longer watermark delay",
+    "Bigger Kafka partitions"
+   ],
+   "answer": 0,
+   "why": "Caching collapses identical queries into one per TTL, cutting load by orders of magnitude for almost no cost. Replicas also help but cost far more."
+  },
+  {
+   "q": "Device clocks are sometimes wrong by days. Best handling?",
+   "options": [
+    "Always use client_ts",
+    "Discard such events",
+    "Use server_ts only for all events",
+    "Record both; if client_ts deviates beyond a threshold from server_ts, use server_ts and flag"
+   ],
+   "answer": 3,
+   "why": "Keeping both preserves accurate event time for most events while bounding damage from bad clocks. Using only server_ts throws away accurate timing for offline events."
+  },
+  {
+   "q": "How do you meet a privacy deletion request when raw data sits in immutable Kafka segments?",
+   "options": [
+    "Rewrite Kafka segments",
+    "Crypto-shredding: delete the token key so tokenised data is unlinkable, then delete in lake and rebuild OLAP",
+    "Ignore Kafka since retention is short",
+    "Compact the topic by user"
+   ],
+   "answer": 1,
+   "why": "Deleting the key makes all copies anonymous immediately and the remaining stores are cleaned later. 'Ignore Kafka' still leaves identifiable data for days if PII is not tokenised."
+  },
+  {
+   "q": "Which metric best measures pipeline freshness end to end?",
+   "options": [
+    "Flink CPU",
+    "Collector p99 latency",
+    "Canary events injected at ingest and timed until queryable in the OLAP store",
+    "Number of Pinot segments"
+   ],
+   "answer": 2,
+   "why": "Canaries measure the full path users depend on. Collector latency only covers the first hop."
+  },
+  {
+   "q": "Why keep heavy ad-hoc exploration on Trino over the lake instead of Pinot?",
+   "options": [
+    "Pinot cannot run SQL",
+    "Large unbounded scans would compete with latency-sensitive dashboard queries on the serving cluster",
+    "Trino is always faster",
+    "Lake data is more recent"
+   ],
+   "answer": 1,
+   "why": "Isolation protects the war-room SLO; Pinot does support SQL. Trino is slower per query but scales cheaply for big scans."
+  },
+  {
+   "q": "You need first results within 10 s but 24 h lateness. Best combination?",
+   "options": [
+    "Watermark delay 24 h",
+    "Processing-time windows",
+    "Short watermark delay with allowed lateness emitting upserts",
+    "Drop all late events"
+   ],
+   "answer": 2,
+   "why": "A short delay gives fast first results; allowed lateness plus upserts corrects later. A 24 h delay would make dashboards a day stale."
+  },
+  {
+   "q": "Raw topic has 256 partitions. What is the maximum useful parallelism of a Flink source reading it?",
+   "options": [
+    "256",
+    "Unlimited",
+    "Number of brokers",
+    "Number of task managers"
+   ],
+   "answer": 0,
+   "why": "Each partition is read by at most one source subtask; extra subtasks sit idle. Downstream operators can have different parallelism after a rebalance."
+  }
+ ],
+ "references": [
+  {
+   "title": "Real-time Data Infrastructure at Uber (arXiv paper)",
+   "url": "https://arxiv.org/pdf/2104.00087"
+  },
+  {
+   "title": "Operating Apache Pinot (Uber Engineering)",
+   "url": "https://www.uber.com/blog/operating-apache-pinot/"
+  },
+  {
+   "title": "Apache Kafka, Flink, and Druid: Open Source Essentials for Real-Time Data Applications (Imply)",
+   "url": "https://imply.io/blog/apache-kafka-flink-and-druid-open-source-essentials-for-real-time-applications/"
+  },
+  {
+   "title": "ClickHouse vs Druid for real-time analytics (OneUptime)",
+   "url": "https://oneuptime.com/blog/post/2026-03-31-clickhouse-vs-druid-real-time-analytics/view"
+  }
+ ]
+}

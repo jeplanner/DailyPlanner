@@ -1,0 +1,1109 @@
+{
+ "slug": "likes-counter",
+ "title": "Design a likes and reactions counter at scale",
+ "prompt": "Design a \"likes and reactions\" counter at scale.",
+ "group": "feeds",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 100,
+ "summary": "A like button looks trivial, but at hundreds of thousands of reactions per second, with viral posts concentrating load on one key, it becomes a lesson in separating the exact fact (did user U react to post P, and how) from the approximate aggregate (how many reactions of each type). The core tension is correctness of the per-user state, which must be idempotent and toggleable, versus throughput and freshness of the displayed count, which tolerates seconds of staleness but cannot tolerate a single hot row or lock.",
+ "framework": {
+  "clarify": [
+   "Reaction types: just like, or a fixed set (like, love, haha, wow, sad, angry)? Can a user change reaction type? (Assume six types, one reaction per user per object, changeable.)",
+   "Objects: posts only, or also comments, reels, products? (Assume any object id; posts and comments dominate.)",
+   "Scale: assume 500M DAU, 10B reactions written per day, read of counts on every feed impression, about 50B count reads per day.",
+   "Freshness: is it acceptable for the count others see to lag a few seconds? (Assume yes, up to 5 s; but the reacting user must see their own reaction instantly.)",
+   "Exactness: must counts be exact eventually, or can very large counts be approximate (1.2M)? (Assume eventually exact, displayed rounded above 1,000.)",
+   "Do we need 'who reacted' lists and 'friends who reacted' snippets? (Assume a paginated reactor list; friend snippet is a stretch goal.)",
+   "Abuse: bot likes, like-farming; do counts need to be adjusted after removal of fake accounts? (Assume yes, asynchronous recount.)",
+   "Multi-region: are users and writes global? (Assume multi-region active-active reads, writes routed to the object's home region or merged.)"
+  ],
+  "design": [
+   "Baseline: a reactions table with a unique (object_id, user_id) and a counter column UPDATE posts SET likes = likes + 1. Explain the hot-row lock problem on viral posts and the double-count problem on retries.",
+   "Split into two stores: Reaction Store (source of truth, one row per user per object, idempotent upsert) and Counter Store (per object per type counts, derived).",
+   "Write path: API -> Reaction Service upserts the user row and computes a delta (+1 love, -1 like on change) only if state actually changed -> emits delta event to Kafka keyed by object_id.",
+   "Counter Aggregator consumes deltas, coalesces in memory for up to 1 s or 1,000 events per key, then applies one INCRBY per (object, type) to sharded counters in Redis and persists periodic snapshots to Cassandra or MySQL.",
+   "Read path: feed hydration batch-reads counts for 20-50 objects in one MGET from Redis (cache), falling back to the durable count store; the viewer's own reaction state comes from a per-user lookup (Bloom-filter-assisted).",
+   "APIs: PUT /v1/objects/{id}/reaction {type}, DELETE /v1/objects/{id}/reaction, GET /v1/objects/counts?ids=..., GET /v1/objects/{id}/reactors?type=&cursor=.",
+   "Critical path: tap -> optimistic UI -> PUT reaction (idempotent) -> reaction row upsert -> delta event -> aggregator coalesce -> counter INCRBY -> readers see new count within 1-5 s."
+  ],
+  "defend": [
+   "Bottleneck: a hot object (100K reactions/s on a live cricket post). Fix: coalesce deltas in the aggregator, split the counter into N sub-counters (shards) for extreme keys, and serve reads from a cached sum refreshed every second.",
+   "Scale reads: 50B count reads/day = about 600K/s average, 2M/s peak; served by Redis with client-side batching and a near cache (in-process, TTL 1 s) on feed servers for hot objects.",
+   "Scale writes: Reaction Store partitioned by object_id in Cassandra with clustering by user_id; about 115K writes/s average, 500K peak; counters receive far fewer writes because of coalescing (10-100x reduction on hot keys).",
+   "Failure behaviour: if the aggregator lags, counts are stale but reactions are safe; if Redis is lost, rebuild from the durable count snapshot plus replay of Kafka deltas since the snapshot offset; if Kafka is down, the Reaction Service still writes truth and an outbox catches up.",
+   "Correctness: periodic reconciliation job recounts reactions from the source of truth for objects whose counter drift is suspected (or for a sample), and after abuse cleanup.",
+   "Measure: write p99, delta-to-visible lag, aggregator consumer lag, counter drift from recount sample, hot-key QPS, cache hit rate."
+  ],
+  "script": "Before designing, I want to pin down scope. I will assume six reaction types, one reaction per user per object that can change, about 10 billion reaction writes a day and around 50 billion count reads, since every feed impression shows counts. Others can see a count a few seconds stale, but the person who reacted must see their own reaction immediately. The naive design is a reactions table plus UPDATE likes = likes + 1 on the post row; that serialises every like on a viral post on one row lock and double counts on retries. So I separate the fact from the aggregate. The fact, user U reacted love to post P, is an idempotent upsert in a reaction store partitioned by object. Only if the state actually changed do we emit a delta to Kafka keyed by object. An aggregator coalesces deltas for a second and applies one increment per object and type to Redis, with durable snapshots behind it. Reads batch-fetch counts from Redis with a tiny in-process cache for hot posts. To defend it: hot keys are handled by coalescing and, for extreme cases, sharded sub-counters; correctness comes from idempotent upserts and a reconciliation recount; and if anything downstream fails, counts get stale, never wrong for long. I would watch delta-to-visible lag, consumer lag and counter drift."
+ },
+ "brd": {
+  "problem": "Reactions are the cheapest form of engagement and the primary social proof shown on every piece of content. The current implementation increments a column on the post row; during live events viral posts cause lock contention, timeouts and lost likes, and retries cause inflated counts that creators notice. We need reaction counts that are fast to write, fast to read on every impression, eventually exact, and robust to hot content and abuse.",
+  "goals": [
+   "Accept reaction writes with p99 under 50 ms at 500K writes/s peak, including during live events.",
+   "Serve counts for a feed page (up to 50 objects) in one batch with p99 under 10 ms.",
+   "Make displayed counts converge to the exact truth within 5 s in steady state.",
+   "Never double count a user's reaction, regardless of retries or duplicate events.",
+   "Support six reaction types with per-type counts and a paginated reactor list.",
+   "Allow removal of fraudulent reactions with counts corrected within 1 hour."
+  ],
+  "non_goals": [
+   "Ranking content by reactions (the ranking team consumes our delta stream).",
+   "Real-time push of count changes to all viewers via WebSocket (stretch goal for live events).",
+   "Arbitrary emoji reactions as in chat apps.",
+   "Analytics dashboards for creators (they read from the warehouse)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Users",
+    "needs": "Instant feedback on tap; their reaction persists; counts look credible."
+   },
+   {
+    "who": "Creators",
+    "needs": "Accurate, non-inflated counts; reactor lists; trust that removals of bots are fair."
+   },
+   {
+    "who": "Feed and ranking teams",
+    "needs": "Cheap batched count reads and a reliable delta stream for engagement signals."
+   },
+   {
+    "who": "Integrity team",
+    "needs": "Ability to void reactions from fake accounts and recount."
+   },
+   {
+    "who": "SRE",
+    "needs": "No hot-row incidents during live events; graceful staleness rather than errors."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Reaction write latency",
+    "target": "p99 under 50 ms"
+   },
+   {
+    "metric": "Batch count read latency (50 ids)",
+    "target": "p99 under 10 ms"
+   },
+   {
+    "metric": "Delta-to-visible lag",
+    "target": "p95 under 2 s, p99 under 5 s"
+   },
+   {
+    "metric": "Counter drift vs recount (sampled)",
+    "target": "under 0.01 percent of objects off by more than 0.1 percent"
+   },
+   {
+    "metric": "Write availability",
+    "target": "99.99 percent"
+   },
+   {
+    "metric": "Lost reactions",
+    "target": "zero acknowledged writes lost"
+   }
+  ],
+  "constraints": [
+   "Reads outnumber writes about 5:1 and every feed request needs counts for many objects.",
+   "Traffic is extremely skewed: during an India vs Pakistan match, a single post can take 100K reactions per second.",
+   "Mobile clients retry on flaky networks; duplicate requests are normal.",
+   "Must run multi-region with users served from the nearest region."
+  ],
+  "risks": [
+   {
+    "risk": "Hot-key overload on one Redis shard during live events",
+    "mitigation": "Aggregator coalescing, sharded sub-counters for objects above a QPS threshold, near cache on readers."
+   },
+   {
+    "risk": "Double counting from retries or replays",
+    "mitigation": "Deltas emitted only on real state change of the per-user row; deltas carry an id and are applied idempotently by offset tracking."
+   },
+   {
+    "risk": "Counter drift after partial failures",
+    "mitigation": "Snapshot plus offset recovery, plus a reconciliation recount job."
+   },
+   {
+    "risk": "Like farming inflates counts",
+    "mitigation": "Integrity signals feed a void job; voided reactions emit negative deltas; rate limits per actor."
+   },
+   {
+    "risk": "Counter store loss",
+    "mitigation": "Counts are derived; rebuild from durable snapshots and Kafka retention of 7 days, or full recount from the reaction store."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Viewer scrolling the feed",
+    "needs": "Sees counts instantly on every card and a responsive reaction button."
+   },
+   {
+    "name": "Creator",
+    "needs": "Trusts counts, browses who reacted, sees a breakdown by type."
+   },
+   {
+    "name": "Integrity analyst",
+    "needs": "Voids a botnet's reactions and sees counts corrected."
+   }
+  ],
+  "user_stories": [
+   "As a viewer, I want my reaction to show instantly when I tap so that the app feels fast.",
+   "As a viewer, I want to change my like to love so that I express the right emotion, without the total changing.",
+   "As a viewer, I want to remove my reaction so that I can undo a mistake.",
+   "As a viewer, I want to see the total and the top three reaction types on each post so that I understand the response.",
+   "As a creator, I want to see who reacted, filtered by type, so that I know my audience.",
+   "As a creator, I want counts not to jump up and down so that I trust them.",
+   "As an integrity analyst, I want to remove reactions from banned accounts so that counts reflect real people.",
+   "As a feed engineer, I want to fetch counts and the viewer's own reaction for 50 posts in one call so that feed latency stays low."
+  ],
+  "functional": [
+   "Set, change or remove a reaction for (user, object) idempotently.",
+   "Maintain per-object counts per reaction type and a total.",
+   "Return counts for a batch of up to 100 objects in one call.",
+   "Return the viewer's own reaction for a batch of objects.",
+   "Return a paginated reactor list per object, filterable by type, newest first.",
+   "Emit a reaction delta stream for downstream consumers (ranking, notifications, analytics).",
+   "Support voiding reactions by actor (ban) and recounting affected objects.",
+   "Display rounded counts (1.2K, 3.4M) on clients, exact on creator insights."
+  ],
+  "non_functional": [
+   {
+    "name": "Write latency",
+    "target": "p99 under 50 ms"
+   },
+   {
+    "name": "Read latency",
+    "target": "p99 under 10 ms for a 50-object batch"
+   },
+   {
+    "name": "Freshness",
+    "target": "Others see changes within 5 s p99; actor sees own state immediately"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99 percent writes and reads"
+   },
+   {
+    "name": "Durability",
+    "target": "Acknowledged reactions never lost (RF 3, quorum writes)"
+   },
+   {
+    "name": "Consistency",
+    "target": "Per-user reaction state is linearizable per (user, object) key via LWT or single-writer; counts are eventually consistent"
+   },
+   {
+    "name": "Scalability",
+    "target": "Handle 100K reactions/s on a single object without errors"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "500M DAU; 20 reactions per user per day = 10B reaction writes/day.",
+    "Every feed impression shows counts; 100 impressions per user per day = 50B count reads/day (each impression one object, batched 20-50 per request).",
+    "Reaction row: object_id 8 B, user_id 8 B, type 1 B, timestamp 8 B, overhead about 40 B = about 65 B.",
+    "Counter row per object: 6 types x 8 B + total = about 64 B; 2B objects with any reaction in the active set.",
+    "Peak = 5x average during live events; a single hot object can see 100K/s.",
+    "Change or remove is about 10 percent of writes."
+   ],
+   "math": [
+    "Writes: 10B / 86,400 = about 115K/s average, about 580K/s peak.",
+    "Count reads (object-level): 50B / 86,400 = about 580K objects/s average; batched by 30, about 20K requests/s; peak object reads about 3M/s.",
+    "Reaction store growth: 10B x 65 B = 650 GB/day; about 240 TB/year logical, about 720 TB with RF 3 (many deployments compact to a bitmap or drop old reactor lists).",
+    "Counter store: 2B objects x 64 B = 128 GB, fits in a Redis cluster of about 20 shards with headroom (plus durable copy).",
+    "Coalescing: with a 1 s window, a 100K/s hot object becomes 6 INCRBY per second (one per type) instead of 100K.",
+    "Kafka deltas: 580K msgs/s x 60 B = about 35 MB/s peak; 256 partitions."
+   ],
+   "summary": "Roughly 115K reaction writes per second average and 580K peak, 600K to 3M object count reads per second, 650 GB/day of new reaction rows, and a counter working set of about 128 GB that fits in memory; the hard part is single-key skew, not total volume."
+  },
+  "out_of_scope": [
+   "Ranking and recommendations using reaction signals.",
+   "Live WebSocket streaming of counts to every viewer.",
+   "Custom emoji reactions.",
+   "Creator analytics UI."
+  ]
+ },
+ "hld": {
+  "overview": "Two planes. The truth plane stores one row per (object, user) with the current reaction type and is written idempotently by the Reaction Service. The aggregate plane derives per-object per-type counts from a delta stream: the Reaction Service emits a delta only when the stored state changed, an Aggregator coalesces deltas per key and applies batched increments to Redis counters, and a Snapshotter persists counts with the Kafka offset for recovery. Readers batch-fetch counts from Redis via a near cache, and the viewer's own reactions from the truth plane with a Bloom filter shortcut.",
+  "diagram": "  +--------+  PUT reaction   +-----------------+  LWT upsert  +---------------------------+\n  | Client |---------------->| Reaction Svc    |------------->| Reaction Store (Cassandra)|\n  | (optim.|                 | idempotent,     |              | PK (object_id, bucket)    |\n  |  UI)   |                 | computes delta  |              | CK user_id -> type, ts    |\n  +---+----+                 +--------+--------+              +---------------------------+\n      |                               | delta (only if changed), key=object_id\n      |                               v\n      |                      +-------------------+         +----------------------------+\n      |                      | Kafka: reaction-  |-------->| Consumers: ranking, notifs,|\n      |                      | deltas (256 part) |         | analytics                  |\n      |                      +--------+----------+         +----------------------------+\n      |                               v\n      |                      +-------------------+  INCRBY  +---------------------------+\n      |                      | Counter Aggregator|--------->| Redis Cluster: counters   |\n      |                      | coalesce 1s/1000  |          | cnt:{obj} hash type->n    |\n      |                      +--------+----------+          | hot objs: N sub-counters  |\n      |                               | snapshot+offset     +-------------+-------------+\n      |                               v                                   ^\n      |                      +-------------------+                        |\n      |                      | Count Snapshots   |       batch MGET       |\n      |  GET feed            | (Cassandra/MySQL) |     +------------------+--+\n      +--------------------------------------------->  | Feed / Count Read API|\n                                                       | near cache TTL 1s    |\n                                                       +----------------------+",
+  "components": [
+   {
+    "name": "Reaction Service",
+    "responsibility": "Validates request, performs idempotent compare-and-set on (object, user), computes the delta vector from old and new type, writes outbox/delta, returns new state."
+   },
+   {
+    "name": "Reaction Store (Cassandra)",
+    "responsibility": "Source of truth: partition by object_id (bucketed for huge objects), clustering by user_id; secondary table by user for 'my reactions' lookups."
+   },
+   {
+    "name": "User Reaction Index",
+    "responsibility": "Table keyed by (user_id, object_id) for viewer-state lookups in feed; fronted by a per-user Bloom filter of recently reacted objects."
+   },
+   {
+    "name": "Kafka reaction-deltas",
+    "responsibility": "Durable ordered stream of deltas keyed by object_id; also feeds ranking, notifications and analytics."
+   },
+   {
+    "name": "Counter Aggregator",
+    "responsibility": "Stateful consumer: coalesces deltas per (object, type) for up to 1 s or 1,000 events, applies INCRBY in pipelined batches, tracks offsets, detects hot keys and switches them to sharded sub-counters."
+   },
+   {
+    "name": "Redis counters",
+    "responsibility": "Hot serving copy of counts: hash per object with fields per type and total; sub-counter keys for hot objects."
+   },
+   {
+    "name": "Snapshotter and Count Store",
+    "responsibility": "Every 30 s flushes changed counters with the Kafka offset they include into a durable store for recovery and for cold objects."
+   },
+   {
+    "name": "Count Read API with near cache",
+    "responsibility": "Batch reads with MGET/pipelining; in-process cache with 1 s TTL for top hot objects; falls back to Count Store on miss."
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Recounts from the Reaction Store for sampled or flagged objects and after void jobs, and fixes counter drift."
+   },
+   {
+    "name": "Integrity Void Job",
+    "responsibility": "For banned actors, deletes or marks reactions and emits negative deltas."
+   }
+  ],
+  "flows": [
+   {
+    "name": "React or change reaction",
+    "steps": [
+     "Client shows the reaction optimistically and sends PUT /v1/objects/P/reaction {type: love, client_ts, request_id}.",
+     "Reaction Service reads current row (P, U) at LOCAL_QUORUM; old = like.",
+     "Conditional write: UPDATE ... SET type=love, ver=ver+1 IF ver = old_ver (Cassandra LWT) or single-writer per key via partitioned service.",
+     "If the condition fails (concurrent change), re-read and recompute; if new == old, return without delta (idempotent retry).",
+     "Delta = {like: -1, love: +1, total: 0}; written to Kafka keyed by P (via outbox or synchronous produce with acks=all before responding).",
+     "Respond 200 with the new state; the client keeps its optimistic UI."
+    ]
+   },
+   {
+    "name": "Aggregate and serve counts",
+    "steps": [
+     "Aggregator poll returns 5,000 deltas; it sums them into a map {(P, love): +812, (P, like): -14, ...}.",
+     "Every 1 s or when a key reaches 1,000 events, it pipelines HINCRBY cnt:{P} love 812 to Redis.",
+     "After Redis acks, it commits the Kafka offset; every 30 s, the Snapshotter writes changed counters plus offset to the Count Store.",
+     "Feed service hydrates 30 posts: near cache hit for hot ones, MGET the rest from Redis, Count Store fallback for misses.",
+     "Feed service also fetches viewer state: Bloom filter says 'definitely not reacted' for most posts; positives are checked in the User Reaction Index."
+    ]
+   },
+   {
+    "name": "Hot object escalation",
+    "steps": [
+     "Aggregator measures per-key rate; P exceeds 5,000 deltas/s.",
+     "P is registered in a hot-key set; writes switch to cnt:{P}:shard{k} with k = hash(aggregator_instance) mod 16.",
+     "Readers for hot keys sum 16 sub-counters (one pipelined call) and cache the sum in the near cache for 1 s.",
+     "When rate falls below threshold for 10 minutes, sub-counters are folded back into the main counter."
+    ]
+   },
+   {
+    "name": "Recovery after Redis data loss",
+    "steps": [
+     "Detect lost shard (empty after failover with replication lag).",
+     "Load counters for that slot range from the Count Store snapshot, which records Kafka offset O per partition.",
+     "Replay deltas from offset O for the affected keys; deltas are commutative sums, so order within the window does not matter.",
+     "Mark the shard healthy; reconciler samples objects to validate."
+    ]
+   }
+  ],
+  "data_flow": "Writes: client -> Reaction Service -> Reaction Store (truth) -> delta to Kafka -> Aggregator -> Redis counters -> Snapshot store. Reads: feed -> near cache -> Redis -> Count Store; viewer state from Bloom filter plus User Reaction Index. Corrections: void job and reconciler emit compensating deltas through the same stream, so there is one path that mutates counts."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "PUT",
+    "path": "/v1/objects/{object_id}/reaction",
+    "request": "{type: 'love', request_id: 'uuid'}",
+    "response": "{object_id, my_reaction: 'love', counts_hint: {total: 10423}}",
+    "notes": "Idempotent: same final state on retries; counts_hint may be stale; client renders optimistic total."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/objects/{object_id}/reaction",
+    "request": "{request_id}",
+    "response": "{object_id, my_reaction: null}",
+    "notes": "Idempotent; deleting a non-existent reaction returns 200 with no delta."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/objects/counts?ids=1,2,...,50&viewer=me",
+    "request": "Up to 100 object ids.",
+    "response": "{items: [{id, total, by_type: {like: 9001, love: 1200, haha: 222}, top: ['like','love','haha'], my_reaction: 'like'}]}",
+    "notes": "Batch only; internal callers (feed) use gRPC equivalent."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/objects/{object_id}/reactors?type=love&cursor=&limit=50",
+    "request": "Optional type filter, opaque cursor.",
+    "response": "{users: [{id, name, type, reacted_at}], next_cursor}",
+    "notes": "Served from Reaction Store clustering order; friends-first ranking is a separate enrichment."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/v1/void",
+    "request": "{actor_ids: [...], reason: 'botnet-123'}",
+    "response": "{job_id}",
+    "notes": "Integrity-only; runs async, emits negative deltas."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "reaction",
+    "store": "Cassandra",
+    "fields": [
+     "object_id bigint",
+     "bucket smallint",
+     "user_id bigint",
+     "type tinyint",
+     "ver int",
+     "updated_at timestamp"
+    ],
+    "keys": "PRIMARY KEY ((object_id, bucket), user_id); bucket = 0 normally, hash(user_id) mod 64 for objects flagged huge.",
+    "notes": "Reactor list newest-first needs a second table reactor_by_time ((object_id, type, day), reacted_at DESC, user_id)."
+   },
+   {
+    "entity": "user_reaction",
+    "store": "Cassandra",
+    "fields": [
+     "user_id bigint",
+     "object_id bigint",
+     "type tinyint",
+     "updated_at"
+    ],
+    "keys": "PRIMARY KEY ((user_id), object_id).",
+    "notes": "Viewer-state lookups for a feed page are one partition read with IN on object ids."
+   },
+   {
+    "entity": "counter",
+    "store": "Redis (serving) + Cassandra/MySQL snapshot (durable)",
+    "fields": [
+     "cnt:{object_id} hash: like, love, haha, wow, sad, angry, total",
+     "cnt:{object_id}:s{0..15} for hot objects",
+     "snapshot: object_id, counts..., kafka_partition, kafka_offset, updated_at"
+    ],
+    "keys": "Redis key cnt:{object_id}; snapshot PK object_id.",
+    "notes": "Counts are derived; can be rebuilt from snapshots plus deltas, or recount."
+   },
+   {
+    "entity": "delta event",
+    "store": "Kafka topic reaction-deltas",
+    "fields": [
+     "event_id",
+     "object_id",
+     "user_id",
+     "old_type",
+     "new_type",
+     "ts",
+     "source (user|void|reconcile)"
+    ],
+    "keys": "Message key object_id; 256 partitions; retention 7 days.",
+    "notes": "Consumers compute their own vector from old and new type."
+   }
+  ],
+  "classes": [
+   {
+    "name": "ReactionService",
+    "responsibility": "Idempotent state transitions per (user, object).",
+    "methods": [
+     "setReaction(userId, objectId, type) -> State",
+     "removeReaction(userId, objectId) -> State",
+     "deltaOf(old, new) -> Map<type,int>"
+    ]
+   },
+   {
+    "name": "CounterAggregator",
+    "responsibility": "Coalesce deltas and apply batched increments with offset tracking.",
+    "methods": [
+     "onBatch(records)",
+     "flush(force=false)",
+     "isHot(objectId) -> bool",
+     "commitOffsets()"
+    ]
+   },
+   {
+    "name": "CountReader",
+    "responsibility": "Batch reads with near cache and fallbacks.",
+    "methods": [
+     "getCounts(ids) -> Map<id, Counts>",
+     "sumShards(objectId) -> Counts",
+     "fallbackFromSnapshot(ids)"
+    ]
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Recount from truth and emit corrections.",
+    "methods": [
+     "recount(objectId) -> Counts",
+     "repair(objectId)",
+     "sampleAndVerify(rate)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Idempotent state transition and delta emission",
+    "explain": "The only way counts change is through a delta derived from an actual state transition of the per-user row. Retries that ask for the same final state produce no delta. Concurrent requests for the same (user, object) are serialised by a version compare-and-set.",
+    "pseudocode": "def set_reaction(user, obj, new_type):\n  for _ in range(3):\n    row = store.get(obj, user)                       # LOCAL_QUORUM\n    old = row.type if row else None\n    if old == new_type:\n        return State(new_type)                       # retry or no-op\n    ok = store.cas(obj, user, expect_ver=row.ver if row else None,\n                   type=new_type)                    # LWT IF ver = x / IF NOT EXISTS\n    if ok:\n        outbox.emit(Delta(obj, user, old, new_type)) # key = obj\n        return State(new_type)\n  raise Conflict()\n\ndef delta_of(old, new):\n  v = defaultdict(int)\n  if old: v[old] -= 1; v['total'] -= 1\n  if new: v[new] += 1; v['total'] += 1\n  return v                                          # like->love: total 0\n"
+   },
+   {
+    "name": "Coalescing aggregator with at-least-once safe apply",
+    "explain": "Sums deltas per key in memory and flushes on time or size. Offsets are committed only after Redis acks. A crash after INCRBY but before commit would re-apply a batch, so each flush writes the batch's last offset per partition to Redis in the same MULTI transaction (cnt applied-offset fence); on restart, records at or below the fence are skipped.",
+    "pseudocode": "acc = defaultdict(lambda: defaultdict(int)); last_off = {}\ndef on_batch(records):\n  for r in records:\n    if r.offset <= fence[r.partition]: continue      # already applied\n    for t, n in delta_of(r.old, r.new).items():\n      acc[r.object_id][t] += n\n    last_off[r.partition] = r.offset\n  if elapsed() > 1.0 or size(acc) > 50_000: flush()\n\ndef flush():\n  pipe = redis.multi()\n  for obj, vec in acc.items():\n    key = shard_key(obj) if is_hot(obj) else f'cnt:{obj}'\n    for t, n in vec.items():\n      if n: pipe.hincrby(key, t, n)\n  for p, o in last_off.items(): pipe.hset('fence', p, o)\n  pipe.execute(); kafka.commit(last_off); acc.clear()\n"
+   },
+   {
+    "name": "Display rounding",
+    "explain": "Clients show compact numbers so exact second-level fluctuation of large counts is invisible: below 1,000 exact; then one decimal K or M, truncated not rounded up so a count never appears to drop when it crosses a boundary.",
+    "pseudocode": "def compact(n):\n  if n < 1000: return str(n)\n  for div, suf in ((1e9,'B'), (1e6,'M'), (1e3,'K')):\n    if n >= div:\n      v = math.floor(n / div * 10) / 10            # truncate\n      return f'{v:g}{suf}'\n"
+   }
+  ],
+  "sequence": "Client      ReactionSvc     Cassandra      Kafka       Aggregator      Redis      FeedAPI\n  | PUT love     |               |             |              |             |           |\n  |------------->| read (P,U)    |             |              |             |           |\n  |              |-------------->|             |              |             |           |\n  |              |<-- like,v3 ---|             |              |             |           |\n  |              | CAS v3->v4    |             |              |             |           |\n  |              |-------------->|             |              |             |           |\n  |              |<---- ok ------|             |              |             |           |\n  |              | delta(like->love) key=P     |              |             |           |\n  |              |---------------------------->|              |             |           |\n  |<--- 200 -----|               |             |  poll batch  |             |           |\n  |              |               |             |------------->| coalesce 1s |           |\n  |              |               |             |              | HINCRBY x2  |           |\n  |              |               |             |              |------------>|           |\n  |              |               |             |<-- commit ---|             |           |\n  |  GET feed (another viewer)   |             |              |             |   MGET    |\n  |-------------------------------------------------------------------------------------->|\n  |              |               |             |              |             |<----------|\n  |<------------------------------------ counts within ~1-2 s ------------------------------|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Client retries PUT after a timeout that actually succeeded",
+   "handling": "Second request sees old == new and returns without a delta; counts unchanged."
+  },
+  {
+   "case": "User taps like then love then unlike within 300 ms from two devices",
+   "handling": "CAS on version serialises transitions; each successful transition emits its own delta; the final state is whichever CAS won last and the deltas sum to that state."
+  },
+  {
+   "case": "100K reactions per second on one live-match post",
+   "handling": "Aggregator coalescing turns them into a few increments per second; above 5K/s the key switches to 16 sub-counters; readers sum shards and cache 1 s. The Reaction Store partition for the object is bucketed by hash(user) to spread writes."
+  },
+  {
+   "case": "Aggregator crashes after INCRBY but before Kafka commit",
+   "handling": "Fence offsets stored atomically with the increments in Redis; on restart records at or below the fence are skipped, so no double apply."
+  },
+  {
+   "case": "Redis failover loses the last second of increments (async replication)",
+   "handling": "Snapshot store has counts plus offset; reload affected keys and replay deltas from that offset; reconciler validates a sample."
+  },
+  {
+   "case": "Count briefly appears to go down to another viewer",
+   "handling": "Can happen with real unlikes or between sub-counter folds. Display truncation and near cache smoothing hide most noise; never serve an older snapshot after a newer value to the same session (session-level monotonic read via returned version)."
+  },
+  {
+   "case": "Object deleted while reactions are in flight",
+   "handling": "Deltas for a deleted object are dropped by the aggregator (tombstone set); counters and reactions are deleted by a cleanup job."
+  },
+  {
+   "case": "Banned botnet of 50K accounts reacted to 2M objects",
+   "handling": "Void job scans user_reaction by actor, deletes rows, emits negative deltas with source=void, throttled to 20K/s so it does not starve live traffic."
+  },
+  {
+   "case": "Viewer's own reaction state not yet visible in a replica (read-your-writes)",
+   "handling": "Client keeps optimistic state keyed by object for 60 s and merges it over server responses; server reads own-state at LOCAL_QUORUM."
+  },
+  {
+   "case": "Counter goes negative due to a bug or out-of-order negative delta before positive in a different partition",
+   "handling": "Deltas for an object are on one partition so ordered; negative counts are clamped at display and flagged to the reconciler."
+  },
+  {
+   "case": "Multi-region concurrent reactions to the same post",
+   "handling": "Counters as per-region sub-counters (a G-Counter-like per-region PN counter) summed on read; reaction rows routed to the user's home region so a user's own row has a single writer."
+  },
+  {
+   "case": "Very old post suddenly goes viral (cold key in snapshot store only)",
+   "handling": "First reads miss Redis, load from Count Store, populate Redis with request coalescing (single-flight) so 10K concurrent readers trigger one load."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Cassandra",
+   "layer": "Reaction truth store",
+   "overview": "Leaderless wide-column store with tunable consistency, LWT for compare-and-set, and high write throughput via LSM trees.",
+   "why": "Hundreds of thousands of small upserts per second, natural partitioning by object and by user, LWT for the rare per-key CAS.",
+   "alternatives": "MySQL sharded by object_id (unique constraint on (object, user) is easy, resharding is hard); DynamoDB with conditional writes (managed, similar model); TAO-style graph store fronting MySQL as Facebook does."
+  },
+  {
+   "name": "Apache Kafka",
+   "layer": "Delta stream",
+   "overview": "Partitioned durable log with ordered per-key delivery and replay.",
+   "why": "Decouples write from aggregation, gives ordered deltas per object, lets several consumers (counts, ranking, notifications) share one stream, supports recovery by replay.",
+   "alternatives": "Kinesis (managed, smaller per-shard throughput); Pulsar; direct synchronous counter update (simpler, collapses on hot keys)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Counter serving",
+   "overview": "Sharded in-memory store with atomic HINCRBY and pipelining.",
+   "why": "128 GB working set fits in memory; sub-millisecond batch reads; atomic increments of coalesced deltas.",
+   "alternatives": "Memcached (no hashes or atomic multi-field ops); Cassandra counter columns (non-idempotent on retry and slower); Aerospike (good, less familiar)."
+  },
+  {
+   "name": "Apache Flink (optional)",
+   "layer": "Stateful aggregation",
+   "overview": "Stream processor with keyed state, windows and exactly-once checkpoints.",
+   "why": "Can replace the hand-written aggregator: keyed tumbling windows of 1 s with checkpointed state and two-phase sinks give exactly-once counting.",
+   "alternatives": "Kafka Streams (library, simpler deploy); custom consumer (full control, more code to get right)."
+  },
+  {
+   "name": "Bloom filters",
+   "layer": "Viewer-state shortcut",
+   "overview": "Probabilistic set membership with no false negatives and tunable false positives.",
+   "why": "Most viewers have not reacted to most posts; a per-user Bloom filter of recent reactions answers 'definitely not' without hitting the database.",
+   "alternatives": "Always query user_reaction (simple, more load); cache full per-user reaction sets (memory heavy)."
+  },
+  {
+   "name": "Caffeine/Guava near cache",
+   "layer": "Read path",
+   "overview": "In-process cache with size and TTL bounds.",
+   "why": "Absorbs extreme read skew on hot objects (millions of reads/s on one key) without hammering a single Redis shard.",
+   "alternatives": "Redis read replicas per hot key (more ops); CDN edge caching of counts (staleness and personalisation issues)."
+  },
+  {
+   "name": "Spark batch on the data lake",
+   "layer": "Reconciliation",
+   "overview": "Batch compute over daily snapshots of the reaction store.",
+   "why": "Full nightly recount for objects with recent activity and comparison with counters at scale.",
+   "alternatives": "Online sampled reconciler only (cheaper, less coverage)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Hot keys and sharded counters",
+   "explain": "A counter is the classic hot key: every increment touches the same record, so the throughput of that record bounds the throughput of the whole feature. In a relational database, UPDATE ... SET n = n + 1 takes a row lock; concurrent transactions queue behind it, and with replication and fsync a single row may sustain only a few hundred to a few thousand updates per second. In a sharded key-value store, one key lives on one shard, so a hot counter pins one CPU core on one node while the rest of the cluster idles. Sharded counters split one logical counter into N physical sub-counters. A writer picks a sub-counter at random or by its own identity and increments it; a reader sums all N. Write throughput scales roughly linearly with N; read cost grows with N, which is why the sum is usually cached. Google App Engine popularised the pattern for Datastore, where an entity group allowed about one write per second. Choosing N is a trade-off: too small and the hotspot remains, too large and every read becomes a fan-in. Adaptive schemes start with N = 1 and split keys that cross a rate threshold, then merge them back when traffic cools.",
+   "in_this_design": "Normal objects use one Redis hash. When an object exceeds 5K deltas/s at the aggregator, it is switched to 16 sub-counters keyed by aggregator instance; readers sum 16 fields in one pipelined call and cache the sum for 1 s. Reaction rows for huge objects are bucketed by hash(user_id) mod 64 in Cassandra for the same reason.",
+   "key_points": [
+    "A single counter row is a serialisation point.",
+    "Split writes across N sub-counters, sum on read, cache the sum.",
+    "Make N adaptive: split hot keys, merge when they cool.",
+    "Coalescing upstream often removes the need for sharding."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use a faster database for the counter row?",
+     "a": "The limit is per key, not per database: one key is one partition on one node. Any store hits a ceiling on a single key; only splitting or coalescing removes it."
+    },
+    {
+     "q": "How do you pick the number of shards?",
+     "a": "From peak per-key write rate divided by safe per-key throughput, with headroom: for 100K/s raw and 10K/s safe per Redis key we would need 10+; after coalescing we need far fewer. 16 is a good adaptive ceiling."
+    },
+    {
+     "q": "What does sharding cost on reads?",
+     "a": "N reads per count. With pipelining it is one round trip, but CPU and network grow with N; hence caching the summed value briefly and only sharding hot keys."
+    }
+   ]
+  },
+  {
+   "name": "Write coalescing and batching",
+   "explain": "Coalescing merges many small updates to the same key into one larger update before applying it. For commutative, associative operations like addition, the result is identical regardless of how updates are grouped, so a stream of +1s can be summed in memory and applied as +812. This reduces write amplification on storage, network round trips and lock contention, at the cost of latency equal to the batching window and the risk of losing the in-memory buffer on a crash. The risk is removed when the buffer is backed by a durable log: if the aggregator crashes, it re-reads deltas from the last committed offset and rebuilds the buffer. The window is usually bounded both by time (for example 1 s, to cap staleness) and by size (to cap memory and the cost of a crash replay). Batching is the related idea of grouping different keys into one request, for example pipelining thousands of increments in one network round trip. Together they can turn a million small writes per second into a few thousand bulk operations.",
+   "in_this_design": "The Counter Aggregator sums deltas per (object, type) for up to 1 s or 1,000 events and pipelines the HINCRBY commands. A 100K/s hot object becomes 6 increments per second. Kafka is the durable buffer, so a crash only delays counts.",
+   "key_points": [
+    "Addition is commutative and associative, so it coalesces perfectly.",
+    "Bound the window by time (freshness) and size (memory, replay cost).",
+    "A durable log makes the in-memory buffer safe to lose.",
+    "Coalescing is the first defence against hot keys; sharding is the second."
+   ],
+   "qa": [
+    {
+     "q": "What freshness do you give up?",
+     "a": "At most the window (1 s) plus consumer lag; the user who reacted sees their own state instantly via optimistic UI, so the cost is invisible to them."
+    },
+    {
+     "q": "Why can you coalesce counts but not the per-user reaction state?",
+     "a": "Per-user state is a set or last-writer value that must be exact and idempotent per key; its correctness depends on each individual transition, so we keep it as a direct CAS write."
+    },
+    {
+     "q": "What if the aggregator crashes with 50,000 buffered deltas?",
+     "a": "Nothing is lost; it restarts from the last committed offset and reprocesses those deltas. The fence offset in Redis prevents double application of the batch that was applied but not committed."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and the fact-vs-aggregate split",
+   "explain": "An idempotent operation produces the same result whether it is applied once or many times. Increment is not idempotent: retrying +1 adds again. Set-membership is: adding user U to the set of people who liked P twice leaves the set unchanged. That is why robust counter designs store the underlying facts as idempotent state and derive the count from changes in that state. The client says 'my reaction to P is love' rather than 'add one love'; the server compares the requested state with the stored state and only if they differ performs the transition and emits a delta. Retries, duplicate taps and replays of the request become harmless. The delta stream can still be delivered more than once, so its consumer must also be idempotent, typically by tracking offsets or event ids atomically with the effect. This split also gives a path to correctness: because the facts are stored, the aggregate can always be recomputed from scratch and compared, which is impossible if only a counter exists.",
+   "in_this_design": "PUT reaction expresses desired state; the Reaction Service CASes the (object, user) row and emits a delta only on change. The aggregator applies deltas idempotently using an offset fence stored atomically with increments. The reconciler recounts from facts.",
+   "key_points": [
+    "Store facts idempotently; derive aggregates from state changes.",
+    "APIs should express desired state (PUT type), not operations (+1).",
+    "Every consumer of an at-least-once stream needs its own idempotency.",
+    "Keeping facts lets you recount and prove correctness."
+   ],
+   "qa": [
+    {
+     "q": "Why PUT with a type rather than POST /like?",
+     "a": "PUT is naturally idempotent: repeating it leaves the same state. POST implies a new action each time and invites double counting on retries."
+    },
+    {
+     "q": "Do you need the request_id then?",
+     "a": "Not for correctness of state; it is useful for tracing and for deduping side effects like notifications on rapid toggles."
+    },
+    {
+     "q": "Could you skip storing per-user rows and only keep counts?",
+     "a": "Then you cannot prevent duplicate likes, show 'you liked this', support changes, void bots or recount. The per-user fact is mandatory."
+    }
+   ]
+  },
+  {
+   "name": "Eventual consistency, read-your-writes and monotonic reads",
+   "explain": "Eventual consistency promises that if updates stop, all replicas converge to the same value; it says nothing about what a reader sees in the meantime. That is often fine for aggregates, but users notice specific anomalies. Read-your-writes means a user sees their own updates; violating it looks like 'I liked it and the heart turned grey again'. Monotonic reads means a user never sees an older value after a newer one; violating it looks like a count jumping backwards. These session guarantees can be provided on top of an eventually consistent store: the client can remember what it wrote and overlay it, the server can return a version and refuse to serve older versions to that session, or requests can be pinned to the same replica. The PACELC framing helps: even without partitions, there is a trade-off between latency and consistency, and for counts we choose latency, while for the user's own reaction row we pay a little latency (quorum or CAS) for correctness.",
+   "in_this_design": "Counts are eventually consistent with p99 under 5 s. Own reaction state uses optimistic client overlay plus quorum reads. The near cache and display truncation reduce visible non-monotonicity; responses carry a counter version so a session does not regress.",
+   "key_points": [
+    "Aggregates can be eventual; the user's own action cannot appear lost.",
+    "Session guarantees (RYW, monotonic reads) fix the visible anomalies cheaply.",
+    "PACELC: choose latency for counts, consistency for per-user state.",
+    "Display rounding hides harmless jitter."
+   ],
+   "qa": [
+    {
+     "q": "A user likes a post, refreshes, and the heart is empty. What failed?",
+     "a": "Read-your-writes: the read hit a replica or cache that had not applied the write. Fix with client overlay for a short window and own-state reads at quorum or from the primary for that user."
+    },
+    {
+     "q": "Is strong consistency for counts worth it?",
+     "a": "No. It would require coordination on every increment to a hot key, the exact thing that fails at scale, for a number users cannot verify to the unit anyway."
+    },
+    {
+     "q": "How do you stop a count appearing to go backwards?",
+     "a": "Return a version with counts and keep the max seen per session in the client; truncate display; avoid serving from a stale snapshot after a fresher Redis read."
+    }
+   ]
+  },
+  {
+   "name": "CRDT counters for multi-region writes (G-Counter, PN-Counter)",
+   "explain": "A conflict-free replicated data type is a data structure whose replicas can be updated independently and concurrently and always merge to the same result without coordination. The simplest is the grow-only counter, G-Counter: each replica keeps its own slot in a vector, only increments its own slot, and merge takes the element-wise maximum; the value is the sum of slots. Because max is commutative, associative and idempotent, replicas can exchange state in any order, any number of times, and converge. A PN-Counter supports decrements by keeping two G-Counters, one for increments (P) and one for decrements (N), with value P minus N. CRDTs fit counters across regions: each region accepts increments locally with no cross-region round trip, and regions periodically exchange state. The costs are metadata that grows with the number of replicas, and the fact that CRDTs guarantee convergence, not business invariants; they cannot stop a count going below zero or enforce one reaction per user on their own. Redis Enterprise active-active and Riak implement CRDT counters.",
+   "in_this_design": "In multi-region mode, each region maintains its own per-object per-type counter slot (a PN-Counter); the read path sums region slots. Uniqueness per user is still enforced by routing a user's reaction rows to their home region, so the CRDT only has to merge counts.",
+   "key_points": [
+    "G-Counter: per-replica slots, merge by max, value is the sum.",
+    "PN-Counter: two G-Counters for increments and decrements.",
+    "Merges are commutative, associative and idempotent, so no coordination.",
+    "Convergence is not invariants; uniqueness needs a single writer elsewhere."
+   ],
+   "qa": [
+    {
+     "q": "Why not have both regions INCR the same global counter?",
+     "a": "Cross-region synchronous writes add 100+ ms per increment and fail during partitions; async replication of increments as values would lose or duplicate updates. Per-region slots avoid both."
+    },
+    {
+     "q": "Why does merge use max and not sum?",
+     "a": "State is exchanged repeatedly; summing would double count on every exchange. Max is idempotent, so receiving the same state twice changes nothing."
+    },
+    {
+     "q": "Can a PN-Counter prevent a user liking twice from two regions?",
+     "a": "No. CRDTs ensure convergence of whatever operations happened; uniqueness is enforced by giving the user's reaction row one home region."
+    }
+   ]
+  },
+  {
+   "name": "Change streams, offsets and recovery from snapshots",
+   "explain": "When a derived view (a cache, a counter table, a search index) is computed from a log of changes, recovery becomes a matter of two numbers: a snapshot of the view and the log position it reflects. To rebuild, load the snapshot and replay the log from that position. This is the core idea behind event sourcing and stream-table duality: a table is the accumulated state of a stream, and a stream is the change log of a table. For the replay to be correct, the snapshot and the offset must be captured atomically, otherwise you replay too much (double count) or too little (lose updates). Log retention must exceed the snapshot interval plus the time to detect and react to failure. When the derived state is a commutative sum, replays are simpler because order inside the replay range does not matter, only that each delta is applied exactly once relative to the snapshot. Kafka consumer offsets, Flink checkpoints and database WAL positions are all instances of the same idea.",
+   "in_this_design": "The Snapshotter writes counter values plus Kafka partition offsets every 30 s; Redis increments are fenced with the applied offset. After Redis loss, we load snapshots and replay from the stored offsets. Kafka retention is 7 days, far beyond the 30 s snapshot interval.",
+   "key_points": [
+    "Derived state = snapshot + log position; store them atomically.",
+    "Retention must exceed snapshot interval plus detection time.",
+    "Commutative deltas make replay order-insensitive.",
+    "The truth store allows a last-resort full recount."
+   ],
+   "qa": [
+    {
+     "q": "What if snapshot and offset are written separately?",
+     "a": "A crash between them makes the offset disagree with the values, leading to double application or missed deltas on replay."
+    },
+    {
+     "q": "Why keep Kafka retention at 7 days if snapshots are every 30 s?",
+     "a": "To recover from bugs discovered later, to bootstrap new consumers and to rebuild after multi-hour incidents."
+    },
+    {
+     "q": "Could you use Kafka Streams instead?",
+     "a": "Yes: a KTable aggregated by object id with changelog topics gives this pattern out of the box, plus exactly-once processing within Kafka."
+    }
+   ]
+  },
+  {
+   "name": "Bloom filters for negative lookups",
+   "explain": "A Bloom filter is a bit array of m bits with k hash functions. To add an item, set the k bits its hashes point to. To query, check those k bits: if any is zero, the item was definitely never added; if all are one, it was probably added. There are no false negatives, and the false positive rate is about (1 - e^(-kn/m))^k for n items; with about 10 bits per item and 7 hashes it is around 1 percent. Bloom filters cannot delete items (counting Bloom filters or cuckoo filters can) and they must be sized for the expected n. They are ideal when most lookups are negative and a real lookup is expensive, which is why LSM-tree databases like Cassandra and RocksDB keep one per SSTable to skip files that cannot contain a key. The pattern is: consult the filter in memory; if it says no, answer immediately; if it says maybe, do the real lookup.",
+   "in_this_design": "Feed hydration needs 'did this viewer react?' for 30 posts; for most posts the answer is no. A per-user Bloom filter of objects reacted in the last 30 days (about 1,000 items, 1.2 KB) stored in Redis lets us skip user_reaction reads for most posts and only check positives.",
+   "key_points": [
+    "No false negatives, tunable false positives.",
+    "About 10 bits per item gives about 1 percent false positives.",
+    "Great when negatives dominate and the real lookup is costly.",
+    "No delete in a plain Bloom filter; rebuild or use a counting/cuckoo filter."
+   ],
+   "qa": [
+    {
+     "q": "What happens with a false positive here?",
+     "a": "We do a real lookup that returns 'no reaction'; cost is one extra read, never a wrong answer."
+    },
+    {
+     "q": "How do you handle unlike, since Bloom filters cannot delete?",
+     "a": "Leave the bit set (it just becomes a false positive) and rebuild the filter periodically, or use a cuckoo filter that supports deletion."
+    },
+    {
+     "q": "Why not cache the full set of reacted objects per user?",
+     "a": "Heavy users have tens of thousands of reactions; a filter is a few KB with bounded size, the set is not."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Synchronous counter update vs async delta aggregation",
+   "options": "Increment counter in the write request; or emit delta and aggregate",
+   "choice": "Async aggregation",
+   "why": "Synchronous increments make write latency and availability depend on hot keys; async costs 1-5 s of staleness, which the product accepts."
+  },
+  {
+   "decision": "Exact vs approximate counts",
+   "options": "Exact eventually-consistent counters; or HyperLogLog-style approximate unique counts",
+   "choice": "Exact eventually",
+   "why": "We already store per-user facts for uniqueness, so exact counts cost little; HLL fits unique viewers but not toggleable reactions with decrements."
+  },
+  {
+   "decision": "Always shard counters vs adaptive sharding",
+   "options": "N sub-counters for every object; or split only hot keys",
+   "choice": "Adaptive",
+   "why": "99.9 percent of objects are cold; always sharding multiplies read cost and memory for no benefit."
+  },
+  {
+   "decision": "Redis as serving store vs database counters",
+   "options": "Redis hashes plus snapshots; or Cassandra counter columns",
+   "choice": "Redis plus snapshots",
+   "why": "Cassandra counters are not idempotent on retry and are slower; Redis is fast and recoverable from snapshot plus log."
+  },
+  {
+   "decision": "Hand-written aggregator vs Flink",
+   "options": "Custom Kafka consumer; or Flink keyed windows with checkpoints",
+   "choice": "Start custom, move to Flink as features grow",
+   "why": "Custom is small and transparent; Flink gives exactly-once state and windows if we add more aggregations (per-hour trending, per-region)."
+  },
+  {
+   "decision": "Store reactor lists forever vs compact",
+   "options": "Keep all rows; or keep counts plus recent reactors for old objects",
+   "choice": "Keep rows but tier old partitions to cheaper storage",
+   "why": "Rows are needed for uniqueness and voiding; cost is managed by tiering, not deleting."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Aggregator lag (slow Redis or a poison message)",
+   "behavior": "Counts become stale; writes and own-state unaffected. Poison messages are skipped to a DLQ after 3 attempts; autoscale on lag; alert at 30 s."
+  },
+  {
+   "failure": "Redis shard loss",
+   "behavior": "Reads fall back to Count Store snapshots (up to 30 s stale); shard rebuilt from snapshot plus Kafka replay."
+  },
+  {
+   "failure": "Cassandra node failure",
+   "behavior": "RF 3 with LOCAL_QUORUM continues; LWT needs a quorum of Paxos participants, still available with 2 of 3."
+  },
+  {
+   "failure": "Kafka unavailable",
+   "behavior": "Reaction Service writes truth plus outbox rows; outbox relay publishes when Kafka returns; counts stale meanwhile."
+  },
+  {
+   "failure": "Bug double-applies deltas for an hour",
+   "behavior": "Reconciler detects drift on sampled objects; fix the bug, then recount affected objects from truth or rebuild from snapshot before the bug plus replay with the fixed code."
+  },
+  {
+   "failure": "Live event surge beyond capacity",
+   "behavior": "Rate-limit reaction writes per user (10/s), degrade reactor list endpoint first, keep counts served from near cache; writes still accepted."
+  }
+ ],
+ "metrics": [
+  "Reaction write QPS and p99 latency; CAS conflict rate.",
+  "Delta-to-visible lag p50/p95/p99.",
+  "Aggregator consumer lag per partition; flush size and frequency.",
+  "Top-N hot keys by delta rate; number of keys in sharded mode.",
+  "Redis hit rate, near cache hit rate, Count Store fallback rate.",
+  "Counter drift from reconciliation sample.",
+  "Void job throughput and backlog.",
+  "Error rate per endpoint and region."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you show 'Priya and 3 friends reacted'?",
+   "a": "At read time, intersect the viewer's friend list (from the graph cache) with reactors: for small friend lists, batch-check user_reaction by (friend_id, object_id); for large ones, maintain a per-object reactor Bloom filter. Cache the snippet per (viewer, object) briefly."
+  },
+  {
+   "q": "Could you use HyperLogLog?",
+   "a": "HLL estimates distinct counts with about 0.8 percent error in 12 KB and cannot remove elements, so it does not fit toggleable reactions. It fits 'unique viewers' counts well."
+  },
+  {
+   "q": "How do you push live counts during a match?",
+   "a": "Clients viewing a hot post subscribe via WebSocket; a broadcaster reads the summed counter once per second and fans out to subscribers through a pub/sub tree, sending only deltas. Cost is per subscriber per second, so we cap rate and only enable for hot objects."
+  },
+  {
+   "q": "How does Facebook do it?",
+   "a": "TAO stores objects and associations (like edges) with association counts maintained alongside, cached in a two-tier write-through cache over sharded MySQL; the idea is the same: an edge per user and a derived count kept close to it."
+  },
+  {
+   "q": "What if product wants exact counts instantly for creators?",
+   "a": "Serve creator insights from a recount over the truth store for that object (bounded cost per creator), or read Redis plus unflushed aggregator buffer; do not change the global design."
+  },
+  {
+   "q": "How do you test correctness?",
+   "a": "Property tests on the delta function, chaos tests killing aggregators mid-flush, and a continuous reconciler that compares random objects' counts with recounts and alerts on drift."
+  },
+  {
+   "q": "What changes if reactions become multi-select (a user can give several)?",
+   "a": "The fact becomes a set per (user, object); transitions add or remove individual types, emitting per-type deltas; total becomes 'users with at least one reaction', a delta on empty to non-empty transitions."
+  }
+ ],
+ "key_points": [
+  "Separate the fact (user U reacted type T to P) from the aggregate (counts per type).",
+  "Make the API express desired state so retries are idempotent; emit deltas only on real change.",
+  "Hot keys are the real problem: coalesce first, shard counters adaptively second, near cache reads third.",
+  "Counts are eventually consistent within seconds; the actor's own state is read-your-writes.",
+  "Kafka delta stream plus snapshot-with-offset makes counters rebuildable.",
+  "Reconcile by recounting from facts; that is how you prove correctness.",
+  "Multi-region: per-region counter slots (CRDT) and a home region per user for uniqueness.",
+  "Measure delta-to-visible lag, consumer lag, hot keys and drift."
+ ],
+ "quiz": [
+  {
+   "q": "Why does UPDATE posts SET likes = likes + 1 fail on a viral post?",
+   "options": [
+    "SQL cannot add numbers atomically",
+    "Indexes become corrupted",
+    "The column overflows",
+    "Every increment serialises on one row lock, capping throughput for that post"
+   ],
+   "answer": 3,
+   "why": "The row is a serialisation point. The update is atomic, which is exactly why it queues; overflow is not the issue at realistic counts."
+  },
+  {
+   "q": "A client retries PUT reaction=love after a timeout that actually succeeded. What happens in this design?",
+   "options": [
+    "The server sees stored state already equals love and emits no delta",
+    "The count increments twice",
+    "The request is rejected with 409",
+    "The aggregator detects and subtracts the duplicate"
+   ],
+   "answer": 0,
+   "why": "Desired-state API plus compare with stored state makes the retry a no-op. The aggregator does not see duplicates because none are emitted."
+  },
+  {
+   "q": "A user changes like to love. What delta vector is emitted?",
+   "options": [
+    "like +1, love +1, total +2",
+    "love +1, total +1",
+    "like -1, love +1, total 0",
+    "like -1, total -1"
+   ],
+   "answer": 2,
+   "why": "Changing type moves one reaction between types; the total stays the same."
+  },
+  {
+   "q": "Roughly how many reaction writes per second on average at 10B per day?",
+   "options": [
+    "About 11,500",
+    "About 115,000",
+    "About 1.15M",
+    "About 11.5M"
+   ],
+   "answer": 1,
+   "why": "10^10 / 86,400 is about 115,700."
+  },
+  {
+   "q": "With a 1 s coalescing window, a single object at 100K reactions/s and six types needs about how many counter increments per second?",
+   "options": [
+    "100,000",
+    "16,000",
+    "1",
+    "About 6"
+   ],
+   "answer": 3,
+   "why": "One HINCRBY per non-zero type per flush; total can be derived or included as a seventh field. 16,000 confuses coalescing with sub-counter sharding."
+  },
+  {
+   "q": "Which statement about G-Counter merge is correct?",
+   "options": [
+    "Merge takes the element-wise maximum of slots",
+    "Merge sums each replica's slot",
+    "Merge takes the latest timestamp",
+    "Merge requires a leader"
+   ],
+   "answer": 0,
+   "why": "Max is idempotent so repeated exchanges do not double count; summing would."
+  },
+  {
+   "q": "The aggregator crashes after applying INCRBY to Redis but before committing its Kafka offset. What prevents double counting?",
+   "options": [
+    "Kafka acks=all",
+    "Redis persistence (AOF)",
+    "An applied-offset fence written atomically with the increments",
+    "The near cache"
+   ],
+   "answer": 2,
+   "why": "On restart, records at or below the fence are skipped. AOF only makes Redis durable; it does not know which Kafka records were applied."
+  },
+  {
+   "q": "For feed hydration, most viewers have not reacted to most posts. Which structure cheaply answers 'definitely not reacted'?",
+   "options": [
+    "HyperLogLog",
+    "Bloom filter",
+    "Count-min sketch",
+    "Merkle tree"
+   ],
+   "answer": 1,
+   "why": "Bloom filters have no false negatives, so 'no' is certain. HLL estimates cardinality, not membership."
+  },
+  {
+   "q": "Users report their like 'disappears' after refresh, then reappears. Which guarantee is violated?",
+   "options": [
+    "Monotonic writes",
+    "Durability",
+    "Linearizability of counts",
+    "Read-your-writes"
+   ],
+   "answer": 3,
+   "why": "They do not see their own write on read. Durability is fine, the like reappears."
+  },
+  {
+   "q": "Why not use HyperLogLog for like counts?",
+   "options": [
+    "HLL cannot remove elements, and unlikes are required",
+    "HLL is too slow",
+    "HLL needs exact storage",
+    "HLL is not mergeable"
+   ],
+   "answer": 0,
+   "why": "HLL supports adds and merges but not deletes. It is mergeable, which makes that distractor tempting."
+  },
+  {
+   "q": "Which partition key for the delta topic best supports correct per-object ordering?",
+   "options": [
+    "user_id",
+    "event_id",
+    "object_id",
+    "reaction type"
+   ],
+   "answer": 2,
+   "why": "Deltas for one object stay ordered and one aggregator owns that object's counter. user_id would spread one object's deltas across consumers, requiring cross-consumer coordination."
+  },
+  {
+   "q": "During a live match, one Redis shard is at 100 percent CPU serving count reads for one post. Best first fix?",
+   "options": [
+    "Add more Redis shards",
+    "In-process near cache with 1 s TTL on feed servers for hot keys",
+    "Increase Kafka partitions",
+    "Switch to strong consistency"
+   ],
+   "answer": 1,
+   "why": "More shards do not split one key; a near cache spreads hot reads across all feed servers."
+  },
+  {
+   "q": "Why are counts allowed to be eventually consistent while per-user reaction rows use CAS?",
+   "options": [
+    "Counts are less important",
+    "Regulators require it",
+    "Cassandra does not support CAS on counters",
+    "Per-user state must be exactly one value for uniqueness and idempotency, while small count lag is invisible and coordination on hot counts is expensive"
+   ],
+   "answer": 3,
+   "why": "This is the PACELC choice: consistency where correctness depends on it, latency where it does not."
+  },
+  {
+   "q": "Redis loses the last second of increments after async replica promotion. Best recovery?",
+   "options": [
+    "Reload snapshot with its offset and replay Kafka deltas from that offset",
+    "Accept the loss permanently",
+    "Ask users to like again",
+    "Recount the whole platform immediately"
+   ],
+   "answer": 0,
+   "why": "Snapshot plus log replay is targeted and exact. A full recount works but is far more expensive than needed."
+  },
+  {
+   "q": "What is the main read-side cost of sharding a counter into 16 sub-counters?",
+   "options": [
+    "Writes become slower",
+    "Counts become approximate",
+    "Every read must fetch and sum 16 values",
+    "Kafka ordering breaks"
+   ],
+   "answer": 2,
+   "why": "Writes get faster; reads fan in. Counts remain exact."
+  },
+  {
+   "q": "A botnet's 2M reactions must be removed. What is the right mechanism?",
+   "options": [
+    "Directly decrement Redis counters",
+    "Delete reaction rows and emit negative deltas through the same stream, throttled",
+    "Rebuild Redis from scratch",
+    "Hide counts on affected posts"
+   ],
+   "answer": 1,
+   "why": "One mutation path keeps counters, ranking and analytics consistent. Direct Redis edits diverge from snapshots and downstream consumers."
+  },
+  {
+   "q": "Why should display truncate (1.29K -> 1.2K) instead of rounding (1.3K)?",
+   "options": [
+    "Truncation is faster",
+    "It saves storage",
+    "Rounding is not allowed by iOS",
+    "So a count never appears to drop when a real value crosses a rounding boundary and then falls slightly"
+   ],
+   "answer": 3,
+   "why": "Rounding can show 1.3K, then 1.2K after one unlike; truncation reduces visible backwards jumps."
+  },
+  {
+   "q": "In multi-region active-active, how do you prevent the same user reacting twice from two regions?",
+   "options": [
+    "Route each user's reaction rows to a single home region",
+    "CRDT PN-Counter",
+    "Last-writer-wins on counts",
+    "Bloom filter in each region"
+   ],
+   "answer": 0,
+   "why": "Uniqueness needs one writer per user key; CRDTs ensure convergence but not invariants like uniqueness."
+  },
+  {
+   "q": "Aggregator CPU is low but consumer lag rises steadily. Most likely cause?",
+   "options": [
+    "Display truncation",
+    "Bloom filter false positives",
+    "Too few Kafka partitions for consumers to parallelise or blocked on Redis I/O",
+    "CAS conflicts"
+   ],
+   "answer": 2,
+   "why": "Lag with low CPU usually means waiting on I/O or insufficient partition parallelism. CAS conflicts affect the write service, not the aggregator."
+  },
+  {
+   "q": "What does the reconciler fundamentally rely on?",
+   "options": [
+    "Redis persistence",
+    "Per-user reaction facts stored durably so counts can be recomputed",
+    "Kafka exactly-once",
+    "Client-side counts"
+   ],
+   "answer": 1,
+   "why": "Without facts there is nothing to recount from; Kafka retention is finite, so it cannot be the sole basis."
+  },
+  {
+   "q": "A cold post from 2019 suddenly goes viral and 10K requests miss Redis at once. Best protection?",
+   "options": [
+    "Increase TTL to infinity",
+    "Disable the post",
+    "Return zero counts",
+    "Single-flight request coalescing so one loader populates the cache"
+   ],
+   "answer": 3,
+   "why": "Single-flight prevents a thundering herd on the Count Store. Long TTLs do not help a key that is not cached yet."
+  }
+ ],
+ "references": [
+  {
+   "title": "TAO: Facebook's Distributed Data Store for the Social Graph (USENIX ATC 2013)",
+   "url": "https://www.usenix.org/biblio/tao-facebook%E2%80%99s-distributed-data-store-social-graph"
+  },
+  {
+   "title": "Designing a Like System at Instagram and Facebook Scale",
+   "url": "https://blog.chrischodev.com/designing-like-system-social-network-scale/"
+  },
+  {
+   "title": "System Design: Distributed Counter - sharded counters, approximate counting, Redis INCR",
+   "url": "https://www.techinterview.org/post/3233474288/system-design-distributed-counter-atomic-operations-sharded-counters-approximate-counting-redis-incr-dynamodb-atomic/"
+  },
+  {
+   "title": "Grokking: System design of sharded counters (Educative)",
+   "url": "https://www.educative.io/courses/grokking-the-system-design-interview/system-design-the-sharded-counters"
+  },
+  {
+   "title": "Instagram Engineering: scaling infrastructure to multiple data centers",
+   "url": "https://instagram-engineering.com/instagration-pt-2-scaling-our-infrastructure-to-multiple-data-centers-5745cbad7834"
+  }
+ ]
+}

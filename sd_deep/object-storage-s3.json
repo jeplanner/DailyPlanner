@@ -1,0 +1,1296 @@
+{
+ "slug": "object-storage-s3",
+ "title": "Design an Object Storage Service (S3)",
+ "prompt": "Design an object storage service (S3).",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "Object storage looks like a giant key-value store of immutable blobs, but the real design is two systems: a strongly consistent, horizontally partitioned metadata index (bucket + key to version and chunk locations) and a cheap, self-healing data plane that erasure-codes chunks across drives, racks and AZs. The core tensions are eleven-nines durability at a fraction of 3x replication cost, strong read-after-write consistency on top of caches, and hot key-prefix partitions under trillions of objects.",
+ "framework": {
+  "clarify": [
+   "API surface: S3-style PUT, GET (with byte ranges), HEAD, DELETE, LIST by prefix, multipart upload, versioning; no in-place partial updates (objects are immutable).",
+   "Object sizes: from a few bytes to 5 TB; assume median 100 KB with a long tail of multi-GB media and backups. Single PUT up to 5 GB, multipart above 100 MB recommended.",
+   "Scale: assume 100 PB stored in a region, 100 billion objects, 1M requests/s peak (GET:PUT about 5:1), and 1 PB/day ingest.",
+   "Durability target eleven nines per object per year, availability 99.99% for standard class; RPO 0 for acknowledged writes within a region (survive loss of one AZ).",
+   "Consistency: strong read-after-write for PUT and DELETE, and LIST that reflects completed writes, as S3 has offered since December 2020.",
+   "Multi-tenancy, auth and cost: IAM-style policies, per-bucket encryption, storage classes (standard, infrequent, archive) and lifecycle rules; cross-region replication is async and optional.",
+   "Out of the box we do not need POSIX semantics, renames, appends or file locking."
+  ],
+  "design": [
+   "Baseline first: one server writing each object to a local file system path and a MySQL table for key to path. It works for a few TB but has no durability beyond one disk and the table becomes the bottleneck.",
+   "Split into front-end (stateless API servers), metadata service (partitioned, replicated key index), placement service (which storage nodes hold which volumes) and storage nodes (drives holding chunks).",
+   "PUT path: authenticate, choose a placement group, stream the object into chunks (for example 8 MB), erasure-code each stripe as RS(10,4) or similar and write the 14 fragments to 14 nodes in 3 AZs in parallel, verify checksums, then commit metadata (key -> version -> chunk map) with a single conditional write. Only after the metadata commit is the PUT acknowledged.",
+   "GET path: look up the latest version in metadata (cache with coherence), read any 10 of 14 fragments (prefer data fragments, no decode needed), stream to client; Range GETs read only the needed stripes.",
+   "Metadata index partitioned by key range (bucket + key), each partition replicated with Paxos/Raft across 3 AZs; partitions split automatically when hot (S3 guidance: about 3,500 writes/s and 5,500 reads/s per prefix partition).",
+   "LIST is a range scan over the sorted key index within a bucket, paginated at 1,000 keys with a continuation token.",
+   "Background services: scrubber (verifies checksums), repair (rebuilds lost fragments), garbage collector (deletes chunks of overwritten or deleted versions), lifecycle and tiering, and usage metering."
+  ],
+  "defend": [
+   "Bottleneck: the metadata index, not bytes. Every request touches it; sequential key prefixes (dates, monotonically increasing ids) concentrate load on one partition. Defend with automatic range splitting, load-based splits, and guidance to spread prefixes.",
+   "Scaling reads: metadata caches on front-ends with a coherence protocol, read from data fragments without decode, CDN in front of public objects, and hot-object replication into extra cache copies.",
+   "Scaling writes: stateless front-ends, parallel fragment writes, multipart upload so large objects become many independent parallel PUTs, and placement that balances fresh writes across many empty drives.",
+   "Failure behaviour: tolerate any 4 of 14 fragments lost, so a full AZ (about 5 fragments if spread 5/5/4) needs a wider code or replication across AZs; repair is prioritised by how many fragments a stripe has lost; timeouts on slow nodes trigger hedged reads of a parity fragment.",
+   "Consistency: metadata commit is the linearisation point; caches are invalidated or version-checked through a witness so a GET after a successful PUT never returns old data.",
+   "Measure: durability model inputs (annualised drive failure rate, repair time, repair backlog), request latency per op p50/p99, 503 SlowDown rate per partition, metadata partition heat, bytes per storage class, scrub error rate."
+  ],
+  "script": "I will start by clarifying: an S3-style service with PUT, GET with ranges, DELETE, LIST by prefix, multipart and versioning, immutable objects up to 5 TB, about 100 PB and 100 billion objects in a region, a million requests per second, eleven nines durability and strong read-after-write consistency. The baseline is one server with files on disk and a table mapping keys to paths, which fails on durability and on index scale. So I split it into two systems. The data plane cuts objects into chunks, erasure-codes each stripe, say 10 data plus 4 parity fragments spread over three AZs, which costs 1.4x storage instead of 3x and survives four lost fragments. The metadata plane is a range-partitioned, Raft-replicated index from bucket and key to version and chunk locations. A PUT writes fragments first, then commits metadata, and only then acks; that commit is the single point that makes reads strongly consistent. To defend it: the metadata index is the bottleneck, so it splits hot key ranges automatically; reads are cached with a coherence check; repair, scrubbing and garbage collection run continuously because at this scale drives fail every hour; and I track repair backlog and 503 SlowDown rates as first-class metrics."
+ },
+ "brd": {
+  "problem": "Teams across the company store product images, invoices, logs, ML datasets, backups and video. Today they use NFS shares and ad hoc HDFS clusters that are expensive, fill up, lose data on hardware failures and cannot be shared safely across teams. The business needs one cheap, practically infinite, highly durable store with a simple HTTP API, fine-grained access control and storage tiers, so that teams stop running their own storage and the company pays for capacity at commodity disk prices.",
+  "goals": [
+   "Provide durable storage (eleven nines annual object durability) for any amount of unstructured data.",
+   "Cut cost per GB-month by at least 50% versus 3x-replicated file storage using erasure coding and tiering.",
+   "Offer a simple S3-compatible HTTP API so existing tools and SDKs work without changes.",
+   "Strong read-after-write consistency so applications can treat it as a source of truth.",
+   "Scale elastically to hundreds of PB and millions of requests per second without per-team capacity planning.",
+   "Security by default: encryption at rest, private buckets, auditable access."
+  ],
+  "non_goals": [
+   "POSIX file system semantics (rename, append, locks, random writes).",
+   "Low single-digit-millisecond latency for small objects (a separate express or cache tier can do that).",
+   "Querying object content beyond simple metadata and prefixes.",
+   "Synchronous multi-region writes."
+  ],
+  "stakeholders": [
+   {
+    "who": "Application teams (catalog images, invoices, user uploads)",
+    "needs": "Simple API, low GET latency for hot objects, pre-signed URLs for direct browser upload."
+   },
+   {
+    "who": "Data and ML platform",
+    "needs": "High aggregate throughput for large sequential reads, many parallel readers, cheap long-term storage."
+   },
+   {
+    "who": "Infrastructure / SRE",
+    "needs": "Automatic repair, predictable capacity, safe drive and server replacement, clear durability metrics."
+   },
+   {
+    "who": "Security and compliance",
+    "needs": "Encryption, access policies, audit logs, object lock for legal retention, deletion guarantees."
+   },
+   {
+    "who": "Finance",
+    "needs": "Low cost per GB, chargeback per bucket and team, lifecycle rules that move cold data to cheaper tiers."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Annual object durability (modelled)",
+    "target": ">= 99.999999999%"
+   },
+   {
+    "metric": "Availability (standard class)",
+    "target": "99.99% monthly successful requests"
+   },
+   {
+    "metric": "GET first-byte latency for small objects",
+    "target": "p50 < 20 ms, p99 < 100 ms in-region"
+   },
+   {
+    "metric": "Storage overhead",
+    "target": "<= 1.5x raw for standard class (erasure coded)"
+   },
+   {
+    "metric": "Repair backlog",
+    "target": "No stripe at minimum redundancy for more than 1 hour"
+   },
+   {
+    "metric": "Adoption",
+    "target": "80% of team-owned NFS/HDFS data migrated in 12 months"
+   }
+  ],
+  "constraints": [
+   "Commodity servers with high-density HDDs (20+ TB each) and some SSD for metadata.",
+   "Three AZs per region with about 1-2 ms RTT between them; cross-AZ bandwidth is finite and costly.",
+   "Must be S3 API compatible including signatures (SigV4) and multipart semantics.",
+   "Drives fail constantly: at 1-2% annual failure rate and hundreds of thousands of drives, several fail every day."
+  ],
+  "risks": [
+   {
+    "risk": "Silent data corruption (bit rot, firmware bugs) goes unnoticed",
+    "mitigation": "End-to-end checksums from client to disk, periodic scrubbing of every fragment, verify on read and on repair."
+   },
+   {
+    "risk": "Correlated failures (a power domain, bad drive batch, bad deploy) take out many fragments of one stripe",
+    "mitigation": "Placement across AZs, racks and drive batches; staged deploys one cell at a time; durability modelling that includes correlated events."
+   },
+   {
+    "risk": "Metadata index bug or corruption makes data unreachable",
+    "mitigation": "Replicated with consensus, point-in-time backups of the index, formal methods and property-based testing for the storage node and protocols."
+   },
+   {
+    "risk": "Hot prefixes cause throttling (503 SlowDown) for big tenants",
+    "mitigation": "Automatic partition splits, prefix design guidance, per-tenant request quotas."
+   },
+   {
+    "risk": "Accidental deletion by customers",
+    "mitigation": "Versioning, MFA delete, object lock, soft-delete window before garbage collection."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Backend developer",
+    "needs": "Upload and fetch objects with SDKs, pre-signed URLs, metadata headers, predictable errors."
+   },
+   {
+    "name": "Data engineer",
+    "needs": "Multi-GB parallel uploads and range reads at 10+ Gbps per job, fast LIST over prefixes."
+   },
+   {
+    "name": "Security admin",
+    "needs": "Bucket policies, default encryption, block public access, audit logs."
+   },
+   {
+    "name": "Storage operator",
+    "needs": "Health of drives, repair progress, capacity forecasts, safe decommissioning."
+   }
+  ],
+  "user_stories": [
+   "As a developer, I want to PUT an object and immediately GET it so that I can use the store as my source of truth.",
+   "As a mobile app, I want to upload a photo directly with a pre-signed URL so that my servers are not in the data path.",
+   "As a data engineer, I want to upload a 200 GB file in parallel parts and resume failed parts so that large uploads are fast and reliable.",
+   "As an analyst, I want to read byte ranges of a Parquet file so that I only fetch the columns I need.",
+   "As a developer, I want to list objects under a prefix with a delimiter so that I can browse like folders.",
+   "As a compliance officer, I want versioning and object lock so that records cannot be deleted for 7 years.",
+   "As a finance owner, I want lifecycle rules that move objects older than 30 days to an infrequent-access class so that storage cost drops automatically.",
+   "As an operator, I want failed drives to be repaired automatically so that durability is maintained without manual work.",
+   "As a security admin, I want every object encrypted with per-bucket keys from a KMS so that a stolen disk reveals nothing."
+  ],
+  "functional": [
+   "Bucket operations: create, delete, set policy, versioning, lifecycle, encryption, replication configuration.",
+   "Object operations: PUT (up to 5 GB), GET with Range, HEAD, DELETE, COPY, conditional requests (If-Match, If-None-Match).",
+   "Multipart upload: initiate, upload part (5 MB to 5 GB, up to 10,000 parts), complete, abort, list parts.",
+   "LIST objects v2 by prefix and delimiter with pagination (max 1,000 keys per page) and continuation tokens.",
+   "Versioning: every PUT creates a version id; DELETE adds a delete marker; GET by version id.",
+   "Access control: authentication with signed requests, bucket policies, pre-signed URLs with expiry.",
+   "Storage classes and lifecycle transitions and expirations.",
+   "Server-side encryption (service keys or customer-managed KMS keys) and checksums (CRC32C/SHA-256) end to end.",
+   "Event notifications on object created/deleted to a queue."
+  ],
+  "non_functional": [
+   {
+    "name": "Durability",
+    "target": "11 nines per object per year; survive loss of a full AZ plus one more drive"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for standard class reads and writes"
+   },
+   {
+    "name": "Consistency",
+    "target": "Strong read-after-write for PUT/DELETE/LIST on a single key; no atomic multi-key ops"
+   },
+   {
+    "name": "Latency",
+    "target": "Small GET p99 < 100 ms first byte; small PUT p99 < 200 ms"
+   },
+   {
+    "name": "Throughput",
+    "target": "1M requests/s region-wide; per prefix partition 3,500 writes/s and 5,500 reads/s before splitting"
+   },
+   {
+    "name": "Scalability",
+    "target": "100B+ objects, 100+ PB per region, linear by adding storage nodes and metadata partitions"
+   },
+   {
+    "name": "Cost",
+    "target": "<= 1.5x raw storage overhead for standard class"
+   },
+   {
+    "name": "Security",
+    "target": "Encryption at rest and in transit, least-privilege policies, full audit logs"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "100 PB logical stored today, growing 1 PB/day of new data (with deletes, net about 0.6 PB/day).",
+    "100 billion objects, average 1 MB (median much smaller, skewed by large objects).",
+    "Peak 1M requests/s: 800k GET/HEAD/LIST, 200k PUT/DELETE.",
+    "Erasure code RS(10,4): 1.4x overhead; 20 TB HDDs at 80% max fill, so 16 TB usable each.",
+    "Metadata per object about 500 bytes (key up to 1 KB, version, size, ETag, chunk map, ACL refs)."
+   ],
+   "math": [
+    "Raw data on disk: 100 PB x 1.4 = 140 PB; at 16 TB usable per drive = about 8,750 drives; at 60 drives per storage server = about 150 servers (plus growth and spare headroom, plan 200+).",
+    "Growth: 0.6 PB/day net x 1.4 = 0.84 PB/day raw = about 52 new 16 TB drives per day, about one server per day.",
+    "Drive failures: 8,750 drives x 1.5% AFR = about 130 failures/year, roughly one every 3 days at this size; at 10x scale, several per day.",
+    "Repair traffic per failed 20 TB drive with RS(10,4): rebuilding one fragment reads 10 fragments, so about 10 x 16 TB = 160 TB of reads spread across hundreds of drives; at 50 GB/s aggregate repair bandwidth that is about 1 hour.",
+    "Metadata: 100B objects x 500 B = 50 TB; replicated 3x = 150 TB on SSD; at 1 TB per partition replica, about 50,000 partitions.",
+    "Metadata QPS: 1M requests/s, each touching 1-2 metadata partitions; at 5,000 ops/s per partition comfortable, need at least 200-400 active partitions handling peak, the rest are cold.",
+    "Ingest bandwidth: 1 PB/day = about 11.6 GB/s average, peaking maybe 3x = 35 GB/s; with 1.4x coding that is about 50 GB/s of internal write bandwidth across thousands of drives (about 25 MB/s per drive)."
+   ],
+   "summary": "Raw disk is about 140 PB for 100 PB logical with RS(10,4), around 9,000 drives and 150-200 dense servers, adding roughly a server a day. The metadata index is about 50 TB (150 TB replicated) across tens of thousands of range partitions, and the hard capacity problem is request heat on a few of them, not bytes. Drive failure and repair are continuous background load that must be budgeted."
+  },
+  "out_of_scope": [
+   "File-system gateways (NFS/SMB) and POSIX semantics.",
+   "Query-in-place features like S3 Select and analytics engines.",
+   "CDN edge caching (assumed as a separate system in front).",
+   "Billing system internals beyond emitting usage records."
+  ]
+ },
+ "hld": {
+  "overview": "Requests hit a load-balanced fleet of stateless front-end servers that authenticate, authorize and route. The metadata service is a range-partitioned, consensus-replicated sorted key-value store holding bucket and object records (key -> versions -> chunk map). The placement service tracks storage nodes, drives and volume health and picks where each stripe's fragments go. Storage nodes run a local log-structured store for fragments on HDDs. Background fleets do scrubbing, repair, garbage collection, lifecycle tiering and metering. A witness/coherence layer lets front-end metadata caches serve strongly consistent reads.",
+  "diagram": "\n Clients / SDKs / pre-signed browser uploads\n            |  HTTPS (SigV4)\n            v\n +----------------------+       +-------------------------+\n |  Load balancers      |       |  IAM / policy service   |\n +----------+-----------+       +-----------+-------------+\n            v                               ^ authz\n +--------------------------------------------------------+\n |  Front-end fleet (stateless): auth, chunking, EC,      |\n |  metadata cache + witness check, streaming             |\n +----+-------------------------+----------------------+--+\n      | key lookups/commits      | stripe placement     | fragment I/O\n      v                          v                      v\n +-------------------+   +----------------+   +--------------------------------+\n | Metadata service  |   | Placement svc  |   | Storage nodes (AZ-a/b/c)       |\n | range partitions  |   | drive/volume   |   | HDD JBOD, local LSM fragment   |\n | Raft x3 per part. |   | health, maps   |   | store, checksums               |\n +---------+---------+   +----------------+   +--------------------------------+\n           |                                          ^\n           v                                          | read/rebuild\n +-------------------+   +-----------------------------------------------+\n | Witness (in-flight|   | Background: scrubber, repair, GC, lifecycle,  |\n | write tracking)   |   | metering, cross-region replication            |\n +-------------------+   +-----------------------------------------------+\n",
+  "components": [
+   {
+    "name": "Front-end API servers",
+    "responsibility": "Terminate TLS, verify signatures, evaluate policies, chunk and erasure-code uploads, stream downloads, coordinate multipart, enforce request quotas."
+   },
+   {
+    "name": "Metadata service (index)",
+    "responsibility": "Sorted, range-partitioned map (bucket, key, version) -> object record; each partition replicated by Raft across 3 AZs; supports conditional writes and range scans for LIST."
+   },
+   {
+    "name": "Partition manager",
+    "responsibility": "Monitors load per key range, splits hot or large partitions, merges cold ones, moves leaders to balance."
+   },
+   {
+    "name": "Placement service",
+    "responsibility": "Knows every storage node, drive, failure domain and free capacity; returns a placement for each stripe spread across AZs and racks; avoids degraded drives."
+   },
+   {
+    "name": "Storage nodes",
+    "responsibility": "Store fragments on HDDs using a log-structured local store; verify checksums on read; report health; serve reads and repair traffic."
+   },
+   {
+    "name": "Witness / cache coherence",
+    "responsibility": "Tracks recently written keys so front-end metadata caches can tell whether a cached entry may be stale and must be refreshed."
+   },
+   {
+    "name": "Repair service",
+    "responsibility": "Detects lost or corrupt fragments (drive failure, scrub errors) and rebuilds them, prioritising stripes with the least remaining redundancy."
+   },
+   {
+    "name": "Scrubber",
+    "responsibility": "Continuously reads and verifies fragment checksums at a low rate to catch bit rot."
+   },
+   {
+    "name": "Garbage collector",
+    "responsibility": "Deletes fragments no longer referenced by any version after a grace period; cleans aborted multipart uploads."
+   },
+   {
+    "name": "Lifecycle and tiering",
+    "responsibility": "Applies bucket rules: transition to infrequent or archive classes, expire versions."
+   },
+   {
+    "name": "KMS integration",
+    "responsibility": "Envelope encryption: per-object data keys wrapped by bucket keys in KMS."
+   },
+   {
+    "name": "Metering and audit",
+    "responsibility": "Records request and storage usage per bucket; writes access logs."
+   }
+  ],
+  "flows": [
+   {
+    "name": "PUT object (single part, 50 MB)",
+    "steps": [
+     "Front-end authenticates (SigV4), checks bucket policy, and checks request quota for the bucket's partition.",
+     "Asks placement for a stripe placement: 14 drives on 14 different servers spread 5/5/4 across 3 AZs.",
+     "Streams the body: for each 8 MB data chunk-set it computes RS(10,4) fragments and CRC32C per fragment, writes all 14 in parallel; succeeds when all 14 (or at least 12 with the rest queued for repair) are durable.",
+     "Computes the overall checksum/ETag and compares with the client-provided Content-MD5 or x-amz-checksum.",
+     "Commits metadata: conditional write to the key's partition leader with the new version id and chunk map; Raft replicates to a majority of 3 AZs.",
+     "Updates the witness so caches see a newer version; returns 200 with ETag and version id.",
+     "If the metadata commit fails, fragments become orphans and the GC removes them later; the client retries."
+    ]
+   },
+   {
+    "name": "GET object with Range",
+    "steps": [
+     "Front-end authenticates and authorises.",
+     "Looks up metadata: checks local cache plus witness; if possibly stale, reads from the partition leader (or a lease-holding replica).",
+     "Maps the byte range to stripes and fragments; requests the 10 data fragments of those stripes (no decode needed).",
+     "If a fragment read is slow beyond p95 latency or fails, issues hedged reads to parity fragments and decodes.",
+     "Verifies checksums and streams bytes to the client."
+    ]
+   },
+   {
+    "name": "Multipart upload (200 GB)",
+    "steps": [
+     "CreateMultipartUpload returns an upload id stored in metadata.",
+     "Client uploads parts (for example 100 MB each, 2,000 parts) in parallel, each stored like a small object and recorded under the upload id with its ETag.",
+     "Failed parts are retried individually; ListParts lets the client resume.",
+     "CompleteMultipartUpload sends the ordered list of part numbers and ETags; the service validates and atomically commits one object version whose chunk map concatenates the parts.",
+     "Abort or lifecycle rule removes incomplete uploads; GC deletes their fragments."
+    ]
+   },
+   {
+    "name": "Drive failure and repair",
+    "steps": [
+     "Storage node reports a dead drive (or heartbeat loss); placement marks its fragments as lost.",
+     "Repair service queries which stripes had fragments there and sorts by remaining redundancy (stripes that lost 2+ fragments first).",
+     "For each stripe it reads any 10 surviving fragments, recomputes the missing ones and writes them to new drives in the right failure domains.",
+     "Updates placement maps; metadata chunk maps reference stripe ids, not drives, so object records do not change."
+    ]
+   }
+  ],
+  "data_flow": "Object bytes flow client -> front-end -> erasure coder -> 14 storage nodes in 3 AZs. Metadata flows front-end -> metadata partition leader -> Raft followers, and becomes visible at commit. Reads take the reverse path, fetching data fragments in parallel. Background flows run constantly: scrubbers read fragments and report corruption, repair reads 10 fragments to rebuild one, GC removes unreferenced fragments, lifecycle moves cold objects to archive storage, and metering streams usage events to billing."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "PUT",
+    "path": "/{bucket}/{key}",
+    "request": "body, Content-Length, Content-MD5 or x-amz-checksum-crc32c, x-amz-server-side-encryption, If-None-Match: * (optional)",
+    "response": "200 ETag, x-amz-version-id",
+    "notes": "Max 5 GB; conditional put-if-absent for safe concurrent creators."
+   },
+   {
+    "method": "GET",
+    "path": "/{bucket}/{key}?versionId=",
+    "request": "Range: bytes=0-1048575, If-Match/If-None-Match",
+    "response": "200/206 body, ETag, Content-Range, Last-Modified",
+    "notes": "Strongly consistent with latest committed version."
+   },
+   {
+    "method": "DELETE",
+    "path": "/{bucket}/{key}",
+    "request": "versionId (optional)",
+    "response": "204, x-amz-delete-marker",
+    "notes": "With versioning, adds a delete marker; data removed by GC/lifecycle."
+   },
+   {
+    "method": "GET",
+    "path": "/{bucket}?list-type=2&prefix=&delimiter=/&continuation-token=",
+    "request": "max-keys <= 1000",
+    "response": "Contents[key,size,etag], CommonPrefixes, NextContinuationToken",
+    "notes": "Range scan over sorted index; delimiter groups keys into folders."
+   },
+   {
+    "method": "POST",
+    "path": "/{bucket}/{key}?uploads",
+    "request": "headers",
+    "response": "UploadId",
+    "notes": "Initiate multipart."
+   },
+   {
+    "method": "PUT",
+    "path": "/{bucket}/{key}?partNumber=N&uploadId=U",
+    "request": "part body 5 MB-5 GB",
+    "response": "ETag",
+    "notes": "Up to 10,000 parts; idempotent per part number."
+   },
+   {
+    "method": "POST",
+    "path": "/{bucket}/{key}?uploadId=U",
+    "request": "CompleteMultipartUpload [partNumber, ETag]",
+    "response": "ETag (md5 of part md5s + '-N')",
+    "notes": "Atomic commit of the assembled object."
+   },
+   {
+    "method": "PUT",
+    "path": "/{bucket}?lifecycle",
+    "request": "rules: prefix/tag filter, transitions, expiration",
+    "response": "200",
+    "notes": "Executed by lifecycle workers asynchronously."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Bucket",
+    "store": "Metadata service (bucket table, small, globally replicated)",
+    "fields": [
+     "bucket_name",
+     "owner_account",
+     "region",
+     "versioning_state",
+     "policy_json",
+     "encryption_config",
+     "lifecycle_rules",
+     "created_at"
+    ],
+    "keys": "bucket_name (globally unique)",
+    "notes": "Read-heavy, cached aggressively with short TTL and invalidation."
+   },
+   {
+    "entity": "Object version",
+    "store": "Metadata service (range-partitioned sorted KV)",
+    "fields": [
+     "bucket",
+     "key",
+     "version_id (time-ordered, inverted for newest-first)",
+     "is_latest",
+     "is_delete_marker",
+     "size",
+     "etag",
+     "checksum",
+     "storage_class",
+     "encryption: wrapped data key",
+     "user_metadata",
+     "chunk_map: [stripe_id, offset, length]",
+     "created_at"
+    ],
+    "keys": "Primary key (bucket, key, inverted version_id); partitioned by key range within bucket",
+    "notes": "Sorted order enables LIST; partitions split on size or load."
+   },
+   {
+    "entity": "Stripe",
+    "store": "Placement service / stripe table",
+    "fields": [
+     "stripe_id",
+     "ec_scheme (10+4)",
+     "fragment_locations [node, drive, extent]",
+     "fragment_checksums",
+     "state (healthy, degraded, repairing)"
+    ],
+    "keys": "stripe_id (hash-partitioned)",
+    "notes": "Object records point to stripe ids so repair moves fragments without touching object metadata."
+   },
+   {
+    "entity": "Fragment",
+    "store": "Storage node local LSM store",
+    "fields": [
+     "fragment_id (stripe_id + index)",
+     "data",
+     "crc32c",
+     "written_at"
+    ],
+    "keys": "fragment_id",
+    "notes": "Data stored outside the LSM tree in large extents to limit write amplification."
+   },
+   {
+    "entity": "Multipart upload",
+    "store": "Metadata service",
+    "fields": [
+     "upload_id",
+     "bucket",
+     "key",
+     "initiated_at",
+     "parts [part_number, etag, size, stripes]"
+    ],
+    "keys": "(bucket, key, upload_id)",
+    "notes": "Expired by lifecycle (for example after 7 days)."
+   },
+   {
+    "entity": "Witness entry",
+    "store": "In-memory replicated witness",
+    "fields": [
+     "partition_id",
+     "key hash",
+     "latest sequence number"
+    ],
+    "keys": "key hash",
+    "notes": "Lets caches check freshness cheaply."
+   }
+  ],
+  "classes": [
+   {
+    "name": "RequestHandler",
+    "responsibility": "Per-request orchestration in the front-end.",
+    "methods": [
+     "authenticate(req)",
+     "authorize(principal, action, resource)",
+     "putObject(stream)",
+     "getObject(range)",
+     "listObjects(prefix, token)"
+    ]
+   },
+   {
+    "name": "ErasureCoder",
+    "responsibility": "Reed-Solomon encode/decode over GF(2^8).",
+    "methods": [
+     "encode(dataChunks[10]) -> parity[4]",
+     "decode(anyTen) -> dataChunks",
+     "reconstruct(missingIdx)"
+    ]
+   },
+   {
+    "name": "PlacementClient",
+    "responsibility": "Chooses fragment destinations.",
+    "methods": [
+     "placeStripe(size, storageClass) -> 14 slots",
+     "reportFailure(node, drive)",
+     "locate(stripeId)"
+    ]
+   },
+   {
+    "name": "MetadataClient",
+    "responsibility": "Talks to partition leaders with routing cache.",
+    "methods": [
+     "getLatest(bucket, key, consistent)",
+     "commitVersion(record, condition)",
+     "scan(bucket, startKey, limit)"
+    ]
+   },
+   {
+    "name": "PartitionManager",
+    "responsibility": "Splits and moves key-range partitions.",
+    "methods": [
+     "observeLoad(partition)",
+     "split(partition, splitKey)",
+     "moveLeader(partition, node)"
+    ]
+   },
+   {
+    "name": "RepairScheduler",
+    "responsibility": "Prioritised rebuild of degraded stripes.",
+    "methods": [
+     "onFragmentLost(fragment)",
+     "nextBatch() by remaining redundancy",
+     "rebuild(stripe)"
+    ]
+   },
+   {
+    "name": "GarbageCollector",
+    "responsibility": "Removes unreferenced data safely.",
+    "methods": [
+     "markCandidates()",
+     "sweep(olderThan=grace)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Erasure-coded write with quorum and repair hand-off",
+    "explain": "Write all 14 fragments in parallel; accept when enough are durable to meet the target durability (here at least 12), queue the rest for repair; only then commit metadata.",
+    "pseudocode": "put(stream):\n  for chunkset in split(stream, 10 x 8MB):\n    parity = rs_encode(chunkset)            # 4 parity fragments\n    slots = placement.placeStripe()         # 14 drives, 3 AZs\n    acks = parallel_write(slots, chunkset + parity, timeout=2s)\n    if acks < 12: abort; retry stripe on new slots\n    if acks < 14: repair.enqueue(stripe)\n    stripes.append(stripe)\n  ok = metadata.commit(bucket, key, newVersion(stripes), cond)\n  if not ok: gc.markOrphans(stripes); return 409/500\n  witness.bump(bucket, key); return 200"
+   },
+   {
+    "name": "Strongly consistent cached metadata read",
+    "explain": "Front-ends cache object metadata. A witness tracks the latest write sequence per key hash; a cache entry is only used if its sequence is at least the witness's, otherwise the leader is consulted.",
+    "pseudocode": "getLatest(b, k):\n  e = cache.get(b,k)\n  w = witness.seq(hash(b,k))       # tiny, fast check\n  if e and e.seq >= w: return e\n  e = metadataLeader(b,k).read()     # linearizable read via leader lease\n  cache.put(b,k,e); return e"
+   },
+   {
+    "name": "Load-based partition split",
+    "explain": "Each partition reports ops/s and size. If ops/s exceeds the threshold for a sustained window, pick a split key at the load median (not size median) and split; if keys are sequential, the newest range stays hot, so split repeatedly.",
+    "pseudocode": "every 10s for p in partitions:\n  if p.ops_5min > 3500 writes or 5500 reads or p.size > 1TB:\n    splitKey = p.loadHistogram.median()\n    if splitKey not in (p.start, p.end):\n      createChild(p.start, splitKey); createChild(splitKey, p.end)\n      handoff via Raft config change; update routing table"
+   },
+   {
+    "name": "Repair prioritisation",
+    "explain": "Stripes that have lost more fragments are closer to data loss, so they are rebuilt first; throttle total repair bandwidth to protect foreground latency except for critical stripes.",
+    "pseudocode": "pq = priority queue by (lost_fragments desc, age desc)\nloop:\n  s = pq.pop()\n  bw = (s.lost >= 3) ? unlimited : repairBudget\n  frags = read_any(s, 10, bw)\n  missing = rs_reconstruct(frags, s.lostIdx)\n  write(missing, placement.replacementSlots(s))\n  updateStripe(s)"
+   }
+  ],
+  "sequence": "\nClient      Front-end        Placement      Storage x14        Metadata(Raft)   Witness\n  |-- PUT ---->|                   |               |                    |              |\n  |            |-- auth/authz      |               |                    |              |\n  |            |-- placeStripe --->|               |                    |              |\n  |            |<-- 14 slots ------|               |                    |              |\n  |            |-- write frags (parallel) -------->| fsync, crc         |              |\n  |            |<-- 14 acks -----------------------|                    |              |\n  |            |-- commitVersion(cond) ---------------------------------->| replicate   |\n  |            |<-- committed (majority of 3 AZs) -----------------------|              |\n  |            |-- bump(seq) ---------------------------------------------------------->|\n  |<-- 200 ETag|                   |               |                    |              |\n  |-- GET ---->| cache hit? check witness seq ------------------------------------------>|\n  |            | stale -> read leader ------------------------------------>|              |\n  |            |-- read 10 data frags ------------>|                    |              |\n  |<-- body ---|                   |               |                    |              |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Two clients PUT the same key at the same time",
+   "handling": "Last writer wins by commit order at the partition leader; each gets its own version id with versioning on. For create-only semantics, use If-None-Match: * so the second gets 412."
+  },
+  {
+   "case": "PUT succeeds in writing fragments but the front-end crashes before metadata commit",
+   "handling": "Object never becomes visible; client retries; the orphan fragments are found by GC (stripes not referenced after a grace period) and deleted."
+  },
+  {
+   "case": "GET right after PUT hits a front-end with a stale cached metadata entry",
+   "handling": "Witness sequence check shows the cache is behind, so the front-end reads from the leader; this is how strong read-after-write survives caching."
+  },
+  {
+   "case": "Sequential keys (logs/2026-10-11/...) hammer one metadata partition",
+   "handling": "Load-based splitting; clients see 503 SlowDown and back off with jitter while the split happens; guidance to add a hash prefix or spread across prefixes."
+  },
+  {
+   "case": "Delete then immediate LIST",
+   "handling": "LIST reads the same strongly consistent index, so the key is absent (or shows a delete marker with versions); GC removes data later."
+  },
+  {
+   "case": "Two drives in the same stripe fail within an hour",
+   "handling": "Stripe has 12 of 14 left, still readable; repair prioritises it above stripes with 1 loss; with 4 losses it is critical and gets unthrottled bandwidth."
+  },
+  {
+   "case": "Silent corruption in a fragment",
+   "handling": "Checksum mismatch on read triggers reading a parity fragment and decoding, and the bad fragment is queued for repair; scrubber finds it even if never read."
+  },
+  {
+   "case": "Multipart upload never completed",
+   "handling": "Parts consume storage invisibly; lifecycle rule AbortIncompleteMultipartUpload after 7 days; GC deletes their fragments."
+  },
+  {
+   "case": "Client uploads with a wrong Content-MD5 or connection drops mid-stream",
+   "handling": "Checksum mismatch -> 400 BadDigest, nothing committed; short body -> request fails, no metadata commit."
+  },
+  {
+   "case": "Very small objects (1 KB) in huge numbers",
+   "handling": "Erasure coding 1 KB into 14 fragments is wasteful; pack small objects into shared stripes/extents, or replicate small objects 3x, and track per-object fragments by offset in a larger blob."
+  },
+  {
+   "case": "Hot object (viral image) gets 50k GETs/s",
+   "handling": "Front-end and CDN caching; per-object request cache; the data fragments for the stripe get extra cached copies so one drive is not the limit."
+  },
+  {
+   "case": "AZ outage during writes",
+   "handling": "Placement writes 14 fragments across the two surviving AZs (degraded placement) or uses a scheme that still meets durability; repair re-spreads when the AZ returns."
+  },
+  {
+   "case": "Clock skew on front-ends affects version ordering",
+   "handling": "Version order is assigned by the partition leader's log sequence (and monotonic hybrid timestamp), not front-end wall clocks."
+  },
+  {
+   "case": "Key with 1,024 bytes of UTF-8 and unusual characters",
+   "handling": "Keys are opaque byte strings up to 1 KB; normalise nothing; LIST ordering is by UTF-8 bytes."
+  },
+  {
+   "case": "Bucket policy change and a pre-signed URL issued before it",
+   "handling": "Pre-signed URLs carry the signer's identity; every request re-evaluates current policy, so revoking the signer's permission invalidates it even before expiry."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Custom range-partitioned KV on Raft (FoundationDB-like)",
+   "layer": "Metadata index",
+   "overview": "Sorted, transactional key-value store split into ranges, each replicated across 3 AZs with a consensus protocol.",
+   "why": "Needs strong consistency, conditional writes, range scans for LIST and automatic splitting for trillions of keys.",
+   "alternatives": "Cassandra (no range-scan-friendly strong consistency by default), MySQL sharded by bucket (hot buckets and resharding pain), Spanner/CockroachDB (good fit, but cost and latency trade-offs at this QPS)."
+  },
+  {
+   "name": "Reed-Solomon erasure coding (ISA-L)",
+   "layer": "Durability encoding",
+   "overview": "Splits data into k data and m parity fragments so any k reconstruct; ISA-L gives SIMD-accelerated encoding.",
+   "why": "1.4x overhead with 4-failure tolerance versus 3x for triple replication.",
+   "alternatives": "3x replication (simpler, faster small reads, 2x more disk); LRC local reconstruction codes (cheaper repair, slightly more overhead)."
+  },
+  {
+   "name": "Log-structured fragment store on HDD (ShardStore-like, written in Rust)",
+   "layer": "Storage node",
+   "overview": "Append-only extents for data with an LSM index of fragment id to extent location; crash-consistent.",
+   "why": "HDDs favour sequential writes; Rust gives memory safety for a component that must not corrupt data; formal-methods-style testing.",
+   "alternatives": "Plain files on XFS (inode overhead with billions of small files); Ceph BlueStore."
+  },
+  {
+   "name": "High-density HDDs (20+ TB) with SSD for metadata",
+   "layer": "Hardware",
+   "overview": "Bulk capacity on HDD JBODs, metadata and indexes on NVMe.",
+   "why": "Cheapest cost per TB for bulk data; metadata needs IOPS.",
+   "alternatives": "All-flash (fast, expensive); tape or optical for archive tier."
+  },
+  {
+   "name": "KMS with envelope encryption",
+   "layer": "Security",
+   "overview": "Per-object data keys encrypted by bucket/customer master keys held in HSM-backed KMS.",
+   "why": "Encryption at rest without KMS calls on every byte; key rotation and crypto-shredding.",
+   "alternatives": "Single service-wide key (weak isolation); client-side encryption only."
+  },
+  {
+   "name": "Load balancers and DNS",
+   "layer": "Edge",
+   "overview": "L4/L7 load balancing with virtual-hosted-style bucket endpoints.",
+   "why": "Spreads millions of connections over stateless front-ends; DNS per bucket enables isolation.",
+   "alternatives": "Single global endpoint (harder to shard traffic)."
+  },
+  {
+   "name": "Kafka or internal queue",
+   "layer": "Events",
+   "overview": "Change events for notifications, replication, metering.",
+   "why": "Decouples background consumers from the write path.",
+   "alternatives": "Polling the index (expensive); synchronous hooks (slow writes)."
+  },
+  {
+   "name": "Open-source analogues: MinIO, Ceph RGW",
+   "layer": "Reference implementations",
+   "overview": "MinIO: erasure-coded object store per server set; Ceph: CRUSH placement with RADOS objects.",
+   "why": "Useful to explain on-prem builds and to compare placement strategies.",
+   "alternatives": "Building from scratch for hyperscale."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Erasure coding (Reed-Solomon) versus replication",
+   "explain": "Replication keeps whole copies: with 3 copies you survive the loss of 2 and pay 3x storage. Erasure coding instead splits data into k data fragments and computes m parity fragments using math over a finite field (Reed-Solomon codes), such that any k of the k+m fragments are enough to reconstruct the original. With k=10 and m=4 you store 14 fragments, pay 1.4x storage, and survive the loss of any 4 fragments. That is better fault tolerance than 3x replication at less than half the cost. The price is paid elsewhere. Writes must compute parity and touch k+m nodes instead of 3. Reads of healthy data can be served from the k data fragments without decoding, but if one is missing you must read k fragments and decode, which costs CPU and network. Repair is expensive: rebuilding one lost fragment needs reading k others, so a lost 20 TB drive triggers about 10x that in reads across the cluster. Local reconstruction codes (LRC), used in Azure storage, add extra local parities so most single failures can be repaired from a small group. Small objects are a poor fit for erasure coding because splitting 4 KB into 14 pieces wastes space and IOPS, so systems pack small objects together or replicate them.",
+   "in_this_design": "Standard class uses RS(10,4) stripes over 8 MB chunks spread across 3 AZs; small objects are packed into shared stripes; metadata (small, hot) uses 3x replication via Raft. Repair is prioritised by fragments lost per stripe.",
+   "key_points": [
+    "k+m code: any k of k+m fragments reconstruct; tolerate m losses at (k+m)/k overhead.",
+    "RS(10,4) = 1.4x storage, survives 4 losses; 3x replication = 3x storage, survives 2.",
+    "Repair cost is high: one lost fragment needs k reads.",
+    "Healthy reads use data fragments directly; degraded reads decode.",
+    "Pack or replicate small objects; erasure-code large ones."
+   ],
+   "qa": [
+    {
+     "q": "Why not just replicate 3x like HDFS?",
+     "a": "At 100 PB, 3x means 300 PB of disk versus 140 PB for RS(10,4), with worse fault tolerance (2 failures versus 4); the savings pay for the extra CPU and repair complexity."
+    },
+    {
+     "q": "What is the main downside of erasure coding for repair?",
+     "a": "Rebuilding one fragment reads k fragments, so repair network and disk traffic is k times the lost data; codes like LRC reduce this."
+    },
+    {
+     "q": "How do you lay out 14 fragments across 3 AZs to survive an AZ loss?",
+     "a": "Losing an AZ loses about 5 fragments, more than m=4, so either use a wider code such as (9,6) or (12,6), or a cross-AZ layout where each AZ holds a full local code plus cross-AZ parity; choose by durability modelling."
+    },
+    {
+     "q": "How do you handle a 2 KB object?",
+     "a": "Store it inside a larger packed stripe at an offset, or replicate it 3x; its metadata entry points at (stripe, offset, length)."
+    }
+   ]
+  },
+  {
+   "name": "Durability modelling (what eleven nines means)",
+   "explain": "Durability is the probability that an object survives a year. It is not the same as availability, which is about being able to access it right now. Eleven nines, 99.999999999%, means that if you store 10 million objects you might expect to lose one every 10,000 years on average. You cannot measure that directly; you model it. The main inputs are the annual failure rate of drives (often 1-2%), the time to detect and repair a failure, the number of fragments that can be lost, and how independent failures are. Data is lost only if more than m fragments of the same stripe are lost before repair finishes. Shorter repair time is a huge lever: if repair takes 1 hour instead of 1 day, the chance that further fragments of the same stripe fail during that window drops roughly 24x per additional failure needed. Correlated failures dominate real risk: a bad batch of drives, a power event in a rack, a software bug that corrupts data, or an operator error. So placement spreads fragments across independent failure domains, deploys are staged, and checksums plus scrubbing catch silent corruption that would otherwise accumulate unnoticed. Operators track the repair backlog as a primary durability signal, because a growing backlog directly lowers the real durability.",
+   "in_this_design": "We model durability per storage class from AFR, repair time (target under 1 hour for stripes missing 2+ fragments), and placement across AZs, racks and drive batches. Repair backlog and stripes-at-minimum-redundancy are paged metrics. Scrubbers read every fragment at least every few weeks.",
+   "key_points": [
+    "Durability is about not losing data; availability is about accessing it now.",
+    "Data loss needs more than m failures in one stripe before repair completes.",
+    "Repair speed is the biggest lever after code choice.",
+    "Correlated failures and bugs dominate real risk, not independent drive deaths.",
+    "Alert on repair backlog, not only on loss."
+   ],
+   "qa": [
+    {
+     "q": "How would you justify an eleven nines claim?",
+     "a": "Show a Markov or simulation model with measured AFR, detection plus repair times, code parameters and failure-domain independence; validate against observed repair data; include correlated failure scenarios."
+    },
+    {
+     "q": "What is more dangerous: a 2% AFR or a slow repair pipeline?",
+     "a": "Usually slow repair, because the risk of overlapping failures in one stripe grows with the window; a backlog also signals capacity or throttling problems."
+    },
+    {
+     "q": "How do you protect against software bugs, which no erasure code helps with?",
+     "a": "Checksums end to end, formal methods and property-based testing of the storage node, staged rollouts per cell, versioning and soft-delete so data is recoverable, and independent verifiers."
+    },
+    {
+     "q": "Why scrub data that nobody reads?",
+     "a": "Silent corruption accumulates; if a stripe has latent bad fragments and then drives fail, you may have fewer good fragments than you think. Scrubbing finds and repairs them early."
+    }
+   ]
+  },
+  {
+   "name": "Range partitioning and automatic splitting of the metadata index",
+   "explain": "To scale a key-value index you split the key space into partitions. Hash partitioning spreads keys uniformly but destroys order, so a prefix scan has to ask every partition. Range partitioning keeps keys sorted and assigns contiguous ranges to partitions, so a LIST of a prefix touches one or a few partitions and results come out sorted. The risk with ranges is skew: if keys are written in order (timestamps, increasing ids), all new writes go to the last range, making it hot. The fix is automatic splitting: each partition tracks size and load and, when it crosses a threshold, splits at a key that divides the load, not just the data. The new halves can move to different servers. Repeated splitting of a hot tail still leaves the newest range hot for sequential keys, so systems also advise clients to add randomness or spread across prefixes. Splitting takes time (minutes), so sudden load jumps show up as throttling. Bigtable, HBase, Spanner and S3's index all use this pattern, with a routing table (often itself stored in the same system) mapping key ranges to servers, cached in clients and refreshed when a request hits the wrong server.",
+   "in_this_design": "The object index is keyed by (bucket, key, inverted version) and range-partitioned. Partitions split on sustained load above roughly 3,500 writes/s or 5,500 reads/s, or above about 1 TB; front-ends cache the routing table. During splits, clients may receive 503 SlowDown and must retry with exponential backoff and jitter.",
+   "key_points": [
+    "Range partitioning keeps LIST cheap and sorted; hash partitioning does not.",
+    "Sequential keys create a hot tail partition.",
+    "Split by load, not only size.",
+    "Throttling (503 SlowDown) is the visible cost while splits catch up.",
+    "Routing tables are cached and corrected on misroute."
+   ],
+   "qa": [
+    {
+     "q": "Why not hash-partition object keys to avoid hot spots?",
+     "a": "LIST by prefix would fan out to every partition and merge results, which is very costly at 100 billion keys; range partitioning plus splitting keeps LIST efficient."
+    },
+    {
+     "q": "A customer writes logs/yyyy/mm/dd/hh/... at 20k PUT/s and gets 503s. What do you advise?",
+     "a": "Spread writes across prefixes (for example a short hash after logs/) so load splits across partitions, and retry with jittered backoff; meanwhile the system splits the hot range."
+    },
+    {
+     "q": "How does a client find the right partition?",
+     "a": "A routing table maps key ranges to partition leaders; front-ends cache it and refresh on a wrong-leader error."
+    },
+    {
+     "q": "What happens to in-flight requests during a split?",
+     "a": "The partition hands over ranges via a consensus configuration change; requests to the old range get a retriable redirect and the client retries against the new owner."
+    }
+   ]
+  },
+  {
+   "name": "Strong consistency with caches (read-after-write)",
+   "explain": "A system is strongly consistent for a key if every read returns the result of the latest completed write, as if there were one copy. With a single replicated leader per partition this is easy: send every read to the leader (or a replica holding a valid lease). The hard part is caching: at millions of requests per second, front-ends want to cache metadata, but a cache can hold an old version after a write. Eventual consistency accepts that and lets the cache expire; for years S3 was eventually consistent for overwrites and LISTs for exactly this reason. To offer strong consistency without sending everything to the leader, you need a way for a cache to know cheaply whether it is stale. One method is a witness: a small, highly available component that records, per key or key hash, a sequence number of the latest write. On a read, the front-end compares its cached entry's sequence with the witness; if the cache is not older, it serves; otherwise it fetches from the leader. Because the witness check is tiny, it is much cheaper than a full metadata read, and the common case (no recent write) still uses the cache. The commit to the metadata leader is the linearisation point: the PUT is not acked until the commit is replicated and the witness updated.",
+   "in_this_design": "PUT acks only after the Raft commit and witness bump. GET and HEAD use the front-end cache only if the witness confirms freshness. LIST reads from partition leaders directly. This gives strong read-after-write for single keys without giving up caching; there are still no multi-key transactions.",
+   "key_points": [
+    "Linearisation point is the metadata commit, not the data write.",
+    "Leader reads are consistent; caches need a freshness check.",
+    "A witness gives a cheap is-my-cache-stale test.",
+    "S3 moved from eventual to strong consistency in December 2020 using this kind of approach.",
+    "Strong consistency is per key; there are no multi-object transactions."
+   ],
+   "qa": [
+    {
+     "q": "Why is the ack sent only after metadata commit, not after fragments are written?",
+     "a": "Until the metadata points at the new chunks, no reader can find them; acking earlier would let a GET right after the PUT return the old version."
+    },
+    {
+     "q": "Why not simply disable metadata caching?",
+     "a": "Every GET and HEAD would hit partition leaders, multiplying load on the bottleneck component; the witness keeps cache hit rates high while preserving correctness."
+    },
+    {
+     "q": "Is LIST also strongly consistent?",
+     "a": "Yes for completed writes, because it scans the authoritative index; it is not a snapshot across pages, so concurrent writes may appear on later pages."
+    },
+    {
+     "q": "How would you support compare-and-swap on an object?",
+     "a": "Conditional PUT with If-Match on the ETag, evaluated at the partition leader inside the commit, returning 412 if the current version changed."
+    }
+   ]
+  },
+  {
+   "name": "Consensus replication (Raft/Paxos) for metadata",
+   "explain": "Metadata must be correct and highly available, and it is small compared with object data, so it is replicated with a consensus protocol. In Raft, a group of replicas (typically 3 or 5) elects one leader per term. The leader appends each write to its log and sends it to followers; once a majority has persisted it, the entry is committed and applied. With 3 replicas in 3 AZs, any one AZ can fail and the remaining two still form a majority, so writes continue with no data loss. Reads can be served by the leader if it knows it is still leader, which is guaranteed with a lease: followers promise not to elect a new leader for a lease period, so the leader can answer reads without another round trip. If a leader fails, followers time out (for example 1-2 s), run an election with randomized timeouts to avoid ties, and the replica with the most up-to-date log wins. Each partition of the index is its own Raft group, so there are tens of thousands of groups; batching and multiplexing heartbeats across groups keeps overhead acceptable. Consensus gives linearizable conditional writes such as put-if-absent, which are the building blocks for strong consistency and conditional APIs.",
+   "in_this_design": "Every metadata partition is a 3-replica Raft group across 3 AZs. Commits need 2 of 3. Leaders hold read leases for linearizable reads. Splits and moves use Raft membership changes. Heartbeats are coalesced per node pair.",
+   "key_points": [
+    "Majority commit: 3 replicas tolerate 1 failure; 5 tolerate 2.",
+    "Leases let leaders serve reads without a quorum round trip.",
+    "Terms fence old leaders.",
+    "One Raft group per range partition; multiplex heartbeats.",
+    "Consensus is for small, critical metadata; bulk data uses erasure coding."
+   ],
+   "qa": [
+    {
+     "q": "Why not use Raft for object data too?",
+     "a": "It would mean 3 full copies and majority writes of large blobs; erasure coding gives better durability per byte and data is immutable, so we only need consensus on which chunks a key points to."
+    },
+    {
+     "q": "What happens to a PUT if the metadata leader's AZ fails mid-commit?",
+     "a": "If a majority had not stored the entry, it is not committed and the client gets a timeout and retries; if it was committed, the new leader has it. Retries are safe because each attempt gets its own version and the last commit wins."
+    },
+    {
+     "q": "How do you avoid stale reads from a deposed leader?",
+     "a": "Read leases shorter than the election timeout plus bounded clock drift; a leader without a valid lease must do a quorum check before answering."
+    },
+    {
+     "q": "How many Raft groups can a node host?",
+     "a": "Thousands, if heartbeats are coalesced and logs are batched into shared storage; that is how range-partitioned stores scale to many partitions."
+    }
+   ]
+  },
+  {
+   "name": "Content addressing, checksums and end-to-end integrity",
+   "explain": "Data can be corrupted at every layer: a client bug, a flipped bit in RAM without ECC, a bad network card, a firmware bug writing the wrong sector, or slow decay on disk. End-to-end integrity means computing a checksum as close to the source as possible and verifying it at every hop and at rest, rather than trusting each layer. Clients send a Content-MD5 or a CRC32C/SHA-256 checksum header; the front-end verifies the received bytes against it before committing. Each fragment stores its own checksum, verified on every read and by background scrubbers. When a mismatch is found, the system treats the fragment as missing, reconstructs it from other fragments and rewrites it. Checksums also make retries and deduplication safe: an ETag lets clients detect changes, and conditional requests (If-Match) use it for optimistic concurrency. Strong cryptographic hashes are needed only where an adversary might craft collisions; for detecting random corruption, CRC32C is fast with hardware support. A system that stores exabytes will see corruption regularly, so integrity checking is not optional; it is part of the durability model.",
+   "in_this_design": "Clients may send x-amz-checksum-crc32c or Content-MD5; front-ends verify before commit and store a full-object checksum. Each fragment has a CRC32C verified on read, repair and scrub. Multipart ETags are MD5 of part MD5s with a -N suffix, so clients can verify parts.",
+   "key_points": [
+    "Checksum at the source, verify at every hop and at rest.",
+    "Corrupt fragment = missing fragment; repair it.",
+    "CRC32C is fast for random errors; use SHA-256 where tamper detection matters.",
+    "ETags enable conditional requests and change detection.",
+    "Scrubbing turns silent corruption into visible repair work."
+   ],
+   "qa": [
+    {
+     "q": "Why isn't TCP's checksum enough?",
+     "a": "It is weak (16-bit) and only covers the network hop; corruption in memory, disk or software bugs is not caught."
+    },
+    {
+     "q": "Why is the multipart ETag not the MD5 of the whole object?",
+     "a": "Parts are uploaded independently, so the service computes MD5 of the concatenated part MD5s; clients wanting a full-object checksum should use the newer checksum headers."
+    },
+    {
+     "q": "How do you detect corruption in data nobody reads for years?",
+     "a": "Background scrubbing reads every fragment periodically and compares checksums, rebuilding bad ones."
+    },
+    {
+     "q": "What do you do on a checksum mismatch during GET?",
+     "a": "Read a different fragment (parity), decode, return correct data to the client, and enqueue repair of the bad fragment."
+    }
+   ]
+  },
+  {
+   "name": "Garbage collection and safe deletion in immutable storage",
+   "explain": "In an immutable store, overwrites and deletes do not change bytes in place. A new PUT writes new chunks and moves the key's pointer; a DELETE removes or masks the pointer. The old chunks become garbage only when no version references them. Collecting them safely is tricky because of races: a PUT may have written chunks but not yet committed metadata, a long-running GET may still be streaming an old version, and a COPY may have just added a new reference. A common approach is mark and sweep with a grace period. Periodically compute the set of chunks referenced by any live metadata entry (or maintain reference counts updated transactionally), treat everything else older than the grace period (for example 24-72 hours) as a deletion candidate, and delete it. The grace period covers in-flight writes and reads. Reference counting is cheaper to query but risks leaks or premature frees if counts are not updated atomically with metadata. Deletion must also respect versioning, object lock and legal holds, and deleted data might be required to be unrecoverable for privacy, which can be handled by deleting per-object encryption keys (crypto-shredding) before physically reclaiming space.",
+   "in_this_design": "DELETE and overwrite only change metadata. A GC fleet scans stripe references against the index, deletes unreferenced stripes after a 48-hour grace, and also reclaims orphans from failed PUTs and aborted multipart uploads. Object lock and legal holds block both metadata deletion and GC.",
+   "key_points": [
+    "Deletes are metadata operations; space is reclaimed later.",
+    "Grace periods protect in-flight writes and reads.",
+    "Mark-and-sweep is safer; ref counts are cheaper but leak-prone.",
+    "Orphans from failed PUTs and multipart are a big source of garbage.",
+    "Crypto-shredding gives fast logical erasure."
+   ],
+   "qa": [
+    {
+     "q": "Why not delete chunks synchronously on DELETE?",
+     "a": "It would slow the request and race with readers streaming the old version or other versions sharing chunks; async GC with a grace period is safer."
+    },
+    {
+     "q": "How do you find orphaned chunks from crashed PUTs?",
+     "a": "Stripes have creation time; any stripe not referenced by metadata after the grace period is an orphan and is collected."
+    },
+    {
+     "q": "How do you meet a privacy deletion SLA when GC may take days?",
+     "a": "Delete the object's data key so remaining bytes are unreadable immediately, then physically reclaim later."
+    },
+    {
+     "q": "What prevents GC from deleting data still needed after a bug in the scanner?",
+     "a": "Grace periods, rate limits, two-phase deletion (mark then delete after a second confirmation), and audits that sample deletions against the index."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Redundancy scheme",
+   "options": "3x replication vs RS(10,4) vs LRC",
+   "choice": "RS(10,4) (or LRC) for large objects, replication for small objects and metadata",
+   "why": "Less than half the disk cost with better fault tolerance for bulk data; small objects and metadata need low latency and simple repair."
+  },
+  {
+   "decision": "Metadata partitioning",
+   "options": "Hash vs range",
+   "choice": "Range with load-based splits",
+   "why": "Efficient sorted LIST by prefix; hot ranges handled by splitting and client guidance."
+  },
+  {
+   "decision": "Consistency",
+   "options": "Eventual (cache with TTL) vs strong (witness-checked caches)",
+   "choice": "Strong read-after-write",
+   "why": "Applications can use the store as a source of truth without workarounds; witness keeps cache hit rates high."
+  },
+  {
+   "decision": "Ack point for PUT",
+   "options": "After fragments written vs after metadata commit",
+   "choice": "After metadata commit",
+   "why": "Guarantees read-after-write and avoids acking data that is not reachable."
+  },
+  {
+   "decision": "Deletion",
+   "options": "Synchronous physical delete vs async GC",
+   "choice": "Async GC with grace period",
+   "why": "Avoids races with readers and in-flight writes; keeps DELETE fast."
+  },
+  {
+   "decision": "Small-object handling",
+   "options": "Erasure-code each object vs pack into shared stripes",
+   "choice": "Pack into shared stripes",
+   "why": "Avoids massive IOPS and space overhead; costs more complex GC (compaction of partially dead stripes)."
+  },
+  {
+   "decision": "Cross-region durability",
+   "options": "Synchronous multi-region writes vs async replication per bucket",
+   "choice": "Async replication, opt-in",
+   "why": "Region-level sync writes would add 50-150 ms per PUT; most data only needs AZ-level durability."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Single drive failure",
+   "behavior": "Its fragments are marked lost; reads of affected stripes decode from parity with slightly higher latency; repair restores redundancy within about an hour."
+  },
+  {
+   "failure": "Storage server or rack failure",
+   "behavior": "Up to 60 drives' fragments lost at once, but placement ensures at most one fragment per stripe per server/rack; many stripes degrade by one fragment and repair runs in parallel."
+  },
+  {
+   "failure": "AZ failure",
+   "behavior": "Metadata Raft groups keep majority (2 of 3); stripes lose about 5 fragments each, so the code must tolerate that (wider code or cross-AZ layout); writes use degraded placement; repair floods when the AZ returns or is declared lost."
+  },
+  {
+   "failure": "Metadata partition leader failure",
+   "behavior": "Raft elects a new leader in 1-3 s; requests to that key range get retriable errors and front-ends retry with jitter; no committed writes lost."
+  },
+  {
+   "failure": "Witness unavailable",
+   "behavior": "Front-ends cannot validate caches, so they read from metadata leaders directly; higher latency and leader load, but still correct."
+  },
+  {
+   "failure": "Hot partition overload",
+   "behavior": "503 SlowDown to clients for that range; clients back off; partition manager splits; other ranges unaffected."
+  },
+  {
+   "failure": "Bad software deploy corrupting writes",
+   "behavior": "Staged rollout per cell catches it on a small blast radius; checksums detect bad fragments; versioning and grace-period GC allow recovery."
+  }
+ ],
+ "metrics": [
+  "Request rate, error rate (4xx/5xx) and latency p50/p99 by operation (GET, PUT, LIST, HEAD)",
+  "503 SlowDown rate per metadata partition and number of hot partitions",
+  "Stripes by remaining redundancy (14, 13, 12, 11, 10) and repair backlog age",
+  "Drive failures per day, AFR by drive model and batch",
+  "Scrub coverage (percent of fragments verified in last N days) and checksum error rate",
+  "Metadata cache hit rate and witness check latency",
+  "Storage used by class and bucket, garbage bytes awaiting GC, incomplete multipart bytes",
+  "Raft leader elections per hour and commit latency per partition"
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you implement versioning?",
+   "a": "Each PUT writes a new version record with a time-ordered id; is_latest is derived by sort order (inverted version id puts newest first). DELETE without version id writes a delete marker. GET without version returns the newest non-marker. Lifecycle can expire non-current versions."
+  },
+  {
+   "q": "How do you support pre-signed URLs?",
+   "a": "The client SDK signs (method, bucket, key, expiry, headers) with the owner's credentials using HMAC (SigV4). The front-end recomputes the signature and checks expiry and current policy. No server state is needed."
+  },
+  {
+   "q": "How would you add a cheaper archive tier?",
+   "a": "Lifecycle moves objects older than N days into a class stored on denser media with wider erasure codes or tape; metadata keeps the key but marks the class; GET requires a restore job that copies data back to standard storage for a period."
+  },
+  {
+   "q": "How do you make LIST fast for a bucket with 1 billion keys?",
+   "a": "LIST is a range scan on sorted partitions starting at the prefix; each page reads up to 1,000 keys from one or two partitions. Delimiter handling skips over common prefixes by seeking past them rather than reading every key."
+  },
+  {
+   "q": "How would you implement S3-style event notifications without slowing PUT?",
+   "a": "Write an event to a change log as part of (or right after) the metadata commit, e.g. via an outbox in the partition, and have notifiers deliver to queues at least once."
+  },
+  {
+   "q": "What changes for 1 trillion objects?",
+   "a": "Metadata becomes 500+ TB, so more partitions and more aggressive packing of small object metadata; the routing table itself must be partitioned; GC and scrubbing must be incremental and sharded per cell."
+  },
+  {
+   "q": "How do you handle a tenant that writes 1M tiny objects per second?",
+   "a": "Request quotas per bucket, small-object packing, and guidance to batch into larger objects; partitions split, but per-request costs (auth, metadata) dominate, so pricing per request discourages it."
+  },
+  {
+   "q": "How would cross-region replication work?",
+   "a": "A replication service consumes the change log, copies new versions to the destination bucket asynchronously, preserving version ids and metadata, and tracks replication lag; deletes replicate as delete markers if configured."
+  }
+ ],
+ "key_points": [
+  "Two systems: a strongly consistent, range-partitioned metadata index and an erasure-coded, self-healing data plane.",
+  "Erasure coding RS(10,4) gives 1.4x overhead and survives 4 lost fragments, versus 3x for replication.",
+  "PUT writes fragments first, commits metadata last; the metadata commit is the linearisation point and the ack point.",
+  "Strong read-after-write with caches via a witness freshness check; no multi-key transactions.",
+  "The bottleneck is metadata heat on key ranges; split partitions by load and advise prefix spreading; 503 SlowDown means back off.",
+  "Durability is a model: AFR, repair time, failure-domain spread; repair backlog is the key alarm.",
+  "End-to-end checksums and scrubbing catch silent corruption.",
+  "Deletes are metadata-only; GC with grace periods reclaims space; crypto-shredding for privacy.",
+  "Multipart upload turns huge objects into parallel, resumable parts committed atomically.",
+  "Small objects are packed; large objects are striped; metadata uses Raft replication."
+ ],
+ "quiz": [
+  {
+   "q": "Why does an S3-like service use RS(10,4) erasure coding instead of 3x replication for large objects?",
+   "options": [
+    "About 1.4x storage overhead while tolerating 4 lost fragments",
+    "It halves read latency",
+    "It removes the need for repair",
+    "It makes metadata strongly consistent"
+   ],
+   "answer": 0,
+   "why": "Erasure coding cuts storage cost with higher fault tolerance. It does not remove repair; repair is actually more expensive per lost byte, which is the tempting misconception."
+  },
+  {
+   "q": "When should the service acknowledge a PUT?",
+   "options": [
+    "After the first fragment is written",
+    "After all fragments are written but before metadata commit",
+    "After fragments are durable and the metadata commit is replicated",
+    "As soon as the request body is received"
+   ],
+   "answer": 2,
+   "why": "Only the metadata commit makes the object reachable; acking before it breaks read-after-write. Writing all fragments is necessary but not sufficient."
+  },
+  {
+   "q": "A customer writes keys like logs/2026/10/11/12/... at 20k PUT/s and gets 503 SlowDown. The best advice is:",
+   "options": [
+    "Use larger objects only",
+    "Switch to HTTP/1.0",
+    "Disable versioning",
+    "Add a short hash prefix to spread keys across partitions and retry with jittered backoff"
+   ],
+   "answer": 3,
+   "why": "Sequential keys concentrate on one range partition. Larger objects reduce request count, but the root cause is key distribution."
+  },
+  {
+   "q": "Roughly how much raw disk does 100 PB of data need with RS(10,4)?",
+   "options": [
+    "100 PB",
+    "140 PB",
+    "300 PB",
+    "400 PB"
+   ],
+   "answer": 1,
+   "why": "1.4x overhead gives 140 PB. 300 PB is the 3x replication answer."
+  },
+  {
+   "q": "How does the design keep strong read-after-write while caching metadata on front-ends?",
+   "options": [
+    "A witness sequence check tells the front-end whether its cached entry might be stale",
+    "Short cache TTLs of 1 second",
+    "Clients add ?nocache to URLs",
+    "Caches are written synchronously on every PUT across all front-ends"
+   ],
+   "answer": 0,
+   "why": "The witness provides a cheap freshness test. Short TTLs reduce staleness but cannot guarantee it, which is the tempting trap."
+  },
+  {
+   "q": "Why is the metadata index range-partitioned rather than hash-partitioned?",
+   "options": [
+    "Hashing is slower to compute",
+    "Range partitioning prevents hot spots",
+    "LIST by prefix becomes a scan of one or few partitions in sorted order",
+    "Raft only works with ranges"
+   ],
+   "answer": 2,
+   "why": "Ordered ranges make prefix LIST cheap. Range partitioning actually creates hot-spot risk rather than preventing it, which makes that distractor tempting but wrong."
+  },
+  {
+   "q": "A drive holding fragments of 1 million stripes fails. What does repair of a lost fragment with RS(10,4) cost?",
+   "options": [
+    "Copying one fragment from a replica",
+    "Re-uploading the objects from clients",
+    "Nothing until the drive is replaced",
+    "Reading 10 surviving fragments of each stripe and recomputing the missing one"
+   ],
+   "answer": 3,
+   "why": "Reconstruction needs k=10 fragments. Copying a single replica is how replication repairs, the tempting confusion."
+  },
+  {
+   "q": "Which metric most directly warns of falling durability?",
+   "options": [
+    "GET p99 latency",
+    "Repair backlog and number of stripes at minimum redundancy",
+    "Bucket count",
+    "Number of front-end servers"
+   ],
+   "answer": 1,
+   "why": "Durability drops when degraded stripes wait. Latency matters for availability, not durability."
+  },
+  {
+   "q": "A PUT wrote all fragments but the front-end crashed before the metadata commit. What happens?",
+   "options": [
+    "The fragments are orphans; the object is not visible; GC later deletes them",
+    "The object is visible but corrupt",
+    "Repair commits the metadata",
+    "The next GET triggers the commit"
+   ],
+   "answer": 0,
+   "why": "No metadata pointer means nothing is visible, and GC reclaims unreferenced stripes after the grace period."
+  },
+  {
+   "q": "Why are small objects (1-4 KB) packed into shared stripes?",
+   "options": [
+    "To make them strongly consistent",
+    "To enable versioning",
+    "Erasure-coding each into 14 tiny fragments wastes space and IOPS",
+    "Because HTTP cannot carry small bodies"
+   ],
+   "answer": 2,
+   "why": "Per-object striping multiplies operations and wastes block space. Consistency is a metadata property, unrelated to packing."
+  },
+  {
+   "q": "Two clients concurrently PUT the same key without conditions. What is the result?",
+   "options": [
+    "Both fail with 409",
+    "The objects are merged",
+    "The first one wins always",
+    "The commit order at the partition leader decides; last committed wins"
+   ],
+   "answer": 3,
+   "why": "The leader serialises commits. 'First one wins' is what If-None-Match: * would give, not the default."
+  },
+  {
+   "q": "What protects against silent bit rot in fragments that nobody reads?",
+   "options": [
+    "Raft replication",
+    "Background scrubbing with per-fragment checksums",
+    "TLS",
+    "LIST operations"
+   ],
+   "answer": 1,
+   "why": "Scrubbing verifies checksums and triggers repair. Raft protects metadata, not fragment bytes."
+  },
+  {
+   "q": "Why are DELETEs implemented as metadata changes plus asynchronous GC?",
+   "options": [
+    "To avoid races with readers and in-flight writes and keep deletes fast",
+    "Disks cannot delete data",
+    "To make deletes eventually consistent",
+    "To save CPU on checksum computation"
+   ],
+   "answer": 0,
+   "why": "Async GC with grace periods is safe and fast. Deletes remain strongly consistent at the metadata layer, so 'eventually consistent' is wrong."
+  },
+  {
+   "q": "With 3 metadata replicas in 3 AZs using Raft, what happens when one AZ fails?",
+   "options": [
+    "Writes stop until the AZ returns",
+    "Data is lost",
+    "Writes continue with 2 of 3 replicas forming a majority",
+    "Reads stop but writes continue"
+   ],
+   "answer": 2,
+   "why": "Two of three is a majority. Writes stopping would happen only after losing two AZs."
+  },
+  {
+   "q": "A 200 GB upload over a flaky network keeps failing. The best feature to use is:",
+   "options": [
+    "Single PUT with a longer timeout",
+    "Pre-signed URL",
+    "Gzip compression",
+    "Multipart upload with parallel, retryable parts"
+   ],
+   "answer": 3,
+   "why": "Parts upload in parallel and can be retried individually. A longer timeout still restarts the whole 200 GB on failure."
+  },
+  {
+   "q": "Which is the most likely cause of real-world data loss in a well-designed object store?",
+   "options": [
+    "Independent single drive failures",
+    "Correlated failures or software bugs",
+    "Too many LIST requests",
+    "Cosmic rays on network cables"
+   ],
+   "answer": 1,
+   "why": "Codes handle independent failures well; correlated events and bugs are what break the model. Independent drive failures are the tempting answer because they are most frequent."
+  },
+  {
+   "q": "How should a GET respond if a data fragment read times out?",
+   "options": [
+    "Hedge by reading a parity fragment and decode",
+    "Wait indefinitely",
+    "Return 500",
+    "Retry the same fragment 10 times"
+   ],
+   "answer": 0,
+   "why": "Hedged reads to other fragments keep tail latency low. Repeated retries on one slow drive make p99 worse."
+  },
+  {
+   "q": "Why is cross-region replication asynchronous by default?",
+   "options": [
+    "Regions cannot communicate",
+    "Erasure codes forbid it",
+    "Synchronous replication would add 50-150 ms WAN latency to every PUT",
+    "S3 has no API for it"
+   ],
+   "answer": 2,
+   "why": "WAN round trips per write are expensive. It is possible to communicate; it is a latency and availability trade-off."
+  },
+  {
+   "q": "Roughly how many metadata bytes do 100 billion objects at 500 bytes each need before replication?",
+   "options": [
+    "5 GB",
+    "500 GB",
+    "5 PB",
+    "50 TB"
+   ],
+   "answer": 3,
+   "why": "100e9 x 500 B = 5e13 B = 50 TB. 5 PB is off by 100x."
+  },
+  {
+   "q": "What is the purpose of If-None-Match: * on PUT?",
+   "options": [
+    "Disable caching",
+    "Create the object only if it does not exist (put-if-absent)",
+    "Force strong consistency",
+    "Request compression"
+   ],
+   "answer": 1,
+   "why": "It is a conditional create evaluated at the leader. Strong consistency already exists; the header adds a condition."
+  },
+  {
+   "q": "A partition split happens during heavy traffic. What do clients experience?",
+   "options": [
+    "Brief retriable errors or redirects for that key range, then normal service",
+    "Data loss",
+    "All buckets become read-only",
+    "LIST returns duplicate keys forever"
+   ],
+   "answer": 0,
+   "why": "Splits are a handover via consensus; clients retry. Read-only or data loss would be catastrophic and do not happen."
+  },
+  {
+   "q": "For a privacy deletion that must be effective in 24 hours while GC may take 3 days, what works?",
+   "options": [
+    "Speed up GC to 1 hour cluster-wide",
+    "Mark the bucket private",
+    "Delete the object's encryption data key (crypto-shredding), then reclaim space later",
+    "Overwrite with zeros synchronously across all fragments"
+   ],
+   "answer": 2,
+   "why": "Destroying the key makes the bytes unreadable immediately. Synchronous overwrite is tempting but races with GC and repair and is slow."
+  }
+ ],
+ "references": [
+  {
+   "title": "How S3 Actually Works (Barking Iguana)",
+   "url": "https://barkingiguana.com/writing/how-s3-actually-works/"
+  },
+  {
+   "title": "Amazon S3 now delivers strong read-after-write consistency (AWS)",
+   "url": "https://aws.amazon.com/about-aws/whats-new/2020/12/amazon-s3-now-delivers-strong-read-after-write-consistency-automatically-for-all-applications"
+  },
+  {
+   "title": "How automated reasoning helps us innovate at S3 scale (AWS Storage Blog)",
+   "url": "https://aws.amazon.com/blogs/storage/how-automated-reasoning-helps-us-innovate-at-s3-scale/"
+  },
+  {
+   "title": "How Erasure Coding Achieves S3 Durability with Reduced Storage Costs (Arpit Bhayani)",
+   "url": "https://arpitbhayani.me/notes/how-erasure-coding-achieves-s3-durability-with-reduced-storage-costs"
+  },
+  {
+   "title": "How Amazon S3 Achieves Strong Consistency and Durability (hidekazu-konishi)",
+   "url": "https://hidekazu-konishi.com/entry/how_amazon_s3_achieves_consistency_and_durability.html"
+  }
+ ]
+}

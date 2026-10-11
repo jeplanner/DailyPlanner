@@ -1,0 +1,1093 @@
+{
+ "slug": "multi-tenant-saas-schema",
+ "title": "Design a multi-tenant SaaS schema (pool, bridge and silo tenancy)",
+ "prompt": "Design a schema for a multi-tenant SaaS.",
+ "group": "storage",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "A multi-tenant SaaS has to serve 50,000 small tenants cheaply and a handful of giant enterprise tenants safely from the same codebase. The core tension is cost and operational simplicity (one shared pool of tables keyed by tenant_id) versus isolation, noisy-neighbour protection and compliance (a schema or database per tenant). The strong answer is a tiered model: pooled tables with tenant_id leading every key plus row-level security by default, a tenant directory that routes each tenant to a shard or to a dedicated silo, and a migration path to move a tenant between tiers online.",
+ "framework": {
+  "clarify": [
+   "What is the tenant count and distribution? Assume 50,000 tenants, Zipf-like: 95% have under 50 users, the top 50 enterprise tenants hold about 40% of all rows.",
+   "Is the product B2B with organisation-level tenants, and can a user belong to more than one tenant (consultants, agencies)? Assume yes, users are global and memberships are per tenant.",
+   "What isolation and compliance promises are sold? Assume SOC 2 for everyone, and data residency (EU, India) plus optional dedicated database for enterprise tier.",
+   "Do tenants need custom fields or custom objects? Assume yes, up to 200 custom fields per object type.",
+   "What is the read/write mix and latency target? Assume OLTP, 80/20 read/write, p99 under 150 ms for API calls.",
+   "Is cross-tenant querying needed (internal analytics, billing)? Assume yes but only offline via a warehouse, never on the OLTP path.",
+   "How are schema changes rolled out? Assume one codebase and one schema version for all tenants, deployed several times a week.",
+   "What is the restore requirement? Assume per-tenant point-in-time restore within 24 hours is a contractual feature for enterprise."
+  ],
+  "design": [
+   "Baseline: a single relational database where every tenant-owned table has tenant_id as the first column of its primary key, and every query is filtered by tenant_id.",
+   "Add enforcement in depth: the application sets app.tenant_id on the connection per request, and PostgreSQL row-level security policies reject any row whose tenant_id does not match.",
+   "Add a tenant directory (control plane) mapping tenant_id to tier, region, shard and connection pool; the data access layer routes every request through it.",
+   "Scale out by sharding the pool on tenant_id (Citus-style or application-level), co-locating all tables of one tenant on the same shard so joins stay local.",
+   "Offer a bridge tier (schema per tenant on a shared cluster) and a silo tier (database per tenant) for enterprise, using the same DDL so code paths do not fork.",
+   "Model custom fields with a typed JSONB column plus a per-tenant field-definition table and expression indexes created on demand for hot custom fields.",
+   "Critical path: request -> auth (JWT carries tenant_id) -> tenant directory lookup (cached) -> pooled connection to the right shard -> SET tenant context -> query with RLS -> response."
+  ],
+  "defend": [
+   "Bottleneck: noisy neighbours on a shared shard. Defend with per-tenant rate limits and statement timeouts, per-tenant query cost tracking, and moving whales to their own shard or silo.",
+   "Scaling reads: read replicas per shard, a per-tenant cache namespace in Redis keyed tenant:{id}:..., and keeping tenant_id first in every index so scans touch one tenant's range.",
+   "Scaling writes: add shards and rebalance by moving whole tenants (logical replication of one tenant's rows, then a cutover in the directory), never by splitting a tenant.",
+   "Failure behaviour: a shard outage affects only the tenants on it (blast radius); the directory is cached with a 60 s TTL and served stale if the control plane is down.",
+   "Schema migrations: expand-and-contract across all shards and silos via a migration orchestrator with per-shard progress, so a silo tenant never drifts versions.",
+   "What I would measure: cross-tenant access attempts blocked by RLS (must be zero from app code), p99 per tenant, rows and QPS per tenant per shard, shard skew ratio, migration lag per shard."
+  ],
+  "script": "Let me first pin down the tenancy shape. I will assume around 50,000 business tenants with a heavy skew: most are tiny, but the top 50 hold about 40 percent of the data, and enterprise customers pay for residency and optionally a dedicated database. Users can belong to multiple tenants. Given that, I start with the cheapest model that is safe: a pooled schema where tenant_id leads every primary key and index, and isolation is enforced twice, once in the data access layer and once by PostgreSQL row-level security driven by a session variable. A tenant directory maps each tenant to a tier, region and shard, so I can shard the pool by tenant_id with all of a tenant's tables co-located, and graduate a whale to a schema-per-tenant or database-per-tenant silo without changing application code. Custom fields go into typed JSONB with per-tenant definitions. Then I will defend it: noisy neighbours with per-tenant limits and tenant moves, migrations with expand and contract across every shard, blast radius per shard, and I will measure per-tenant latency and skew so we know when to move someone."
+ },
+ "brd": {
+  "problem": "The company sells a B2B workflow product to tens of thousands of organisations. Running one database per customer is too expensive and too slow to operate at that count, but a naive shared database risks the single worst SaaS incident: one tenant seeing another tenant's data. Large customers also demand residency, dedicated capacity and per-tenant restore, and a few heavy tenants already degrade latency for everyone on the shared cluster.",
+  "goals": [
+   "Zero cross-tenant data exposure, enforced by at least two independent layers.",
+   "Keep infrastructure cost per small tenant under about 2 USD per month by pooling.",
+   "Offer enterprise isolation tiers (dedicated schema or database, regional residency) without forking code.",
+   "Contain noisy neighbours so one tenant cannot push another tenant's p99 beyond SLO.",
+   "Support per-tenant export, deletion and point-in-time restore.",
+   "Ship schema changes to every tenant several times a week with no downtime."
+  ],
+  "non_goals": [
+   "Real-time cross-tenant analytics on the OLTP store (that is the warehouse's job).",
+   "Per-tenant custom code or forked schemas beyond the custom-field mechanism.",
+   "Multi-master writes for one tenant across regions.",
+   "Building our own database engine."
+  ],
+  "stakeholders": [
+   {
+    "who": "Enterprise customers and their security teams",
+    "needs": "Proof of isolation, residency, audit logs, dedicated options and restore guarantees."
+   },
+   {
+    "who": "SMB customers",
+    "needs": "Low price, fast onboarding (tenant ready in seconds), consistent performance."
+   },
+   {
+    "who": "Product engineering",
+    "needs": "One codebase and one data access API that is hard to misuse."
+   },
+   {
+    "who": "SRE and DBA team",
+    "needs": "A bounded number of clusters, automated migrations and tenant moves, clear blast radius."
+   },
+   {
+    "who": "Finance and sales",
+    "needs": "Per-tenant cost attribution to price tiers correctly."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Cross-tenant data incidents",
+    "target": "0"
+   },
+   {
+    "metric": "API p99 latency per tenant",
+    "target": "under 150 ms for 99% of tenants"
+   },
+   {
+    "metric": "Tenant provisioning time (pool tier)",
+    "target": "under 5 s"
+   },
+   {
+    "metric": "Infra cost per pooled tenant",
+    "target": "under 2 USD per month"
+   },
+   {
+    "metric": "Schema migration rollout across all shards and silos",
+    "target": "under 24 h, zero downtime"
+   },
+   {
+    "metric": "Per-tenant restore (enterprise)",
+    "target": "RPO 5 min, RTO 4 h"
+   }
+  ],
+  "constraints": [
+   "Data residency: EU tenants' data must stay in the EU region, Indian tenants' in India (DPDP Act).",
+   "Existing stack is PostgreSQL; the team has strong SQL skills and limited NoSQL experience.",
+   "Connection limits: a PostgreSQL primary realistically handles a few thousand connections, so per-tenant connection pools are impossible in the pool tier.",
+   "SOC 2 and ISO 27001 audits require demonstrable access controls and audit trails."
+  ],
+  "risks": [
+   {
+    "risk": "A developer forgets the tenant filter in a query.",
+    "mitigation": "RLS as a second layer, a data access layer that injects tenant_id, lint rules and tests that run every query as a different tenant."
+   },
+   {
+    "risk": "A whale tenant outgrows its shard.",
+    "mitigation": "Per-tenant size and QPS monitoring with thresholds that trigger an online move to a dedicated shard or silo."
+   },
+   {
+    "risk": "Migrations fail halfway across hundreds of silos, causing version drift.",
+    "mitigation": "Migration orchestrator with idempotent, backward-compatible steps and per-target state."
+   },
+   {
+    "risk": "Tenant directory becomes a single point of failure.",
+    "mitigation": "Replicated store, aggressive client caching with stale-on-error, and a static snapshot fallback."
+   },
+   {
+    "risk": "Custom fields explode the schema or produce slow queries.",
+    "mitigation": "JSONB with per-tenant field definitions, quotas, and on-demand partial indexes."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Tenant admin",
+    "needs": "Create the workspace, invite users, define custom fields, export or delete data."
+   },
+   {
+    "name": "End user",
+    "needs": "Fast, correct access to only their organisation's records, possibly across several organisations."
+   },
+   {
+    "name": "Platform engineer",
+    "needs": "Write features without thinking about tenancy plumbing and without risk of leaks."
+   },
+   {
+    "name": "SRE / DBA",
+    "needs": "Move tenants, add shards, roll migrations and restore one tenant without touching others."
+   }
+  ],
+  "user_stories": [
+   "As a tenant admin, I want my workspace provisioned instantly at sign-up so that my team can start working.",
+   "As a tenant admin, I want to add custom fields to records so that the product fits my process.",
+   "As an end user who consults for three companies, I want to switch tenants without logging in again so that I can work efficiently.",
+   "As an enterprise security officer, I want my data in a dedicated database in the EU so that I satisfy my auditors.",
+   "As a tenant admin, I want to export all my data and delete my tenant so that I can leave the service cleanly.",
+   "As an SRE, I want to move a heavy tenant to its own shard online so that others stop suffering.",
+   "As an enterprise admin, I want to restore my tenant to yesterday 10:00 after a bad bulk import so that I recover without affecting other customers.",
+   "As a platform engineer, I want queries that forget tenant_id to fail loudly so that leaks cannot ship."
+  ],
+  "functional": [
+   "Provision a tenant in the pool tier by inserting directory and seed rows (no DDL).",
+   "Route every request to the tenant's shard or silo based on the tenant directory.",
+   "Enforce tenant isolation in the data access layer and with database row-level security.",
+   "Support users with memberships in multiple tenants with per-tenant roles.",
+   "Support per-tenant custom field definitions with type validation and optional indexing.",
+   "Move a tenant between shards or tiers online with under 30 s of write freeze.",
+   "Export a tenant's full data set and hard-delete it within 30 days of request.",
+   "Apply schema migrations to every shard and silo with tracked progress."
+  ],
+  "non_functional": [
+   {
+    "name": "Isolation",
+    "target": "Zero cross-tenant reads or writes; RLS enabled on 100% of tenant tables"
+   },
+   {
+    "name": "Latency",
+    "target": "p99 under 150 ms API, p99 under 20 ms per primary-key query"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95% per tenant; a shard failure affects under 5% of tenants"
+   },
+   {
+    "name": "Durability",
+    "target": "RPO 5 min (WAL archiving), 3 copies within region"
+   },
+   {
+    "name": "Scalability",
+    "target": "Linear growth by adding shards; up to 2,000 tenants per pooled shard"
+   },
+   {
+    "name": "Residency",
+    "target": "Tenant data never leaves its assigned region"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "50,000 tenants, 2 million total users, 400,000 daily active.",
+    "Average tenant has 200,000 rows across all tables; top 50 tenants average 80 million rows each.",
+    "Average row about 1 KB including indexes.",
+    "Peak API load 20,000 requests per second, 4 queries per request, 80% reads."
+   ],
+   "math": [
+    "Small tenants: 49,950 x 200,000 rows x 1 KB = about 10 TB.",
+    "Whales: 50 x 80 M rows x 1 KB = about 4 TB, so whales are 4/14 = about 30% of storage in 0.1% of tenants.",
+    "Peak queries: 20,000 x 4 = 80,000 QPS, of which 64,000 reads and 16,000 writes.",
+    "A tuned PostgreSQL primary on 32 vCPU handles roughly 10,000 to 15,000 simple writes per second, so 16,000 writes need at least 2 shards; with headroom and storage of about 1 TB per shard we plan 16 pooled shards.",
+    "Per shard: about 50,000/16 = 3,100 tenants, 5,000 QPS, 2 read replicas each.",
+    "Connections: 16 shards x PgBouncer in transaction mode, 400 server connections each, fronting tens of thousands of app-side connections."
+   ],
+   "summary": "About 14 TB and 80,000 QPS at peak fits in 16 pooled PostgreSQL shards of about 1 TB each with 2 replicas, plus a few dozen silo databases for enterprise tenants who buy them."
+  },
+  "out_of_scope": [
+   "The analytics warehouse and its ETL beyond describing that it consumes CDC.",
+   "Billing and metering logic beyond per-tenant usage counters.",
+   "Search indexing (handled by a separate per-tenant aware search service).",
+   "Identity provider and SSO federation details."
+  ]
+ },
+ "hld": {
+  "overview": "Requests carry a tenant_id in a signed token. A tenant-aware data access layer looks up the tenant in a cached directory to find tier, region and shard, borrows a connection from that shard's PgBouncer pool, sets the tenant context, and runs queries that are filtered by tenant_id and double-checked by row-level security. Pooled shards hold thousands of tenants each, with all of a tenant's tables co-located by tenant_id. Enterprise tenants can live in a bridge (schema per tenant) or silo (database per tenant). A control plane provisions tenants, runs migrations across all targets and moves tenants between shards using logical replication.",
+  "diagram": "\n  Client --> API Gateway (JWT: user_id, tenant_id) --> App services\n                                                          |\n                                                 Tenant-aware DAL\n                                                  |            |\n                                     Tenant Directory      Redis cache\n                                     (cached, TTL 60s)   tenant:{id}:*\n                                                  |\n             +--------------------+---------------+----------------+\n             |                    |                                |\n     Pool shard 1..16      Bridge cluster                  Silo DBs (enterprise)\n     PgBouncer + PG        schema per tenant               DB per tenant, own region\n     RLS on tenant_id      search_path = t_123             same DDL, same code\n       2 replicas each\n             |\n        CDC (Debezium) --> Kafka --> Warehouse (cross-tenant analytics, billing)\n\n  Control plane: Provisioner | Migration Orchestrator | Tenant Mover | Quota manager\n",
+  "components": [
+   {
+    "name": "API gateway and auth",
+    "responsibility": "Validate JWT, extract user_id and the active tenant_id, check membership, apply per-tenant rate limits."
+   },
+   {
+    "name": "Tenant directory",
+    "responsibility": "Source of truth for tenant_id -> tier, region, shard_id, status (active, moving, suspended); small replicated table, cached in every app node."
+   },
+   {
+    "name": "Tenant-aware data access layer",
+    "responsibility": "Route to shard, set app.tenant_id on the session, inject tenant_id in every query, refuse queries without tenant scope."
+   },
+   {
+    "name": "Pooled PostgreSQL shards",
+    "responsibility": "Store thousands of small tenants per shard; tenant_id leads every key; RLS policies enforce isolation."
+   },
+   {
+    "name": "Bridge and silo databases",
+    "responsibility": "Dedicated schema or database for enterprise tenants with residency or isolation needs; identical DDL."
+   },
+   {
+    "name": "PgBouncer pools",
+    "responsibility": "Multiplex many app connections onto few server connections per shard in transaction mode."
+   },
+   {
+    "name": "Migration orchestrator",
+    "responsibility": "Apply versioned, expand-and-contract migrations to every shard and silo and record per-target progress."
+   },
+   {
+    "name": "Tenant mover",
+    "responsibility": "Copy a tenant's rows to a new shard via logical replication, catch up, freeze writes briefly, flip the directory."
+   },
+   {
+    "name": "CDC pipeline and warehouse",
+    "responsibility": "Stream changes for cross-tenant analytics, billing and search indexing off the OLTP path."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Authenticated read request",
+    "steps": [
+     "Client sends GET /v1/records?view=open with a JWT whose claims include user_id and active tenant_id.",
+     "Gateway verifies signature, checks the membership cache for (user_id, tenant_id), applies the tenant's token bucket.",
+     "DAL resolves tenant_id via the in-process directory cache (TTL 60 s) to shard 7.",
+     "DAL borrows a connection from shard 7's PgBouncer, runs SET LOCAL app.tenant_id = 't_123' inside a transaction.",
+     "Query runs with WHERE tenant_id = $1; RLS policy USING (tenant_id = current_setting('app.tenant_id')) filters again.",
+     "Index on (tenant_id, status, updated_at) keeps the scan inside the tenant's range; results return in about 5 ms."
+    ]
+   },
+   {
+    "name": "Tenant provisioning (pool tier)",
+    "steps": [
+     "Sign-up calls Provisioner with org name and region.",
+     "Provisioner picks the least-loaded shard in that region by tenants, bytes and QPS.",
+     "Inserts tenant row in the directory with status provisioning, then seed rows (roles, default settings) in the shard.",
+     "Marks status active; total time under 5 s because no DDL runs."
+    ]
+   },
+   {
+    "name": "Online tenant move (whale to dedicated shard)",
+    "steps": [
+     "Mover creates a logical replication publication filtered to tenant_id = X on the source shard (PG 15 row filters).",
+     "Target shard copies the initial snapshot, then streams changes until lag is under 1 s.",
+     "Directory status set to moving; DAL rejects new writes for X with a retryable 503 for a few seconds.",
+     "Wait for lag 0, verify row counts and checksums per table, flip directory shard_id to the target, bump directory version.",
+     "App nodes see the new version via pub/sub invalidation; writes resume; old rows deleted after a 7 day safety window."
+    ]
+   }
+  ],
+  "data_flow": "Writes go from app to the tenant's shard primary, replicate synchronously to one standby and asynchronously to read replicas, then flow through WAL-based CDC into Kafka topics keyed by tenant_id for the warehouse, search and billing. Reads hit replicas or Redis entries namespaced by tenant. The directory is read-mostly and pushed to app caches with version-based invalidation."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/tenants",
+    "request": "{name, region, plan}",
+    "response": "{tenant_id, shard, status}",
+    "notes": "Control plane only; idempotent on an Idempotency-Key header."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/records?filter=...&cursor=...",
+    "request": "JWT with tenant_id claim",
+    "response": "{items[], next_cursor}",
+    "notes": "Keyset pagination on (tenant_id, updated_at, id)."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/fields",
+    "request": "{object_type, key, data_type, indexed}",
+    "response": "{field_id}",
+    "notes": "Creates a custom field definition; indexed=true schedules CREATE INDEX CONCURRENTLY of a partial expression index."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/tenants/{id}/move",
+    "request": "{target_shard | target_tier}",
+    "response": "{job_id}",
+    "notes": "Runs the tenant mover state machine; status polled at /internal/jobs/{id}."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/tenants/{id}/export",
+    "request": "{format: ndjson}",
+    "response": "{job_id, download_url when done}",
+    "notes": "Streams rows per table scoped by tenant_id to object storage."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/tenants/{id}",
+    "request": "{confirm_token}",
+    "response": "{scheduled_purge_at}",
+    "notes": "Soft-suspends immediately, hard-purges after 30 days, crypto-shreds backups by destroying the tenant key."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "tenant",
+    "store": "Control-plane PostgreSQL (replicated, small)",
+    "fields": [
+     "tenant_id uuid",
+     "name",
+     "tier (pool|bridge|silo)",
+     "region",
+     "shard_id",
+     "status",
+     "plan",
+     "dir_version bigint",
+     "created_at"
+    ],
+    "keys": "PK tenant_id",
+    "notes": "About 50,000 rows; fully cached in each app node."
+   },
+   {
+    "entity": "user / membership",
+    "store": "Global identity DB",
+    "fields": [
+     "user_id",
+     "email",
+     "membership(user_id, tenant_id, role, created_at)"
+    ],
+    "keys": "membership PK (user_id, tenant_id), index (tenant_id, user_id)",
+    "notes": "Users are global; per-tenant data references user_id only."
+   },
+   {
+    "entity": "record (tenant-owned business object)",
+    "store": "Pooled shard PostgreSQL",
+    "fields": [
+     "tenant_id uuid",
+     "record_id bigint",
+     "status",
+     "owner_user_id",
+     "custom jsonb",
+     "updated_at",
+     "version int"
+    ],
+    "keys": "PK (tenant_id, record_id); index (tenant_id, status, updated_at); distributed/sharded by tenant_id",
+    "notes": "RLS policy on tenant_id; FKs always composite (tenant_id, x_id) so a row cannot reference another tenant's row."
+   },
+   {
+    "entity": "field_definition",
+    "store": "Pooled shard PostgreSQL",
+    "fields": [
+     "tenant_id",
+     "object_type",
+     "field_key",
+     "data_type",
+     "required",
+     "indexed",
+     "index_name"
+    ],
+    "keys": "PK (tenant_id, object_type, field_key)",
+    "notes": "Validates custom jsonb on write; max 200 per object type."
+   },
+   {
+    "entity": "tenant_usage",
+    "store": "Redis plus daily rollup in warehouse",
+    "fields": [
+     "tenant_id",
+     "qps",
+     "rows",
+     "bytes",
+     "cpu_ms"
+    ],
+    "keys": "usage:{tenant_id}:{minute}",
+    "notes": "Drives noisy-neighbour detection and billing."
+   }
+  ],
+  "classes": [
+   {
+    "name": "TenantContext",
+    "responsibility": "Immutable per-request holder of tenant_id, user_id, roles, tier and shard.",
+    "methods": [
+     "from_jwt(token)",
+     "require_role(role)",
+     "tenant_id()"
+    ]
+   },
+   {
+    "name": "TenantRouter",
+    "responsibility": "Resolve tenant to a connection pool using the cached directory with version checks.",
+    "methods": [
+     "pool_for(tenant_id)",
+     "on_directory_change(version)",
+     "mark_moving(tenant_id)"
+    ]
+   },
+   {
+    "name": "TenantScopedSession",
+    "responsibility": "Wrap a DB transaction that sets app.tenant_id and injects tenant filters.",
+    "methods": [
+     "begin(ctx)",
+     "query(sql, params)",
+     "commit()"
+    ]
+   },
+   {
+    "name": "MigrationOrchestrator",
+    "responsibility": "Apply migrations to all targets with retries and recorded state.",
+    "methods": [
+     "plan(version)",
+     "apply(target)",
+     "status()"
+    ]
+   },
+   {
+    "name": "TenantMover",
+    "responsibility": "State machine copy -> catch-up -> freeze -> verify -> flip -> cleanup.",
+    "methods": [
+     "start(tenant_id, target)",
+     "step()",
+     "abort()"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Shard placement for a new tenant",
+    "explain": "Choose the shard in the right region with the lowest weighted load so tenants spread evenly; avoid shards above 70% of any budget.",
+    "pseudocode": "def place(region):\n    cands = [s for s in shards if s.region == region and s.accepting]\n    def load(s):\n        return 0.5*s.bytes/s.max_bytes + 0.3*s.qps/s.max_qps + 0.2*s.tenants/s.max_tenants\n    cands = [s for s in cands if load(s) < 0.7]\n    if not cands:\n        return provision_new_shard(region)\n    return min(cands, key=load)"
+   },
+   {
+    "name": "Online tenant move",
+    "explain": "Copy with logical replication filtered by tenant_id, then a short write freeze and directory flip; reads continue throughout.",
+    "pseudocode": "def move(t, src, dst):\n    pub = src.create_publication(f'tenant_{t}', where=f\"tenant_id='{t}'\")\n    dst.subscribe(pub)              # initial copy + stream\n    wait_until(lambda: lag(dst) < 1.0)\n    directory.set_status(t, 'moving')   # DAL returns 503 Retry-After: 2 for writes\n    wait_until(lambda: lag(dst) == 0)\n    assert checksums(src, t) == checksums(dst, t)\n    directory.update(t, shard=dst, status='active', version=+1)\n    broadcast_invalidate(t)\n    schedule(delete_rows, src, t, after_days=7)"
+   },
+   {
+    "name": "Request-scoped tenant enforcement",
+    "explain": "Every transaction sets a local GUC that RLS reads, so even raw SQL is filtered; the GUC is transaction-local so PgBouncer transaction pooling cannot leak it.",
+    "pseudocode": "BEGIN;\nSET LOCAL app.tenant_id = :tid;\n-- policy: CREATE POLICY iso ON record USING (tenant_id = current_setting('app.tenant_id')::uuid)\n--         WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);\nSELECT ... FROM record WHERE tenant_id = :tid AND status = 'open';\nCOMMIT;"
+   }
+  ],
+  "sequence": "\nClient     Gateway      App/DAL       Directory     PgBouncer(shard7)   Postgres\n  |  GET /records |           |              |               |                 |\n  |------------->| verify JWT|              |               |                 |\n  |              |---------->| lookup t_123 |               |                 |\n  |              |           |--(cache hit)>|               |                 |\n  |              |           |<- shard 7 ---|               |                 |\n  |              |           |------ BEGIN; SET LOCAL app.tenant_id -------->|\n  |              |           |------ SELECT ... WHERE tenant_id=$1 --------->|\n  |              |           |               (RLS filters tenant_id again)  |\n  |              |           |<----------------- rows -----------------------|\n  |              |<----------| COMMIT        |               |                 |\n  |<-------------| 200 items |              |               |                 |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "A developer writes raw SQL without a tenant filter.",
+   "handling": "RLS returns only the current tenant's rows; if app.tenant_id is unset, current_setting raises and the query fails closed. CI runs a test suite as tenant A against data seeded for tenant B."
+  },
+  {
+   "case": "PgBouncer in transaction mode reuses a server connection that still has a previous tenant's setting.",
+   "handling": "Use SET LOCAL inside a transaction so the setting dies at COMMIT; never use session-level SET with transaction pooling."
+  },
+  {
+   "case": "A foreign key points to a row in another tenant (e.g. assigning a record to a user of a different tenant).",
+   "handling": "Composite foreign keys (tenant_id, x_id) make cross-tenant references impossible at the schema level."
+  },
+  {
+   "case": "A tenant moves shards while an app node still has the old directory entry.",
+   "handling": "Directory version in cache; source shard rows are marked moved and the DAL gets a TenantMoved error, refreshes the directory and retries once."
+  },
+  {
+   "case": "One whale tenant runs a huge report that saturates its shard.",
+   "handling": "Per-tenant statement_timeout (e.g. 5 s for API, reports go to a replica or the warehouse), per-tenant concurrency caps in the DAL, and alerting that triggers a move."
+  },
+  {
+   "case": "User belongs to two tenants and has two tabs open.",
+   "handling": "Active tenant is in the token or an explicit header per request, never in a server session, so tabs cannot cross-contaminate."
+  },
+  {
+   "case": "Cache key collision across tenants.",
+   "handling": "Every cache key is prefixed tenant:{id}:, enforced by the cache client wrapper; global caches are explicitly named."
+  },
+  {
+   "case": "Global uniqueness constraints such as a unique invoice number.",
+   "handling": "Make uniqueness per tenant: UNIQUE (tenant_id, invoice_no); globally unique things like email live in the global identity DB."
+  },
+  {
+   "case": "Migration succeeds on 14 shards and fails on 2 silos.",
+   "handling": "Expand-and-contract keeps code compatible with both versions; the orchestrator retries the failed targets and blocks the contract step until all report done."
+  },
+  {
+   "case": "Tenant requests deletion but data exists in backups and the warehouse.",
+   "handling": "Delete from OLTP, issue tombstones via CDC to downstream stores, and crypto-shred: per-tenant data keys for sensitive columns and backups are destroyed so restored copies are unreadable."
+  },
+  {
+   "case": "Sequence or ID enumeration leaks tenant size.",
+   "handling": "Use per-tenant sequences or UUIDv7 / Snowflake IDs externally so record_id values do not reveal volumes or allow guessing."
+  },
+  {
+   "case": "A support engineer needs to look at a tenant's data.",
+   "handling": "Break-glass role that sets app.tenant_id via an audited impersonation flow with time-boxed approval; BYPASSRLS is reserved for migrations only."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "PostgreSQL 15/16",
+   "layer": "OLTP storage",
+   "overview": "Mature relational database with transactions, rich indexing, JSONB and row-level security.",
+   "why": "RLS gives a second isolation layer, JSONB handles custom fields, logical replication with row filters enables tenant moves.",
+   "alternatives": "MySQL (no native RLS, so isolation is app-only); DynamoDB with tenant_id as partition key (great scale, weaker ad-hoc querying and no joins)."
+  },
+  {
+   "name": "Citus (or application-level sharding)",
+   "layer": "Sharding",
+   "overview": "PostgreSQL extension that distributes tables by a distribution column and co-locates related tables.",
+   "why": "Distributing by tenant_id co-locates all of a tenant's tables so joins and transactions stay single-node; tenant isolation to a dedicated node is a built-in operation.",
+   "alternatives": "Vitess for MySQL; hand-rolled routing via the tenant directory (more control, more code); CockroachDB or Spanner (automatic range splitting, higher latency and cost)."
+  },
+  {
+   "name": "PgBouncer",
+   "layer": "Connection pooling",
+   "overview": "Lightweight connection pooler for PostgreSQL.",
+   "why": "Thousands of app workers share a few hundred server connections per shard; transaction mode is required at this scale.",
+   "alternatives": "RDS Proxy, Odyssey, pgcat (which also does sharding and load balancing)."
+  },
+  {
+   "name": "Redis",
+   "layer": "Cache and rate limits",
+   "overview": "In-memory key-value store.",
+   "why": "Per-tenant namespaced caches, token buckets per tenant, usage counters.",
+   "alternatives": "Memcached (no data structures), local in-process cache (fast, but no cross-node limits)."
+  },
+  {
+   "name": "Debezium + Kafka",
+   "layer": "Change data capture",
+   "overview": "Reads PostgreSQL WAL and publishes row changes as events.",
+   "why": "Feeds the warehouse, search and billing without querying OLTP; topic keys by tenant_id keep per-tenant ordering.",
+   "alternatives": "Application-level outbox table; periodic batch extracts (simpler, staler)."
+  },
+  {
+   "name": "Snowflake / BigQuery warehouse",
+   "layer": "Analytics",
+   "overview": "Columnar cloud warehouse.",
+   "why": "Cross-tenant analytics and billing rollups without loading the OLTP shards.",
+   "alternatives": "ClickHouse (cheaper, more operations); read replicas (risky load on OLTP)."
+  },
+  {
+   "name": "Cloud KMS",
+   "layer": "Key management",
+   "overview": "Managed service for encryption keys with envelope encryption.",
+   "why": "Per-tenant data keys for sensitive columns, BYOK for enterprise, crypto-shredding on deletion.",
+   "alternatives": "HashiCorp Vault Transit; single platform key (simpler, no per-tenant shredding)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Tenancy models: pool, bridge and silo",
+   "explain": "A multi-tenant system has to decide how much infrastructure tenants share. In the pool model all tenants share the same database and the same tables, and every row carries a tenant_id. It is the cheapest per tenant, provisioning is just inserting rows, and migrations run once per shard, but isolation is purely logical and noisy neighbours share CPU, IO and buffer cache. In the bridge model tenants share a database server but each gets its own schema (namespace) with identical tables. Isolation is better because a missing filter cannot cross schemas, and per-tenant backup and drop are easier, but thousands of schemas mean thousands of copies of every table and index, catalog bloat, and migrations that must run N times. In the silo model each tenant gets its own database or even its own cluster and account. That gives the strongest isolation, independent scaling, per-tenant restore and residency, but cost and operational overhead scale linearly with tenant count. AWS SaaS guidance and most mature SaaS companies end up with a hybrid: pool by default, silo as a paid tier, with one codebase that only differs in routing. The key engineering requirement for a hybrid is that the schema is identical across models, so the same tenant_id column exists even in a silo, which makes moving a tenant between models a data copy rather than a rewrite.",
+   "in_this_design": "Small tenants live in pooled shards; enterprise tenants can buy a bridge or silo. The tenant directory stores the tier and shard so the DAL routes transparently, and every table keeps tenant_id even in silos so the mover can promote or demote tenants online.",
+   "key_points": [
+    "Pool is cheapest and simplest to operate; silo is safest and most expensive; bridge sits between with catalog-bloat pain.",
+    "Use a hybrid with tiering by tenant value, not one model for all.",
+    "Keep tenant_id in every table even in silos so moving between tiers is a copy.",
+    "Isolation models are also a pricing and sales lever, not just an engineering choice."
+   ],
+   "qa": [
+    {
+     "q": "Why not just give every tenant its own database?",
+     "a": "At 50,000 tenants that is 50,000 databases to migrate, monitor, back up and connect to. Connection pooling breaks down because pools are per database, and cost per idle tenant dominates. Silo is right for the few hundred tenants who pay for it, not the long tail."
+    },
+    {
+     "q": "When is schema-per-tenant a bad idea?",
+     "a": "When tenant count is in the thousands or more: each schema duplicates every table and index, the system catalog grows huge, pg_dump and planning slow down, and every migration must run thousands of times. It works for hundreds of tenants, not tens of thousands."
+    },
+    {
+     "q": "How do you choose which tenants go to silo?",
+     "a": "By contract (residency, dedicated isolation clauses) and by measured load: tenants above a threshold of rows or QPS share, say over 20% of a shard, get moved to dedicated capacity because they are both a noisy-neighbour risk and able to pay."
+    }
+   ]
+  },
+  {
+   "name": "Row-level security and defense in depth",
+   "explain": "Row-level security (RLS) is a database feature where a policy expression is automatically appended to every query on a table. In PostgreSQL you enable it with ALTER TABLE ... ENABLE ROW LEVEL SECURITY and create policies with a USING clause for reads and a WITH CHECK clause for writes. The classic multi-tenant policy compares the row's tenant_id to a session setting such as current_setting('app.tenant_id'). Because the database enforces it, a query that forgets the WHERE tenant_id = ? clause still returns only the current tenant's rows, and an INSERT with the wrong tenant_id is rejected. Defense in depth means you do not rely on a single control: the application layer injects tenant filters, the database enforces RLS, composite foreign keys prevent cross-tenant references, and tests try to break the boundary. Important details: the table owner and superusers bypass RLS unless FORCE ROW LEVEL SECURITY is set, so the application should connect as a non-owner role; the session variable must be set per transaction (SET LOCAL) when using a transaction-mode pooler; and policy expressions should be simple equality on an indexed column so the planner can still use the (tenant_id, ...) indexes. RLS has a small overhead, typically a few percent, which is cheap insurance against the most damaging bug class in SaaS.",
+   "in_this_design": "Every tenant-owned table has an RLS policy on tenant_id driven by app.tenant_id set with SET LOCAL at the start of each transaction. The app role is not the owner and has no BYPASSRLS; only the migration role does.",
+   "key_points": [
+    "RLS turns a forgotten WHERE clause from a data leak into an empty result.",
+    "Use SET LOCAL in a transaction with PgBouncer transaction pooling.",
+    "Connect as a non-owner role or use FORCE ROW LEVEL SECURITY.",
+    "Keep policies as simple equality on the leading index column so performance holds."
+   ],
+   "qa": [
+    {
+     "q": "If you have RLS, why also filter in the application?",
+     "a": "Two reasons: performance (an explicit tenant_id predicate helps the planner and is visible in query review) and defense in depth (if someone disables RLS during a migration or uses a privileged role, the app filter still protects). Each layer covers the other's failure modes."
+    },
+    {
+     "q": "What breaks RLS in a pooled-connection setup?",
+     "a": "Session-level SET with transaction pooling: the next transaction on that server connection inherits the previous tenant's setting. SET LOCAL ties the value to the transaction. Also, if the setting is missing, use current_setting without the missing_ok flag so it errors rather than defaulting."
+    },
+    {
+     "q": "Does RLS hurt performance?",
+     "a": "Slightly. With a simple tenant_id = constant policy and indexes leading with tenant_id, the planner pushes the predicate into the index scan, and overhead is usually low single-digit percent. Complex policies with subqueries can be expensive and should be avoided."
+    }
+   ]
+  },
+  {
+   "name": "Sharding by tenant and co-location",
+   "explain": "Sharding splits data across multiple database nodes by a shard key. The choice of key decides whether queries can be answered by one node or must fan out to all. In a B2B SaaS almost every query is within a single tenant, so tenant_id is the natural shard key: if every table is distributed by tenant_id, then all rows of one tenant live on the same node. That is called co-location, and it means joins, foreign keys and multi-statement transactions for one tenant stay local, with no distributed transactions. Shard mapping can be done by hashing tenant_id into a fixed number of logical shards (for example 1,024 buckets mapped onto 16 physical nodes) or by an explicit directory that maps each tenant to a node. Hashing is simple and balances counts of tenants, but tenants are not equal in size; a directory allows placing tenants by measured load and isolating whales. A common hybrid is hash by default plus directory overrides. The main weakness of tenant sharding is skew: one giant tenant can exceed a single node. The answer is first to give it a dedicated node, and only if it still exceeds one node, to shard that tenant internally by a secondary key such as (tenant_id, account_id).",
+   "in_this_design": "The pool is sharded by tenant_id with all tables co-located; the tenant directory records each tenant's shard so placement is load-aware and whales can be isolated. Rebalancing moves whole tenants.",
+   "key_points": [
+    "Shard key = the most common query scope; in B2B that is tenant_id.",
+    "Co-location keeps joins and transactions single-node.",
+    "Directory-based placement handles skew better than pure hashing.",
+    "Rebalance by moving whole tenants, not by splitting them."
+   ],
+   "qa": [
+    {
+     "q": "What if a single tenant is bigger than one node?",
+     "a": "Give it a dedicated node first, which covers most cases up to several TB. Beyond that, shard within the tenant by a second key, for example (tenant_id, workspace_id), accepting that some cross-workspace queries fan out. It is a small number of tenants so it can be a special path."
+    },
+    {
+     "q": "Hash or directory?",
+     "a": "Directory, because tenant sizes follow a power law and placement must account for load and residency. A directory is a small, cacheable table; its risks (availability, staleness) are handled with caching and version checks."
+    },
+    {
+     "q": "How do you handle cross-tenant queries like admin dashboards?",
+     "a": "Not on OLTP. CDC streams changes into a warehouse that is designed for scans across all tenants. The few operational cross-tenant needs (billing counters) use pre-aggregated usage data."
+    }
+   ]
+  },
+  {
+   "name": "Noisy neighbour isolation and per-tenant quotas",
+   "explain": "In any shared system one consumer can use enough of a shared resource to degrade others; in multi-tenant SaaS this is called the noisy neighbour problem. Database resources that get contended include CPU, disk IO, buffer cache (one tenant's scan evicts others' hot pages), locks, connections and replication bandwidth. Mitigation works at several layers. At the edge, per-tenant rate limits using token buckets cap request rates according to plan. In the data access layer, per-tenant concurrency limits (a bulkhead) stop one tenant from holding all pool connections, and statement timeouts bound the cost of any single query. In the database, workload separation routes heavy reads to replicas or the warehouse. Observability must be per tenant: you cannot fix what you cannot attribute, so collect per-tenant QPS, rows scanned, CPU time (via pg_stat_statements with tenant tags or sampled query comments) and latency. Finally, placement: when a tenant consistently uses a large share of a shard, move it. The cost model matters too, because heavy tenants should pay for the isolation they consume.",
+   "in_this_design": "Gateway token buckets per tenant, DAL concurrency caps per tenant per shard, statement_timeout 5 s on API transactions, reports on replicas, per-tenant usage counters in Redis, and automated move recommendations when a tenant exceeds 20% of a shard's CPU for an hour.",
+   "key_points": [
+    "Contended resources: CPU, IO, buffer cache, locks, connections.",
+    "Rate limit at the edge, bulkhead in the DAL, timeout in the DB.",
+    "Per-tenant attribution is a prerequisite for fairness.",
+    "The final fix for a persistent whale is placement, not throttling."
+   ],
+   "qa": [
+    {
+     "q": "p99 rose for many tenants on shard 4 but QPS is flat. What do you check?",
+     "a": "Per-tenant breakdown of rows scanned and CPU on shard 4. Flat QPS with rising latency often means one tenant started an expensive pattern (a report, a missing index on a custom field) that evicts cache. Throttle or timeout that tenant immediately, then fix the query or move the tenant."
+    },
+    {
+     "q": "Why per-tenant concurrency limits if you already rate limit requests?",
+     "a": "Rate limits bound arrival rate, not cost. Ten slow requests per second can hold 50 connections if each takes 5 s. A concurrency cap per tenant bounds how much of the pool one tenant can hold."
+    },
+    {
+     "q": "How do you attribute database CPU to tenants?",
+     "a": "Tag queries with a comment containing tenant_id (sqlcommenter style) and aggregate from sampled logs or pg_stat_statements split by query plus tenant sampling; also track rows read per tenant in the DAL."
+    }
+   ]
+  },
+  {
+   "name": "Online schema migration (expand and contract)",
+   "explain": "A schema change is dangerous in production because code and schema must agree, and you cannot deploy both atomically across many servers and databases. Expand and contract (also called parallel change) splits a breaking change into safe steps. Expand: add the new structure in a backward-compatible way, for example add a nullable column or a new table, and create indexes concurrently so writes are not blocked. Migrate: deploy code that writes to both old and new structures, then backfill old rows in small batches with throttling. Switch: deploy code that reads from the new structure. Contract: once nothing reads the old structure, drop it. Each step is independently deployable and reversible. In PostgreSQL, specific operations matter: adding a column with a constant default is metadata-only since version 11, CREATE INDEX CONCURRENTLY avoids long locks, and setting a lock_timeout of a few seconds stops a migration from queueing behind a long transaction and blocking all traffic. In multi-tenant systems the migration must run on every shard and silo, so an orchestrator tracks a version per target and the code must tolerate a mix of versions during the rollout.",
+   "in_this_design": "The migration orchestrator applies each step to 16 shards plus every bridge schema and silo, records per-target status, and blocks the contract step until all targets finish. lock_timeout 3 s and batch backfills of 5,000 rows protect live traffic.",
+   "key_points": [
+    "Never couple a breaking schema change and a code change in one deploy.",
+    "Expand, dual-write, backfill, switch reads, contract.",
+    "Use CREATE INDEX CONCURRENTLY and lock_timeout.",
+    "In multi-tenant, track migration version per shard and silo."
+   ],
+   "qa": [
+    {
+     "q": "Why is schema-per-tenant painful for migrations?",
+     "a": "Every migration runs once per schema, so 5,000 schemas means 5,000 DDL executions, each taking locks; failures leave partial states. Pooled tables need one run per shard."
+    },
+    {
+     "q": "How do you rename a column safely?",
+     "a": "Add the new column, dual-write, backfill in batches, switch reads, stop writing the old column, drop it in a later release. Never use RENAME on a live table used by running code."
+    },
+    {
+     "q": "What does lock_timeout protect against?",
+     "a": "An ALTER waiting behind a long-running transaction holds a lock request in the queue, and every subsequent query on that table queues behind it, causing an outage. A short lock_timeout fails the migration fast so it can be retried."
+    }
+   ]
+  },
+  {
+   "name": "Flexible schemas for custom fields (EAV vs JSONB vs columns)",
+   "explain": "SaaS customers want to add their own fields. There are three classic approaches. Entity-attribute-value (EAV) stores each custom value as a row (entity_id, attribute_id, value). It is fully flexible but every read becomes a pivot of many rows, typing is weak, and queries with several conditions need many self-joins, so performance degrades badly at scale. Pre-allocated columns (custom_text_1 ... custom_text_50, as Salesforce historically did with flex columns) keep values in the main row and are fast, but are wasteful, limited in count, and need a metadata mapping. A JSON document column (PostgreSQL JSONB) stores all custom values in one binary-encoded field in the row: reads are one row, writes are atomic with the record, and you can index specific keys with expression indexes or the whole document with a GIN index. Typing and validation move to the application using a per-tenant field-definition table. The trade-offs with JSONB are that statistics for planner estimates are weak, large documents cause write amplification since the whole value is rewritten, and GIN indexes are expensive to maintain on write-heavy tables. A practical pattern is JSONB plus on-demand partial expression indexes for the few custom fields each tenant filters on.",
+   "in_this_design": "record.custom is JSONB validated against field_definition. When a tenant marks a field as indexed, the orchestrator creates CREATE INDEX CONCURRENTLY ON record ((custom->>'key')) WHERE tenant_id = X, limited to 10 per tenant.",
+   "key_points": [
+    "EAV is flexible but slow and hard to query.",
+    "JSONB keeps custom data in-row and indexable.",
+    "Validate types in the app with per-tenant definitions.",
+    "Partial expression indexes per tenant beat one giant GIN index."
+   ],
+   "qa": [
+    {
+     "q": "Why not EAV?",
+     "a": "A query like status=open AND priority=high AND region=south becomes three self-joins over a very tall table; with millions of values it is slow and hard to index. JSONB answers it from a single row with an index on the hot key."
+    },
+    {
+     "q": "Risk of per-tenant partial indexes?",
+     "a": "Too many indexes slow writes and bloat the catalog. Cap indexes per tenant, create them concurrently, and drop unused ones based on pg_stat_user_indexes."
+    },
+    {
+     "q": "How do you handle a field type change from text to number?",
+     "a": "Version the field definition, validate new writes against the new type, backfill-convert existing values in batches, and rebuild any index; reads tolerate both forms during migration."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Default tenancy model",
+   "options": "Pool / bridge (schema per tenant) / silo (DB per tenant)",
+   "choice": "Pool by default, silo as a paid tier",
+   "why": "Pool keeps cost and operations flat for 50,000 tenants; silo satisfies the few who need contractual isolation."
+  },
+  {
+   "decision": "Isolation enforcement",
+   "options": "App filters only / RLS only / both",
+   "choice": "Both",
+   "why": "Each layer covers the other's failure modes; RLS overhead is small."
+  },
+  {
+   "decision": "Shard mapping",
+   "options": "Hash of tenant_id / directory lookup",
+   "choice": "Directory (with hash for initial suggestion)",
+   "why": "Tenant sizes are skewed; placement must consider load and residency, and directories make moves a single update."
+  },
+  {
+   "decision": "Custom fields",
+   "options": "EAV / pre-allocated columns / JSONB",
+   "choice": "JSONB with per-tenant definitions",
+   "why": "In-row reads, flexible, indexable on demand."
+  },
+  {
+   "decision": "Primary keys",
+   "options": "Global bigint sequence / UUIDv4 / composite (tenant_id, id) with UUIDv7 or per-tenant id",
+   "choice": "Composite (tenant_id, id)",
+   "why": "Clusters a tenant's rows in index order, allows composite FKs, and makes moving tenants conflict-free."
+  },
+  {
+   "decision": "Cross-tenant analytics",
+   "options": "Query OLTP replicas / CDC to warehouse",
+   "choice": "CDC to warehouse",
+   "why": "Keeps scans off OLTP and gives columnar performance."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "A pooled shard primary fails.",
+   "behavior": "Patroni promotes the synchronous standby in about 30 s; only the roughly 3,100 tenants on that shard see errors; clients retry with exponential backoff and jitter."
+  },
+  {
+   "failure": "Tenant directory database is down.",
+   "behavior": "App nodes keep serving from their in-memory directory snapshot (stale-on-error); provisioning and moves pause."
+  },
+  {
+   "failure": "A tenant move fails during catch-up.",
+   "behavior": "State machine aborts, directory never flipped, subscription dropped, target rows deleted; the tenant was never unavailable for reads."
+  },
+  {
+   "failure": "A migration takes a long lock on one shard.",
+   "behavior": "lock_timeout 3 s aborts it; orchestrator retries with backoff and alerts after N failures; other shards proceed but contract waits."
+  },
+  {
+   "failure": "Redis cache cluster unavailable.",
+   "behavior": "Reads fall back to replicas with a per-tenant concurrency cap to avoid a thundering herd; rate limiting falls back to local in-process buckets."
+  },
+  {
+   "failure": "A region is lost.",
+   "behavior": "Tenants of that region fail over to the paired region within residency rules (EU to EU) from async replicas; RPO up to a few seconds, RTO under 1 h."
+  }
+ ],
+ "metrics": [
+  "RLS violations or missing app.tenant_id errors (alert on any).",
+  "p50/p99 latency per tenant and per shard; count of tenants breaching SLO.",
+  "Per-tenant QPS, rows scanned, CPU ms, storage bytes; top-10 tenants per shard.",
+  "Shard skew: max/avg of bytes and QPS across shards.",
+  "PgBouncer pool wait time and saturation per shard.",
+  "Replication lag per replica and per tenant-move subscription.",
+  "Migration version per target and time-to-complete.",
+  "Provisioning latency and failures."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you prove isolation to an enterprise auditor?",
+   "a": "Show the layered controls: tenant context from signed tokens, DAL injection, RLS policies on every table (with a CI check that fails if a new table lacks one), composite FKs, per-tenant encryption keys, audit logs of every privileged access, and pen-test results that attempt cross-tenant access."
+  },
+  {
+   "q": "A whale wants its data in its own AWS account. Can you do it?",
+   "a": "Yes, that is the silo tier: same DDL and code deployed to a cell in their account or a dedicated cell, the directory points their tenant_id there, and the tenant mover migrates data with logical replication across the network."
+  },
+  {
+   "q": "How do you restore one tenant to a point in time in the pool?",
+   "a": "Restore the shard's backup plus WAL to a scratch instance at the requested time, extract that tenant's rows by tenant_id, and replay them into the live shard in a maintenance window for that tenant, with diff review. Silo tenants just use native PITR."
+  },
+  {
+   "q": "What changes if users can belong to many tenants?",
+   "a": "Users and credentials become global, memberships map users to tenants with roles, and the active tenant is explicit per request. Tenant data stores only user_id references, never copies user profiles."
+  },
+  {
+   "q": "Why not use a distributed SQL database and skip sharding?",
+   "a": "CockroachDB or Spanner would auto-split ranges, which is attractive, but cost per tenant and latency for single-row operations are higher, RLS support differs, and the team's PostgreSQL expertise is an asset. Tenant-based sharding on PostgreSQL is a well-understood path; I would revisit if cross-tenant transactions became a requirement."
+  },
+  {
+   "q": "How do you keep tenant IDs from leaking via URLs?",
+   "a": "Tenant comes from the token, not the URL; if the URL has a slug it is validated against memberships. External IDs are opaque UUIDv7 or encoded IDs so enumeration attacks do not work."
+  },
+  {
+   "q": "How do you handle 1,000 new tenants a minute during a marketing campaign?",
+   "a": "Provisioning is row inserts only, so it is cheap; the placement algorithm spreads them, and a pre-warmed spare shard per region is kept at 0% so we never wait on provisioning a node."
+  }
+ ],
+ "key_points": [
+  "Pool by default, bridge or silo as a paid tier, one identical schema everywhere.",
+  "tenant_id leads every primary key, index and foreign key.",
+  "Defense in depth: token -> DAL injection -> PostgreSQL RLS with SET LOCAL -> composite FKs.",
+  "A tenant directory routes tenants to shards and makes moves a metadata flip.",
+  "Shard by tenant with co-location so joins and transactions stay on one node.",
+  "Noisy neighbours: rate limit, bulkhead, statement timeout, then move the whale.",
+  "Custom fields in JSONB with per-tenant definitions and partial indexes.",
+  "Expand-and-contract migrations tracked per shard and silo.",
+  "Cross-tenant analytics via CDC to a warehouse, never on OLTP."
+ ],
+ "quiz": [
+  {
+   "q": "Your SaaS has 50,000 tenants, most tiny. Which default tenancy model minimises cost while staying safe?",
+   "options": [
+    "Database per tenant with a shared connection pool",
+    "Shared tables with tenant_id plus row-level security",
+    "Schema per tenant on one large cluster",
+    "One table per tenant inside a shared schema"
+   ],
+   "answer": 1,
+   "why": "Pooled tables with tenant_id and RLS scale to tens of thousands of tenants cheaply. Schema per tenant is tempting for isolation but bloats the catalog and multiplies migrations by 50,000."
+  },
+  {
+   "q": "Using PgBouncer in transaction mode, how should the app set the tenant context for RLS?",
+   "options": [
+    "SET app.tenant_id once when the connection is opened",
+    "Pass tenant_id as a query parameter only and skip the setting",
+    "SET LOCAL app.tenant_id at the start of each transaction",
+    "Store tenant_id in a temporary table per session"
+   ],
+   "answer": 2,
+   "why": "SET LOCAL lives only until COMMIT, so a reused server connection cannot carry a previous tenant's value. Session-level SET is the tempting wrong answer: with transaction pooling the next client inherits it."
+  },
+  {
+   "q": "Which primary key design best supports co-location and moving tenants between shards?",
+   "options": [
+    "Composite (tenant_id, record_id)",
+    "Global auto-increment bigint",
+    "Random UUIDv4 only",
+    "Natural key such as record title"
+   ],
+   "answer": 0,
+   "why": "A composite key clusters a tenant's rows, enables composite FKs and avoids ID conflicts when copying a tenant. A global sequence looks simple but makes the shard a dependency for IDs and leaks volumes."
+  },
+  {
+   "q": "p99 for many tenants on shard 4 doubled, total QPS flat. Most likely cause?",
+   "options": [
+    "The tenant directory cache expired",
+    "A network partition between regions",
+    "A replication slot was dropped",
+    "One tenant started expensive scans evicting shared cache"
+   ],
+   "answer": 3,
+   "why": "Flat QPS with rising latency on one shard is the noisy-neighbour signature: one tenant's heavy queries consume CPU, IO and buffer cache. Directory expiry would add a lookup, not double p99 across a shard."
+  },
+  {
+   "q": "What prevents a record from referencing a user row that belongs to another tenant?",
+   "options": [
+    "A CHECK constraint on user_id range",
+    "Composite foreign key (tenant_id, user_id)",
+    "An application-level validation only",
+    "A trigger that logs mismatches"
+   ],
+   "answer": 1,
+   "why": "Composite FKs make cross-tenant references impossible at the schema level. App validation helps but is exactly the layer that can be forgotten."
+  },
+  {
+   "q": "Roughly how much storage do 50 whale tenants of 80 M rows at 1 KB each use?",
+   "options": [
+    "About 400 GB",
+    "About 40 TB",
+    "About 4 TB",
+    "About 400 TB"
+   ],
+   "answer": 2,
+   "why": "50 x 80 million = 4 billion rows x 1 KB = 4 TB. 40 TB is an off-by-ten slip on 80 M rows."
+  },
+  {
+   "q": "Why is schema-per-tenant hard at 20,000 tenants?",
+   "options": [
+    "PostgreSQL cannot have more than 1,000 schemas",
+    "Catalog bloat and every migration running 20,000 times",
+    "It forbids row-level security",
+    "It needs one connection pool per schema in PgBouncer by design"
+   ],
+   "answer": 1,
+   "why": "Each schema duplicates all tables and indexes, bloating the catalog, and every DDL runs per schema. There is no hard limit of 1,000 schemas; that is the tempting myth."
+  },
+  {
+   "q": "Best way to support customer-defined custom fields that are occasionally filtered on?",
+   "options": [
+    "EAV table with one row per value",
+    "Add a real column per custom field via ALTER TABLE",
+    "Store custom fields in a separate document database",
+    "JSONB column plus on-demand partial expression indexes"
+   ],
+   "answer": 3,
+   "why": "JSONB keeps values in-row and indexes only the hot keys. ALTER TABLE per field looks clean but runs DDL per customer request on a shared table and quickly hits column limits."
+  },
+  {
+   "q": "A whale tenant uses 35% of its shard's CPU for weeks. Best long-term action?",
+   "options": [
+    "Move it to a dedicated shard or silo",
+    "Lower its rate limit until CPU drops",
+    "Add more read replicas to the shard",
+    "Increase statement_timeout for everyone"
+   ],
+   "answer": 0,
+   "why": "Placement fixes persistent skew without hurting the customer. Throttling is tempting but punishes a paying customer for legitimate use."
+  },
+  {
+   "q": "During a tenant move, what minimises downtime?",
+   "options": [
+    "pg_dump and restore while the tenant is suspended",
+    "Logical replication filtered by tenant_id, then a brief write freeze and directory flip",
+    "Copy rows with a nightly batch job",
+    "Dual-write from the app to both shards forever"
+   ],
+   "answer": 1,
+   "why": "Logical replication streams changes so the freeze lasts seconds. pg_dump is simple but requires downtime proportional to tenant size."
+  },
+  {
+   "q": "Which role should the application use to connect so RLS is enforced?",
+   "options": [
+    "The table owner role",
+    "A superuser for simplicity",
+    "A non-owner role without BYPASSRLS",
+    "A role with BYPASSRLS but app-side filters"
+   ],
+   "answer": 2,
+   "why": "Owners and superusers bypass RLS unless FORCE is set. A BYPASSRLS role with app filters throws away the second layer."
+  },
+  {
+   "q": "Where should cross-tenant analytics (e.g. churn across all customers) run?",
+   "options": [
+    "On pooled shard primaries during off-peak hours",
+    "Fan-out queries across all shard replicas",
+    "In a warehouse fed by CDC",
+    "In Redis via aggregated keys"
+   ],
+   "answer": 2,
+   "why": "A columnar warehouse is built for scans across all tenants and keeps load off OLTP. Fan-out to replicas is tempting but adds lag-sensitive load and is slow."
+  },
+  {
+   "q": "Why set lock_timeout on migrations?",
+   "options": [
+    "To make DDL run faster",
+    "To avoid a queued ALTER blocking all subsequent queries on the table",
+    "To force migrations to run in parallel",
+    "To skip RLS checks during migrations"
+   ],
+   "answer": 1,
+   "why": "A waiting ACCESS EXCLUSIVE request blocks every later query behind it. lock_timeout fails fast instead. It does not speed DDL itself."
+  },
+  {
+   "q": "Which is the strongest reason for a tenant directory over hashing tenant_id to shards?",
+   "options": [
+    "Hashing is slower to compute",
+    "Hashing cannot work with PostgreSQL",
+    "Directories need no caching",
+    "Tenant sizes are skewed and placement must consider load and residency"
+   ],
+   "answer": 3,
+   "why": "Directories allow load-aware and residency-aware placement and single-row moves. Hash speed is irrelevant; the tempting answer misses skew."
+  },
+  {
+   "q": "A user belongs to three tenants. Where should the active tenant live?",
+   "options": [
+    "In the per-request token or header",
+    "In a server-side sticky session",
+    "In a browser cookie shared across tabs only",
+    "Derived from the user's email domain"
+   ],
+   "answer": 0,
+   "why": "Per-request scoping prevents tabs and sessions from cross-contaminating. Email domain is tempting but users join other organisations as guests."
+  },
+  {
+   "q": "Peak 20,000 requests/s with 4 queries each and 20% writes. Writes per second?",
+   "options": [
+    "4,000",
+    "16,000",
+    "80,000",
+    "64,000"
+   ],
+   "answer": 1,
+   "why": "20,000 x 4 = 80,000 queries; 20% is 16,000 writes. 64,000 is the read count."
+  },
+  {
+   "q": "A deleted tenant's data must also vanish from backups. Practical approach?",
+   "options": [
+    "Rewrite every backup file to remove rows",
+    "Keep backups forever but mark the tenant deleted",
+    "Crypto-shred by destroying the tenant's data key",
+    "Stop taking backups for that shard"
+   ],
+   "answer": 2,
+   "why": "Destroying the per-tenant key makes encrypted data in backups unreadable. Rewriting backups is tempting in theory but impractical and error-prone."
+  },
+  {
+   "q": "Which isolation layer catches a developer's raw SQL missing WHERE tenant_id?",
+   "options": [
+    "The API gateway rate limiter",
+    "The composite primary key",
+    "The Redis key prefix",
+    "Row-level security policy"
+   ],
+   "answer": 3,
+   "why": "RLS appends the tenant predicate to every query. A composite PK organises data but does not filter queries."
+  },
+  {
+   "q": "Best place to cap how many DB connections one tenant can hold at once?",
+   "options": [
+    "Per-tenant concurrency limit in the data access layer",
+    "max_connections in postgresql.conf",
+    "The CDN",
+    "The warehouse loader"
+   ],
+   "answer": 0,
+   "why": "A per-tenant bulkhead in the DAL bounds pool usage per tenant. max_connections is global and cannot distinguish tenants."
+  },
+  {
+   "q": "Why keep tenant_id even in silo databases where only one tenant lives?",
+   "options": [
+    "It is required by PostgreSQL",
+    "It speeds queries in single-tenant databases",
+    "Identical schema makes moving tenants between tiers a copy and keeps code paths unified",
+    "It allows sharing the silo with new tenants automatically"
+   ],
+   "answer": 2,
+   "why": "Same DDL everywhere avoids forked code and makes promotion or demotion a data copy. It does not speed single-tenant queries."
+  }
+ ],
+ "references": [
+  {
+   "title": "AWS Database Blog: Multi-tenant data isolation with PostgreSQL Row Level Security",
+   "url": "https://aws.amazon.com/blogs/database/multi-tenant-data-isolation-with-postgresql-row-level-security"
+  },
+  {
+   "title": "AWS Prescriptive Guidance: Row-level security recommendations",
+   "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/saas-multitenant-managed-postgresql/rls.html"
+  },
+  {
+   "title": "AWS Prescriptive Guidance: Implementing managed PostgreSQL for multi-tenant SaaS",
+   "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/saas-multitenant-managed-postgresql/welcome.html"
+  },
+  {
+   "title": "Multi-Tenancy: Pooled vs Siloed (archman.dev)",
+   "url": "https://archman.dev/docs/data-architecture-and-persistence/data-modeling-and-access/multi-tenancy-pooled-vs-siloed"
+  },
+  {
+   "title": "Multi-tenant database patterns through a SaaS lens (dev.to)",
+   "url": "https://dev.to/duske/multi-tenant-database-patterns-through-a-saas-lens-1pc5"
+  }
+ ]
+}

@@ -1,0 +1,1210 @@
+{
+ "slug": "retries-circuit-breakers",
+ "title": "Design retries, timeouts and circuit breakers (resilient service client)",
+ "prompt": "Design retries, timeouts, and circuit breakers for a service.",
+ "group": "reliability",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "The real problem is not one failing call but how a fleet of callers reacts to it: naive retries multiply load exactly when a dependency is weakest, and missing timeouts turn a slow dependency into exhausted threads everywhere upstream. The design is a shared resilience layer (deadlines, budgeted retries with jitter, circuit breakers, bulkheads) whose settings are derived from measured latency and whose behaviour is observable, so a partial outage stays partial.",
+ "framework": {
+  "clarify": [
+   "Which service and which dependencies? Assume an Order service at about 20k RPS peak calling Inventory, Pricing, Payment and Promotions, each over gRPC/HTTP inside one region.",
+   "What is the end-to-end latency SLO for the caller? Assume checkout API p99 under 800 ms and 99.95% availability, so every downstream call must fit inside that budget.",
+   "Which calls are idempotent? Reads (price, stock) are safe to retry; Payment capture is only retryable with an idempotency key; side-effecting calls without keys are never retried blindly.",
+   "Is a stale or default answer acceptable for each dependency? Promotions can be skipped, Pricing can use a 60 s cached price, Payment cannot be faked.",
+   "How many layers of the stack retry today (SDK, sidecar, service, gateway)? Retries stacked at 3 layers with 3 attempts each give 27x amplification, so we must pick one layer.",
+   "Do we have a service mesh (Envoy/Istio) or is resilience in a client library? It changes where config lives and how fast it can be changed.",
+   "Is configuration per dependency and changeable at runtime without a deploy? Assume yes via a config service with a 30 s propagation target.",
+   "What does the business prefer under overload: fail fast with a clear error, or wait longer? Assume fail fast for browsing, slightly more patience for payment."
+  ],
+  "design": [
+   "Baseline: every outbound call goes through one ResilientClient wrapper (library or sidecar) with a per-dependency policy: connect timeout, per-try timeout, overall deadline, retry policy, breaker, bulkhead.",
+   "Deadlines, not just timeouts: the edge sets a deadline (now + 800 ms) and propagates remaining time in a header (grpc-timeout or x-deadline-ms); each hop uses min(own timeout, remaining minus safety margin) and refuses work that cannot finish.",
+   "Retries: only on retryable signals (connect failure, 503, 429 with Retry-After, UNAVAILABLE, per-try timeout on idempotent calls), max 2 retries, exponential backoff base 50 ms cap 1 s with full jitter, gated by a retry budget of 10% of requests per client.",
+   "Circuit breaker per dependency (and per endpoint for hot ones): closed -> open when failure rate >= 50% over a 10 s sliding window with at least 20 calls, or slow-call rate >= 80% above 2x p99; open for 30 s; half-open admits 5 probes; close on 4/5 success.",
+   "Bulkheads: a separate concurrency limit per dependency (e.g. Payment 200 in-flight per pod, Promotions 50) so one slow dependency cannot consume the whole thread or connection pool.",
+   "Fallback hook per call site: cached value, default, degraded response, or fail fast with a typed error; plus metrics, traces and a policy registry that the platform team owns."
+  ],
+  "defend": [
+   "Bottleneck: during an incident the bottleneck is the sick dependency; the design caps the extra load we add to it at 10% (retry budget) and drops it to near zero once the breaker opens.",
+   "Scale reads: cached fallbacks and request hedging (only for idempotent reads, after p95) keep tail latency low without raising load more than about 5%.",
+   "Scale writes: write calls are retried only with idempotency keys stored server side for 24 h, so retries are safe; otherwise fail and let the caller decide.",
+   "Failure behaviour: timeouts bound waiting, jittered retries smooth synchronized load, breakers stop hammering, bulkheads contain the blast radius, load shedding at the server protects it from clients that ignore all of the above.",
+   "Measure: per-dependency success rate, p50/p99 latency, retry ratio, budget exhaustion count, breaker state transitions, bulkhead rejections, deadline-exceeded counts, and the amplification factor (downstream calls / upstream requests).",
+   "Validate with fault injection: inject 500 ms latency and 30% errors into Pricing in staging and in a canary cell, and confirm the checkout SLO holds and breakers trip within 10 s."
+  ],
+  "script": "Before drawing boxes I want to pin down the caller and the dependencies: say an Order service at 20k RPS calling Inventory, Pricing, Payment and Promotions, with an 800 ms p99 checkout SLO. I will ask which calls are idempotent, which have an acceptable fallback, and how many layers already retry, because retry amplification is the classic way these systems melt. My design is a single resilience layer on every outbound call: a deadline set at the edge and propagated hop by hop, per-try timeouts derived from each dependency's p99.9, at most two retries with exponential backoff and full jitter, capped by a 10% retry budget, and only on retryable errors. Each dependency gets a circuit breaker on failure rate and slow-call rate, plus a bulkhead so a slow Promotions service cannot eat the threads Payment needs. Every call site declares its fallback. To defend it I will show the load math during an outage, how idempotency keys make payment retries safe, and the metrics and chaos tests that prove the breaker trips before our own SLO burns."
+ },
+ "brd": {
+  "problem": "Checkout and order flows depend on 4-8 internal services. Today each team hand-rolls HTTP clients with default timeouts (often 30-60 s or none) and ad-hoc retries. During the last sale event a 2-minute Pricing slowdown exhausted Order service thread pools, retries from three layers tripled Pricing load, and checkout failed for 14 minutes after Pricing itself had recovered. The business needs partial dependency failures to stay partial and recover fast.",
+  "goals": [
+   "Bound the impact of any single dependency failure to the features that truly need it.",
+   "Cut mean time to recover after a dependency heals from tens of minutes to under 1 minute (no retry storm).",
+   "Make resilience policy standard, versioned and observable across all services instead of per-team code.",
+   "Make retries safe for money-moving calls through idempotency, so customers are never double charged.",
+   "Let on-call engineers change timeouts, budgets and breaker thresholds at runtime within 30 s."
+  ],
+  "non_goals": [
+   "Building a multi-region failover system; this is intra-region call resilience.",
+   "Replacing the service mesh or RPC framework; we configure and wrap what exists.",
+   "Guaranteeing exactly-once delivery across services; we provide at-least-once plus idempotency.",
+   "Auto-tuning every parameter with ML in v1; we derive defaults from measured latency."
+  ],
+  "stakeholders": [
+   {
+    "who": "Checkout and Order product teams",
+    "needs": "Simple per-call policy with sane defaults and typed fallbacks."
+   },
+   {
+    "who": "Dependency owners (Pricing, Payment, Inventory)",
+    "needs": "Protection from retry storms and clients that ignore 429/Retry-After."
+   },
+   {
+    "who": "SRE / on-call",
+    "needs": "Runtime knobs, breaker dashboards, alerts on budget exhaustion and amplification."
+   },
+   {
+    "who": "Finance and Payments compliance",
+    "needs": "Zero duplicate captures; auditable retry history on payment calls."
+   },
+   {
+    "who": "Platform team",
+    "needs": "One library/sidecar config model they can evolve without touching 300 services."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Checkout availability during a single-dependency outage",
+    "target": ">= 99.5% for flows not needing that dependency"
+   },
+   {
+    "metric": "Retry amplification factor during incidents",
+    "target": "<= 1.1x downstream calls per upstream request"
+   },
+   {
+    "metric": "Time from dependency recovery to full checkout recovery",
+    "target": "< 60 s"
+   },
+   {
+    "metric": "Duplicate payment captures caused by retries",
+    "target": "0"
+   },
+   {
+    "metric": "Services onboarded to the standard policy",
+    "target": "100% of tier-1 within 2 quarters"
+   }
+  ],
+  "constraints": [
+   "Must add under 1 ms p99 overhead per call in the client path.",
+   "Polyglot fleet (Java, Go, Node): either a sidecar or libraries with identical semantics.",
+   "Config changes must be safe to roll out gradually and roll back in one step.",
+   "Sale-day peak is about 10x normal traffic and policies must hold at that peak."
+  ],
+  "risks": [
+   {
+    "risk": "Breakers trip on a few bad hosts and cut off a mostly healthy dependency",
+    "mitigation": "Outlier ejection per host before the dependency-wide breaker; minimum call volume before tripping."
+   },
+   {
+    "risk": "Timeouts set too tight cause false failures at peak",
+    "mitigation": "Derive from p99.9 plus headroom, review weekly, canary changes."
+   },
+   {
+    "risk": "Fallback paths are untested and fail when used",
+    "mitigation": "Exercise fallbacks continuously with fault injection in a canary cell."
+   },
+   {
+    "risk": "Teams bypass the library with raw clients",
+    "mitigation": "Lint rule and mesh egress policy that only allows calls through the sidecar."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Service developer",
+    "needs": "Declare a policy in a few lines of config and get typed errors to handle."
+   },
+   {
+    "name": "On-call SRE",
+    "needs": "See breaker states and retry ratios per dependency and change knobs live."
+   },
+   {
+    "name": "Dependency owner",
+    "needs": "Assurance that callers back off when they return 429/503 and honour Retry-After."
+   }
+  ],
+  "user_stories": [
+   "As a checkout developer, I want every outbound call to have a deadline so that a slow dependency cannot hang my request threads.",
+   "As a checkout developer, I want idempotent reads retried automatically with jitter so that transient blips are invisible to users.",
+   "As a payments developer, I want retries of capture to reuse the same idempotency key so that a customer is never charged twice.",
+   "As an on-call SRE, I want a breaker to open when Pricing fails so that we stop sending it load and serve cached prices instead.",
+   "As an on-call SRE, I want to change a timeout or disable retries for one dependency at runtime so that I can stop a retry storm in seconds.",
+   "As the Pricing owner, I want callers to respect Retry-After and a retry budget so that my recovery is not crushed by a thundering herd.",
+   "As a product manager, I want promotions to be skipped rather than failing checkout so that revenue continues when a non-critical service is down.",
+   "As an SRE, I want dashboards of amplification factor and bulkhead rejections so that I can find the real source of an incident quickly."
+  ],
+  "functional": [
+   "Per-dependency, per-method policy: connect timeout, per-try timeout, total deadline, max attempts, backoff, retryable codes, breaker settings, bulkhead size, fallback.",
+   "Deadline propagation via request metadata; each hop computes the remaining budget and fails fast with DEADLINE_EXCEEDED when it is below a minimum.",
+   "Retries with exponential backoff and full jitter, honouring Retry-After and server push-back headers, bounded by a token-bucket retry budget.",
+   "Circuit breaker with closed/open/half-open states on failure-rate and slow-call-rate thresholds over a sliding window, per dependency and optionally per endpoint.",
+   "Bulkhead per dependency (semaphore or dedicated pool) with fast rejection when full.",
+   "Pluggable fallbacks: cache, static default, degraded response, or typed failure.",
+   "Idempotency key generation and propagation for non-idempotent calls marked retryable.",
+   "Runtime config from a config service with validation, versioning, gradual rollout and one-click rollback.",
+   "Metrics, traces (attempt number as a span attribute) and structured logs for every attempt."
+  ],
+  "non_functional": [
+   {
+    "name": "Overhead",
+    "target": "< 1 ms p99 added per call, < 5% CPU on the caller"
+   },
+   {
+    "name": "Breaker reaction time",
+    "target": "Opens within 10 s of a dependency failure rate crossing 50%"
+   },
+   {
+    "name": "Config propagation",
+    "target": "New policy live on 99% of pods within 30 s"
+   },
+   {
+    "name": "Amplification bound",
+    "target": "Retries add at most 10% extra load at any time"
+   },
+   {
+    "name": "Availability of caller during dependency outage",
+    "target": ">= 99.5% for paths with a fallback"
+   },
+   {
+    "name": "Correctness",
+    "target": "Zero duplicate side effects for calls retried with idempotency keys"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "Order service: 20k RPS peak, 2k RPS normal; 400 pods at peak (50 RPS per pod).",
+    "Fan-out: 4 downstream calls per order request, so 80k downstream RPS at peak.",
+    "Pricing p99 = 40 ms, p99.9 = 90 ms healthy; Payment p99 = 300 ms, p99.9 = 700 ms.",
+    "Idempotency records kept 24 h; about 30% of requests carry a key (writes)."
+   ],
+   "math": [
+    "Naive retries: 3 attempts at each of 3 layers = 27x; if Pricing is failing, 20k RPS of upstream could become 540k RPS on Pricing. With one retrying layer and 2 retries it is 3x = 60k RPS; with a 10% budget it is 22k RPS.",
+    "Little's law for bulkheads: in-flight = RPS x latency. Pricing per pod: 50 RPS x 0.04 s = 2 in flight healthy; if latency degrades to 2 s, 100 in flight. A bulkhead of 20 caps that, rejecting the rest fast instead of holding threads.",
+    "Thread pool sizing: 200 worker threads per pod with 4 calls per request; one dependency hanging at a 30 s default timeout would fill 200 threads in 200 / 50 = 4 s. With a 150 ms per-try timeout the pod never saturates.",
+    "Deadline budget: 800 ms total. Inventory 100 ms + Pricing 150 ms in parallel, then Payment 500 ms, plus 50 ms own work = about 700 ms, leaving 100 ms for one retry of a fast read only.",
+    "Idempotency store: 20k RPS x 30% = 6k writes/s x 86,400 s = 518M keys/day; at 200 bytes each about 100 GB/day, so a sharded KV with 24 h TTL.",
+    "Metrics: 400 pods x 4 deps x 10 series = 16k time series per service, fine for Prometheus at 15 s scrape."
+   ],
+   "summary": "The numbers show that unbounded retries, not the original failure, are the biggest load risk (up to 27x), that 2 to 20 slots per dependency per pod is the right bulkhead scale, and that the 800 ms deadline only leaves room for one fast retry, so retries must be scarce and budgeted."
+  },
+  "out_of_scope": [
+   "Cross-region failover and DNS-level traffic steering.",
+   "Message-queue consumer retry and dead-letter design (covered with async workflows).",
+   "Rate limiting of external client traffic at the API gateway.",
+   "Auto-scaling policy of dependencies."
+  ]
+ },
+ "hld": {
+  "overview": "Every service talks to its dependencies through a resilience layer that is either a client library (Resilience4j-style for Java, equivalents for Go/Node) or the Envoy sidecar in the mesh. The layer reads policies from a central Policy Registry, enforces deadlines, retries, breakers and bulkheads per dependency, and emits metrics and traces. Dependencies run server-side protection too: admission control, load shedding by priority and 429/503 with Retry-After. An idempotency store backs safe retries for write calls.",
+  "diagram": "  Client --> API Gateway (sets deadline 800ms, request-id)\n                 |\n                 v\n  +-------------------- Order Service pod --------------------+\n  |  Handler                                                  |\n  |    |                                                      |\n  |    v                                                      |\n  |  ResilientClient  [deadline | bulkhead | breaker | retry]  |\n  |    |        |            |              |                 |\n  |    |   Fallback cache   Metrics/Traces  Policy cache <-------- Policy Registry\n  +----|------------------------------------------------------+    (config svc)\n       | gRPC + grpc-timeout + idempotency-key\n       v\n  +-----------+  +-----------+  +-----------+  +-------------+\n  | Inventory |  | Pricing   |  | Payment   |  | Promotions  |\n  | admission |  | admission |  | admission |  | admission   |\n  | + shedding|  | + shedding|  | + idem.   |  | + shedding  |\n  +-----------+  +-----------+  |  store    |  +-------------+\n                                +-----------+\n                                     |\n                               Idempotency KV (24h TTL)\n",
+  "components": [
+   {
+    "name": "ResilientClient (library or sidecar)",
+    "responsibility": "Wraps each outbound call: deadline check, bulkhead acquire, breaker check, attempt with per-try timeout, classify result, backoff and retry within budget, fallback."
+   },
+   {
+    "name": "Policy Registry",
+    "responsibility": "Versioned per-dependency policies (timeouts, retries, breaker, bulkhead), validation, gradual rollout, push to clients within 30 s."
+   },
+   {
+    "name": "Deadline propagator",
+    "responsibility": "Reads incoming deadline header, computes remaining budget, writes it on outgoing calls, rejects work that cannot finish."
+   },
+   {
+    "name": "Retry budget (token bucket)",
+    "responsibility": "Per client process per dependency: each success deposits 0.1 token, each retry spends 1, so retries stay under about 10% of traffic."
+   },
+   {
+    "name": "Circuit breaker",
+    "responsibility": "Sliding-window failure and slow-call tracking, state machine closed/open/half-open, per dependency and optionally per endpoint."
+   },
+   {
+    "name": "Bulkhead",
+    "responsibility": "Semaphore or pool per dependency limiting in-flight calls; fast rejection when full."
+   },
+   {
+    "name": "Fallback providers",
+    "responsibility": "Local LRU of last-good responses, static defaults, or typed degraded results per call site."
+   },
+   {
+    "name": "Server-side admission control",
+    "responsibility": "On each dependency: concurrency limit, priority-based load shedding, 429/503 with Retry-After."
+   },
+   {
+    "name": "Idempotency store",
+    "responsibility": "Stores key -> status/response for 24 h so a retried write returns the original result."
+   },
+   {
+    "name": "Observability pipeline",
+    "responsibility": "Per-attempt metrics, breaker transitions, trace spans with attempt numbers, alerting."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Healthy read with one transient failure",
+    "steps": [
+     "Gateway sets deadline T+800 ms; Order handler calls Pricing via ResilientClient.",
+     "Client computes budget = min(policy per-try 150 ms, remaining 790 ms - 20 ms margin) = 150 ms.",
+     "Bulkhead acquire succeeds (3/20 in use); breaker is CLOSED.",
+     "Attempt 1 gets UNAVAILABLE after 5 ms (connection reset); classified retryable.",
+     "Retry budget has tokens; backoff = random(0, 50 ms) = 31 ms; deadline still has 750 ms.",
+     "Attempt 2 to a different host succeeds in 35 ms; success recorded, 0.1 token deposited, bulkhead released."
+    ]
+   },
+   {
+    "name": "Dependency outage and recovery",
+    "steps": [
+     "Pricing starts failing 70% of calls; breaker window (10 s, min 20 calls) crosses 50% failure rate.",
+     "Breaker OPENS; calls fail fast in microseconds and the fallback returns the cached price (TTL 60 s) marked stale.",
+     "Retry budget is drained, so no retries are added; Pricing load drops to near zero from this client.",
+     "After 30 s the breaker goes HALF-OPEN and admits 5 probe calls.",
+     "If 4 of 5 succeed it CLOSES; otherwise it reopens with the wait doubled up to 2 minutes.",
+     "Traffic ramps back gradually because jittered backoff and half-open probes avoid a synchronized surge."
+    ]
+   },
+   {
+    "name": "Payment capture retry with idempotency",
+    "steps": [
+     "Order generates idempotency key = hash(order_id, attempt_group) and calls Payment.capture with it.",
+     "Per-try timeout of 1.5 s expires; outcome unknown.",
+     "Client retries once after jittered backoff with the same key.",
+     "Payment looks up the key: if the first attempt completed, it returns the stored result; if in progress, it returns 409 and the client polls status.",
+     "Exactly one capture occurs; the attempt history is logged for audit."
+    ]
+   }
+  ],
+  "data_flow": "Requests carry request-id, deadline and, for writes, an idempotency key. The client layer emits a span per attempt and counters per outcome to the metrics pipeline. Policies flow from the registry to client caches by push with a periodic pull fallback. Fallback caches are populated from successful responses. Server-side admission control returns push-back signals that feed the client's backoff and breaker decisions."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "CALL",
+    "path": "client.call(dep, method, req, ctx)",
+    "request": "dependency name, method, payload, context with deadline and optional idempotency key",
+    "response": "Result or typed error: Timeout, Unavailable, CircuitOpen, BulkheadFull, BudgetExhausted, DeadlineExceeded, NonRetryable",
+    "notes": "Single entry point; call sites never set raw socket timeouts."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/policies/{service}",
+    "request": "service name, current version",
+    "response": "policy document per dependency with version and checksum",
+    "notes": "Long-poll or streamed push; clients keep the last good version if the registry is down."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/policies/{service}/{dependency}",
+    "request": "policy JSON, rollout percentage, reason",
+    "response": "new version id",
+    "notes": "Validated (timeout <= deadline, maxAttempts <= 3), audited, staged rollout 1% -> 10% -> 100%."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/payments/capture",
+    "request": "header Idempotency-Key, grpc-timeout; body order_id, amount",
+    "response": "200 with capture id, 409 in-progress, 429/503 with Retry-After",
+    "notes": "Server stores key result for 24 h; same key with different body returns 422."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/resilience/state",
+    "request": "none (admin)",
+    "response": "breaker states, bulkhead usage, budget tokens per dependency",
+    "notes": "For on-call dashboards and debugging a single pod."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/resilience/override",
+    "request": "dependency, action force_open|force_closed|disable_retries, ttl",
+    "response": "ack",
+    "notes": "Manual kill switch with auto-expiry so overrides are not forgotten."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "ResiliencePolicy",
+    "store": "Policy Registry (etcd or a config DB, cached in client memory)",
+    "fields": [
+     "service",
+     "dependency",
+     "method_glob",
+     "connect_timeout_ms",
+     "per_try_timeout_ms",
+     "max_attempts",
+     "backoff_base_ms",
+     "backoff_cap_ms",
+     "retryable_codes",
+     "retry_budget_ratio",
+     "breaker_failure_rate",
+     "breaker_slow_call_ms",
+     "breaker_window_s",
+     "breaker_min_calls",
+     "breaker_open_s",
+     "half_open_probes",
+     "bulkhead_max_concurrent",
+     "fallback",
+     "version"
+    ],
+    "keys": "PK (service, dependency, method_glob); version monotonic",
+    "notes": "Most specific method_glob wins; defaults at dependency level."
+   },
+   {
+    "entity": "IdempotencyRecord",
+    "store": "Sharded Redis or DynamoDB-style KV with TTL",
+    "fields": [
+     "key",
+     "request_hash",
+     "status (IN_PROGRESS|DONE|FAILED)",
+     "response_blob",
+     "created_at",
+     "expires_at"
+    ],
+    "keys": "PK key; shard by hash(key); TTL 24 h",
+    "notes": "Insert-if-absent claims the key; request_hash detects key reuse with a different body."
+   },
+   {
+    "entity": "BreakerWindow",
+    "store": "In-process memory per client",
+    "fields": [
+     "ring buffer of buckets (1 s each, 10 buckets)",
+     "calls",
+     "failures",
+     "slow_calls",
+     "state",
+     "opened_at",
+     "probe_count"
+    ],
+    "keys": "per (dependency, endpoint) in each process",
+    "notes": "Local by design: no shared state means no new dependency in the hot path."
+   },
+   {
+    "entity": "AttemptEvent",
+    "store": "Metrics (Prometheus) and traces (OpenTelemetry backend)",
+    "fields": [
+     "dependency",
+     "method",
+     "attempt",
+     "outcome",
+     "latency_ms",
+     "breaker_state",
+     "budget_tokens"
+    ],
+    "keys": "time series labels dependency, method, outcome",
+    "notes": "Keep labels low-cardinality; request ids only in traces."
+   }
+  ],
+  "classes": [
+   {
+    "name": "ResilientClient",
+    "responsibility": "Orchestrates one logical call across attempts.",
+    "methods": [
+     "call(dep, method, req, ctx) -> Result",
+     "classify(err) -> RETRYABLE|NON_RETRYABLE|PUSHBACK",
+     "attemptTimeout(ctx, policy) -> duration"
+    ]
+   },
+   {
+    "name": "CircuitBreaker",
+    "responsibility": "State machine over a sliding window.",
+    "methods": [
+     "allow() -> bool",
+     "onSuccess(latency)",
+     "onFailure(kind)",
+     "state() -> CLOSED|OPEN|HALF_OPEN"
+    ]
+   },
+   {
+    "name": "RetryBudget",
+    "responsibility": "Token bucket that bounds retries as a fraction of successes.",
+    "methods": [
+     "onRequest()",
+     "tryAcquireRetry() -> bool",
+     "tokens() -> float"
+    ]
+   },
+   {
+    "name": "Bulkhead",
+    "responsibility": "Concurrency limiter per dependency.",
+    "methods": [
+     "tryAcquire(timeout=0) -> Permit",
+     "release(permit)",
+     "inFlight() -> int"
+    ]
+   },
+   {
+    "name": "Backoff",
+    "responsibility": "Computes delay with exponential growth and jitter, honours Retry-After.",
+    "methods": [
+     "next(attempt, retryAfter?) -> duration"
+    ]
+   },
+   {
+    "name": "DeadlineContext",
+    "responsibility": "Carries absolute deadline and computes remaining time.",
+    "methods": [
+     "remaining() -> duration",
+     "child(margin) -> DeadlineContext",
+     "toHeader() -> string"
+    ]
+   },
+   {
+    "name": "PolicyCache",
+    "responsibility": "Holds current policies, subscribes to registry, keeps last good version.",
+    "methods": [
+     "get(dep, method) -> Policy",
+     "onUpdate(version, doc)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Call with deadline, budget, breaker and jittered retry",
+    "explain": "One loop handles all attempts. It checks the breaker and bulkhead before each attempt, uses the smaller of the per-try timeout and the remaining deadline, and only retries retryable errors when the budget and deadline both allow.",
+    "pseudocode": "def call(dep, method, req, ctx):\n    p = policies.get(dep, method)\n    budget.onRequest()                      # deposit 0.1 token\n    for attempt in range(1, p.max_attempts + 1):\n        if ctx.remaining() < p.min_useful_ms:\n            return fallback_or(DeadlineExceeded)\n        if not breaker[dep].allow():\n            return fallback_or(CircuitOpen)\n        permit = bulkhead[dep].tryAcquire()\n        if permit is None:\n            return fallback_or(BulkheadFull)\n        t = min(p.per_try_timeout, ctx.remaining() - MARGIN)\n        try:\n            res = transport.send(req, timeout=t, deadline=ctx.toHeader())\n            breaker[dep].onSuccess(res.latency)\n            return res\n        except Exception as e:\n            kind = classify(e)\n            breaker[dep].onFailure(kind)\n            if kind == NON_RETRYABLE or not req.idempotent_or_keyed:\n                return fallback_or(e)\n            if attempt == p.max_attempts or not budget.tryAcquireRetry():\n                return fallback_or(e)\n            sleep(backoff.next(attempt, e.retry_after))\n        finally:\n            bulkhead[dep].release(permit)\n"
+   },
+   {
+    "name": "Full-jitter exponential backoff",
+    "explain": "Delay grows exponentially but is drawn uniformly from zero to the cap, so a crowd of clients that failed together spreads its retries over the whole window instead of arriving in synchronized waves.",
+    "pseudocode": "def next(attempt, retry_after=None):\n    if retry_after:                       # server push-back wins\n        return retry_after + random(0, 0.1 * retry_after)\n    ceiling = min(CAP_MS, BASE_MS * 2 ** (attempt - 1))\n    return random_uniform(0, ceiling)     # full jitter\n"
+   },
+   {
+    "name": "Sliding-window circuit breaker",
+    "explain": "Ten 1-second buckets form a ring. The breaker opens only when there were enough calls and either the failure rate or slow-call rate exceeds its threshold. Half-open admits a fixed number of probes.",
+    "pseudocode": "def onResult(ok, latency):\n    b = ring[now_sec % 10]; b.reset_if_stale(now_sec)\n    b.calls += 1; b.fail += (not ok); b.slow += latency > SLOW_MS\n    if state == CLOSED:\n        calls, fail, slow = sum_ring()\n        if calls >= MIN_CALLS and (fail/calls >= 0.5 or slow/calls >= 0.8):\n            state = OPEN; opened_at = now()\n    elif state == HALF_OPEN:\n        probes_done += 1; probes_ok += ok\n        if probes_done == PROBES:\n            state = CLOSED if probes_ok >= 4 else OPEN; opened_at = now()\n\ndef allow():\n    if state == OPEN and now() - opened_at >= OPEN_S:\n        state = HALF_OPEN; probes_issued = probes_done = probes_ok = 0\n    if state == HALF_OPEN:\n        if probes_issued < PROBES: probes_issued += 1; return True\n        return False\n    return state == CLOSED\n"
+   },
+   {
+    "name": "Retry budget token bucket",
+    "explain": "Each request adds a fraction of a token, each retry costs one whole token, and the bucket is capped. In steady state retries cannot exceed the ratio, and in an outage the bucket empties quickly so retries stop.",
+    "pseudocode": "RATIO = 0.1; MAX_TOKENS = 100\ndef onRequest():  tokens = min(MAX_TOKENS, tokens + RATIO)\ndef tryAcquireRetry():\n    if tokens >= 1: tokens -= 1; return True\n    return False\n"
+   }
+  ],
+  "sequence": "Gateway        OrderSvc/Client        Breaker   Pricing      Cache\n  | req (dl=800ms) |                     |          |            |\n  |--------------->| allow?              |          |            |\n  |                |-------------------->| CLOSED   |            |\n  |                | send t=150ms, dl hdr           |            |\n  |                |------------------------------->|            |\n  |                |<---------- 503 Retry-After 40ms|            |\n  |                | onFailure, budget ok, sleep 40-44ms         |\n  |                | send attempt 2 (other host)    |            |\n  |                |------------------------------->|            |\n  |                |<------------------- 200 35ms --|            |\n  |                | onSuccess, put last-good ------------------>|\n  |<-------------- 200 (total 92ms)                 |            |\n  ...  later: Pricing failing, window fail rate 62% ...           |\n  |--------------->| allow? -> OPEN (fast fail)    |            |\n  |                | fallback get ------------------------------>|\n  |<-- 200 (stale price flagged, 3ms) <----------------------------|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Retry amplification across layers (SDK, service, sidecar, gateway all retry)",
+   "handling": "Retry at exactly one layer (the one closest to the failure with knowledge of idempotency); other layers set max_attempts=1. Mark responses with a 'retried' or 'do-not-retry' header so upstream layers do not retry an already-retried failure."
+  },
+  {
+   "case": "Timeout on a non-idempotent write: did it happen or not?",
+   "handling": "Never blind-retry. Use an idempotency key so a retry returns the original outcome, or query status by business key before retrying."
+  },
+  {
+   "case": "Deadline already almost expired when request arrives",
+   "handling": "Check remaining budget on entry; if below the minimum useful time, fail immediately with DEADLINE_EXCEEDED instead of doing work whose result will be thrown away."
+  },
+  {
+   "case": "Breaker opens because of a few bad hosts while most are healthy",
+   "handling": "Do outlier ejection (Envoy: eject a host after 5 consecutive 5xx for 30 s, max 10-20% ejected) before the dependency-wide breaker trips; breaker per endpoint for hot paths."
+  },
+  {
+   "case": "Low traffic dependency: 2 failures out of 3 calls trips the breaker",
+   "handling": "Minimum call volume (e.g. 20 calls in the window) before the failure rate is evaluated."
+  },
+  {
+   "case": "Half-open thundering herd: every pod probes at the same instant after 30 s",
+   "handling": "Add jitter to the open duration (30 s +/- 20%) and limit probes per pod to a handful; recovery ramps gradually."
+  },
+  {
+   "case": "Client errors (400, 404, validation) counted as failures and open the breaker",
+   "handling": "Classify: only 5xx, timeouts, connection failures and explicit overload count as failures; 4xx are successes from the breaker's point of view."
+  },
+  {
+   "case": "Server sends 429 with Retry-After of 60 s but deadline is 800 ms",
+   "handling": "Do not wait past the deadline; return the push-back error or fallback immediately and let the breaker or rate limiter on the client record it."
+  },
+  {
+   "case": "GC pause or CPU throttling in the caller makes healthy calls look slow",
+   "handling": "Measure latency from the server side too; slow-call threshold set well above p99; alert on caller CPU throttling separately."
+  },
+  {
+   "case": "Synchronized retries after a network blip (all clients failed at t=0)",
+   "handling": "Full jitter spreads retries; retry budget caps total; servers shed by priority."
+  },
+  {
+   "case": "Long-running streaming or batch calls under the same timeout policy",
+   "handling": "Separate policy class for streams with idle timeouts and heartbeats instead of a single total timeout."
+  },
+  {
+   "case": "Fallback cache is empty for a new item when the breaker opens",
+   "handling": "Fallback chain: local cache -> shared cache -> static default or typed failure; never fabricate prices or payment outcomes."
+  },
+  {
+   "case": "Config push sets a timeout larger than the overall deadline or max_attempts 10",
+   "handling": "Registry validation rejects it; staged rollout with automatic rollback on error-rate regression."
+  },
+  {
+   "case": "Clock skew between hosts breaks absolute deadlines",
+   "handling": "Propagate remaining duration (grpc-timeout style) rather than an absolute wall-clock timestamp; each hop converts to its own monotonic clock."
+  },
+  {
+   "case": "Hedged requests double load during an incident",
+   "handling": "Hedge only idempotent reads, only after the p95 delay, cap hedges at 5% of requests, and disable hedging when the breaker is not closed."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Envoy / Istio service mesh",
+   "layer": "Network sidecar",
+   "overview": "L7 proxy beside each pod handling routing, timeouts, retries, outlier detection and connection-level circuit breaking.",
+   "why": "Language-agnostic enforcement for a polyglot fleet, central config, per-host outlier ejection and retry budgets built in.",
+   "alternatives": "Linkerd (simpler, smaller feature set); library-only approach (no extra hop, but per-language reimplementation)."
+  },
+  {
+   "name": "Resilience4j",
+   "layer": "Java client library",
+   "overview": "Lightweight fault tolerance library with CircuitBreaker, Retry, Bulkhead, RateLimiter and TimeLimiter modules.",
+   "why": "Fine-grained call-site control (fallbacks need business context the sidecar does not have); sliding window breakers with slow-call thresholds.",
+   "alternatives": "Hystrix (in maintenance mode); Failsafe; Polly for .NET; custom code (error prone)."
+  },
+  {
+   "name": "gRPC deadlines",
+   "layer": "RPC framework",
+   "overview": "gRPC carries a per-call deadline that propagates through the call graph via the grpc-timeout header.",
+   "why": "Deadline propagation for free, cancellation when the caller gives up, standard status codes for classification.",
+   "alternatives": "HTTP with a custom x-deadline header; Thrift with manual propagation."
+  },
+  {
+   "name": "Redis Cluster or DynamoDB",
+   "layer": "Idempotency store",
+   "overview": "Low-latency key-value stores with TTL and conditional writes.",
+   "why": "SET NX / conditional put claims an idempotency key atomically; TTL handles cleanup; single-digit ms.",
+   "alternatives": "Relational table with unique constraint (stronger, slower at 6k writes/s per service but fine); storing keys inside the payment DB transaction (best for exactness)."
+  },
+  {
+   "name": "etcd / Consul / internal config service",
+   "layer": "Policy registry",
+   "overview": "Strongly consistent key-value stores with watch APIs for configuration.",
+   "why": "Watches push policy changes in seconds; versioning and audit; clients cache the last good config.",
+   "alternatives": "Git-ops with a deploy per change (slower); feature-flag platform (good UI, weaker validation)."
+  },
+  {
+   "name": "Prometheus + Grafana",
+   "layer": "Metrics and alerting",
+   "overview": "Pull-based time-series monitoring and dashboards.",
+   "why": "Breaker state, retry ratio, bulkhead rejections and latency histograms per dependency with alerting rules.",
+   "alternatives": "Datadog or other SaaS (less ops, cost at high cardinality); M3/VictoriaMetrics at very large scale."
+  },
+  {
+   "name": "OpenTelemetry tracing",
+   "layer": "Distributed tracing",
+   "overview": "Vendor-neutral spans and context propagation.",
+   "why": "Each attempt is a span with attempt number and outcome, making retry storms and amplification visible in a single trace.",
+   "alternatives": "Zipkin or Jaeger native clients; vendor agents."
+  },
+  {
+   "name": "Chaos tooling (Gremlin, Chaos Mesh, Envoy fault filter)",
+   "layer": "Verification",
+   "overview": "Injects latency, errors and resource pressure into running systems.",
+   "why": "Proves breakers, timeouts and fallbacks actually work before a sale day.",
+   "alternatives": "Game days with manual fault injection; staging-only tests (miss production realities)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Timeouts and deadline propagation",
+   "explain": "A timeout is the longest a caller will wait for a response before giving up. Without it a caller waits forever on a hung connection, holding a thread, a socket and memory. Timeouts come in layers: a connect timeout (how long to establish TCP/TLS, usually small like 100-250 ms inside a data center), a per-try or request timeout (how long one attempt may take) and an overall deadline (how long the whole operation, including retries, may take). Picking the value is a trade-off. Too long and a slow dependency ties up resources upstream; too short and healthy-but-slow requests fail, producing false errors and wasted retries. A common practice is to measure the dependency's latency distribution and set the timeout around its p99.9, accepting that about 0.1% of calls may time out spuriously. A deadline is an absolute or remaining time budget carried with the request through every hop. If the edge promises the user 800 ms, then a service three hops down should know that only, say, 300 ms remain and should not start a 500 ms query. Propagating remaining duration rather than a wall-clock timestamp avoids clock skew. Deadlines also enable cancellation: when the caller gives up, downstream work can be aborted instead of finishing work nobody will read. Without deadlines, a server can be busy completing requests whose callers have already timed out, which is exactly how overload turns into collapse.",
+   "in_this_design": "The gateway sets an 800 ms deadline; the ResilientClient computes each attempt's timeout as min(per-try policy, remaining minus a 20 ms margin) and rejects calls with less than the minimum useful time. Per-try timeouts are derived from each dependency's p99.9 (Pricing 150 ms, Payment 1.5 s on its own longer budget).",
+   "key_points": [
+    "Every network call needs a connect timeout, a per-try timeout and an overall deadline.",
+    "Set per-try timeouts from measured p99.9 latency plus headroom, then revisit as latency changes.",
+    "Propagate remaining time, not absolute timestamps, to avoid clock skew.",
+    "Fail fast when the remaining budget cannot cover useful work.",
+    "Cancellation on deadline expiry stops wasted downstream work."
+   ],
+   "qa": [
+    {
+     "q": "How do you choose a timeout value?",
+     "a": "From data: take the dependency's latency histogram under normal and peak load, pick around p99.9 so false timeouts are about 0.1%, make sure it fits the caller's own SLO budget, and re-derive it as the dependency changes. Never use library defaults like 30 s or infinite."
+    },
+    {
+     "q": "Why is a per-try timeout not enough on its own?",
+     "a": "With retries, three attempts of 300 ms each plus backoff could exceed the user-facing budget. An overall deadline bounds the whole operation and lets each hop know how much time really remains."
+    },
+    {
+     "q": "What goes wrong if downstream services ignore the deadline?",
+     "a": "They keep working on requests whose callers have already given up, burning capacity during exactly the moment of overload. That wasted work is a primary cause of cascading failure; propagating and honouring deadlines with cancellation fixes it."
+    }
+   ]
+  },
+  {
+   "name": "Retries with exponential backoff and jitter",
+   "explain": "Many failures are transient: a connection reset, a host being restarted, a brief leader election. Retrying turns these into invisible blips. But a retry is also extra load, and it arrives exactly when the dependency may already be struggling. Two techniques make retries safe. Exponential backoff waits longer after each failure (for example 50 ms, 100 ms, 200 ms up to a cap) so that a struggling server gets breathing room. Jitter adds randomness to that delay. Without jitter, thousands of clients that failed at the same instant all retry at the same instant again, forming synchronized waves that keep knocking the server over. Full jitter picks the delay uniformly between zero and the exponential ceiling; analyses of contention workloads show it completes work with far fewer total calls than plain exponential backoff. Equally important is deciding what is retryable. Retry connection failures, explicit 'unavailable' or overload responses, and timeouts on idempotent operations. Do not retry validation errors, authorization errors or business rejections, because they will fail the same way again. Respect server push-back such as HTTP 429 or 503 with a Retry-After header. Finally, retries must be limited: a small max attempts (2-3 total) and a time bound from the deadline.",
+   "in_this_design": "Max 3 attempts total, base 50 ms, cap 1 s, full jitter, Retry-After honoured if it fits the deadline, retries routed to a different host where possible, and only idempotent or idempotency-keyed calls are retried.",
+   "key_points": [
+    "Retry only transient, retryable errors and only idempotent or keyed operations.",
+    "Exponential backoff gives the server room; jitter breaks synchronization.",
+    "Full jitter (uniform 0..ceiling) is a strong default.",
+    "Honour Retry-After and other push-back signals.",
+    "Bound retries by both attempt count and remaining deadline."
+   ],
+   "qa": [
+    {
+     "q": "Why is jitter needed if we already back off exponentially?",
+     "a": "Backoff alone keeps clients in lockstep: everyone who failed at t=0 retries at 50 ms, 150 ms, 350 ms together. Jitter spreads those retries over the window, converting spikes into a smoother load the server can absorb."
+    },
+    {
+     "q": "Should you retry a timeout?",
+     "a": "Only if the operation is idempotent or carries an idempotency key, because a timeout means the outcome is unknown. For a read it is safe; for a payment capture without a key it could double-charge."
+    },
+    {
+     "q": "Why retry against a different host?",
+     "a": "If the failure is host-specific (bad node, full disk, GC pause) a retry to the same host likely fails again. Load balancers and meshes can exclude the previous host for the retry attempt."
+    }
+   ]
+  },
+  {
+   "name": "Retry budgets and retry amplification",
+   "explain": "In a call graph, each layer's retries multiply. If the gateway, the service and a client SDK each try 3 times, one user request can become 27 calls at the bottom layer. When the bottom dependency is failing, this amplification multiplies load by an order of magnitude precisely when capacity is lowest, which can keep a service down long after the original trigger is gone. This is a metastable failure: the system stays broken because of its own reaction. Two defences exist. First, retry at one layer only, usually the one closest to the failing dependency that also knows whether the call is idempotent; other layers pass errors through, perhaps with a 'do not retry' marker. Second, use a retry budget: a cap on retries as a fraction of normal traffic, commonly around 10%. A token bucket implements it simply: each request adds 0.1 token, each retry costs 1 token. In a healthy system the bucket stays full and isolated failures get retried. During a broad outage the bucket drains quickly and retries stop, so the dependency sees at most about 1.1x its normal load from this client instead of 3x or 27x. Server-side, a per-request retry counter or 'retry attempt' header lets the server shed retries first.",
+   "in_this_design": "Every ResilientClient keeps a per-dependency token bucket with ratio 0.1; the mesh is configured with max_attempts=1 for services that use the library so only one layer retries; amplification factor is a first-class dashboard metric.",
+   "key_points": [
+    "Retries at N layers with K attempts amplify load K^N.",
+    "Retry at one layer; pass errors through elsewhere.",
+    "A 10% retry budget bounds extra load to about 1.1x.",
+    "Token bucket: requests deposit 0.1, retries spend 1.",
+    "Metastable failures are sustained by the system's own retries."
+   ],
+   "qa": [
+    {
+     "q": "A dependency recovered 5 minutes ago but errors persist. What do you suspect?",
+     "a": "A retry storm sustaining overload (metastable failure): retries plus queued work keep the dependency saturated. Check amplification factor and retry ratio, disable retries or open breakers to drain, then restore with budgets in place."
+    },
+    {
+     "q": "Why is a per-request max attempts limit not enough?",
+     "a": "It bounds one request's retries but not the aggregate. If every request fails, 3 attempts still means 3x load. A budget bounds the fleet-wide ratio, which is what the dependency experiences."
+    },
+    {
+     "q": "Where should retries live in a 4-layer stack?",
+     "a": "Usually the layer right above the failing dependency, since it sees the precise error and knows idempotency. Upper layers should not retry the same failure; the edge may retry only on connection-level failures before any work happened."
+    }
+   ]
+  },
+  {
+   "name": "Circuit breaker pattern",
+   "explain": "A circuit breaker sits in front of calls to a dependency and tracks recent outcomes. In the CLOSED state calls flow normally while the breaker counts failures and slow calls in a sliding window, by count (last 100 calls) or by time (last 10 seconds). When the failure rate crosses a threshold, and enough calls were observed to make the rate meaningful, the breaker trips to OPEN. While open, calls fail immediately without touching the network. This saves the caller's threads and latency budget and, just as importantly, removes load from the struggling dependency so it can recover. After a cool-down period the breaker moves to HALF-OPEN and lets a small number of trial calls through. If they succeed it closes; if they fail it opens again, often with a longer wait. The pattern was popularised by Michael Nygard's Release It! and by Netflix Hystrix. Modern breakers also count slow calls, because a dependency that answers in 5 seconds is effectively down for a caller with an 800 ms SLO. Breakers are usually local to each caller process, which avoids a shared coordination dependency at the cost of each pod discovering failure separately. They pair with fallbacks: an open breaker should trigger a defined degraded behaviour rather than a raw error.",
+   "in_this_design": "Per dependency and per hot endpoint: 10 s window, minimum 20 calls, open at 50% failures or 80% slow calls (slower than 2x p99), open for 30 s with jitter, 5 half-open probes, close on 4 successes. Envoy outlier ejection handles single bad hosts first.",
+   "key_points": [
+    "Closed -> Open on failure or slow-call rate; Open fails fast; Half-open probes.",
+    "Require a minimum call volume before tripping.",
+    "Count slow calls, not just errors.",
+    "Do not count client errors (4xx) as failures.",
+    "Pair every breaker with a defined fallback."
+   ],
+   "qa": [
+    {
+     "q": "Why do we need a breaker if we already have timeouts?",
+     "a": "Timeouts bound each call but every call still waits the full timeout and still sends load. With a sick dependency at 20k RPS, every request pays 150 ms and the dependency gets hammered. An open breaker fails in microseconds and stops the load."
+    },
+    {
+     "q": "Should the breaker be shared across pods?",
+     "a": "Usually not. Shared state adds a dependency and latency in the hot path. Local breakers converge within seconds because every pod sees the same failure. Shared or centralized control is used for manual overrides only."
+    },
+    {
+     "q": "How do you avoid the breaker cutting off a mostly healthy service?",
+     "a": "Use host-level outlier ejection first, keep breakers per endpoint for heterogeneous APIs, require minimum call volume, and exclude 4xx. Alert on breaker opens so humans see it."
+    }
+   ]
+  },
+  {
+   "name": "Bulkheads and concurrency limits (Little's law)",
+   "explain": "A bulkhead, named after the watertight compartments in a ship, isolates resources so that a failure in one part cannot sink the whole. In a service, the shared resources are threads, connections and memory. If all outbound calls share one pool of 200 threads, a single slow dependency can occupy all 200 and the service stops answering even requests that never touch that dependency. A bulkhead gives each dependency its own limit, either a dedicated thread pool or a semaphore that caps in-flight calls. When the limit is reached, new calls are rejected immediately rather than queued. Sizing comes from Little's law: the average number of items in a system equals arrival rate times time in system. At 50 calls per second and 40 ms latency you need about 2 concurrent slots; setting a cap of 20 leaves 10x headroom for latency spikes while still bounding damage when latency jumps to seconds. Adaptive concurrency limiters (for example, gradient or AIMD algorithms used by Netflix's concurrency-limits library and Envoy's adaptive concurrency filter) adjust the limit automatically by watching latency, shrinking it when latency rises. Bulkheads are equally useful server-side: separate pools for critical and non-critical request types.",
+   "in_this_design": "Per pod: Pricing 20, Inventory 20, Promotions 10, Payment 50 (longer latency). Rejections return BulkheadFull immediately and trigger the fallback; the main request thread pool is never consumed by one dependency.",
+   "key_points": [
+    "Isolate pools per dependency so one slow dependency cannot exhaust shared threads.",
+    "Size with Little's law: in-flight = rate x latency, then add headroom.",
+    "Reject fast when full; do not queue unboundedly.",
+    "Adaptive limits track latency and shrink under stress.",
+    "Use server-side bulkheads for priority classes too."
+   ],
+   "qa": [
+    {
+     "q": "Semaphore or thread pool bulkhead?",
+     "a": "Semaphore is cheaper and works with async/non-blocking clients; a thread pool also isolates blocking calls and allows a hard timeout on the thread, at the cost of context switches. Modern async stacks mostly use semaphores."
+    },
+    {
+     "q": "Why not queue calls when the bulkhead is full?",
+     "a": "Queuing adds latency that likely exceeds the deadline anyway, holds memory and hides the overload. Fast rejection lets the fallback run and signals pressure clearly."
+    },
+    {
+     "q": "How do you size the bulkhead for Payment with p99 300 ms at 50 RPS per pod?",
+     "a": "Little's law gives 50 x 0.3 = 15 in flight at p99; cap at around 50 to allow spikes while ensuring a hang cannot hold more than 50 of the pod's 200 threads."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and idempotency keys",
+   "explain": "An operation is idempotent if doing it twice has the same effect as doing it once. GET, PUT of a full resource and DELETE are naturally idempotent; 'charge this card 500 rupees' is not. Retries are only safe for idempotent operations, because a timeout leaves the caller not knowing whether the first attempt took effect: the request may have been lost, or processed with the response lost. An idempotency key turns a non-idempotent operation into an idempotent one. The client generates a unique key for the logical operation (not per attempt) and sends it with every attempt. The server, before doing work, atomically claims the key in a store (insert if absent). If the key is new it does the work and stores the result against the key. If the key exists and is complete, it returns the stored result without redoing the work. If the key exists and is still in progress, it returns a conflict so the client can wait and poll. The server should also hash the request body and reject a reused key with a different body. Keys expire after a retention window like 24 hours. This is how payment APIs such as Stripe make retries safe, and it is the practical way to get effectively-once outcomes over at-least-once delivery.",
+   "in_this_design": "Payment capture and order creation calls carry an Idempotency-Key derived from order id; Payment stores key -> result in a KV with 24 h TTL using conditional put; the ResilientClient refuses to retry any non-idempotent call that lacks a key.",
+   "key_points": [
+    "A timeout means unknown outcome; only idempotent operations are safe to retry.",
+    "One key per logical operation, reused across attempts.",
+    "Claim the key atomically before doing work; store the result.",
+    "Reject key reuse with a different payload.",
+    "At-least-once delivery plus idempotency gives effectively-once outcomes."
+   ],
+   "qa": [
+    {
+     "q": "Who generates the key, client or server?",
+     "a": "The client, before the first attempt, because only the client knows that two attempts belong to the same logical operation. A server-generated id cannot deduplicate a request whose response was lost."
+    },
+    {
+     "q": "What if two attempts arrive concurrently?",
+     "a": "The atomic insert-if-absent lets one win; the other sees IN_PROGRESS and gets 409, then polls or retries later and receives the stored result."
+    },
+    {
+     "q": "Where should the key be stored for strongest guarantees?",
+     "a": "In the same database transaction as the side effect (for example the payments table) so the record and the effect commit together. A separate cache store is faster but leaves a small window if the process crashes between effect and record."
+    }
+   ]
+  },
+  {
+   "name": "Load shedding and backpressure (server side)",
+   "explain": "Client-side resilience assumes clients behave. Servers must also protect themselves, because some clients will not, and because legitimate traffic can exceed capacity during a sale. Load shedding means deliberately rejecting some requests early and cheaply when the server is near saturation, so that the requests it does accept complete within their deadlines. The alternative, accepting everything, makes queues grow, latency rise past every caller's timeout, and goodput (useful completed work) fall to zero even though the server is 100% busy. Signals to shed on include in-flight requests, queue length, queueing time (CoDel-style: shed when requests wait longer than a target such as 5-10 ms consistently), CPU, or a concurrency limit. Shedding should be by priority: drop prefetch and analytics before checkout. Backpressure is the broader idea of propagating 'slow down' to producers: HTTP 429/503 with Retry-After, gRPC RESOURCE_EXHAUSTED, or bounded queues that block. Clients that receive push-back should back off and count it toward breaker decisions. Google's SRE guidance also describes client-side adaptive throttling, where clients start rejecting locally when the ratio of requests to accepted requests rises, saving the server the cost of even rejecting.",
+   "in_this_design": "Each dependency runs an admission controller with a concurrency limit and priority classes (checkout > browse > batch), returns 503 with Retry-After when shedding, and drops requests whose propagated deadline has already passed. Clients treat push-back as a breaker failure signal and honour Retry-After.",
+   "key_points": [
+    "Accepting everything under overload drives goodput toward zero.",
+    "Shed early and cheaply, by priority.",
+    "Use queueing time or concurrency, not just CPU, as the signal.",
+    "Return explicit push-back (429/503 + Retry-After) so clients back off.",
+    "Drop requests whose deadline already expired."
+   ],
+   "qa": [
+    {
+     "q": "Why can't client-side breakers alone protect a dependency?",
+     "a": "Not every client uses the library, some are batch jobs or partners, and new traffic spikes are legitimate. The server is the only place that sees total load, so it must shed independently."
+    },
+    {
+     "q": "What is the difference between throughput and goodput under overload?",
+     "a": "Throughput counts requests processed; goodput counts those that completed in time to be useful. An overloaded server can show high throughput while goodput is near zero because callers already timed out."
+    },
+    {
+     "q": "Why shed on queueing delay rather than queue length?",
+     "a": "Delay directly measures harm to callers and adapts to varying request costs; a queue of 100 cheap requests may be fine while 10 expensive ones are not."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Where to implement resilience",
+   "options": "Service mesh sidecar vs client library vs both",
+   "choice": "Both: mesh for connect timeouts, outlier ejection and default policies; library at call sites that need business fallbacks and idempotency.",
+   "why": "The sidecar is language-agnostic and centrally configured but lacks business context; the library knows which calls are safe to retry and what the fallback is. Configure retries in only one of them per call."
+  },
+  {
+   "decision": "Timeout value",
+   "options": "Tight (p99) vs loose (several times p99.9)",
+   "choice": "About p99.9 plus headroom, bounded by remaining deadline.",
+   "why": "Tight timeouts create false failures and retries at peak; loose ones let slowness consume threads. p99.9 gives about 0.1% false timeouts with bounded resource holding."
+  },
+  {
+   "decision": "Breaker scope",
+   "options": "Per dependency vs per endpoint vs per host",
+   "choice": "Per host outlier ejection plus per dependency breaker, per endpoint for heterogeneous APIs.",
+   "why": "Per host handles bad nodes without cutting off the service; per endpoint stops a slow report API from blocking a fast lookup API; per dependency is the simple default."
+  },
+  {
+   "decision": "Breaker state local vs shared",
+   "options": "In-process local state vs shared via Redis",
+   "choice": "Local.",
+   "why": "Shared state adds latency and a new failure point to every call; local breakers all see the same failure and converge within seconds."
+  },
+  {
+   "decision": "Retry limit model",
+   "options": "Fixed max attempts only vs max attempts plus budget",
+   "choice": "Max 3 attempts plus a 10% token budget.",
+   "why": "Max attempts bounds latency for one request; the budget bounds aggregate amplification during broad outages."
+  },
+  {
+   "decision": "Hedged requests",
+   "options": "Never vs for idempotent reads after p95",
+   "choice": "Enabled for selected idempotent reads, capped at 5% extra load and disabled when the breaker is not closed.",
+   "why": "Cuts tail latency significantly for fan-out reads at low cost, but must not add load during incidents."
+  },
+  {
+   "decision": "Fallback on payment failure",
+   "options": "Fail checkout vs queue for later capture vs fake success",
+   "choice": "Fail fast with a clear retryable message, or authorize-now-capture-later where the payment provider supports it.",
+   "why": "Money correctness beats availability; never show success for a payment that did not happen."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Dependency hard down (connection refused)",
+   "behavior": "Attempts fail in milliseconds; breaker opens within the 10 s window; fallback served; retries stop as the budget drains; half-open probes detect recovery."
+  },
+  {
+   "failure": "Dependency slow (p99 goes from 40 ms to 3 s)",
+   "behavior": "Per-try timeout 150 ms cuts each call; slow-call rate trips the breaker; bulkhead caps in-flight at 20 so caller threads stay free."
+  },
+  {
+   "failure": "Policy registry unavailable",
+   "behavior": "Clients keep last good policy in memory and on disk; defaults compiled in if never fetched; alert but no traffic impact."
+  },
+  {
+   "failure": "Bad policy pushed (timeouts 10 ms)",
+   "behavior": "Staged rollout shows error spike in the 1% cohort; automatic rollback on SLO regression; manual override API with TTL."
+  },
+  {
+   "failure": "Idempotency store unavailable",
+   "behavior": "Payment rejects keyed writes with 503 rather than risk duplicates; reads continue; breaker opens on Payment and checkout shows a retry-later message."
+  },
+  {
+   "failure": "Retry storm after a network partition heals",
+   "behavior": "Jitter spreads retries; budget caps them; servers shed by priority and expired deadline; amplification alert pages on-call."
+  },
+  {
+   "failure": "Breaker flapping (open/close every 30 s)",
+   "behavior": "Exponential open duration up to 2 min, jitter, and alert on transitions per minute; investigate partial failure or per-host issue."
+  }
+ ],
+ "metrics": [
+  "Per dependency: request rate, success rate, p50/p99/p99.9 latency by outcome.",
+  "Retry ratio (retries / requests) and retry budget exhaustion count.",
+  "Amplification factor: downstream calls per upstream request.",
+  "Circuit breaker state gauge and transitions per minute; time spent open.",
+  "Bulkhead in-flight and rejection counts.",
+  "Deadline exceeded counts per hop and remaining-budget distribution on arrival.",
+  "Fallback invocation rate and stale-data age served.",
+  "Server-side shed rate by priority class and Retry-After values issued.",
+  "Idempotency key hit rate (replays) and key-conflict 409s.",
+  "SLO burn rate for checkout availability and latency."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just set a long timeout and retry 5 times to maximize success?",
+   "a": "Because each waiting call holds a thread and each retry adds load. Under a real outage this exhausts the caller and multiplies load on the dependency, converting a partial failure into a full one and delaying recovery. Short bounded timeouts, few retries and a budget maximize overall success."
+  },
+  {
+   "q": "Your breaker is local per pod. With 400 pods, isn't recovery noisy?",
+   "a": "Each pod sends at most 5 probes, so 2,000 probes over a jittered window, which is small compared with normal 20k RPS. The benefit is no shared state on the hot path. If needed, a central override can force breakers open or closed fleet-wide."
+  },
+  {
+   "q": "How do you test that all this works?",
+   "a": "Unit tests for the state machine; integration tests with fault injection (latency, errors, resets) in staging; continuous chaos in a canary cell in production; game days before sale events where we kill or slow each dependency and verify SLOs and alerts."
+  },
+  {
+   "q": "How do you prevent the mesh and the library both retrying?",
+   "a": "Policy: library-owned calls set mesh retries to zero via route config, enforced by a linter that checks both configs; we also tag requests with an attempt header so we can detect double retrying in traces."
+  },
+  {
+   "q": "What about hedging versus retrying?",
+   "a": "Retrying waits for failure; hedging sends a second copy after a delay (say p95) and takes the first answer. Hedging cuts tail latency for idempotent reads, at the cost of extra load, so we cap it at a few percent and disable it when the dependency is unhealthy."
+  },
+  {
+   "q": "How would you roll this out across 300 services?",
+   "a": "Ship the library and sidecar defaults (connect timeout, outlier ejection) first since they need no code change, then onboard tier-1 services with explicit policies and fallbacks, track adoption as a platform OKR, and block new services without a declared policy in CI."
+  },
+  {
+   "q": "A dependency returns 200 but with garbage or empty data. Does your breaker help?",
+   "a": "Not by default. Add response validation in the client that classifies semantic failures (empty price list) as failures for breaker purposes, and alert on content-level metrics."
+  }
+ ],
+ "key_points": [
+  "The danger is not the failing call, it is how every caller reacts: retries and missing timeouts turn partial failures into total ones.",
+  "Every call gets a connect timeout, a per-try timeout from p99.9, and a propagated deadline.",
+  "Retry only retryable errors on idempotent or keyed calls, max 3 attempts, exponential backoff with full jitter.",
+  "Retry at one layer and cap aggregate retries with a 10% budget; watch the amplification factor.",
+  "Circuit breakers on failure and slow-call rate with minimum volume; open fails fast and triggers a fallback.",
+  "Bulkheads sized by Little's law keep one slow dependency from eating all threads.",
+  "Idempotency keys make write retries safe: client generates once, server claims atomically.",
+  "Servers must shed load by priority and push back; client politeness is not enough.",
+  "Prove it with fault injection and game days, not by reading config."
+ ],
+ "quiz": [
+  {
+   "q": "Order service calls Pricing through a gateway retry (3), service retry (3) and SDK retry (3). Pricing is fully down. Roughly how many Pricing calls does one user request cause?",
+   "options": [
+    "3",
+    "27",
+    "9",
+    "6"
+   ],
+   "answer": 1,
+   "why": "Retries multiply across layers: 3 x 3 x 3 = 27. 9 is tempting if you forget one layer, but every layer independently retries the failures it sees."
+  },
+  {
+   "q": "What is the main reason to add jitter to exponential backoff?",
+   "options": [
+    "To break synchronization so many clients do not retry at the same instant",
+    "To make each individual retry succeed more often",
+    "To reduce the number of retry attempts per request",
+    "To satisfy TCP congestion control"
+   ],
+   "answer": 0,
+   "why": "Jitter de-correlates clients that failed together so retries spread out. It does not change the per-request attempt count, which is the tempting but wrong answer."
+  },
+  {
+   "q": "A retry budget of 10% implemented as a token bucket (0.1 token per request, 1 per retry). During a total outage, what extra load do retries add once the bucket drains?",
+   "options": [
+    "About 3x",
+    "About 2x",
+    "Unlimited",
+    "About 10% of request rate"
+   ],
+   "answer": 3,
+   "why": "Once drained, retries are only funded by the 0.1 deposited per request, so they cap at about 10% extra. 3x would be max attempts without a budget."
+  },
+  {
+   "q": "Which response should NOT be retried?",
+   "options": [
+    "503 Service Unavailable with Retry-After",
+    "Connection reset before the request was sent",
+    "400 Bad Request due to a validation error",
+    "gRPC UNAVAILABLE"
+   ],
+   "answer": 2,
+   "why": "A validation error will fail the same way every time. 503 with Retry-After is explicit push-back that invites a later retry, so it is retryable if the deadline allows."
+  },
+  {
+   "q": "A payment capture times out after 1.5 s. What is the correct client behaviour?",
+   "options": [
+    "Retry with a new idempotency key so the server treats it as fresh",
+    "Retry with the same idempotency key, or query status first",
+    "Never retry; mark the order as failed",
+    "Retry without a key since the first attempt failed"
+   ],
+   "answer": 1,
+   "why": "A timeout means the outcome is unknown; reusing the same key lets the server return the original result. A new key is the dangerous option because it can create a second capture."
+  },
+  {
+   "q": "Why should a breaker require a minimum number of calls in its window before evaluating failure rate?",
+   "options": [
+    "So 2 failures out of 3 calls on a low-traffic endpoint do not trip it",
+    "To reduce memory use",
+    "Because half-open needs that many probes",
+    "To make the breaker close faster"
+   ],
+   "answer": 0,
+   "why": "Small samples give noisy rates; a minimum volume avoids spurious trips. It is unrelated to half-open probe count."
+  },
+  {
+   "q": "Pricing p99 jumps from 40 ms to 3 s but it returns no errors. Which mechanism stops caller threads from being exhausted?",
+   "options": [
+    "Retry budget",
+    "Error-rate-only circuit breaker",
+    "Exponential backoff",
+    "Per-try timeouts plus a bulkhead (and a slow-call breaker)"
+   ],
+   "answer": 3,
+   "why": "Without errors, an error-rate breaker never trips; timeouts bound each wait, the bulkhead caps in-flight calls, and a slow-call threshold opens the breaker. Backoff only applies after a failure."
+  },
+  {
+   "q": "By Little's law, at 50 requests/s per pod and 40 ms average latency, how many calls are in flight on average?",
+   "options": [
+    "0.8",
+    "20",
+    "2",
+    "125"
+   ],
+   "answer": 2,
+   "why": "In-flight = rate x latency = 50 x 0.04 = 2. 20 is the bulkhead limit we choose to leave headroom, not the average concurrency."
+  },
+  {
+   "q": "Why propagate the remaining time budget rather than an absolute deadline timestamp?",
+   "options": [
+    "It is smaller on the wire",
+    "It avoids errors from clock skew between hosts",
+    "HTTP does not allow timestamps in headers",
+    "It allows longer deadlines downstream"
+   ],
+   "answer": 1,
+   "why": "Different hosts' wall clocks disagree; a relative duration converted to each host's monotonic clock is robust. Wire size is trivial either way."
+  },
+  {
+   "q": "Which statement about circuit breaker state is best for a 400-pod service?",
+   "options": [
+    "Each pod keeps local breaker state; pods converge because they see the same failures",
+    "Breaker state should be stored in Redis so all pods agree",
+    "Only one pod should hold the breaker and others ask it",
+    "Breakers should live only at the API gateway"
+   ],
+   "answer": 0,
+   "why": "Local state avoids adding a network dependency to every call. Shared Redis state sounds consistent but introduces latency and a new single point of failure."
+  },
+  {
+   "q": "After a dependency recovers, errors continue for 10 minutes. Which is the most likely cause?",
+   "options": [
+    "DNS caching",
+    "Too few retries",
+    "Breakers stuck closed",
+    "A metastable retry storm with queued work keeping it saturated"
+   ],
+   "answer": 3,
+   "why": "Self-sustaining overload from retries and backlog is the classic metastable failure. Breakers stuck closed would increase load but the root driver is the retry and queue feedback loop."
+  },
+  {
+   "q": "Half-open state in a breaker exists to:",
+   "options": [
+    "Retry failed calls from the open period",
+    "Send half the traffic to the dependency",
+    "Allow a small number of trial calls to detect recovery without a flood",
+    "Switch to a backup dependency"
+   ],
+   "answer": 2,
+   "why": "Half-open admits a few probes. 'Send half the traffic' is a common misreading of the name and would risk re-overloading a recovering service."
+  },
+  {
+   "q": "Which classification is correct for a breaker counting failures?",
+   "options": [
+    "Count 404 Not Found as failure",
+    "Count 5xx, timeouts and connection errors as failures; 4xx as success",
+    "Count only timeouts",
+    "Count every non-200 as failure"
+   ],
+   "answer": 1,
+   "why": "4xx reflects caller input, not dependency health. Counting every non-200 would trip breakers on legitimate not-found results."
+  },
+  {
+   "q": "Where is the best single layer to retry in a deep call graph?",
+   "options": [
+    "At the layer immediately above the failing dependency that knows the call's idempotency",
+    "Only at the edge gateway",
+    "At every layer for safety",
+    "Only in the database driver"
+   ],
+   "answer": 0,
+   "why": "The nearest layer sees the precise error and idempotency semantics, and retrying there avoids multiplication. Edge-only retries replay whole request trees, which is far more expensive."
+  },
+  {
+   "q": "Hedged requests are most appropriate for:",
+   "options": [
+    "Payment captures",
+    "Writes with idempotency keys to speed them up",
+    "All requests during an outage",
+    "Idempotent reads in a fan-out, sent after the p95 delay, capped at a few percent"
+   ],
+   "answer": 3,
+   "why": "Hedging trades a little extra load for lower tail latency on safe reads. During outages it adds load, so it should be disabled then."
+  },
+  {
+   "q": "A 30 s default HTTP timeout on a dependency, 200 worker threads, 50 RPS per pod all touching that dependency. If it hangs, roughly how fast are threads exhausted?",
+   "options": [
+    "About 200 seconds",
+    "About 30 seconds",
+    "About 4 seconds",
+    "Never, threads are released at 30 s"
+   ],
+   "answer": 2,
+   "why": "200 threads / 50 new requests per second = 4 s until all are blocked. Threads release only after 30 s, which is too late."
+  },
+  {
+   "q": "A server under overload should preferably reject:",
+   "options": [
+    "The oldest requests in the queue first",
+    "Requests with expired deadlines and low-priority classes first",
+    "Requests randomly with equal probability",
+    "Only requests from new clients"
+   ],
+   "answer": 1,
+   "why": "Expired-deadline work is wasted, and low-priority traffic protects checkout. Random shedding is fair but drops valuable checkout calls just as often."
+  },
+  {
+   "q": "Which is the strongest place to store the idempotency record for a payment?",
+   "options": [
+    "Same DB transaction as the payment effect",
+    "A separate cache with 1 h TTL",
+    "Client memory",
+    "Application log file"
+   ],
+   "answer": 0,
+   "why": "Committing record and effect atomically eliminates the crash window. A separate cache is faster but a crash between effect and record can still produce a duplicate."
+  },
+  {
+   "q": "What does 'slow-call rate' add to a breaker?",
+   "options": [
+    "It is used only in half-open",
+    "It slows the breaker's reaction to avoid flapping",
+    "It measures how slowly the breaker closes",
+    "It opens the breaker when many calls exceed a latency threshold even without errors"
+   ],
+   "answer": 3,
+   "why": "A dependency answering in seconds is effectively down for an 800 ms SLO; slow-call rate captures that. It does not slow the breaker."
+  },
+  {
+   "q": "The policy registry is down for 20 minutes. What should clients do?",
+   "options": [
+    "Block all outbound calls",
+    "Disable timeouts",
+    "Use last known good policy and compiled defaults",
+    "Retry the registry with no backoff"
+   ],
+   "answer": 2,
+   "why": "Config systems must not be in the request path; static stability means keep running on cached config. Hammering the registry without backoff makes its outage worse."
+  },
+  {
+   "q": "What is the main benefit of an outlier-ejection layer before a dependency-wide breaker?",
+   "options": [
+    "It replaces retries",
+    "It removes a few bad hosts without cutting off the healthy majority",
+    "It enforces deadlines",
+    "It reduces config"
+   ],
+   "answer": 1,
+   "why": "Per-host ejection handles node-local faults; a dependency-wide breaker would wrongly stop traffic to healthy hosts. It does not replace retries."
+  },
+  {
+   "q": "Which combination best bounds the latency a user sees for one request?",
+   "options": [
+    "Overall deadline propagated from the edge",
+    "Retry budget alone",
+    "Max attempts alone",
+    "Bulkhead size"
+   ],
+   "answer": 0,
+   "why": "The deadline bounds total time including all retries and hops. A retry budget bounds aggregate load, not a single request's latency, which is the tempting confusion."
+  },
+  {
+   "q": "Full jitter backoff with base 50 ms and cap 1 s, attempt 3. The delay is drawn from:",
+   "options": [
+    "Exactly 200 ms",
+    "Uniform 0 to 1 s",
+    "200 ms plus or minus 10%",
+    "Uniform 0 to 200 ms"
+   ],
+   "answer": 3,
+   "why": "Ceiling = 50 x 2^(3-1) = 200 ms; full jitter picks uniformly in [0, 200]. Plus or minus 10% is 'equal-ish' jitter, which keeps more synchronization."
+  },
+  {
+   "q": "Why is retrying a non-idempotent call without a key dangerous even when the first attempt returned 503?",
+   "options": [
+    "503 always means the work was done",
+    "503 cannot be retried by HTTP spec",
+    "Some proxies return 503 after forwarding, so work may have happened",
+    "It is not dangerous"
+   ],
+   "answer": 2,
+   "why": "An intermediary may have forwarded the request before failing, so the effect may exist. The claim that 503 always means work was done is equally wrong; it is unknown, hence the need for a key."
+  }
+ ],
+ "references": [
+  {
+   "title": "AWS Builders' Library: Timeouts, retries, and backoff with jitter",
+   "url": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter"
+  },
+  {
+   "title": "Circuit breaker design pattern (Wikipedia)",
+   "url": "https://en.wikipedia.org/wiki/Circuit_breaker_design_pattern"
+  },
+  {
+   "title": "Netflix Hystrix wiki: How it works",
+   "url": "https://github.com/Netflix/Hystrix/wiki/Architecture"
+  },
+  {
+   "title": "Google SRE book: Addressing Cascading Failures",
+   "url": "https://sre.google/sre-book/addressing-cascading-failures/"
+  }
+ ]
+}

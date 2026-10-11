@@ -1,0 +1,1241 @@
+{
+ "slug": "payment-system",
+ "title": "Design a Payment System (e-commerce pay-in and pay-out)",
+ "prompt": "Design a payment system.",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "A payment system moves money between buyers, the marketplace and sellers through external payment service providers (PSPs) that time out, retry, and report results late. The traffic is modest; the difficulty is correctness: never charge twice, never lose a payment, and be able to prove where every rupee went. The design rests on idempotency keys, an explicit payment state machine, a double-entry ledger, the outbox pattern, and daily reconciliation against the PSP's settlement files.",
+ "framework": {
+  "clarify": [
+   "Scope: pay-in (buyer checkout), pay-out (seller settlement), refunds - all three, or only checkout? Assume all three, with checkout as the critical path.",
+   "Do we process cards ourselves or use PSPs (Stripe, Adyen, Razorpay, Juspay)? Assume external PSPs; we never store raw card numbers (PCI scope minimised via hosted fields and network tokens).",
+   "Payment methods: cards, UPI, net banking, wallets? Assume cards and UPI first; UPI is asynchronous (collect/intent with webhook confirmation).",
+   "Scale: assume 10 million orders per day, peak sale-day 5,000 payments/sec for short windows, average ~120/sec.",
+   "Consistency: money must be exactly right - every payment ends in a known terminal state and every movement is recorded in a ledger.",
+   "Latency: checkout payment p99 under 3 s excluding user authentication (3-D Secure, UPI PIN).",
+   "Multi-PSP: do we need routing and failover across PSPs? Assume yes, by success rate and cost.",
+   "Settlement: marketplace collects and pays sellers T+N days after delivery, net of commission and refunds."
+  ],
+  "design": [
+   "Baseline: checkout calls one PSP synchronously and marks the order paid - then show the failure cases (timeouts, duplicate clicks, lost webhooks).",
+   "Payment service with an idempotency key per checkout attempt and a persisted state machine: CREATED -> PENDING -> AUTHORIZED -> CAPTURED / FAILED, plus REFUNDED.",
+   "PSP gateway layer: adapters per PSP, smart routing, request signing, timeouts, retries only for safe errors, webhook ingestion with signature checks.",
+   "Double-entry ledger: append-only journal where every money movement is balanced debits and credits across accounts (buyer clearing, PSP receivable, seller payable, revenue).",
+   "Outbox pattern: state change and the event to publish are written in one DB transaction; a relay publishes to Kafka for order, ledger and notification consumers.",
+   "Reconciliation: daily match of internal ledger against PSP settlement files and bank statements; status-check jobs for stuck PENDING payments.",
+   "Critical path: client -> order service -> payment service (idempotency check, create record) -> PSP (hosted page / UPI intent) -> webhook -> state AUTHORIZED/CAPTURED -> outbox -> ledger and order."
+  ],
+  "defend": [
+   "Bottleneck is the PSP, not us: protect with per-PSP circuit breakers and bulkheads, route around degraded PSPs by success rate.",
+   "Scale writes: shard payments and ledger by merchant/account id; ledger entries are append-only inserts; hot accounts (marketplace revenue) use sub-accounts.",
+   "Scale reads: payment status served from primary for the payer's own session (read-your-writes), replicas and caches for dashboards.",
+   "Failure: PSP timeout -> mark UNKNOWN, never blindly re-charge; query PSP by our idempotency key/reference, then resolve; webhooks + polling + reconciliation as three layers.",
+   "Exactly-once effect: idempotency keys at our API and at the PSP, unique constraints in the DB, idempotent consumers keyed by event id.",
+   "Measure: authorization success rate by PSP/method/bank, stuck-in-PENDING count and age, reconciliation mismatches, duplicate-charge count (must be 0), ledger imbalance (must be 0)."
+  ],
+  "script": "Payments are a correctness problem more than a scale problem, so I will start by clarifying scope - checkout pay-in, refunds and seller pay-outs through external PSPs, cards and UPI, about 10 million orders a day with sale-day spikes near 5,000 a second. The naive version calls the PSP and marks the order paid; it double-charges on retries and loses payments on timeouts. So my core is a payment service with an idempotency key for every attempt and a persisted state machine, a PSP gateway with routing and circuit breakers, a double-entry ledger as the source of truth for money, and the outbox pattern so state changes and events never diverge. A payment that times out goes to UNKNOWN and is resolved by querying the PSP, by webhooks, and finally by daily reconciliation against settlement files. Then I will defend: retries without double charges, PSP outages, hot ledger accounts, and the two metrics that must always be zero - duplicate charges and ledger imbalance."
+ },
+ "brd": {
+  "problem": "The marketplace's checkout conversion and seller trust depend on payments that just work. Today failures, double charges and stuck payments create support tickets, chargebacks and manual finance reconciliation. We need a payment platform that maximises successful payments, never charges twice, pays sellers accurately and on time, and gives finance an auditable record of every money movement.",
+  "goals": [
+   "Maximise payment success rate (authorisation rate) through smart PSP routing and retries of soft declines.",
+   "Zero duplicate charges and zero lost payments.",
+   "Every money movement recorded in a balanced, immutable double-entry ledger.",
+   "Automated daily reconciliation with PSPs and banks; mismatches under 0.01 percent and resolved within 2 days.",
+   "Seller pay-outs on schedule (T+N) with correct commission and refund netting.",
+   "Stay compliant: PCI-DSS scope minimised, RBI card tokenisation rules, data localisation for Indian payment data."
+  ],
+  "non_goals": [
+   "Becoming a card acquirer or running our own card network connectivity.",
+   "Lending, BNPL credit decisioning, or wallets with stored value (separate regulated products).",
+   "Cross-border multi-currency settlement in phase 1.",
+   "Full fraud-model development (we integrate a risk service)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Buyers",
+    "needs": "Fast, familiar payment methods, no double charges, quick refunds."
+   },
+   {
+    "who": "Sellers",
+    "needs": "Accurate, predictable pay-outs and clear statements."
+   },
+   {
+    "who": "Finance and accounting",
+    "needs": "Ledger that ties to bank statements; audit trail; revenue recognition."
+   },
+   {
+    "who": "Risk, compliance and legal",
+    "needs": "PCI-DSS, RBI guidelines, AML/KYC for sellers, dispute handling."
+   },
+   {
+    "who": "Order and checkout teams",
+    "needs": "Simple API, clear payment states, events they can trust."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Payment success rate (attempts reaching authorised/captured)",
+    "target": ">= 95 percent for cards, >= 97 percent for UPI excluding user drop-off"
+   },
+   {
+    "metric": "Duplicate charges",
+    "target": "0"
+   },
+   {
+    "metric": "Payments stuck in non-terminal state > 1 hour",
+    "target": "< 0.01 percent"
+   },
+   {
+    "metric": "Reconciliation match rate",
+    "target": ">= 99.99 percent auto-matched daily"
+   },
+   {
+    "metric": "Ledger imbalance",
+    "target": "0 (sum of debits equals sum of credits, always)"
+   },
+   {
+    "metric": "Seller pay-out on time",
+    "target": ">= 99.9 percent"
+   }
+  ],
+  "constraints": [
+   "Card data must not touch our servers in raw form; use PSP-hosted fields and network/RBI tokens.",
+   "PSPs have their own rate limits, latencies (300 ms - 3 s) and outages.",
+   "UPI and many bank flows are asynchronous; final status may arrive minutes later.",
+   "Regulatory: RBI data localisation, refund timelines, audit retention of 8-10 years for financial records."
+  ],
+  "risks": [
+   {
+    "risk": "Retries after timeouts double-charge customers.",
+    "mitigation": "Idempotency keys end to end, UNKNOWN state with status query before any retry."
+   },
+   {
+    "risk": "A PSP outage on sale day tanks conversion.",
+    "mitigation": "Multi-PSP routing with circuit breakers and pre-negotiated capacity."
+   },
+   {
+    "risk": "Ledger and PSP disagree and nobody notices.",
+    "mitigation": "Daily automated reconciliation with alerting and an exceptions queue."
+   },
+   {
+    "risk": "Fraud and chargebacks.",
+    "mitigation": "Risk scoring before authorisation, 3-D Secure, velocity limits, dispute workflow."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Buyer",
+    "needs": "Pay with card or UPI in a few taps; see a clear success or failure; get refunds."
+   },
+   {
+    "name": "Seller",
+    "needs": "See payable balance, pay-out schedule, deductions, and bank transfer status."
+   },
+   {
+    "name": "Finance operator",
+    "needs": "Reconciliation dashboard, exceptions queue, manual adjustment with approvals."
+   },
+   {
+    "name": "Checkout service (internal client)",
+    "needs": "Idempotent create/confirm APIs and reliable payment events."
+   }
+  ],
+  "user_stories": [
+   "As a buyer, I want to tap Pay twice by accident and be charged once so that I trust the app.",
+   "As a buyer, I want to see 'payment processing' rather than a failure when the bank is slow so that I do not pay again.",
+   "As a buyer, I want refunds to reach my original method within the regulated timeline so that I am not out of pocket.",
+   "As a seller, I want weekly pay-outs net of commission and returns so that my cash flow is predictable.",
+   "As finance, I want every rupee traceable from buyer payment to seller pay-out so that audits pass.",
+   "As finance, I want mismatches between our records and PSP settlements flagged daily so that we fix them quickly.",
+   "As an SRE, I want traffic shifted away from a failing PSP automatically so that conversion holds during outages.",
+   "As checkout, I want a payment.succeeded event exactly once per payment so that orders are confirmed reliably."
+  ],
+  "functional": [
+   "Create a payment intent for an order with an idempotency key; return client parameters for the PSP-hosted flow.",
+   "Support authorise-then-capture (cards) and direct capture/collect (UPI).",
+   "Receive PSP webhooks, verify signatures, and update payment state idempotently.",
+   "Query PSP status for payments in PENDING/UNKNOWN beyond a threshold.",
+   "Full and partial refunds referencing the original payment.",
+   "Record all movements in a double-entry ledger; expose balances per account.",
+   "Seller pay-out batches: compute payable, create bank transfers, track status.",
+   "Daily reconciliation against PSP settlement reports and bank statements; exceptions workflow.",
+   "PSP routing by method, BIN/bank, success rate and cost; failover on circuit-breaker open."
+  ],
+  "non_functional": [
+   {
+    "name": "Correctness",
+    "target": "0 duplicate charges, 0 ledger imbalance, every payment reaches a terminal state"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99 percent for create/confirm APIs; degraded mode if a PSP is down"
+   },
+   {
+    "name": "Latency",
+    "target": "Create intent p99 < 300 ms; end-to-end confirm p99 < 3 s excluding user authentication"
+   },
+   {
+    "name": "Throughput",
+    "target": "Sustain 5,000 payments/sec peak with 2x headroom"
+   },
+   {
+    "name": "Durability",
+    "target": "Synchronous replication for payment and ledger DBs; RPO 0, RTO < 15 min"
+   },
+   {
+    "name": "Auditability",
+    "target": "Immutable ledger and state history retained 10 years"
+   },
+   {
+    "name": "Security",
+    "target": "PCI-DSS SAQ-A scope (no raw PAN), encryption in transit and at rest, signed webhooks"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "10 million orders/day; 1.3 payment attempts per order (retries, method switches).",
+    "Sale-day peak 5,000 attempts/sec for ~30 minutes; normal peak 500/sec.",
+    "Each payment produces ~6 state transitions and ~4 ledger entries (2 journal lines each) across auth, capture, fees.",
+    "Payment record ~2 KB; ledger line ~300 bytes; webhook payload ~3 KB.",
+    "Retention 10 years for ledger and payment history."
+   ],
+   "math": [
+    "Attempts/day: 10M x 1.3 = 13M; average 13M / 86,400 = ~150/sec.",
+    "Peak write load: 5,000 attempts/sec x (1 insert + ~3 updates in first minute) = ~20,000 DB writes/sec on payments - needs sharding (e.g. 8-16 shards).",
+    "Ledger lines: 13M x 8 = ~100M lines/day x 300 B = ~30 GB/day; ~11 TB/year; ~110 TB for 10 years before compression.",
+    "Payment records: 13M x 2 KB = 26 GB/day, ~10 TB/year.",
+    "Webhooks: ~2 per attempt = 26M/day, ~300/sec average, 10,000/sec peak.",
+    "PSP calls: 5,000/sec peak split across 3 PSPs; each PSP connection pool sized to 5,000 x 1.5 s latency / 3 = ~2,500 concurrent requests per PSP."
+   ],
+   "summary": "Throughput is modest by internet standards - about 150 payments/sec average and 5,000/sec on sale days - but each payment fans out into several state transitions, ledger lines and webhooks, so writes peak around 20,000/sec and the ledger grows ~30 GB/day. The design is sized for correctness and PSP concurrency, not raw QPS."
+  },
+  "out_of_scope": [
+   "Issuing cards or acting as an acquirer.",
+   "Fraud model training (we call a risk service).",
+   "Tax computation and invoicing (consumes ledger events).",
+   "Multi-currency FX in phase 1."
+  ]
+ },
+ "hld": {
+  "overview": "Checkout calls the Payment Service, which owns payment intents and their state machine in a sharded relational database. A PSP Gateway encapsulates PSP adapters, routing, circuit breakers and webhook verification. Every state change writes an outbox row in the same transaction; an outbox relay publishes to Kafka. The Ledger Service consumes these events and writes balanced double-entry journal entries. A Status Poller resolves stuck payments, a Reconciliation Service matches ledger and PSP settlement files daily, and a Payout Service pays sellers from ledger balances. A Risk Service scores payments before authorisation, and a Vault/Token service holds PSP and network tokens, never raw card numbers.",
+  "diagram": " Buyer app --> Checkout/Order svc --(create intent, Idempotency-Key)--> Payment Service\n                                                                       |      |\n                                     Risk svc <-- score ---------------+      |\n                                                                              v\n                           +----------------- Payments DB (sharded) ---------------+\n                           | payments, attempts, idempotency_keys, outbox            |\n                           +---------------------------------------------------------+\n                                     |                         ^\n                                     v                         | webhook (signed)\n                              PSP Gateway  -- route/CB -->  PSP A | PSP B | UPI switch\n                                     |                         |\n        Outbox relay (CDC) ----------+---> Kafka: payment.events (key = payment_id)\n                                                 |            |              |\n                                                 v            v              v\n                                          Ledger svc     Order svc     Notification svc\n                                          (double-entry)\n                                                 |\n                     Reconciliation svc <--------+--------> Payout svc --> Bank (NEFT/IMPS)\n                     ^  PSP settlement files (SFTP/API), bank statements\n                     |\n              Status poller (PENDING/UNKNOWN > N min -> query PSP)\n",
+  "components": [
+   {
+    "name": "Payment Service",
+    "responsibility": "Payment intents, idempotency, state machine, attempt records, refunds; single writer for payment state."
+   },
+   {
+    "name": "PSP Gateway",
+    "responsibility": "Adapters per PSP and method, request signing, timeouts, safe retries, smart routing, circuit breakers, webhook signature verification."
+   },
+   {
+    "name": "Risk Service",
+    "responsibility": "Fraud score and rules (velocity, device, BIN country) before authorisation; can require 3-D Secure or block."
+   },
+   {
+    "name": "Token Vault",
+    "responsibility": "Stores PSP/network tokens and card metadata (last4, BIN, expiry), never raw PAN, keeping PCI scope small."
+   },
+   {
+    "name": "Outbox relay",
+    "responsibility": "Reads outbox rows (polling or CDC via Debezium) and publishes to Kafka; marks published; at-least-once."
+   },
+   {
+    "name": "Ledger Service",
+    "responsibility": "Append-only double-entry journal and account balances; enforces debits == credits per transaction; idempotent by event id."
+   },
+   {
+    "name": "Status Poller",
+    "responsibility": "Finds payments stuck in PENDING/UNKNOWN beyond thresholds (2, 10, 60 min) and queries PSP status APIs."
+   },
+   {
+    "name": "Reconciliation Service",
+    "responsibility": "Daily matching of ledger vs PSP settlement reports vs bank statements; creates exceptions for mismatches."
+   },
+   {
+    "name": "Payout Service",
+    "responsibility": "Computes seller payables from ledger, creates bank transfer batches, tracks bank responses, retries safely."
+   },
+   {
+    "name": "Notification Service",
+    "responsibility": "Sends receipts, failure messages and refund updates; consumes payment events."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Card checkout (authorise and capture)",
+    "steps": [
+     "Order service calls POST /payments with Idempotency-Key = order_id + attempt_no and amount.",
+     "Payment Service checks idempotency table; if key exists, returns stored response; else inserts payment (CREATED) and key in one transaction.",
+     "Risk Service scores; Gateway picks PSP by routing rules and creates a PSP payment with our payment_id as the PSP idempotency key/reference.",
+     "Client completes card entry in PSP-hosted fields and 3-D Secure; state -> PENDING.",
+     "PSP webhook payment.authorized arrives; Gateway verifies signature; Payment Service transitions PENDING -> AUTHORIZED and writes outbox row in the same transaction.",
+     "On shipment (or immediately for digital goods), capture is called; CAPTURED transition plus outbox row.",
+     "Outbox relay publishes; Ledger writes balanced entries; Order service confirms order; buyer is notified."
+    ]
+   },
+   {
+    "name": "Timeout and unknown outcome",
+    "steps": [
+     "Gateway call to PSP times out after 10 s; we do not know whether the charge happened.",
+     "Payment transitions to UNKNOWN (not FAILED); client shows 'processing'.",
+     "Status poller queries PSP by our reference after 30 s, 2 min, 10 min with backoff.",
+     "If PSP reports success, transition to AUTHORIZED/CAPTURED; if no record, mark FAILED and allow a new attempt with a new key.",
+     "If still unresolved by end of day, reconciliation against the settlement file is the final authority; late success on a cancelled order triggers an auto-refund."
+    ]
+   },
+   {
+    "name": "Seller pay-out",
+    "steps": [
+     "Nightly job selects orders past the return window; ledger moves amounts from seller_pending to seller_payable net of commission and fees.",
+     "Payout batch creates one transfer per seller with idempotency key = seller_id + payout_date.",
+     "Bank API/NEFT file submitted; transfers marked IN_TRANSIT; bank responses update to PAID or FAILED.",
+     "Ledger debits seller_payable and credits bank_cash on PAID; failures return to payable and alert."
+    ]
+   },
+   {
+    "name": "Daily reconciliation",
+    "steps": [
+     "Fetch PSP settlement reports (per transaction: reference, amount, fee, settlement date) and bank statement.",
+     "Match by PSP reference/our payment_id: internal captured vs PSP settled; PSP net payout vs bank credit.",
+     "Classify mismatches: missing internally, missing at PSP, amount mismatch, fee mismatch, timing difference.",
+     "Auto-resolve timing differences next day; create exception tickets for others; post adjusting journal entries only with maker-checker approval."
+    ]
+   }
+  ],
+  "data_flow": "Commands flow checkout -> Payment Service -> PSP Gateway -> PSP; outcomes flow back via synchronous responses, signed webhooks and status polling into the payment state machine. Each committed transition emits an outbox event to Kafka, from which the ledger, order, notification and analytics consumers update idempotently. Money truth lives in the ledger; external truth arrives as settlement files and bank statements and is compared daily by reconciliation."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/payments",
+    "request": "Headers: Idempotency-Key. Body: {order_id, amount_minor: 149900, currency: 'INR', method: 'card'|'upi', customer_id, return_url}",
+    "response": "{payment_id, status: 'CREATED'|'PENDING', client_params: {psp, session_token | upi_intent_url}}",
+    "notes": "Same key + same body returns the stored response; same key + different body returns 422."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/payments/{payment_id}/capture",
+    "request": "Headers: Idempotency-Key. Body: {amount_minor}",
+    "response": "{payment_id, status: 'CAPTURED'}",
+    "notes": "Partial capture allowed up to authorised amount; auth expires in ~7 days for cards."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/payments/{payment_id}/refunds",
+    "request": "Headers: Idempotency-Key. Body: {amount_minor, reason}",
+    "response": "{refund_id, status: 'PENDING'}",
+    "notes": "Sum of refunds <= captured amount enforced under row lock."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/payments/{payment_id}",
+    "request": "-",
+    "response": "{payment_id, status, amount_minor, attempts: [...], refunds: [...]}",
+    "notes": "Served from primary for the paying session; replicas for back-office."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/webhooks/{psp}",
+    "request": "PSP-specific payload + signature header",
+    "response": "200 after durable write, else 5xx so PSP retries",
+    "notes": "Verify HMAC signature and timestamp (reject > 5 min old); dedupe by PSP event id."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/payouts/batches",
+    "request": "{payout_date, seller_ids?: [..]}",
+    "response": "{batch_id, transfers: int, total_minor}",
+    "notes": "Internal; idempotent per payout_date."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/ledger/accounts/{account_id}/balance",
+    "request": "?as_of=",
+    "response": "{account_id, balance_minor, currency}",
+    "notes": "Balance = sum of entries, cached in a balance table updated in the same transaction."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "payment",
+    "store": "PostgreSQL / MySQL (sharded by customer_id or payment_id)",
+    "fields": [
+     "payment_id (Snowflake)",
+     "order_id",
+     "customer_id",
+     "amount_minor BIGINT",
+     "currency",
+     "method",
+     "status",
+     "psp",
+     "psp_reference",
+     "version",
+     "created_at",
+     "updated_at"
+    ],
+    "keys": "PK payment_id; UNIQUE(order_id, attempt_no); index (status, updated_at) for poller",
+    "notes": "Amounts in minor units (paise) as integers - never floats. Optimistic locking via version."
+   },
+   {
+    "entity": "idempotency_key",
+    "store": "Same shard as payment (same transaction)",
+    "fields": [
+     "key",
+     "client_id",
+     "request_hash",
+     "response_code",
+     "response_body",
+     "locked_until",
+     "created_at"
+    ],
+    "keys": "PK (client_id, key)",
+    "notes": "Retained 24h-7d; locked_until prevents concurrent duplicate processing."
+   },
+   {
+    "entity": "payment_event (state history)",
+    "store": "Same DB, append-only",
+    "fields": [
+     "event_id",
+     "payment_id",
+     "from_status",
+     "to_status",
+     "source (api|webhook|poller|recon)",
+     "psp_event_id",
+     "at"
+    ],
+    "keys": "PK event_id; UNIQUE(psp_event_id)",
+    "notes": "Audit trail and dedupe of webhooks."
+   },
+   {
+    "entity": "outbox",
+    "store": "Same DB",
+    "fields": [
+     "id",
+     "aggregate_id",
+     "event_type",
+     "payload JSON",
+     "created_at",
+     "published_at"
+    ],
+    "keys": "PK id; index on published_at IS NULL",
+    "notes": "Written in the same transaction as the state change; relay publishes and marks."
+   },
+   {
+    "entity": "ledger_entry",
+    "store": "PostgreSQL (sharded by account_id) or a ledger DB (e.g. TigerBeetle)",
+    "fields": [
+     "entry_id",
+     "txn_id",
+     "account_id",
+     "direction (debit|credit)",
+     "amount_minor",
+     "currency",
+     "source_event_id",
+     "created_at"
+    ],
+    "keys": "PK entry_id; UNIQUE(source_event_id, account_id, direction)",
+    "notes": "Append-only; corrections are new reversing entries. Constraint: per txn_id sum(debits) == sum(credits)."
+   },
+   {
+    "entity": "account",
+    "store": "Ledger DB",
+    "fields": [
+     "account_id",
+     "type (asset|liability|revenue|expense)",
+     "owner (buyer|seller|platform|psp)",
+     "currency",
+     "balance_minor",
+     "version"
+    ],
+    "keys": "PK account_id",
+    "notes": "Hot platform accounts split into N sub-accounts to spread row-lock contention."
+   },
+   {
+    "entity": "recon_item",
+    "store": "Warehouse + recon DB",
+    "fields": [
+     "date",
+     "psp",
+     "psp_reference",
+     "internal_amount",
+     "psp_amount",
+     "fee",
+     "status (matched|mismatch|missing)",
+     "resolution"
+    ],
+    "keys": "(date, psp, psp_reference)",
+    "notes": "Drives the exceptions queue."
+   }
+  ],
+  "classes": [
+   {
+    "name": "PaymentService",
+    "responsibility": "API orchestration and state machine.",
+    "methods": [
+     "create(req, idem_key)",
+     "capture(id, amount, idem_key)",
+     "refund(id, amount, idem_key)",
+     "apply_psp_event(evt)"
+    ]
+   },
+   {
+    "name": "PaymentStateMachine",
+    "responsibility": "Legal transitions only.",
+    "methods": [
+     "can(from, to) -> bool",
+     "transition(payment, to, source) -> Event"
+    ]
+   },
+   {
+    "name": "IdempotencyStore",
+    "responsibility": "Claim, complete and replay idempotent requests.",
+    "methods": [
+     "begin(key, request_hash) -> NEW|IN_PROGRESS|DONE(response)",
+     "complete(key, response)",
+     "release(key)"
+    ]
+   },
+   {
+    "name": "PspRouter",
+    "responsibility": "Pick PSP per payment.",
+    "methods": [
+     "choose(method, bin, amount) -> Psp",
+     "record_outcome(psp, success, latency)"
+    ]
+   },
+   {
+    "name": "PspAdapter (per PSP)",
+    "responsibility": "Translate to PSP API; classify errors.",
+    "methods": [
+     "create_payment(p)",
+     "capture(p)",
+     "refund(r)",
+     "get_status(ref)",
+     "verify_webhook(headers, body)"
+    ]
+   },
+   {
+    "name": "Ledger",
+    "responsibility": "Balanced postings.",
+    "methods": [
+     "post(txn_id, lines[]) # asserts sum(debit) == sum(credit)",
+     "balance(account_id)",
+     "reverse(txn_id)"
+    ]
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Match internal vs external.",
+    "methods": [
+     "load_settlement(psp, date)",
+     "match()",
+     "classify(mismatch)",
+     "open_exception(item)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Idempotent request handling",
+    "explain": "Claim the key atomically with a request hash. If another request holds it, return 409 (retry later). If completed, replay the stored response. If the body differs, reject. Store the response in the same transaction as the business write so a crash cannot leave a half-applied request.",
+    "pseudocode": "def handle(key, body):\n    h = sha256(canonical(body))\n    with db.tx() as tx:\n        row = tx.select_for_update('idem', key)\n        if row and row.request_hash != h: return 422\n        if row and row.response: return row.response          # replay\n        if row and row.locked_until > now(): return 409        # in flight\n        tx.upsert('idem', key, h, locked_until=now()+30s)\n    resp = do_work(body)            # local DB writes + PSP call w/ PSP idem key\n    with db.tx() as tx:\n        tx.update('idem', key, response=resp, locked_until=None)\n    return resp\n"
+   },
+   {
+    "name": "Payment state machine",
+    "explain": "Only legal transitions are applied; events that would move backwards (a late 'pending' webhook after 'captured') are recorded but ignored. Transitions use optimistic locking on version.",
+    "pseudocode": "ALLOWED = {\n  'CREATED':    {'PENDING', 'FAILED'},\n  'PENDING':    {'AUTHORIZED', 'CAPTURED', 'FAILED', 'UNKNOWN'},\n  'UNKNOWN':    {'AUTHORIZED', 'CAPTURED', 'FAILED'},\n  'AUTHORIZED': {'CAPTURED', 'VOIDED', 'EXPIRED'},\n  'CAPTURED':   {'PARTIALLY_REFUNDED', 'REFUNDED', 'DISPUTED'},\n}\ndef transition(p, to, src):\n    if to not in ALLOWED.get(p.status, ()): log_ignored(p, to, src); return\n    with db.tx() as tx:\n        n = tx.update('payment', status=to, version=p.version+1,\n                      where={'id': p.id, 'version': p.version})\n        if n == 0: raise Retry          # concurrent update; reload\n        tx.insert('payment_event', p.id, p.status, to, src)\n        tx.insert('outbox', p.id, 'payment.' + to.lower(), payload(p))\n"
+   },
+   {
+    "name": "Double-entry posting for a captured payment",
+    "explain": "Each business event maps to a balanced set of lines. For a 1,499 rupee order with 10 percent commission and a 2 percent PSP fee, money is receivable from the PSP, owed to the seller, earned as commission, and spent as fee.",
+    "pseudocode": "# amounts in paise; 149900 = Rs 1,499\npost(txn='cap-pay_123', lines=[\n  ('psp_receivable:PSP_A', DEBIT,  146902),   # 149900 - 2% fee\n  ('psp_fees_expense',     DEBIT,    2998),\n  ('seller_pending:S42',   CREDIT, 134910),   # 90% to seller\n  ('commission_revenue',   CREDIT,  14990),   # 10% commission\n])\nassert sum(debits) == sum(credits) == 149900\n"
+   },
+   {
+    "name": "PSP routing with circuit breaker",
+    "explain": "Score each eligible PSP by recent success rate for this method and BIN/bank (sliding 5-minute window), latency and cost; skip PSPs whose breaker is open (error rate > 20 percent over 200 requests); half-open lets 5 percent of traffic probe recovery.",
+    "pseudocode": "def choose(method, bin_):\n    cands = [p for p in psps if p.supports(method) and p.breaker != OPEN]\n    return max(cands, key=lambda p: p.success_rate(method, bin_) * 100\n                                  - p.cost_bps(method) - p.p95_ms / 100)\n"
+   }
+  ],
+  "sequence": "Buyer   Order svc    Payment svc       DB            PSP Gateway     PSP        Kafka  Ledger\n  | Pay    |              |               |                |           |          |       |\n  |------->| POST /payments (Idem-Key)    |                |           |          |       |\n  |        |------------->| claim key, insert CREATED     |           |          |       |\n  |        |              |-------------->|                |           |          |       |\n  |        |              | create PSP payment (ref=payment_id)        |          |       |\n  |        |              |------------------------------->|---------->|          |       |\n  |        |              |<-------------------------------|<----------| session  |       |\n  |        |<-------------| PENDING + client_params        |           |          |       |\n  |<-------| PSP hosted page / 3-D Secure / UPI PIN ------------------->|          |       |\n  |        |              |                                | webhook: authorized  |       |\n  |        |              |<-------------------------------|<----------|          |       |\n  |        |              | tx: AUTHORIZED + event + outbox|           |          |       |\n  |        |              |-------------->|                |           |          |       |\n  |        |              | 200 to webhook                 |           |          |       |\n  |        |              |   outbox relay publishes payment.authorized ---------->|       |\n  |        |<------------------------------------------------------------- event  |       |\n  |        | confirm order|               |                |           |          |------>|\n  |        |              |               |                |           |          | post  |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Buyer double-taps Pay, sending two create requests within 50 ms.",
+   "handling": "Same Idempotency-Key (order_id + attempt); the second request finds the key locked (409, client polls) or completed (replayed response). DB UNIQUE(order_id, attempt_no) is the backstop."
+  },
+  {
+   "case": "PSP call times out - money may or may not have moved.",
+   "handling": "Mark UNKNOWN, never FAILED; query PSP status by our reference before any retry; reuse the same PSP idempotency key on retry so the PSP deduplicates."
+  },
+  {
+   "case": "Webhook arrives before the synchronous PSP response is processed.",
+   "handling": "Both paths call the same idempotent transition; whichever commits first wins, the other is a no-op because the state machine rejects the repeated transition."
+  },
+  {
+   "case": "Webhooks arrive out of order (captured before authorized) or duplicated.",
+   "handling": "Dedupe by PSP event id (UNIQUE constraint); state machine ignores backward transitions; forward jumps allowed when legal (PENDING -> CAPTURED)."
+  },
+  {
+   "case": "Webhook endpoint is down for an hour.",
+   "handling": "PSPs retry with backoff for hours to days; status poller covers the gap; reconciliation is the final net."
+  },
+  {
+   "case": "Late success: PSP confirms payment after we marked it FAILED and the buyer paid again with another method.",
+   "handling": "Transition FAILED -> LATE_CAPTURED is allowed only from reconciliation/poller; order already paid, so automatically refund the late payment and notify the buyer."
+  },
+  {
+   "case": "Partial refunds racing: two agents refund 600 each on a 1,000 payment.",
+   "handling": "Refund creation locks the payment row (SELECT ... FOR UPDATE) and checks sum(refunds) + new <= captured; second one fails validation."
+  },
+  {
+   "case": "Card authorisation expires before capture (e.g. 7 days for many cards).",
+   "handling": "Capture scheduler alerts at day 5; for delayed shipments, re-authorise or capture at order confirmation for long-lead items."
+  },
+  {
+   "case": "Currency rounding on commission split.",
+   "handling": "Integer minor units; allocate remainder paisa deterministically (largest-remainder method) so lines always balance."
+  },
+  {
+   "case": "PSP fee in settlement file differs from contracted rate.",
+   "handling": "Reconciliation flags fee mismatches; finance raises with PSP; ledger posts adjusting entry only after approval."
+  },
+  {
+   "case": "Chargeback/dispute months later.",
+   "handling": "Dispute webhook transitions CAPTURED -> DISPUTED; ledger moves amount from seller payable (or platform loss) to dispute reserve; evidence workflow with deadlines."
+  },
+  {
+   "case": "Hot ledger account: every payment credits commission_revenue, causing row-lock contention on its balance.",
+   "handling": "Split into 16-64 sub-accounts chosen by hash(txn_id); sum for reporting; or compute balances asynchronously from append-only entries."
+  },
+  {
+   "case": "Seller bank account details are wrong; pay-out bounces.",
+   "handling": "Penny-drop verification at onboarding; bounced transfers return to payable, seller notified, retried only after details are re-verified."
+  },
+  {
+   "case": "Replay attack on webhook endpoint.",
+   "handling": "Verify HMAC signature over body and timestamp; reject timestamps older than 5 minutes; dedupe event ids; IP allowlist where PSP supports it."
+  },
+  {
+   "case": "UPI collect request where the user never approves.",
+   "handling": "Collect has an expiry (e.g. 5-10 minutes); poller queries status at expiry, marks FAILED, releases the order's reserved inventory."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "PostgreSQL (or MySQL) with synchronous replication",
+   "layer": "Payments and ledger storage",
+   "overview": "Relational database with ACID transactions, row locks and unique constraints.",
+   "why": "Payments need multi-row atomicity (state + history + outbox + idempotency) and constraints that make duplicates impossible.",
+   "alternatives": "Spanner/CockroachDB - global ACID with horizontal scale, higher latency and cost; NoSQL (DynamoDB) - scales easily but multi-item transactions and constraints are weaker."
+  },
+  {
+   "name": "Apache Kafka",
+   "layer": "Event backbone",
+   "overview": "Durable partitioned log with consumer groups and replay.",
+   "why": "Fan out payment events to ledger, orders, notifications and analytics with per-payment ordering (key = payment_id) and replay for recovery.",
+   "alternatives": "RabbitMQ/SQS - simpler, no replay; direct synchronous calls - couple availability of all consumers to checkout."
+  },
+  {
+   "name": "Debezium (CDC)",
+   "layer": "Outbox relay",
+   "overview": "Change-data-capture connector streaming DB log changes into Kafka.",
+   "why": "Publishes outbox rows from the WAL/binlog without polling load and with ordering per table.",
+   "alternatives": "Polling publisher - simpler, adds DB load and latency; transactional writes to Kafka - cannot be atomic with the DB."
+  },
+  {
+   "name": "TigerBeetle or a ledger on Postgres",
+   "layer": "Ledger",
+   "overview": "TigerBeetle is a purpose-built double-entry accounting database; a Postgres ledger is tables plus constraints.",
+   "why": "Ledger needs balanced, append-only postings and high-contention account updates; TigerBeetle is built for this, Postgres is familiar.",
+   "alternatives": "Event-sourced ledger on Kafka - flexible but balances must be derived; spreadsheets - the problem we are solving."
+  },
+  {
+   "name": "Multiple PSPs (e.g. Razorpay, Juspay orchestration, Stripe, Adyen) and NPCI UPI via PSP",
+   "layer": "External payments",
+   "overview": "Payment service providers handle card network and bank connectivity, 3-D Secure and settlement.",
+   "why": "Redundancy and routing improve success rates and bargaining power; avoids becoming an acquirer.",
+   "alternatives": "Single PSP - simpler, single point of failure; direct acquiring - lower fees, heavy compliance."
+  },
+  {
+   "name": "Resilience4j / Envoy",
+   "layer": "Fault tolerance",
+   "overview": "Libraries/proxies for circuit breakers, bulkheads, timeouts and retries.",
+   "why": "Isolate PSP failures so one slow PSP cannot exhaust threads for all.",
+   "alternatives": "Hand-rolled breakers; service mesh policies (Istio)."
+  },
+  {
+   "name": "HashiCorp Vault / cloud KMS + HSM",
+   "layer": "Secrets and keys",
+   "overview": "Secret storage and key management with hardware-backed keys.",
+   "why": "PSP API keys, webhook secrets and encryption keys must be rotated and audited.",
+   "alternatives": "Environment variables - insecure; PSP-only tokenisation reduces but does not remove key needs."
+  },
+  {
+   "name": "Spark / warehouse (BigQuery, Snowflake)",
+   "layer": "Reconciliation",
+   "overview": "Batch processing over large files and tables.",
+   "why": "Matching tens of millions of daily rows from settlement files and ledger is a batch join problem.",
+   "alternatives": "Streaming reconciliation (Flink) for near-real-time matching; SQL in the OLTP DB - risky load."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Idempotency keys",
+   "explain": "An operation is idempotent if performing it many times has the same effect as performing it once. Reads and PUT-style overwrites are naturally idempotent; 'charge this card 1,499 rupees' is not. Yet networks force retries: a client that sends a request and gets no reply cannot tell whether the request was lost, the server crashed mid-way, or only the response was lost. If it does not retry, it may lose a payment; if it retries blindly, it may charge twice. The idempotency key resolves this. The client generates a unique key for one logical operation (for example order_id plus attempt number, or a UUID created when the user taps Pay) and sends it with every retry. The server records the key with a hash of the request and, once the work is done, the response. A repeat with the same key returns the stored response without redoing the work; a repeat while the first is still running gets a conflict or waits; a repeat with a different body is rejected as a client bug. Stripe popularised this with its Idempotency-Key header and 24-hour retention. Crucially, idempotency must extend to every hop: our service must pass its own stable key to the PSP so that our retries to the PSP are also deduplicated.",
+   "in_this_design": "Checkout sends Idempotency-Key = order_id + attempt_no. The key row is written in the same transaction as the payment row; payment_id is passed to the PSP as its idempotency key/reference; refunds and pay-outs have their own keys (refund request id, seller_id + payout_date).",
+   "key_points": [
+    "Retries are unavoidable; idempotency makes them safe.",
+    "Store key + request hash + response; replay on repeat.",
+    "Reject same key with a different body.",
+    "Propagate a stable key to every downstream hop, including the PSP.",
+    "Back it with a DB unique constraint."
+   ],
+   "qa": [
+    {
+     "q": "Who should generate the idempotency key, client or server?",
+     "a": "The client, because the key must be stable across the client's retries - it identifies the user's intent. A server-generated key per request would be different on each retry and dedupe nothing."
+    },
+    {
+     "q": "How long do you keep keys?",
+     "a": "At least as long as clients may retry - typically 24 hours to 7 days. Beyond that, DB unique constraints on business keys (order_id, attempt) remain as a permanent backstop."
+    },
+    {
+     "q": "What if two requests with the same key arrive simultaneously?",
+     "a": "The first atomically claims the key (insert or SELECT FOR UPDATE with a lock-until); the second sees it in progress and gets 409 or waits, so only one executes."
+    }
+   ]
+  },
+  {
+   "name": "Payment state machine and the UNKNOWN state",
+   "explain": "A payment is a long-lived process, not a single call: it is created, sent to a PSP, possibly authenticated by the user, authorised by the issuer, captured, settled, maybe refunded or disputed weeks later. Modelling it as an explicit finite state machine with a fixed set of states and allowed transitions makes the system predictable. Every input - API call, PSP response, webhook, poller result, reconciliation finding - becomes a requested transition; illegal ones (going from CAPTURED back to PENDING because a late webhook arrived) are logged and ignored. Persisting every transition as an event gives an audit trail. The most important state in payments is one many designs forget: UNKNOWN. When a call to a PSP times out, the truthful answer is that we do not know whether money moved. Marking it FAILED invites the buyer to pay again and causes a double charge if the first one succeeded; marking it SUCCESS ships goods that may not be paid for. UNKNOWN is a holding state resolved by querying the PSP, waiting for a webhook, or reconciliation. Terminal states (CAPTURED, FAILED, REFUNDED) must eventually be reached by every payment, and a metric tracks anything that is not.",
+   "in_this_design": "States: CREATED, PENDING, UNKNOWN, AUTHORIZED, CAPTURED, FAILED, VOIDED, EXPIRED, PARTIALLY_REFUNDED, REFUNDED, DISPUTED. Transitions use optimistic locking on a version column and write history and outbox rows in the same transaction.",
+   "key_points": [
+    "Every input is a requested transition; illegal ones are ignored and logged.",
+    "UNKNOWN is a first-class state for timeouts - never treat it as FAILED.",
+    "Persist transitions as events for audit and debugging.",
+    "Alert on payments stuck in non-terminal states beyond thresholds."
+   ],
+   "qa": [
+    {
+     "q": "Why not just retry the PSP call on timeout?",
+     "a": "Because the first call may have succeeded. First query the PSP by our reference; only if it has no record do we retry with the same PSP idempotency key."
+    },
+    {
+     "q": "How do you handle a webhook that says 'authorized' after 'captured'?",
+     "a": "The state machine rejects the backward transition; we record the event for audit and return 200 to the PSP so it stops retrying."
+    },
+    {
+     "q": "Who is allowed to move a payment out of UNKNOWN?",
+     "a": "The poller (PSP status API), webhooks, and reconciliation - all sources of external truth. The buyer's client never is."
+    }
+   ]
+  },
+  {
+   "name": "Double-entry bookkeeping ledger",
+   "explain": "Double-entry bookkeeping, used for over 500 years, records every movement of value as at least two entries: a debit to one account and a credit to another, of equal total. Accounts have types - assets (cash, money receivable from PSPs), liabilities (money owed to sellers or buyers), revenue (commission), expenses (PSP fees). Because every transaction balances, the sum of all debits always equals the sum of all credits; if it does not, there is a bug, and you know immediately. Balances are derived from entries, never edited directly, so the ledger is an append-only history. Mistakes are fixed by posting reversing entries, not by updating rows, which keeps the audit trail intact. For software systems this gives three properties a single 'balance' column cannot: conservation (money cannot be created or destroyed by a bug without the books going out of balance), traceability (each rupee's path from buyer to seller is a chain of entries), and point-in-time balances (sum entries up to a timestamp). Engineering challenges are hot accounts that every transaction touches, which create lock contention, and the need for idempotent posting so a replayed event does not post twice.",
+   "in_this_design": "The Ledger Service consumes payment, refund, fee, dispute and pay-out events and posts balanced journal entries; UNIQUE(source_event_id, account, direction) makes replays harmless. Platform revenue and PSP receivable accounts are split into sub-accounts to avoid hot-row contention.",
+   "key_points": [
+    "Every transaction: debits == credits; global imbalance means a bug.",
+    "Append-only; fix with reversing entries, never updates.",
+    "Balances are derived, so you can compute them at any point in time.",
+    "Idempotent posting keyed by source event id.",
+    "Split hot accounts to avoid lock contention."
+   ],
+   "qa": [
+    {
+     "q": "Why not just keep a balance column per seller?",
+     "a": "A single mutable number has no history, cannot prove where money came from, and a bug can silently create or lose money. The ledger makes every change explicit and self-checking."
+    },
+    {
+     "q": "How do you represent a refund?",
+     "a": "A new balanced transaction: debit seller_pending (or platform) and credit psp_receivable or refunds_payable for the refunded amount; the original capture entries stay untouched."
+    },
+    {
+     "q": "How do you scale the ledger?",
+     "a": "Shard entries by account id; post a transaction's lines atomically when they share a shard, or use a two-step pattern with a suspense/clearing account when they do not; split hot accounts; consider a purpose-built ledger DB."
+    }
+   ]
+  },
+  {
+   "name": "Transactional outbox pattern",
+   "explain": "Services often need to update their database and notify other services, for example mark a payment captured and publish payment.captured to Kafka. Doing the two separately is a dual write, and dual writes break under failure: if the DB commit succeeds and the publish fails (or the process crashes between them), consumers never hear about the capture; if you publish first and the commit fails, consumers act on something that did not happen. Distributed transactions (two-phase commit) across a DB and a broker are slow and poorly supported. The outbox pattern avoids the dual write: in the same local transaction as the business change, insert a row into an outbox table describing the event. Either both commit or neither does. A separate relay reads unpublished outbox rows - by polling or by change data capture from the database log - publishes them to the broker, and marks them sent. Because the relay can crash after publishing but before marking, delivery is at-least-once, so consumers must be idempotent, typically by event id. Ordering per aggregate is preserved by keying messages by aggregate id.",
+   "in_this_design": "Every payment state transition inserts into outbox in the same transaction; Debezium streams outbox rows to Kafka keyed by payment_id; the ledger, order and notification consumers dedupe by event id.",
+   "key_points": [
+    "Dual writes (DB + broker) lose or invent events under failure.",
+    "Write the event to an outbox table in the same DB transaction.",
+    "Relay via polling or CDC; at-least-once delivery.",
+    "Consumers dedupe by event id; key by aggregate id for ordering."
+   ],
+   "qa": [
+    {
+     "q": "Why not publish to Kafka inside the DB transaction?",
+     "a": "Kafka is not part of the DB transaction; if the commit later fails you have published a lie, and if the publish times out you do not know whether it went through."
+    },
+    {
+     "q": "Polling or CDC for the relay?",
+     "a": "CDC (Debezium) reads the WAL with low latency and no query load; polling is simpler to operate but adds DB load and latency. Both give at-least-once."
+    },
+    {
+     "q": "How do consumers handle duplicates?",
+     "a": "Store processed event ids (or use a natural unique constraint such as source_event_id in the ledger) so reprocessing is a no-op."
+    }
+   ]
+  },
+  {
+   "name": "Reconciliation",
+   "explain": "However carefully a system handles failures, its view of the world can drift from external reality: a webhook is lost, a PSP reverses a transaction, a bank returns a transfer, fees differ from contract, or a bug posts the wrong amount. Reconciliation is the practice of periodically comparing two independent records of the same facts and investigating differences. In payments the main comparisons are: internal payment states and ledger versus the PSP's settlement report (which lists every transaction the PSP settled, its fee, and the payout batch), and the PSP's expected payout versus the actual credit in our bank statement. Matching uses a shared reference, ideally our payment id passed to the PSP. Results fall into categories: matched, timing differences that resolve the next day, amount or fee mismatches, records missing on one side. Automated rules resolve the common cases; the rest go to a finance exceptions queue, and any correction is a ledger entry approved by maker-checker. Reconciliation is the safety net that turns 'eventually consistent with the outside world' into 'provably correct by end of day'.",
+   "in_this_design": "Daily Spark jobs ingest PSP settlement files and bank statements, match on payment_id/PSP reference, auto-resolve timing differences, open exceptions for the rest, and feed late successes or missing captures back into the payment state machine.",
+   "key_points": [
+    "Compare independent records of the same money; investigate every difference.",
+    "Use a shared reference (our id at the PSP) to match.",
+    "Classify: matched, timing, amount/fee mismatch, missing.",
+    "Corrections are approved ledger entries, never silent edits.",
+    "It is the final authority that resolves UNKNOWN payments."
+   ],
+   "qa": [
+    {
+     "q": "Why do you need reconciliation if you have webhooks and polling?",
+     "a": "Webhooks get lost, pollers have bugs, PSPs reverse or adjust transactions days later. Reconciliation is the independent check that catches what the real-time paths miss."
+    },
+    {
+     "q": "What is a timing difference?",
+     "a": "A payment captured at 23:59 that the PSP settles in the next day's file. It matches a day later; flag only if still unmatched after the settlement window."
+    },
+    {
+     "q": "How do you scale matching to tens of millions of rows a day?",
+     "a": "Treat it as a batch join on reference in a warehouse/Spark, partitioned by date and PSP; only exceptions reach humans."
+    }
+   ]
+  },
+  {
+   "name": "Retries, timeouts, circuit breakers and bulkheads",
+   "explain": "Calls to remote systems need explicit failure handling. A timeout bounds how long a caller waits; without one, a slow dependency ties up threads until the caller itself falls over. Retries recover from transient errors, but only safe ones: a retry is safe if the operation is idempotent or carries an idempotency key, and only for errors that might succeed next time (connection reset, 503), not for business declines (insufficient funds). Retries should use exponential backoff with jitter so that many clients do not retry in lockstep and create a retry storm, and should be capped with a retry budget (for example at most 10 percent extra load). A circuit breaker watches a dependency's error rate; when it exceeds a threshold it opens and fails fast for a cool-down period, then half-opens to let a few probe requests through. This protects both the caller and the struggling dependency. Bulkheads isolate resources per dependency - separate connection pools or thread pools per PSP - so one slow PSP cannot exhaust capacity needed for the others. Together these turn a dependency failure into a contained, graceful degradation.",
+   "in_this_design": "The PSP Gateway uses per-PSP pools (bulkheads), 10 s timeouts on payment creation, retries only for network errors with the same PSP idempotency key and jittered backoff, and per-PSP circuit breakers that feed the router so new payments shift to healthy PSPs.",
+   "key_points": [
+    "Timeouts everywhere; a timeout on a payment means UNKNOWN, not FAILED.",
+    "Retry only idempotent operations and transient errors, with jitter and a budget.",
+    "Circuit breakers fail fast and let dependencies recover.",
+    "Bulkheads stop one PSP from starving the rest.",
+    "Hard declines are never retried automatically."
+   ],
+   "qa": [
+    {
+     "q": "A PSP returns 'do not honor'. Retry?",
+     "a": "No - it is an issuer decline. Offer the buyer another method or card. Retrying hard declines can even trigger network penalties."
+    },
+    {
+     "q": "Why add jitter to retries?",
+     "a": "Without it, thousands of clients that failed at the same moment retry at the same moment, overloading the recovering service again."
+    },
+    {
+     "q": "What happens to in-flight payments when a PSP's breaker opens?",
+     "a": "They stay in PENDING/UNKNOWN and are resolved by webhooks or the poller; only new payments are routed elsewhere. We never re-send an in-flight payment to a second PSP without confirming the first failed."
+    }
+   ]
+  },
+  {
+   "name": "Sagas and distributed consistency across services",
+   "explain": "A checkout touches several services that each own their data: orders, inventory, payments, ledger, notifications. A single ACID transaction across them is not feasible - they have separate databases and some steps call external parties that cannot participate in two-phase commit. A saga breaks a business transaction into a sequence of local transactions, each publishing an event or triggering the next step; if a later step fails, previously completed steps are undone by compensating actions. In orchestration, a coordinator drives the steps and tracks state; in choreography, services react to each other's events. Compensations are not rollbacks: you cannot un-send an email or un-charge a card, but you can send a correction or issue a refund. Sagas give up isolation, so intermediate states are visible (an order 'awaiting payment'), and design must make each step and compensation idempotent and retryable. Payments are a classic saga participant: reserve inventory, authorise payment, confirm order, capture on shipment; if inventory cannot be confirmed after authorisation, void the authorisation; if a late payment arrives for a cancelled order, refund it.",
+   "in_this_design": "The order service orchestrates: reserve inventory -> create payment -> on payment.authorized confirm order -> capture on shipment. Compensations: void authorisation if the order is cancelled before capture, refund if captured, release inventory on payment failure or expiry.",
+   "key_points": [
+    "Local transactions plus compensations, not distributed locks.",
+    "Compensation is a new business action (void, refund), not a rollback.",
+    "Every step and compensation must be idempotent.",
+    "Intermediate states are visible; design the UX for them."
+   ],
+   "qa": [
+    {
+     "q": "Why not two-phase commit across order and payment DBs?",
+     "a": "The PSP cannot participate, 2PC blocks on coordinator failure, and it couples availability of all services. Sagas accept temporary inconsistency with guaranteed compensation."
+    },
+    {
+     "q": "Orchestration or choreography here?",
+     "a": "Orchestration by the order service: the flow has clear steps, timeouts and compensations, and one place to see where an order is stuck."
+    },
+    {
+     "q": "What compensates a captured payment for a cancelled order?",
+     "a": "A refund through the PSP with its own idempotency key, plus reversing ledger entries; the buyer is notified."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Synchronous vs asynchronous payment confirmation",
+   "options": "Wait for PSP final result in the request; return PENDING and confirm via webhook",
+   "choice": "Return PENDING quickly, confirm via webhook with polling fallback",
+   "why": "UPI and 3-D Secure are inherently asynchronous; holding connections for minutes wastes resources and fails on mobile networks."
+  },
+  {
+   "decision": "Authorise-then-capture vs immediate capture",
+   "options": "Auth now, capture at shipment; capture at checkout",
+   "choice": "Auth/capture for physical goods with long lead times, immediate capture for digital goods and UPI",
+   "why": "Avoids refunds for cancelled orders, but auths expire, so capture policy depends on fulfilment time."
+  },
+  {
+   "decision": "Database for payments",
+   "options": "Relational ACID; NoSQL",
+   "choice": "Sharded relational with synchronous replicas",
+   "why": "Constraints and multi-row transactions are the cheapest correctness tools available."
+  },
+  {
+   "decision": "Single vs multiple PSPs",
+   "options": "One PSP; several with routing",
+   "choice": "Several with success-rate routing",
+   "why": "Higher authorisation rates and resilience on sale days outweigh integration and reconciliation cost."
+  },
+  {
+   "decision": "Ledger storage",
+   "options": "Tables in the payments DB; separate ledger service/DB",
+   "choice": "Separate ledger service fed by outbox events",
+   "why": "Clear ownership, independent scaling and audit controls; consistency via idempotent event processing and reconciliation."
+  },
+  {
+   "decision": "Event delivery",
+   "options": "Dual write; outbox; 2PC",
+   "choice": "Outbox with CDC",
+   "why": "Atomic with the state change, no distributed transaction, at-least-once with idempotent consumers."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Primary PSP outage on sale day",
+   "behavior": "Circuit breaker opens within ~30 s; router shifts new payments to secondary PSPs; in-flight ones resolved by poller; success rate dips briefly then recovers."
+  },
+  {
+   "failure": "Payments DB primary fails",
+   "behavior": "Failover to synchronous replica (RPO 0) in under a minute; API returns retryable 503s meanwhile; idempotency keys make client retries safe."
+  },
+  {
+   "failure": "Kafka or outbox relay down",
+   "behavior": "Payments still commit; outbox rows accumulate; orders confirm late; relay catches up on recovery with no loss."
+  },
+  {
+   "failure": "Webhook endpoint overloaded",
+   "behavior": "Webhook handler only verifies and writes to an inbox table, returning 200 quickly; processing is async; PSP retries cover 5xx."
+  },
+  {
+   "failure": "Ledger consumer bug posts wrong amounts",
+   "behavior": "Balance check (debits != credits) or reconciliation catches it; consumer paused; reversing entries posted; replay from Kafka after fix."
+  },
+  {
+   "failure": "Bank rejects a pay-out batch file",
+   "behavior": "Batch stays IN_TRANSIT -> FAILED; amounts return to seller_payable; resubmitted with the same idempotency keys after fixing."
+  }
+ ],
+ "metrics": [
+  "Authorisation/success rate by PSP, method, issuing bank and BIN - the business north star.",
+  "Duplicate charges detected (must be 0) and ledger imbalance (must be 0).",
+  "Payments in PENDING/UNKNOWN by age bucket (2 min, 10 min, 1 h, 24 h).",
+  "PSP latency p50/p99 and error rate; circuit-breaker state changes.",
+  "Webhook lag (PSP event time to processed) and dedupe rate.",
+  "Outbox backlog and Kafka consumer lag for ledger and orders.",
+  "Reconciliation auto-match rate and open exceptions by age.",
+  "Refund turnaround time and pay-out on-time rate.",
+  "Chargeback rate by merchant category."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you guarantee the buyer is never charged twice?",
+   "a": "Idempotency key per attempt at our API, payment_id as the PSP's idempotency key, UNIQUE constraints on (order_id, attempt), UNKNOWN state instead of blind retries, and reconciliation to auto-refund any late duplicate that slips through."
+  },
+  {
+   "q": "How would you handle 10x sale-day traffic?",
+   "a": "Pre-scale DB shards and connection pools, pre-negotiate PSP capacity and TPS limits, queue non-critical work (notifications, analytics), enable aggressive PSP routing, and load-test with PSP sandboxes; protect the DB with admission control at the API."
+  },
+  {
+   "q": "Where is card data stored?",
+   "a": "Nowhere on our side in raw form. PSP-hosted fields send the card directly to the PSP; we store a token plus last4/BIN/expiry. Under RBI rules saved cards use network tokens, keeping us in a small PCI scope."
+  },
+  {
+   "q": "How do you add a new payment method like BNPL?",
+   "a": "Implement a PSP/method adapter, map its lifecycle onto our state machine (it is usually asynchronous like UPI), add ledger posting rules for its fees and settlement, and add it to reconciliation inputs."
+  },
+  {
+   "q": "How do you support multiple currencies?",
+   "a": "Amounts carry currency; each account is single-currency; FX conversion is an explicit ledger transaction through FX accounts with the rate recorded; settlement and reconciliation per currency."
+  },
+  {
+   "q": "Why not use eventual consistency everywhere?",
+   "a": "Within a payment we need strong consistency - state, idempotency and outbox in one ACID transaction. Across services (orders, ledger) eventual consistency is fine because events are reliable and reconciliation catches drift."
+  },
+  {
+   "q": "How do you test this?",
+   "a": "PSP sandboxes plus a fault-injecting PSP simulator (timeouts, duplicate and out-of-order webhooks, late success), property-based tests on the state machine, ledger invariants checked in CI and in production continuously."
+  }
+ ],
+ "key_points": [
+  "Payments are a correctness problem: ~150/sec average, 5,000/sec peak, but zero tolerance for double charges.",
+  "Idempotency keys at every hop, backed by DB unique constraints.",
+  "Explicit state machine with an UNKNOWN state; a timeout is not a failure.",
+  "Double-entry ledger: append-only, balanced, idempotent posting; imbalance is a page.",
+  "Outbox pattern so state changes and events never diverge.",
+  "Three layers of truth-finding: webhooks, status polling, daily reconciliation.",
+  "PSP gateway with routing, circuit breakers and bulkheads; never retry hard declines.",
+  "Sagas with compensations (void, refund) across order, inventory and payment.",
+  "Never store raw card numbers; tokens keep PCI scope small.",
+  "Integers in minor units, never floating point."
+ ],
+ "quiz": [
+  {
+   "q": "A call to the PSP times out after 10 s. What should the payment's state become?",
+   "options": [
+    "FAILED, so the buyer can retry",
+    "CAPTURED, since most payments succeed",
+    "UNKNOWN, to be resolved by status query, webhook or reconciliation",
+    "CREATED, and resend immediately to another PSP"
+   ],
+   "answer": 2,
+   "why": "A timeout means we do not know whether money moved. FAILED is the tempting answer but invites a second payment and a double charge."
+  },
+  {
+   "q": "Who should generate the idempotency key for a checkout payment?",
+   "options": [
+    "The client, so it stays the same across that client's retries",
+    "The server, fresh for every request",
+    "The PSP",
+    "The database auto-increment"
+   ],
+   "answer": 0,
+   "why": "The key represents the user's intent and must be stable across retries. A server key per request would differ on each retry and dedupe nothing."
+  },
+  {
+   "q": "Why use the outbox pattern instead of writing to the DB and then publishing to Kafka?",
+   "options": [
+    "Kafka is too slow for payments",
+    "It removes the need for idempotent consumers",
+    "It gives exactly-once delivery to consumers",
+    "It makes the state change and the event atomic, avoiding lost or phantom events"
+   ],
+   "answer": 3,
+   "why": "Both rows commit in one local transaction. Delivery is still at-least-once, so consumers must still be idempotent."
+  },
+  {
+   "q": "In a double-entry ledger, how do you correct an entry posted with the wrong amount?",
+   "options": [
+    "Update the amount in place",
+    "Post a reversing entry and a new correct entry",
+    "Delete the transaction",
+    "Adjust the account balance column directly"
+   ],
+   "answer": 1,
+   "why": "Append-only history keeps the audit trail. Updating in place is tempting but destroys traceability."
+  },
+  {
+   "q": "Which error should the PSP gateway retry automatically?",
+   "options": [
+    "Connection reset before a response, using the same PSP idempotency key",
+    "Insufficient funds",
+    "Card reported stolen",
+    "Do not honor"
+   ],
+   "answer": 0,
+   "why": "Transient network errors with idempotency are safe to retry. The others are issuer declines; retrying them never helps and can incur penalties."
+  },
+  {
+   "q": "About how many payment attempts per second on average for 10 million orders a day at 1.3 attempts each?",
+   "options": [
+    "About 15",
+    "About 1,500",
+    "About 150",
+    "About 15,000"
+   ],
+   "answer": 2,
+   "why": "13 million / 86,400 is about 150. Peak sale traffic is far higher, which is why peak, not average, drives sizing."
+  },
+  {
+   "q": "A webhook 'payment.authorized' arrives after the payment is already CAPTURED. What should happen?",
+   "options": [
+    "Move the payment back to AUTHORIZED",
+    "Return 500 so the PSP retries later",
+    "Capture again",
+    "Record the event, ignore the backward transition, return 200"
+   ],
+   "answer": 3,
+   "why": "The state machine rejects illegal transitions. Returning 500 would make the PSP retry forever."
+  },
+  {
+   "q": "Commission revenue account row is a lock hotspot at peak. Best fix?",
+   "options": [
+    "Split it into many sub-accounts chosen by hash and sum for reporting",
+    "Remove the commission entries",
+    "Use floating-point balances",
+    "Disable ledger transactions during sales"
+   ],
+   "answer": 0,
+   "why": "Sub-accounts spread contention while keeping balanced postings. Removing entries breaks the books."
+  },
+  {
+   "q": "Why store amounts as integers in minor units (paise)?",
+   "options": [
+    "Integers are faster to index",
+    "Floating point cannot represent many decimal amounts exactly, causing rounding errors",
+    "PSPs require it",
+    "It saves storage"
+   ],
+   "answer": 1,
+   "why": "0.1 + 0.2 != 0.3 in binary floating point. Speed and storage are minor side effects."
+  },
+  {
+   "q": "Which mechanism is the final authority for whether a payment actually settled?",
+   "options": [
+    "The buyer's app screen",
+    "The first synchronous PSP response",
+    "The order service",
+    "Reconciliation against PSP settlement files and bank statements"
+   ],
+   "answer": 3,
+   "why": "Settlement files reflect money actually moved. Synchronous responses can be followed by reversals."
+  },
+  {
+   "q": "Two support agents refund 600 rupees each on a 1,000 rupee payment at the same time. What prevents over-refund?",
+   "options": [
+    "Kafka ordering",
+    "Locking the payment row and checking total refunds + new <= captured in one transaction",
+    "Idempotency keys",
+    "Reconciliation the next day"
+   ],
+   "answer": 1,
+   "why": "Different refund requests have different idempotency keys, so keys do not help; a row lock with an invariant check does."
+  },
+  {
+   "q": "A primary PSP starts timing out on sale day. What should the gateway do for new payments?",
+   "options": [
+    "Retry each payment 5 times on that PSP",
+    "Pause checkout",
+    "Open the circuit breaker and route new payments to healthy PSPs",
+    "Send each payment to all PSPs at once"
+   ],
+   "answer": 2,
+   "why": "Fail fast and shift traffic. Sending to all PSPs at once guarantees double charges."
+  },
+  {
+   "q": "Why should the webhook handler only verify, persist and return 200 quickly?",
+   "options": [
+    "PSPs time out and retry slow webhooks; heavy processing in-line causes duplicate deliveries and overload",
+    "Webhooks are not important",
+    "It avoids signature verification",
+    "Kafka requires it"
+   ],
+   "answer": 0,
+   "why": "Fast acknowledgment plus asynchronous processing keeps the endpoint healthy. Signature verification must still happen."
+  },
+  {
+   "q": "Under the saga pattern, what compensates a captured payment when the order is cancelled?",
+   "options": [
+    "Rolling back the payment DB transaction",
+    "Deleting the payment row",
+    "Two-phase commit abort",
+    "Issuing a refund and posting reversing ledger entries"
+   ],
+   "answer": 3,
+   "why": "Compensation is a new business action; a committed capture cannot be rolled back."
+  },
+  {
+   "q": "A late success arrives for a payment marked FAILED, and the buyer already paid with UPI. Correct handling?",
+   "options": [
+    "Ignore it",
+    "Record the late capture and automatically refund it, notifying the buyer",
+    "Ship the order twice",
+    "Mark the UPI payment as failed"
+   ],
+   "answer": 1,
+   "why": "The money moved, so the books must show it and the buyer must get it back. Ignoring it leaves the buyer charged twice."
+  },
+  {
+   "q": "Which storage choice best fits payment state, idempotency keys and outbox?",
+   "options": [
+    "A relational DB so they commit in one ACID transaction with unique constraints",
+    "Redis only",
+    "Kafka topics only",
+    "An eventually consistent wide-column store"
+   ],
+   "answer": 0,
+   "why": "Atomic multi-row writes and constraints are the cheapest correctness tools. Redis can lose recent writes on failover."
+  },
+  {
+   "q": "Idempotency key reused with a different amount in the body. Best response?",
+   "options": [
+    "Process the new amount",
+    "Return the stored response silently",
+    "Reject with 422 because the key was used for a different request",
+    "Charge both"
+   ],
+   "answer": 2,
+   "why": "Matching on request hash catches client bugs. Silently replaying hides the bug and confuses the caller."
+  },
+  {
+   "q": "How do you keep the system out of most PCI-DSS scope?",
+   "options": [
+    "Encrypt card numbers in your database",
+    "Store cards only in memory",
+    "Mask the PAN in logs",
+    "Use PSP-hosted fields and tokens so raw card data never touches your servers"
+   ],
+   "answer": 3,
+   "why": "If PAN never reaches your systems, scope shrinks drastically. Encrypting stored PANs still keeps you in full scope."
+  },
+  {
+   "q": "Ledger consumer receives the same payment.captured event twice. What makes it safe?",
+   "options": [
+    "Kafka exactly-once",
+    "A unique constraint on (source_event_id, account, direction) so the second post is a no-op",
+    "Consumer group rebalancing",
+    "Reconciliation"
+   ],
+   "answer": 1,
+   "why": "Idempotent posting by event id. Kafka's exactly-once covers Kafka-to-Kafka processing, not writes to an external ledger DB."
+  },
+  {
+   "q": "Which metric best captures payment-system business health?",
+   "options": [
+    "CPU utilisation of payment pods",
+    "Number of Kafka partitions",
+    "Average API latency",
+    "Authorisation success rate by PSP, method and issuing bank"
+   ],
+   "answer": 3,
+   "why": "Success rate directly drives conversion and revenue; latency matters but a fast failure is still a failure."
+  },
+  {
+   "q": "Why prefer authorise-then-capture for physical goods with a 3-day dispatch?",
+   "options": [
+    "Cancelled orders can be voided without a refund, and capture happens when fulfilment is certain",
+    "It is faster at checkout",
+    "It avoids PSP fees entirely",
+    "Authorisations never expire"
+   ],
+   "answer": 0,
+   "why": "Voids are cheaper and faster for buyers than refunds. Authorisations do expire, typically around 7 days, which bounds this choice."
+  }
+ ],
+ "references": [
+  {
+   "title": "Designing a Payment System (The Pragmatic Engineer)",
+   "url": "https://newsletter.pragmaticengineer.com/p/designing-a-payment-system"
+  },
+  {
+   "title": "Why Airbnb won't charge you twice (Byte-Sized Design)",
+   "url": "https://bytesizeddesign.substack.com/p/why-airbnb-wont-charge-you-twice"
+  },
+  {
+   "title": "Handling Double Payments at Airbnb (Biweekly Engineering)",
+   "url": "https://biweekly-engineering.beehiiv.com/p/handling-double-payments-airbnb-biweekly-engineering-episode-32"
+  },
+  {
+   "title": "Designing Idempotent Payment APIs (Arpit Bhayani)",
+   "url": "https://arpit.substack.com/p/designing-idempotent-payment-apis"
+  },
+  {
+   "title": "Designing a payment system that never charges a card twice",
+   "url": "https://www.techinterview.org/post/3233476895/designing-a-payment-system-that-never-double-charges/"
+  }
+ ]
+}

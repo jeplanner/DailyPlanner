@@ -1,0 +1,1162 @@
+{
+ "slug": "auth-sessions",
+ "title": "Design authentication and session management (web app login, tokens, sessions)",
+ "prompt": "Design authentication and session management for a web app.",
+ "group": "security",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "Login itself is easy. What is hard is everything around it: proving who the user is (password plus MFA) without letting attackers stuff stolen credentials, then keeping that proof alive cheaply on every request while still being able to revoke it instantly. The core tension is stateless tokens (fast, no lookup, hard to revoke) against server-side sessions (one lookup per request, instant revocation). The senior answer is a hybrid: a short-lived signed access token, a rotating refresh token backed by a session store, and a revocation path that is bounded by the access-token TTL.",
+ "framework": {
+  "clarify": [
+   "Who are the clients: browser SPA only, or also native mobile apps and third-party API clients? This decides cookies versus bearer tokens and whether we need OAuth2/OIDC.",
+   "Scale assumption: 50M registered users, 10M DAU, peak 5k logins/s during a sale-day spike, 200k authenticated API requests/s across all services.",
+   "Which login methods: email+password, OTP over SMS, social login (Google/Apple), SSO for enterprise tenants? I will design password + OTP MFA + Google OIDC and keep SAML out of scope.",
+   "Revocation requirement: when a user clicks 'log out of all devices' or an admin disables an account, how fast must every service reject them? I will assume within 60 seconds.",
+   "Session lifetime: how long may a user stay logged in on a trusted device? Assume 30 days sliding, 90 days absolute, with step-up re-auth for sensitive actions like changing payout bank account.",
+   "Compliance and region: is this India-only (DPDP Act, RBI guidance for payments) or global (GDPR)? Assume single primary region with a DR region, data residency in India.",
+   "Is the auth service on the hot path of every request, or do downstream services verify tokens locally? I will assume local verification is required to keep the auth service out of the 200k rps path."
+  ],
+  "design": [
+   "Baseline: a monolith with a server-side session id in an HttpOnly cookie and a sessions table. Works, but every request in every service needs a DB/cache lookup and the session store becomes a cross-service dependency.",
+   "Components: Auth API (login, MFA, refresh, logout), Credential store (argon2id hashes), Session store (Redis cluster with Postgres as source of truth), Token signer (KMS-held private keys, JWKS endpoint), Risk engine (rate limits, device reputation, breached-password check), Revocation bus (Kafka topic consumed by gateways).",
+   "Tokens: access token = JWT signed with ES256, 10-minute TTL, carries sub, sid, scopes, amr, iat, exp, kid. Refresh token = opaque 256-bit random value, stored hashed, 30-day sliding, rotated on every use with reuse detection.",
+   "APIs: POST /v1/login, POST /v1/mfa/verify, POST /v1/token/refresh, POST /v1/logout, POST /v1/sessions/revoke-all, GET /.well-known/jwks.json, GET /v1/sessions (list devices).",
+   "Critical path for every request: the API gateway verifies the JWT signature with a cached JWKS public key (about 50 microseconds), checks exp, checks sid against an in-memory revoked-session bloom/set fed by Kafka, then forwards identity headers to services. No network call to Auth on the hot path.",
+   "Critical path for login: rate-limit check, fetch user by normalized email, argon2id verify (about 50ms by design), risk score, MFA challenge if needed, create session row, issue access+refresh, set cookies (HttpOnly, Secure, SameSite=Lax, __Host- prefix)."
+  ],
+  "defend": [
+   "Bottleneck: password hashing is deliberately CPU-heavy. At 5k logins/s with 50ms argon2id each we need about 250 cores of hashing; run login on a separately autoscaled pool so a credential-stuffing wave cannot starve refresh or verification.",
+   "Scaling reads: token verification is local and stateless, so it scales linearly with gateway nodes. JWKS is cached with a 5-minute TTL and refetched on unknown kid. The only shared read is the revoked-sid set, which is small (only revocations inside the last access-token TTL window).",
+   "Scaling writes: refresh is the main write, about 10M DAU x 1 refresh per 10 minutes of activity = roughly 15-25k refresh/s at peak. Sessions are sharded by session_id hash in Redis Cluster and by user_id in Postgres; rotation is one compare-and-set per refresh.",
+   "Failure behaviour: if the session store is down, existing access tokens keep working until expiry (degraded but available); refresh fails closed with a 503 and the client retries with exponential backoff and jitter. If KMS is down we keep signing with the in-memory key for its lease, and verification never depends on KMS.",
+   "Security failures: refresh-token reuse kills the whole token family; impossible travel or new device triggers step-up MFA; credential stuffing is throttled per IP, per account, and per ASN with sliding-window counters plus CAPTCHA escalation.",
+   "Measure: login success rate, MFA challenge rate, p99 login latency (target 400ms excluding the user), refresh p99 (50ms), refresh reuse detections per hour, revocation propagation lag (p99 under 5s), JWT verification failures by reason, credential-stuffing blocks per minute."
+  ],
+  "script": "Let me clarify first: it is a browser plus mobile app, around 10 million daily users, peak 5k logins a second during a sale, and the hard requirement is that a logout or account disable takes effect everywhere within a minute. Given that, I do not want the auth service in the path of every one of our 200k requests per second, so the design is a hybrid. Login verifies an argon2id password and an OTP when risk is high, creates a session row, and issues two things: a 10-minute signed JWT access token that any gateway can verify locally with a public key, and an opaque refresh token that is stored hashed, rotated on every use, and tied to the session. Revocation works by deleting the session, so the next refresh fails, and for the 10-minute gap we broadcast revoked session ids on Kafka to every gateway. To defend it: hashing is the CPU bottleneck so login gets its own pool; reads scale because verification is stateless; refresh is the write hotspot and is sharded by session id; and if the session store dies we degrade to 'already logged-in users keep working, new refreshes fail' rather than a full outage. I would watch login success rate, refresh reuse detections and revocation lag."
+ },
+ "brd": {
+  "problem": "Users must log in once and stay securely logged in across web and mobile, while the company must stop account takeover (ATO) from credential stuffing, phishing and stolen devices. Today a legacy session store is queried by every service, causing latency and outages that log everyone out, and there is no way to force logout across devices when an account is compromised.",
+  "goals": [
+   "Reduce account takeover incidents by 80% within two quarters through MFA, rate limiting and breached-password checks.",
+   "Keep authenticated request overhead under 1ms p99 at the gateway by removing synchronous session lookups.",
+   "Support 'log out of all devices' and admin disable with global effect in under 60 seconds.",
+   "Keep login friction low: at least 95% of returning users on trusted devices never see an MFA prompt.",
+   "Provide one identity layer for web, Android, iOS and internal services (single sign-on across subdomains)."
+  ],
+  "non_goals": [
+   "Authorization (who can do what) - handled by a separate RBAC/policy service; we only emit identity and coarse scopes.",
+   "Enterprise SAML federation and SCIM provisioning in phase 1.",
+   "Building a general-purpose OAuth provider for third-party developers.",
+   "KYC / identity verification of real-world identity documents."
+  ],
+  "stakeholders": [
+   {
+    "who": "End customers",
+    "needs": "Fast login, stay logged in, clear device list, recover account easily."
+   },
+   {
+    "who": "Security / Trust and Safety team",
+    "needs": "ATO detection signals, forced logout, audit trail, MFA enforcement levers."
+   },
+   {
+    "who": "Product service teams",
+    "needs": "A verified user id and scopes on every request with zero integration effort and no extra latency."
+   },
+   {
+    "who": "Customer support",
+    "needs": "Tools to see sessions, revoke them and trigger password reset safely."
+   },
+   {
+    "who": "Compliance / Legal",
+    "needs": "Audit logs retained per policy, data residency, DPDP consent handling."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Confirmed ATO incidents per million active users per month",
+    "target": "Under 5 (from 25)"
+   },
+   {
+    "metric": "Login success rate for legitimate users",
+    "target": ">= 98% first attempt excluding wrong password"
+   },
+   {
+    "metric": "Gateway auth overhead",
+    "target": "p99 < 1ms"
+   },
+   {
+    "metric": "Revocation propagation",
+    "target": "p99 < 5s, max 60s"
+   },
+   {
+    "metric": "Auth availability (token refresh + login)",
+    "target": "99.99% monthly"
+   }
+  ],
+  "constraints": [
+   "Must support existing 50M accounts with legacy bcrypt hashes without forcing a password reset (rehash on next login).",
+   "SMS OTP cost is about 0.15-0.25 INR per message; MFA must be risk-based, not always-on.",
+   "Mobile networks in tier-2/3 cities have high latency and frequent drops, so token refresh must be retry-safe.",
+   "Private signing keys must never leave the HSM/KMS boundary except as short-lived in-memory leases."
+  ],
+  "risks": [
+   {
+    "risk": "Credential stuffing wave of millions of attempts during a sale",
+    "mitigation": "Layered rate limits per IP/ASN/account, breached-password screening, CAPTCHA escalation, isolated login compute pool."
+   },
+   {
+    "risk": "Stolen refresh token used silently for weeks",
+    "mitigation": "Rotation with reuse detection that revokes the token family; bind to device key where supported."
+   },
+   {
+    "risk": "Signing key compromise",
+    "mitigation": "Keys in KMS, rotation every 30 days with kid, ability to emergency-rotate and invalidate all tokens by kid."
+   },
+   {
+    "risk": "Session store outage logs everyone out",
+    "mitigation": "Stateless access tokens keep traffic working for the TTL window; Redis replicated with Postgres as source of truth."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Returning shopper on mobile",
+    "needs": "Never re-type the password on the same phone; quick OTP if something is unusual."
+   },
+   {
+    "name": "New user",
+    "needs": "Simple sign-up with email or phone, or one-tap Google sign-in."
+   },
+   {
+    "name": "Seller / admin user",
+    "needs": "Mandatory MFA, step-up for sensitive actions, short sessions."
+   },
+   {
+    "name": "Security analyst",
+    "needs": "Search sessions, see login history and risk scores, kill sessions in bulk."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want to stay signed in on my phone for weeks so that checkout is one tap.",
+   "As a shopper, I want to see all devices logged into my account and sign one out so that I can remove a lost phone.",
+   "As a shopper, I want an OTP only when something looks unusual so that login is quick most of the time.",
+   "As a seller, I want to be asked to re-authenticate before changing my bank account so that a stolen session cannot redirect payouts.",
+   "As a security analyst, I want to force-logout all sessions of a compromised account within a minute so that the attacker loses access immediately.",
+   "As a backend engineer, I want the gateway to give me a trusted user id header so that I never parse tokens myself.",
+   "As a user who forgot my password, I want a reset link that expires and works once so that my account is safe even if the email leaks later.",
+   "As a new user, I want to sign up with Google so that I do not need another password."
+  ],
+  "functional": [
+   "Sign up and login with email/phone + password; passwords hashed with argon2id (m=64MB, t=3, p=1), legacy bcrypt rehashed on login.",
+   "Risk-based MFA via SMS/email OTP or TOTP; mandatory TOTP or WebAuthn for sellers and admins.",
+   "Social login with Google/Apple via OpenID Connect authorization code flow with PKCE.",
+   "Issue short-lived JWT access tokens (10 min) and rotating opaque refresh tokens (30 days sliding, 90 days absolute).",
+   "Logout current session, logout all sessions, admin revoke; propagate revocation to all gateways within 60s.",
+   "Device/session list with last-seen time, approximate location and device name.",
+   "Password reset via single-use token (hashed, 15-minute TTL) that revokes all existing sessions on success.",
+   "Step-up authentication: tokens carry auth_time and amr; sensitive endpoints require auth_time within the last 5 minutes.",
+   "Audit log of every auth event (login, fail, MFA, refresh reuse, revoke) streamed to the SIEM."
+  ],
+  "non_functional": [
+   {
+    "name": "Gateway verification latency",
+    "target": "p99 < 1ms, no network call"
+   },
+   {
+    "name": "Login latency (server side)",
+    "target": "p50 150ms, p99 400ms"
+   },
+   {
+    "name": "Refresh latency",
+    "target": "p99 < 50ms"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for refresh/verify, 99.95% for login"
+   },
+   {
+    "name": "Revocation consistency",
+    "target": "Effective everywhere within 60s (p99 5s)"
+   },
+   {
+    "name": "Durability",
+    "target": "Sessions and credentials RPO 0 (synchronous replication in Postgres)"
+   },
+   {
+    "name": "Security",
+    "target": "OWASP ASVS L2; no secrets in logs; tokens never in URLs"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "50M registered users, 10M DAU, average 2.5 active devices per user, so about 25M live sessions plus 100M long-tail sessions within 30 days.",
+    "Normal login rate 300/s; sale-day peak 5k/s legitimate; credential-stuffing attack can add 50k attempts/s.",
+    "Authenticated API traffic peak 200k rps; access-token TTL 10 minutes.",
+    "Session row about 400 bytes (ids, hashes, device info, timestamps); refresh token hash 32 bytes."
+   ],
+   "math": [
+    "Session storage: 125M sessions x 400B = 50GB in Postgres; the hot 25M in Redis = about 10GB plus overhead, so roughly 20GB across a 6-shard Redis Cluster with 1 replica each.",
+    "Refresh rate: 10M DAU, assume 3M concurrently active at peak, each refreshing once per 10 min = 3M / 600s = 5k/s steady; with mobile retries and app launches budget 20k/s.",
+    "Hashing CPU: argon2id at about 50ms per core per verify. 5k logins/s x 0.05 core-s = 250 cores; attack traffic is rejected by rate limits before hashing, otherwise 50k/s would need 2,500 cores.",
+    "Gateway verify: ES256 verify about 60-100 microseconds per core; 200k rps x 100us = 20 cores spread across the gateway fleet, negligible.",
+    "Revocation set: at most the revocations within one access TTL (10 min). Even 1k revocations/s x 600s = 600k sids x 16B = about 10MB per gateway - fits in memory.",
+    "Audit events: about 30k/s peak x 500B = 15MB/s, about 1.3TB/day raw, compressed about 200GB/day in the log lake."
+   ],
+   "summary": "Verification is cheap and local; the expensive parts are deliberate (argon2id CPU at 250 cores for peak legitimate login) and the write path is refresh at 5-20k/s, easily handled by a sharded Redis plus Postgres. The revocation list stays tiny because it only needs to cover one access-token lifetime."
+  },
+  "out_of_scope": [
+   "Fine-grained authorization decisions (RBAC/ABAC).",
+   "SAML/enterprise federation and SCIM.",
+   "Fraud scoring of payments (separate fraud pipeline; we only feed it login signals).",
+   "Biometric KYC."
+  ]
+ },
+ "hld": {
+  "overview": "Clients talk to an edge API gateway. The gateway terminates TLS, verifies the access JWT locally using cached public keys (JWKS), checks the session id against a locally replicated revoked-set, and forwards X-User-Id / X-Session-Id / scopes to backend services. The Auth service owns login, MFA, refresh, logout and session listing. It stores credentials and sessions in Postgres (source of truth, sharded by user_id) and caches active sessions and refresh-token state in Redis Cluster. A Risk service scores each login using rate counters, device fingerprint, IP reputation and breached-password checks. Private signing keys live in KMS; the Auth service holds a short lease on a data key or calls KMS sign. Revocations publish to a Kafka topic that every gateway consumes.",
+  "diagram": "\n  Browser / App\n       |  HTTPS (cookie or Bearer)\n       v\n  +-----------------+   JWKS (cached 5m)   +------------------+\n  |  API Gateway    |<---------------------|  Auth Service    |\n  | verify JWT local|                      | login/mfa/refresh|\n  | revoked-sid set |<--+                  +--+-----+-----+---+\n  +--------+--------+   |                     |     |     |\n           | identity   | Kafka               |     |     | sign\n           v headers    | auth.revocations    |     |     v\n  +-----------------+   |                     |     |  +------+\n  | Product services|   +---------------------+     |  | KMS  |\n  +-----------------+                               |  +------+\n                          +-------------+   +-------v-------+\n                          | Risk Service|<--| Redis Cluster |\n                          | rate limits |   | sessions, RT  |\n                          | device rep  |   +-------+-------+\n                          +------+------+           | write-through\n                                 |          +-------v-------+\n                                 v          | Postgres      |\n                          +-------------+   | users, creds, |\n                          | Audit/SIEM  |   | sessions      |\n                          +-------------+   +---------------+\n",
+  "components": [
+   {
+    "name": "API Gateway (Envoy + auth filter)",
+    "responsibility": "TLS termination, JWT signature/exp/aud check with cached JWKS, revoked-sid check, strips client-supplied identity headers and injects trusted ones."
+   },
+   {
+    "name": "Auth Service",
+    "responsibility": "Login, MFA challenge/verify, OIDC callback, token issue/refresh/rotation, logout, session listing, password reset."
+   },
+   {
+    "name": "Credential Store (Postgres)",
+    "responsibility": "Users, password hashes with algorithm and params, MFA factors (TOTP secrets encrypted), WebAuthn public keys."
+   },
+   {
+    "name": "Session Store (Redis Cluster + Postgres)",
+    "responsibility": "Session rows and refresh token families; Redis for low-latency refresh, Postgres for durability and listing."
+   },
+   {
+    "name": "Risk Service",
+    "responsibility": "Sliding-window rate limits per IP/ASN/account/device, IP reputation, impossible travel, breached-password k-anonymity check; returns allow / challenge / deny."
+   },
+   {
+    "name": "Key Management (KMS/HSM)",
+    "responsibility": "Holds ES256 signing keys, rotates every 30 days, publishes public keys with kid via JWKS."
+   },
+   {
+    "name": "Revocation Bus (Kafka)",
+    "responsibility": "Topic auth.revocations keyed by user_id; gateways consume and keep an in-memory set of revoked sids with TTL = max access-token lifetime."
+   },
+   {
+    "name": "OTP / Notification Service",
+    "responsibility": "Sends SMS/email OTP and security alerts (new device login) with per-destination rate limits."
+   },
+   {
+    "name": "Audit Pipeline",
+    "responsibility": "Streams auth events to the SIEM and fraud pipeline; immutable, 1-year retention."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Password login with risk-based MFA",
+    "steps": [
+     "Client POSTs /v1/login with identifier, password, device_id; gateway applies an IP rate limit (token bucket 10/min/IP for login).",
+     "Auth asks Risk for a pre-check: per-account failure counter, IP/ASN reputation, device known? Risk returns allow, challenge (CAPTCHA) or deny.",
+     "Auth loads the user by normalized identifier; if not found, it still runs a dummy argon2id verify to keep timing constant.",
+     "argon2id verify; on legacy bcrypt success, rehash with argon2id and update in place.",
+     "Risk post-check: new device or new country or high score -> require MFA; Auth returns 200 {mfa_required, challenge_id} and sends OTP.",
+     "Client POSTs /v1/mfa/verify; OTP checked (6 digits, 5-minute TTL, max 5 attempts).",
+     "Auth creates session row (sid, user_id, device, amr, auth_time), creates refresh family, signs access JWT, sets __Host-at and __Host-rt cookies (or returns tokens to the mobile app for secure storage).",
+     "Audit event emitted; new-device email alert sent asynchronously."
+    ]
+   },
+   {
+    "name": "Token refresh with rotation",
+    "steps": [
+     "Access token expires; client calls POST /v1/token/refresh with the refresh token (cookie scoped to path /v1/token).",
+     "Auth hashes the presented token (SHA-256) and looks up the family in Redis: rt_hash -> {family_id, sid, generation, status}.",
+     "If status is current: atomically (Lua script) mark it used, create generation+1, store new hash, extend sliding expiry, return new access+refresh.",
+     "If status is already used and within a 30-second grace window with the same device, return the already-issued successor (handles mobile retry races).",
+     "If status is used outside grace: treat as theft, revoke the whole family and session, publish revocation, alert the user.",
+     "If the session is revoked or past its absolute 90-day expiry: return 401, client goes to login."
+    ]
+   },
+   {
+    "name": "Logout everywhere / admin revoke",
+    "steps": [
+     "User or admin calls POST /v1/sessions/revoke-all.",
+     "Auth marks all sessions for user_id revoked in Postgres and deletes their refresh families in Redis.",
+     "Auth publishes {user_id, sids[], revoked_at, max_exp} to auth.revocations.",
+     "Every gateway consumes and adds the sids to its revoked set; any in-flight access token with those sids is rejected within seconds.",
+     "Entries expire from the set after 10 minutes because any token with those sids has expired by then."
+    ]
+   }
+  ],
+  "data_flow": "Credentials flow only into the Auth service over TLS and are never logged. Auth reads and writes Postgres (users, sessions) and Redis (refresh families, rate counters via Risk). Signed JWTs flow out to clients and back in on every request, where gateways verify them without contacting Auth. Revocation events flow Auth -> Kafka -> all gateways. Every auth event flows Auth -> Kafka -> SIEM/fraud lake for detection and investigations."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/login",
+    "request": "{identifier, password, device_id, captcha_token?}",
+    "response": "200 {mfa_required:false, access_token, expires_in:600} + Set-Cookie rt | 200 {mfa_required:true, challenge_id, methods:[sms,totp]} | 401 generic error | 429 Retry-After",
+    "notes": "Same error text for unknown user and wrong password. Rate limited per IP, per account and per device."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/mfa/verify",
+    "request": "{challenge_id, method, code}",
+    "response": "200 {access_token, expires_in} + Set-Cookie rt | 401 {attempts_left}",
+    "notes": "Challenge is single-use, 5-minute TTL, max 5 attempts, bound to the device_id of the login step."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/token/refresh",
+    "request": "refresh token in cookie __Host-rt or body {refresh_token} for mobile; header Idempotency-Key optional",
+    "response": "200 {access_token, refresh_token?, expires_in} | 401 {error: invalid_grant}",
+    "notes": "Rotates on every call; reuse outside a 30s grace revokes the family."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/logout",
+    "request": "{scope: current | all}",
+    "response": "204",
+    "notes": "Requires a valid access token and CSRF header for cookie clients; publishes revocation."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/sessions",
+    "request": "Authorization: Bearer <access>",
+    "response": "200 [{sid, device_name, last_seen, city, current:true|false}]",
+    "notes": "Reads from Postgres replica; last_seen updated at most once per 5 minutes per session to limit writes."
+   },
+   {
+    "method": "GET",
+    "path": "/.well-known/jwks.json",
+    "request": "none",
+    "response": "{keys:[{kid, kty:EC, crv:P-256, x, y}]}",
+    "notes": "Cache-Control max-age=300; contains current and previous key during rotation."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/password/reset",
+    "request": "{reset_token, new_password}",
+    "response": "204",
+    "notes": "Token is single-use, hashed at rest, 15-minute TTL; success revokes all sessions."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "users / credentials",
+    "store": "Postgres (sharded by user_id, 16 logical shards)",
+    "fields": [
+     "user_id BIGINT",
+     "email_norm TEXT UNIQUE",
+     "phone_e164 TEXT UNIQUE",
+     "pwd_hash TEXT",
+     "pwd_algo TEXT (argon2id|bcrypt)",
+     "pwd_params JSONB",
+     "mfa_required BOOL",
+     "status (active|locked|disabled)",
+     "created_at"
+    ],
+    "keys": "PK user_id; global lookup tables email_norm -> user_id and phone -> user_id",
+    "notes": "Lookup tables are separate so login can route to the right shard."
+   },
+   {
+    "entity": "sessions",
+    "store": "Postgres (sharded by user_id) + Redis cache",
+    "fields": [
+     "sid UUID",
+     "user_id",
+     "device_id",
+     "device_name",
+     "amr TEXT[]",
+     "auth_time",
+     "created_at",
+     "last_seen",
+     "absolute_exp",
+     "revoked_at NULL",
+     "ip_first",
+     "geo"
+    ],
+    "keys": "PK (user_id, sid); index on (user_id, revoked_at)",
+    "notes": "Co-locating by user_id makes revoke-all a single-shard update."
+   },
+   {
+    "entity": "refresh_families",
+    "store": "Redis Cluster (hash-slot by family_id), async persisted to Postgres",
+    "fields": [
+     "rt:{hash} -> family_id, generation, status(current|used), used_at, successor_hash",
+     "fam:{family_id} -> sid, user_id, current_gen, sliding_exp"
+    ],
+    "keys": "rt:{sha256(token)}; fam:{family_id}; hash tag {family_id} keeps both on one slot",
+    "notes": "Both keys share a hash tag so a Lua script can update them atomically. TTL = sliding expiry."
+   },
+   {
+    "entity": "rate_counters",
+    "store": "Redis",
+    "fields": [
+     "rl:login:ip:{ip}:{window}",
+     "rl:login:acct:{user_id}:{window}",
+     "rl:otp:dest:{phone}:{window}"
+    ],
+    "keys": "Composite key per dimension and window",
+    "notes": "Sliding window approximated by two fixed windows weighted; TTL 2x window."
+   },
+   {
+    "entity": "auth_events",
+    "store": "Kafka -> object storage / SIEM",
+    "fields": [
+     "event_id",
+     "type",
+     "user_id",
+     "sid",
+     "ip",
+     "device_id",
+     "risk_score",
+     "result",
+     "ts"
+    ],
+    "keys": "Kafka key user_id",
+    "notes": "Immutable; 1-year retention."
+   }
+  ],
+  "classes": [
+   {
+    "name": "LoginService",
+    "responsibility": "Orchestrates identifier lookup, hash verify, risk checks and MFA decision.",
+    "methods": [
+     "login(identifier, password, device) -> LoginResult",
+     "verifyMfa(challengeId, code) -> Tokens",
+     "rehashIfNeeded(user, password)"
+    ]
+   },
+   {
+    "name": "TokenIssuer",
+    "responsibility": "Builds and signs access JWTs using the current KMS-backed key; exposes JWKS.",
+    "methods": [
+     "issueAccess(session, scopes) -> jwt",
+     "currentKid()",
+     "jwks() -> JWKSet"
+    ]
+   },
+   {
+    "name": "RefreshTokenManager",
+    "responsibility": "Creates families, rotates tokens atomically, detects reuse, revokes families.",
+    "methods": [
+     "createFamily(sid) -> token",
+     "rotate(token, deviceId) -> (token, sid) | ReuseDetected",
+     "revokeFamily(familyId)"
+    ]
+   },
+   {
+    "name": "SessionRepository",
+    "responsibility": "CRUD on sessions in Postgres with Redis write-through cache.",
+    "methods": [
+     "create(session)",
+     "get(sid)",
+     "listActive(userId)",
+     "revokeAll(userId) -> sids"
+    ]
+   },
+   {
+    "name": "RevocationPublisher / RevocationCache",
+    "responsibility": "Publishes revocations; gateway side keeps a TTL set and answers isRevoked(sid).",
+    "methods": [
+     "publish(userId, sids)",
+     "onEvent(evt)",
+     "isRevoked(sid) -> bool"
+    ]
+   },
+   {
+    "name": "RiskEvaluator",
+    "responsibility": "Combines rate counters and signals into allow/challenge/deny.",
+    "methods": [
+     "preCheck(ctx) -> Decision",
+     "postCheck(ctx, user) -> Decision",
+     "recordFailure(ctx)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Refresh token rotation with reuse detection",
+    "explain": "Each refresh token belongs to a family (one per session). Only the newest generation is valid. Presenting an older generation means the token was copied, so we revoke the whole family. A short grace window returns the same successor to cope with a client that retried after a dropped response.",
+    "pseudocode": "rotate(presented, device):\n  h = sha256(presented)\n  rec = redis.HGETALL('rt:' + h)\n  if rec is empty: return INVALID\n  fam = redis.HGETALL('fam:' + rec.family_id)\n  if fam.revoked: return INVALID\n  if rec.status == 'current':\n     new = random_bytes(32); nh = sha256(new)\n     LUA atomically:\n        if rt:h.status != 'current': abort (lost race)\n        set rt:h.status='used', used_at=now, successor=nh\n        set rt:nh = {family, gen+1, 'current'}; fam.current_gen += 1\n        expire both at sliding_exp\n     return (new, issueAccess(fam.sid))\n  if rec.status == 'used' and now - rec.used_at < 30s and device == fam.device:\n     return (lookupSuccessorToken(rec), issueAccess(fam.sid))  # idempotent retry\n  revokeFamily(rec.family_id); publishRevocation(fam.sid); alert(user)\n  return REUSE_DETECTED"
+   },
+   {
+    "name": "Gateway token verification",
+    "explain": "Stateless verification with a small stateful check against revoked sessions. Unknown kid triggers at most one JWKS refetch per 30s to avoid an amplification attack where random kids force constant refetches.",
+    "pseudocode": "verify(jwt):\n  hdr, claims, sig = parse(jwt)\n  if hdr.alg != 'ES256': reject      # never accept 'none' or HS256 here\n  key = jwks_cache.get(hdr.kid)\n  if key is None and last_refetch < now-30s: refetch_jwks(); key = jwks_cache.get(hdr.kid)\n  if key is None or not ecdsa_verify(key, hdr+claims, sig): reject\n  if claims.exp < now - 30s_skew or claims.iss != ISS or AUD not in claims.aud: reject\n  if revoked_set.contains(claims.sid): reject\n  forward(X-User-Id=claims.sub, X-Session-Id=claims.sid, X-Scopes=claims.scope)"
+   },
+   {
+    "name": "Sliding window login rate limit",
+    "explain": "Approximate sliding window from two fixed windows: count = prev * (1 - elapsed/window) + curr. Cheap (two keys) and smooth at window edges, unlike a pure fixed window that allows 2x bursts at the boundary.",
+    "pseudocode": "allow(key, limit, window=60s):\n  w = floor(now / window)\n  curr = INCR(key + w); EXPIRE(key + w, 2*window)\n  prev = GET(key + (w-1)) or 0\n  frac = (now mod window) / window\n  est = prev * (1 - frac) + curr\n  return est <= limit"
+   }
+  ],
+  "sequence": "\nClient        Gateway        Auth          Risk        Redis      Postgres     KMS\n  | POST /login  |              |              |            |           |          |\n  |------------->| rate-limit   |              |            |           |          |\n  |              |------------->| preCheck     |            |           |          |\n  |              |              |------------->| INCR ctrs  |           |          |\n  |              |              |<-- allow ----|----------->|           |          |\n  |              |              | load user ---------------------------->|          |\n  |              |              | argon2id verify (50ms)    |           |          |\n  |              |              |------------->| postCheck: new device   |          |\n  |              |              |<-- challenge-|            |           |          |\n  |<- 200 mfa_required, challenge_id -----------|            |           |          |\n  | POST /mfa/verify (otp)      |              |            |           |          |\n  |------------->|------------->| check otp ----------------->|           |          |\n  |              |              | insert session --------------------->|          |\n  |              |              | create rt family ----------->|           |          |\n  |              |              | sign JWT ------------------------------------------>|\n  |<- 200 access + Set-Cookie rt (HttpOnly, Secure, SameSite) |           |          |\n  | GET /orders (Bearer at)     |              |            |           |          |\n  |------------->| verify sig+exp+sid locally, forward X-User-Id         |          |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Mobile client sends refresh, server rotates, response is lost on a flaky 3G network; client retries with the old refresh token.",
+   "handling": "30-second grace window: if the old token is 'used' within 30s from the same device_id, return the already-minted successor instead of treating it as theft. Outside the window or from another device, revoke the family."
+  },
+  {
+   "case": "Two browser tabs refresh at the same moment with the same refresh token.",
+   "handling": "Lua compare-and-set lets exactly one win; the loser sees status=used within grace and gets the same successor. Better still, the web client uses a BroadcastChannel/lock so only one tab refreshes."
+  },
+  {
+   "case": "Credential stuffing from 200k residential proxy IPs, each IP trying only 2 passwords.",
+   "handling": "Per-IP limits do not catch it. Add per-account failure limits, per-ASN and global failure-ratio anomaly detection, breached-password screening, device fingerprint velocity, and CAPTCHA/proof-of-work escalation when global failure ratio exceeds baseline."
+  },
+  {
+   "case": "Attacker uses per-account lockout to lock out a victim (denial of service).",
+   "handling": "No hard lockout; use progressive delays and CAPTCHA per account+IP pair, and always let a known device with a valid refresh token continue."
+  },
+  {
+   "case": "Clock skew between the Auth service and gateways makes fresh tokens look expired or not-yet-valid.",
+   "handling": "NTP on all hosts; allow 30-60 seconds leeway on exp/nbf/iat checks; never use client clocks for anything security-relevant."
+  },
+  {
+   "case": "Signing key rotation while tokens signed with the old key are still live.",
+   "handling": "Publish the new public key in JWKS at least one cache TTL (5 minutes) before signing with it; keep the old key published for at least one access-token TTL after the switch; tokens carry kid."
+  },
+  {
+   "case": "User changes password or enables MFA while other sessions are live.",
+   "handling": "Revoke all other sessions (keep current), publish revocations, and send a security email; access tokens die within 10 minutes and are blocked immediately via the revoked set."
+  },
+  {
+   "case": "User enumeration via timing or different error messages on login, sign-up or password reset.",
+   "handling": "Identical responses and constant work (dummy argon2 verify for unknown users); reset always says 'if an account exists, we sent an email'."
+  },
+  {
+   "case": "Gateway restarts and loses its in-memory revoked set.",
+   "handling": "On boot, replay the auth.revocations topic from offset now-15 minutes (or a compacted snapshot) before taking traffic; readiness probe waits for catch-up."
+  },
+  {
+   "case": "XSS on a page tries to steal tokens.",
+   "handling": "Refresh token in an HttpOnly, Secure, SameSite cookie with __Host- prefix and path /v1/token; access token kept in memory, not localStorage; strict CSP. XSS can still act as the user while the page is open, which is why step-up auth protects sensitive actions."
+  },
+  {
+   "case": "CSRF against cookie-authenticated endpoints.",
+   "handling": "SameSite=Lax cookies plus a custom header requirement (X-CSRF or double-submit token) for state-changing requests; refresh endpoint checks Origin."
+  },
+  {
+   "case": "OTP SMS pumping fraud (attackers trigger OTPs to premium numbers to earn revenue share).",
+   "handling": "Per-destination and per-prefix rate limits, block high-cost country prefixes, require CAPTCHA before OTP send for unknown devices, alert on cost spikes."
+  },
+  {
+   "case": "Region failover: primary Postgres lost; DR promoted with a few seconds of async lag.",
+   "handling": "Sessions created in the lag window are lost; those users must log in again (acceptable). Refresh families in the DR Redis are rebuilt from Postgres; a family missing in DR results in a clean 401, not a reuse alarm."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Envoy gateway with JWT authn filter",
+   "layer": "Edge / gateway",
+   "overview": "High-performance L7 proxy with built-in JWT verification, remote JWKS fetching and caching, and an ext_authz hook.",
+   "why": "Verifies tokens locally at every edge node with no code in product services; can be extended with a small filter for the revoked-sid check.",
+   "alternatives": "Kong / NGINX with Lua (similar, plugin ecosystem); per-service middleware libraries (more drift and bugs across languages)."
+  },
+  {
+   "name": "PostgreSQL",
+   "layer": "Source of truth for users, credentials, sessions",
+   "overview": "Relational database with strong consistency, unique constraints and synchronous replication.",
+   "why": "Unique email/phone constraints, transactional session creation, and RPO 0 with a synchronous standby; data volume (about 50GB) is small.",
+   "alternatives": "DynamoDB/Cassandra (easier horizontal scale, but uniqueness and multi-row transactions are harder); MySQL (equally fine)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Session cache, refresh families, rate limit counters",
+   "overview": "In-memory key-value store with atomic Lua scripts, TTLs and hash slots for sharding.",
+   "why": "Sub-millisecond rotation with atomic compare-and-set, natural TTLs for sliding expiry and counters.",
+   "alternatives": "Memcached (no atomic scripts or persistence); storing refresh state only in Postgres (works at 20k/s with sharding but higher latency)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Revocation bus and audit stream",
+   "overview": "Durable, partitioned, replayable log.",
+   "why": "Every gateway can consume all revocations and replay from an offset after restart; the same infrastructure carries audit events to SIEM and the fraud pipeline.",
+   "alternatives": "Redis pub/sub (no replay, lost messages on disconnect); polling a revocation endpoint every few seconds (simple, adds load and lag)."
+  },
+  {
+   "name": "Cloud KMS / HSM with ES256 keys",
+   "layer": "Key management",
+   "overview": "Managed hardware-backed key storage that performs signing without exposing the private key.",
+   "why": "Private key never leaves the boundary; audit log of every sign; easy rotation by kid. ES256 gives small signatures (64 bytes) and fast verify.",
+   "alternatives": "RS256 (bigger tokens, faster verify, slower sign); EdDSA/Ed25519 (fastest, slightly less library support in older stacks); HS256 shared secret (every verifier could forge tokens - unacceptable across many services)."
+  },
+  {
+   "name": "argon2id",
+   "layer": "Password hashing",
+   "overview": "Memory-hard password hashing function that won the Password Hashing Competition.",
+   "why": "Memory hardness (64MB) makes GPU/ASIC cracking of a leaked DB far more expensive than bcrypt or PBKDF2.",
+   "alternatives": "bcrypt cost 12 (well proven, not memory-hard, 72-byte limit); scrypt (memory-hard, harder to tune); PBKDF2 (needed for FIPS, weakest against GPUs)."
+  },
+  {
+   "name": "OpenID Connect (Google/Apple)",
+   "layer": "Federated login",
+   "overview": "Identity layer on top of OAuth 2.0 that returns a signed ID token describing the user.",
+   "why": "Lets users sign in without a password; authorization code flow with PKCE keeps tokens off the front channel.",
+   "alternatives": "Proprietary social SDKs (lock-in, weaker standard guarantees); magic email links (good UX, depends on email deliverability)."
+  },
+  {
+   "name": "WebAuthn / passkeys",
+   "layer": "Phishing-resistant MFA",
+   "overview": "Public-key credentials bound to the site origin, stored on device or synced by the platform.",
+   "why": "Defeats phishing and OTP relay attacks; mandatory for sellers and admins.",
+   "alternatives": "TOTP apps (phishable but cheap); SMS OTP (SIM swap and SMS pumping risks, but universal reach in India)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Stateful sessions vs stateless tokens (and the hybrid)",
+   "explain": "A stateful session gives the client a random, meaningless identifier and keeps all the facts about the login on the server. Each request carries the id and the server looks it up. Revocation is trivial: delete the row and the next request fails. The cost is a lookup on every request, and every service that wants to authenticate users now depends on that session store being up and fast. A stateless token turns this inside out. The server writes the facts (user id, expiry, scopes) into the token and signs them. Anyone holding the public key can check the signature and trust the claims without asking anyone. That removes the lookup and the shared dependency, which is why JWTs became popular in microservice systems. The price is revocation: a signed token stays valid until it expires, because nothing is consulted. You can add a denylist, but then you have a lookup again. The hybrid used by most large systems combines the two. A short-lived stateless access token (5-15 minutes) handles the hot path, and a long-lived stateful refresh token, checked against a session store, lets the client get new access tokens. Revocation deletes the session, so the next refresh fails, and the worst-case exposure is bounded by the access token's TTL. If that bound is too long for some events, a small denylist that covers only one TTL window closes the gap cheaply.",
+   "in_this_design": "Access JWTs live 10 minutes and are verified locally at the gateway. Refresh tokens are opaque, stored hashed in Redis/Postgres, and tied to a session id. Revocation deletes the session and refresh family and broadcasts the sid to gateways, whose revoked set only needs to remember 10 minutes of revocations.",
+   "key_points": [
+    "Stateful = instant revocation, lookup per request; stateless = no lookup, revocation only at expiry.",
+    "The access-token TTL is your revocation latency budget if you have no denylist.",
+    "A denylist only needs entries for one access TTL, so it stays tiny.",
+    "Refresh tokens should be opaque and server-checked; access tokens can be self-contained."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use long-lived JWTs and skip refresh tokens?",
+     "a": "Because you cannot revoke them without a lookup, so a stolen token works for its full lifetime, and claims such as roles go stale. Short access TTL plus refresh gives a revocation point every few minutes while keeping the hot path stateless."
+    },
+    {
+     "q": "If you add a denylist check, haven't you rebuilt stateful sessions?",
+     "a": "Partly, but the shape is different: the denylist is tiny (only revocations from the last 10 minutes), replicated into every gateway's memory via a stream, and checked locally. There is no network call and no shared store on the request path."
+    },
+    {
+     "q": "How would you pick the access-token TTL?",
+     "a": "It trades refresh load against revocation lag and claim staleness. 10 minutes at 3M active users is about 5k refresh/s, which is cheap; 1 minute would be 50k/s for marginal benefit since the denylist covers urgent cases. For high-risk admin consoles I would use 5 minutes and step-up auth."
+    }
+   ]
+  },
+  {
+   "name": "Refresh token rotation and reuse detection",
+   "explain": "A refresh token is a long-lived credential, so it is the prize for an attacker who steals it from a device, a log file or a compromised browser extension. Rotation means each refresh token can be used exactly once: when the client presents it, the server issues a new refresh token and marks the old one as used. On its own this does not stop a thief, since the thief could simply refresh first. The value comes from reuse detection. All tokens descending from one login form a family, and the server remembers which generation is current. If an older, already-used token is ever presented again, then two parties hold copies of the same lineage, the real client and an attacker, and the server cannot tell which is which. The safe response is to revoke the entire family, logging out both parties, and to alert the user. The real user just logs in again; the attacker loses access. The practical difficulty is unreliable networks. If the server rotates but the response never reaches the client, the client honestly retries with the old token, which looks exactly like theft. Systems handle this with a short grace window: if the old token comes back within a few seconds from the same device fingerprint, the server returns the successor it already minted instead of raising an alarm. The window must be short enough to give an attacker no useful advantage. Storing only a hash of each token means a database leak does not leak usable tokens.",
+   "in_this_design": "Each session has one refresh family in Redis keyed by a hash tag so the rotate Lua script is atomic. A 30-second same-device grace returns the existing successor. Reuse outside the grace revokes the family and session, publishes a revocation, and sends a security alert.",
+   "key_points": [
+    "Rotation makes refresh tokens single-use; reuse detection is what turns that into theft detection.",
+    "On reuse, revoke the whole family - you cannot tell which holder is legitimate.",
+    "Grace window plus idempotent successor handles lost responses on mobile.",
+    "Store SHA-256 of the token, never the token itself."
+   ],
+   "qa": [
+    {
+     "q": "Why hash refresh tokens with SHA-256 instead of argon2id like passwords?",
+     "a": "Tokens are 256 bits of randomness, so brute force is impossible regardless of hash speed. A slow hash is only needed for low-entropy human passwords. SHA-256 keeps refresh at sub-millisecond cost."
+    },
+    {
+     "q": "An attacker steals a refresh token and uses it before the real user does. What happens?",
+     "a": "The attacker gets a valid new token and the user's next refresh presents a used token. That triggers reuse detection and revokes the family, so the attacker's access ends within one access TTL. The user sees a logout and a security email."
+    },
+    {
+     "q": "How do you stop two browser tabs from triggering false reuse alarms?",
+     "a": "Client side, serialize refresh with a Web Lock or BroadcastChannel so one tab refreshes and shares the result. Server side, the atomic compare-and-set plus the grace window returns the same successor to the losing tab."
+    }
+   ]
+  },
+  {
+   "name": "Password hashing with memory-hard functions (argon2id, bcrypt) and salting",
+   "explain": "Servers should never be able to recover a user's password; they only need to check that a presented password is correct. So they store the output of a one-way function. A fast hash like SHA-256 is wrong for this. Modern GPUs compute billions of SHA-256 hashes per second, so if the database leaks, an attacker can try every common password against every account in minutes. Two defences fix this. First, a unique random salt per user, stored with the hash, means identical passwords produce different hashes and precomputed rainbow tables are useless. Second, a deliberately expensive function makes each guess cost real resources. bcrypt does this with a tunable work factor that raises CPU cost. argon2id goes further: it is memory-hard, so each guess needs, say, 64MB of RAM. That kills the advantage of GPUs and ASICs, whose parallelism is limited by memory bandwidth. The cost lands on the defender too: every login burns tens of milliseconds of a CPU core and some memory. That is acceptable for logins and must be capacity-planned. Parameters (memory, iterations, parallelism) are stored with each hash so they can be raised later; on a successful login, the server rehashes with stronger parameters. A pepper, a secret key held outside the database (for example HMAC with a KMS key before hashing), adds protection if only the DB leaks.",
+   "in_this_design": "argon2id with m=64MB, t=3, p=1 costing about 50ms per verify; legacy bcrypt hashes are upgraded on next login. Login runs on its own autoscaled pool so hashing cannot starve refresh. Unknown users still incur a dummy verify to keep timing uniform.",
+   "key_points": [
+    "Never fast hashes for passwords; use argon2id, bcrypt or scrypt with per-user salt.",
+    "Memory hardness neutralises GPU/ASIC parallelism.",
+    "Store algorithm and parameters with the hash; rehash on login to upgrade.",
+    "Hashing cost is a capacity line item: about 250 cores for 5k logins/s at 50ms."
+   ],
+   "qa": [
+    {
+     "q": "Credential stuffing is driving 50k login attempts/s. Hashing would need 2,500 cores. What do you do?",
+     "a": "Make most attempts fail before hashing: rate limits per IP/ASN/account, CAPTCHA or proof-of-work escalation, and a global failure-ratio breaker. Hash work is admitted through a bounded queue so overload sheds attack traffic instead of starving legitimate refresh."
+    },
+    {
+     "q": "How do you migrate 50M bcrypt hashes to argon2id without forcing resets?",
+     "a": "Store the algorithm per row. On successful login, verify with bcrypt, then rehash with argon2id and update. Optionally wrap existing bcrypt hashes as argon2id(bcrypt_hash) right away to protect dormant accounts, recording the nested scheme."
+    },
+    {
+     "q": "What does a pepper add on top of a salt?",
+     "a": "A salt is stored next to the hash, so it only defeats precomputation. A pepper is a secret held in KMS, not the database, so an attacker with only a DB dump cannot run offline guesses at all."
+    }
+   ]
+  },
+  {
+   "name": "Asymmetric token signing, JWKS and key rotation",
+   "explain": "A token is only trustworthy if the verifier can be sure it was produced by the issuer and not altered. With symmetric signing (HMAC, HS256) the same secret both signs and verifies. That is fine inside a single service, but if 200 services verify tokens, all 200 hold a secret that can mint tokens for any user, and one compromised service compromises everyone. Asymmetric signing (RS256, ES256, EdDSA) separates the two roles: the issuer signs with a private key that never leaves a KMS or HSM, and verifiers use the matching public key, which is safe to publish. The standard way to publish is a JWKS document, a JSON list of public keys each tagged with a key id (kid). Every token header names the kid that signed it, so verifiers can pick the right key and keys can be rotated without downtime. Rotation is a choreography. Publish the new public key first and wait at least one verifier cache TTL. Then start signing with it. Keep the old public key published until every token it signed has expired. Classic JWT vulnerabilities come from trusting the token header too much: accepting alg none, or being tricked into verifying an RS256 token as HS256 using the public key as the HMAC secret. Verifiers must pin the expected algorithm and issuer and must check audience and expiry.",
+   "in_this_design": "ES256 keys in KMS, rotated every 30 days. JWKS is cached by gateways for 5 minutes with a rate-limited refetch on unknown kid. Gateways pin alg=ES256, iss and aud, and allow 30s clock leeway.",
+   "key_points": [
+    "Asymmetric signing means verifiers cannot forge tokens.",
+    "kid in the header plus JWKS enables zero-downtime rotation.",
+    "Rotation order: publish, wait cache TTL, sign with new, keep old for one token TTL.",
+    "Pin the algorithm; never trust alg from the token."
+   ],
+   "qa": [
+    {
+     "q": "Why ES256 over RS256?",
+     "a": "ES256 signatures are 64 bytes versus 256 for RS256 with a 2048-bit key, which keeps cookies and headers smaller, and signing is cheaper. RS256 verification is faster, but at our volume ES256 verify costs only about 20 cores across the fleet, so size and signing cost win."
+    },
+    {
+     "q": "A signing key may be compromised. What is your emergency procedure?",
+     "a": "Generate a new key, publish it, remove the compromised kid from JWKS immediately and push a gateway config that rejects that kid. All tokens signed with it fail and clients refresh. Refresh tokens are opaque and unaffected, so users are not logged out."
+    },
+    {
+     "q": "How do you prevent a JWKS-refetch amplification attack?",
+     "a": "An attacker sends tokens with random kids to force refetches. Rate-limit refetches to one per 30 seconds per node, and cache negative results."
+    }
+   ]
+  },
+  {
+   "name": "Rate limiting algorithms for login abuse (token bucket, sliding window)",
+   "explain": "Rate limiting caps how often a client can perform an action in a period. Several algorithms are common. A fixed window counter increments a counter per key per minute and rejects once it passes the limit. It is cheap but bursty: a client can send the full limit at 12:00:59 and again at 12:01:00, doubling the effective rate at the boundary. A sliding log stores the timestamp of every request and counts the ones inside the window. It is exact but uses memory proportional to traffic. The sliding window counter keeps two fixed windows and weights the previous one by how much of it still overlaps the sliding window. It gives nearly exact smoothing with two integers per key. A token bucket holds up to B tokens that refill at rate r, and each request spends one. It allows bursts up to B while enforcing an average rate r, which suits user-facing APIs. For abuse defence the key you limit on matters more than the algorithm. Attackers spread requests across thousands of IPs, so you limit on several dimensions at once: IP, /24 subnet, ASN, target account, device fingerprint and globally. Distributed limiters keep counters in a shared store such as Redis using atomic INCR or Lua scripts, and accept small inaccuracy across replicas for speed.",
+   "in_this_design": "Risk service keeps sliding-window counters in Redis for login per IP (10/min), per account (5 failures per 15 min before CAPTCHA), per ASN and global failure ratio, plus OTP sends per phone (3 per 10 min). The gateway enforces a coarse token bucket per IP before requests reach Auth.",
+   "key_points": [
+    "Fixed window: cheap but double bursts at boundaries.",
+    "Sliding window counter: two counters, smooth, good default.",
+    "Token bucket: allows controlled bursts, good for APIs.",
+    "For abuse, multi-dimensional keys (IP, account, ASN, device, global) matter more than the algorithm."
+   ],
+   "qa": [
+    {
+     "q": "Why not hard-lock an account after 5 failures?",
+     "a": "It hands attackers a denial-of-service lever against any user they can name. Prefer progressive delay and CAPTCHA per account+IP, while trusted devices with valid sessions continue unaffected."
+    },
+    {
+     "q": "Redis is down. Do your login rate limits fail open or closed?",
+     "a": "Fail open with a local in-process limiter as fallback, because failing closed blocks all logins. The local limiter is less precise but still caps any one gateway node; the global failure-ratio breaker in Auth adds a second guard."
+    },
+    {
+     "q": "How do you limit an attack spread over 200k residential IPs?",
+     "a": "Per-IP limits do not help. Use per-target-account limits, breached-password checks, device fingerprint velocity, and a global login failure ratio compared with baseline; when it spikes, require CAPTCHA or proof-of-work for unknown devices across the board."
+    }
+   ]
+  },
+  {
+   "name": "Event-driven revocation propagation (pub/sub with replayable log)",
+   "explain": "When state that many nodes cache changes, you must tell them. Polling, where each node asks every few seconds, is simple but adds load proportional to nodes times frequency, and lag up to one interval. Push via pub/sub is fast, but basic pub/sub such as Redis channels is fire-and-forget: a node that is disconnected or restarting misses messages and silently holds stale state. A replayable log such as Kafka combines both properties. Producers append events to a durable, partitioned log and each consumer tracks its own offset, so a node that restarts can resume from where it left off or replay from a known point in time. For caches that only need recent history this is especially clean. If a revoked-session entry is only relevant for 10 minutes, a restarting gateway replays the last 15 minutes and is fully correct before it reports ready. Ordering matters only per key, so keying by user id keeps a user's events in order within a partition. Delivery is at-least-once, so consumers must be idempotent; adding a sid to a set twice is harmless. The remaining risk is lag: if a consumer falls behind, revocations are applied late. So lag is a first-class metric with an alert, and nodes that are too far behind should take themselves out of rotation.",
+   "in_this_design": "Auth publishes revocations to auth.revocations keyed by user_id. Every gateway consumes with its own consumer group, keeps a TTL set of sids, replays 15 minutes on boot, and fails readiness if lag exceeds 30 seconds.",
+   "key_points": [
+    "Replayable log beats fire-and-forget pub/sub for correctness after restarts.",
+    "Consumers must be idempotent under at-least-once delivery.",
+    "Only one TTL window of history is needed, which keeps replay and memory small.",
+    "Consumer lag is a security SLO, not just an ops metric."
+   ],
+   "qa": [
+    {
+     "q": "Why does each gateway need its own consumer group?",
+     "a": "Within one consumer group each partition goes to one consumer, so revocations would be split across nodes. Every gateway must see every revocation, so each is its own group (or uses manual partition assignment for all partitions)."
+    },
+    {
+     "q": "Kafka is down. What happens to revocation?",
+     "a": "New revocations still take effect at refresh time because the session is deleted in Postgres/Redis. The gap is up to one access TTL (10 minutes). For urgent cases admins can also push an emergency kid rotation or a gateway config denylist."
+    },
+    {
+     "q": "Why not have the gateway call Auth to check every token?",
+     "a": "That puts Auth in the path of 200k rps, adds a network hop and makes Auth's availability every service's availability. The stream gives near-instant revocation with zero per-request calls."
+    }
+   ]
+  },
+  {
+   "name": "Browser token storage, cookies, XSS and CSRF",
+   "explain": "Where a browser keeps tokens decides which attacks can steal them. localStorage and sessionStorage can be read by any JavaScript on the origin, so a single XSS bug, or a malicious third-party script, can exfiltrate the token and use it from anywhere. HttpOnly cookies cannot be read by JavaScript at all; the browser attaches them automatically to matching requests. That defeats token theft by XSS, but automatic attachment brings CSRF: a malicious site can make the victim's browser send a request that carries the cookie. Modern defences make CSRF manageable. SameSite=Lax or Strict stops cookies from being sent on most cross-site requests. Requiring a custom header such as X-CSRF on state-changing requests helps because cross-site forms cannot set custom headers without a CORS preflight that the server rejects. Checking the Origin header adds another layer. The __Host- cookie prefix forces Secure, path=/ and no Domain attribute, which prevents subdomains from overwriting the cookie. A common SPA pattern keeps the refresh token in an HttpOnly cookie scoped to the refresh path and the access token in JavaScript memory only, so it disappears on reload and is re-obtained through a refresh. Note that XSS still lets an attacker act as the user while the page is open; storage choice limits theft, and CSP plus step-up auth limit the damage.",
+   "in_this_design": "Web: refresh token in __Host-rt (HttpOnly, Secure, SameSite=Strict, path /v1/token); access token held in memory. Cookie-authenticated mutations require an X-CSRF header and an allowed Origin. Mobile apps store refresh tokens in Keychain/Keystore and send Bearer headers.",
+   "key_points": [
+    "localStorage tokens are readable by any XSS; HttpOnly cookies are not.",
+    "Cookies need CSRF defences: SameSite, custom header, Origin check.",
+    "Access token in memory, refresh token in a path-scoped HttpOnly cookie.",
+    "XSS can still act as the user, so add CSP and step-up for sensitive actions."
+   ],
+   "qa": [
+    {
+     "q": "Why scope the refresh cookie to path /v1/token?",
+     "a": "So the browser sends it only to the refresh endpoint, not on every API call. That shrinks exposure in logs and proxies and limits CSRF surface to one endpoint that also checks Origin."
+    },
+    {
+     "q": "SameSite=Strict or Lax for the refresh cookie?",
+     "a": "Strict for the refresh cookie, because refresh is a background XHR from our own origin. Lax would be needed only for a cookie that must survive top-level navigation from another site, such as a session cookie for server-rendered pages after clicking an email link."
+    },
+    {
+     "q": "Is a JWT in localStorage ever acceptable?",
+     "a": "For low-risk internal tools with strong CSP, maybe. For a consumer app with many third-party scripts (analytics, ads, A/B tools), no: any compromised script can steal it and replay it from anywhere."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Session representation",
+   "options": "Server-side sessions only | Long-lived JWT only | Short JWT + rotating refresh (hybrid)",
+   "choice": "Hybrid",
+   "why": "Keeps the hot path stateless at 200k rps while giving a revocation point every 10 minutes plus a tiny denylist for instant kills."
+  },
+  {
+   "decision": "Access-token TTL",
+   "options": "1 min | 10 min | 60 min",
+   "choice": "10 min",
+   "why": "About 5k refresh/s steady load, acceptable staleness for scopes, and the denylist covers urgent revocations; 1 minute multiplies refresh cost 10x for little gain."
+  },
+  {
+   "decision": "Signing algorithm",
+   "options": "HS256 shared secret | RS256 | ES256",
+   "choice": "ES256",
+   "why": "Asymmetric so verifiers cannot mint tokens; smaller signatures than RS256; widely supported."
+  },
+  {
+   "decision": "MFA policy",
+   "options": "Always-on SMS OTP | Risk-based OTP | Mandatory passkeys",
+   "choice": "Risk-based for shoppers, mandatory TOTP/WebAuthn for sellers/admins",
+   "why": "SMS costs and friction at 10M DAU are high; risk-based keeps 95%+ of trusted-device logins frictionless while privileged accounts get phishing-resistant factors."
+  },
+  {
+   "decision": "Revocation propagation",
+   "options": "Gateways call Auth per request | Gateways poll a denylist | Push via Kafka",
+   "choice": "Push via Kafka with replay",
+   "why": "Seconds of lag, no per-request dependency, survives gateway restarts."
+  },
+  {
+   "decision": "Refresh state store",
+   "options": "Postgres only | Redis only | Redis with async persistence to Postgres",
+   "choice": "Redis primary for rotation, Postgres for session truth",
+   "why": "Rotation needs sub-millisecond atomic CAS; losing refresh state in a Redis failure only forces re-login for affected users, while session listing and revoke-all stay durable in Postgres."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Redis Cluster shard down",
+   "behavior": "Refresh for sessions on that shard fails with 503; clients retry with exponential backoff and jitter (1s, 2s, 4s, cap 30s). Access tokens keep working up to 10 minutes. Replica promotion in about 15s; if state is lost, users on that shard re-login (no reuse alarm since the family is absent, not used)."
+  },
+  {
+   "failure": "Postgres primary failover",
+   "behavior": "Logins and session creation fail for about 30s; refresh keeps working from Redis. Writes queued with idempotency keys are retried."
+  },
+  {
+   "failure": "KMS unavailable",
+   "behavior": "Auth continues signing with an in-memory data key leased for up to 1 hour (or a cached signing session). Verification never touches KMS. If the outage exceeds the lease, new logins and refreshes fail closed; existing tokens work until expiry."
+  },
+  {
+   "failure": "Kafka revocation topic lagging or down",
+   "behavior": "Revocation falls back to refresh-time enforcement (max 10-minute exposure). Gateways with lag above 30s fail readiness and drain if enough healthy peers exist; alert pages security on-call."
+  },
+  {
+   "failure": "Credential stuffing overload",
+   "behavior": "Login pool has a bounded admission queue; excess requests get 429 with Retry-After before hashing. Refresh and verify run on separate pools (bulkhead) and are unaffected."
+  },
+  {
+   "failure": "SMS provider outage",
+   "behavior": "Fail over to a second provider; offer email OTP or TOTP; for low-risk challenges allow the login with a reduced session lifetime instead of blocking entirely."
+  },
+  {
+   "failure": "Bad deploy rejects valid tokens (for example wrong audience)",
+   "behavior": "Canary at 1% with a JWT-verify-failure-rate guardrail auto-rolls back; failure reasons are labelled metrics so the cause is visible within minutes."
+  }
+ ],
+ "metrics": [
+  "Login attempts, successes, failures by reason (bad password, MFA fail, risk deny) per minute",
+  "Global login failure ratio versus 7-day baseline (credential stuffing detector)",
+  "MFA challenge rate and MFA completion rate",
+  "Login p50/p99 server latency; argon2 queue depth on the login pool",
+  "Refresh rate, refresh p99, refresh 401 rate",
+  "Refresh token reuse detections per hour (theft signal)",
+  "Revocation propagation lag p99 (publish to gateway apply) and consumer lag per gateway",
+  "JWT verification failures by reason (expired, bad signature, unknown kid, revoked sid)",
+  "JWKS refetch rate and age of key in use",
+  "OTP sends per destination prefix and SMS spend per hour",
+  "Confirmed account takeover cases per million MAU"
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you support SSO across shop.example.com and seller.example.com?",
+   "a": "Run a central login domain (accounts.example.com) as an OIDC provider. Each app does an authorization code + PKCE redirect; if the user already has a session at accounts, it returns a code silently. Each app then holds its own tokens, so no cookie is shared across subdomains."
+  },
+  {
+   "q": "A user reports being logged out randomly on mobile. How do you debug?",
+   "a": "Check refresh 401 reasons for their sid: reuse detected (likely retry races outside grace, or a real clone), absolute expiry, revoked by password change. Grace-window misses often come from app backgrounding during refresh; fix by persisting the new token before acknowledging, or by widening the grace for same device."
+  },
+  {
+   "q": "How do you add step-up auth for changing a bank account?",
+   "a": "The access token carries auth_time and amr. The payout service requires auth_time within 5 minutes and amr including mfa; otherwise it returns 401 with an insufficient_user_authentication error and the client runs an MFA challenge that issues a new access token with fresh auth_time."
+  },
+  {
+   "q": "Why not put roles and permissions in the JWT?",
+   "a": "Coarse scopes are fine, but fine-grained permissions bloat the token and go stale for up to 10 minutes after a change. Authorization should query a policy service, with caching, for real decisions."
+  },
+  {
+   "q": "How would you go passwordless?",
+   "a": "Offer passkeys (WebAuthn) as the primary credential with OTP fallback. Passkeys remove the password database as an attack target and are phishing resistant. Keep recovery strong, because account recovery becomes the weakest link."
+  },
+  {
+   "q": "What changes for multi-region active-active?",
+   "a": "Gateways verify locally everywhere already. Sessions are homed to the user's region; refresh is routed there, or families are replicated with a last-writer-wins guard per generation. Revocations publish to a global topic mirrored to every region."
+  },
+  {
+   "q": "How do you protect account recovery, which attackers love?",
+   "a": "Recovery requires two independent factors when possible, applies a cool-down (for example 24 hours before payout changes after recovery), notifies all known channels, and revokes all sessions on completion."
+  }
+ ],
+ "key_points": [
+  "Hybrid model: 10-minute stateless JWT for the hot path, opaque rotating refresh token tied to a server-side session.",
+  "Gateway verifies locally with cached JWKS; Auth is never on the 200k rps path.",
+  "Revocation = delete session (effective at next refresh) + Kafka-broadcast sid denylist covering one TTL window.",
+  "Refresh rotation with reuse detection revokes the whole family; 30-second same-device grace for mobile retries.",
+  "argon2id hashing is deliberately expensive: about 250 cores for 5k logins/s, so isolate the login pool.",
+  "Credential stuffing defence is multi-dimensional rate limiting plus breached-password checks plus CAPTCHA escalation, not account lockout.",
+  "ES256 asymmetric keys in KMS, rotated by kid with publish-then-sign choreography.",
+  "Browser: refresh in an HttpOnly __Host- cookie scoped to the refresh path, access token in memory, CSRF header for mutations.",
+  "Degrade gracefully: session store down means logged-in users keep working while new logins/refreshes fail."
+ ],
+ "quiz": [
+  {
+   "q": "Your gateway verifies 10-minute JWTs locally. An admin disables a compromised account. Without any denylist, what is the worst-case time the attacker can still call APIs?",
+   "options": [
+    "Zero, because the account is disabled in the database",
+    "Up to the remaining lifetime of the current access token, at most 10 minutes",
+    "Until the refresh token expires, up to 30 days",
+    "Until the JWKS cache expires, 5 minutes"
+   ],
+   "answer": 1,
+   "why": "Gateways never consult the database, so the access token works until exp. The refresh will fail because the session is deleted, so 30 days is wrong; the JWKS cache governs keys, not revocation."
+  },
+  {
+   "q": "Which is the strongest reason to use ES256 rather than HS256 for tokens verified by 150 services?",
+   "options": [
+    "ES256 tokens are encrypted so claims are hidden",
+    "HS256 cannot carry an exp claim",
+    "With HS256 every verifier holds a secret that can also mint tokens",
+    "ES256 verification is faster than HMAC"
+   ],
+   "answer": 2,
+   "why": "Asymmetric signing separates signing from verifying. ES256 does not encrypt anything (that would be JWE), and HMAC verification is actually faster than ECDSA."
+  },
+  {
+   "q": "A refresh token that was already rotated is presented again 2 hours later from a different device. What should the server do?",
+   "options": [
+    "Revoke the whole token family and session and alert the user",
+    "Return the successor token since it is the same family",
+    "Ignore it and return 401 only for that token",
+    "Rotate it again and issue a new token"
+   ],
+   "answer": 0,
+   "why": "Reuse outside the grace window means two parties hold the lineage; revoking the family cuts off the thief. Returning only 401 for that token leaves the thief's newer token valid."
+  },
+  {
+   "q": "Why is SHA-256 acceptable for storing refresh tokens but not for storing passwords?",
+   "options": [
+    "SHA-256 is reversible for short inputs",
+    "Refresh tokens are high-entropy random values, so fast hashing does not enable brute force",
+    "Refresh tokens expire so hashing is optional",
+    "Passwords are longer than refresh tokens"
+   ],
+   "answer": 1,
+   "why": "256 random bits cannot be brute forced at any hash speed, but human passwords have low entropy and need a slow, memory-hard hash. Expiry does not matter, because a leaked unexpired token is still usable."
+  },
+  {
+   "q": "At 5k logins/s with argon2id costing about 50ms of CPU each, roughly how many cores does hashing need?",
+   "options": [
+    "25",
+    "2,500",
+    "50",
+    "250"
+   ],
+   "answer": 3,
+   "why": "5,000 x 0.05 core-seconds = 250 cores. 2,500 would be the figure for 50k/s attack traffic, which is why attack traffic must be rejected before hashing."
+  },
+  {
+   "q": "Credential stuffing arrives from 200k residential IPs, each making 2 attempts per hour. Which control helps most?",
+   "options": [
+    "Per-IP limit of 10 attempts per minute",
+    "Lowering argon2id cost to speed up rejections",
+    "Longer access-token TTL",
+    "Global failure-ratio detection plus breached-password screening and CAPTCHA escalation"
+   ],
+   "answer": 3,
+   "why": "Per-IP limits never trigger at 2 attempts per IP. Cheaper hashing helps the attacker if the DB leaks and does not stop the attack."
+  },
+  {
+   "q": "A gateway restarts and its in-memory revoked-sid set is empty. What is the correct behaviour?",
+   "options": [
+    "Replay the revocation topic from about 15 minutes ago before reporting ready",
+    "Start serving immediately; revocations will arrive soon",
+    "Call Auth for every token until the set refills",
+    "Reject all tokens until the next JWKS refresh"
+   ],
+   "answer": 0,
+   "why": "Only revocations from the last access-TTL window matter, so a short replay makes the node correct before traffic arrives. Calling Auth per request on boot creates a thundering herd on Auth."
+  },
+  {
+   "q": "Where should a SPA keep its access token to minimise theft by XSS while keeping refresh working?",
+   "options": [
+    "localStorage, with the refresh token in sessionStorage",
+    "Access token in JS memory, refresh token in an HttpOnly Secure SameSite cookie scoped to the refresh path",
+    "Both in a non-HttpOnly cookie so JS can read them",
+    "Both in IndexedDB encrypted with a key in localStorage"
+   ],
+   "answer": 1,
+   "why": "JS-readable storage of any kind can be exfiltrated by XSS. Encrypting with a key that is also JS-readable adds nothing."
+  },
+  {
+   "q": "Key rotation: what is the correct order?",
+   "options": [
+    "Sign with the new key, then publish it in JWKS",
+    "Remove the old key from JWKS, then publish the new key",
+    "Publish the new key, wait at least the JWKS cache TTL, then sign with it; keep the old key until its tokens expire",
+    "Rotate keys only when all users are logged out"
+   ],
+   "answer": 2,
+   "why": "Signing before publishing causes verifiers with a cached JWKS to reject new tokens. Removing the old key first breaks every live token."
+  },
+  {
+   "q": "Mobile users on 3G report being logged out after refresh. Logs show 'reuse detected' with the same device_id within 3 seconds. Most likely fix?",
+   "options": [
+    "Increase access-token TTL to 1 hour",
+    "Disable refresh token rotation",
+    "Switch to HS256",
+    "Add a short same-device grace window that returns the already-issued successor"
+   ],
+   "answer": 3,
+   "why": "The server rotated but the response was lost, so the retry looked like theft. A grace window fixes it without giving up reuse detection; disabling rotation removes theft detection entirely."
+  },
+  {
+   "q": "Why should login not hard-lock an account after 5 failed attempts?",
+   "options": [
+    "Attackers can lock out any user whose identifier they know",
+    "Lockout increases argon2 CPU cost",
+    "Lockout breaks JWT signature verification",
+    "Lockout is not allowed under OIDC"
+   ],
+   "answer": 0,
+   "why": "Hard lockout is a denial-of-service lever. It does not affect hashing cost or signatures."
+  },
+  {
+   "q": "The Redis shard holding refresh families fails and its data is lost. What do affected users experience in this design?",
+   "options": [
+    "Nothing; Redis is only a cache of JWTs",
+    "A reuse-detection alarm and security email",
+    "Their access tokens immediately become invalid",
+    "Existing access tokens work until expiry, then refresh fails cleanly and they log in again"
+   ],
+   "answer": 3,
+   "why": "Access tokens are verified statelessly, so they keep working. Missing families yield a clean invalid_grant, not a reuse alarm, because no used record exists."
+  },
+  {
+   "q": "What does a CSRF attack exploit when tokens are kept in cookies?",
+   "options": [
+    "The attacker reads the cookie with JavaScript",
+    "The browser automatically attaches cookies to requests triggered by another site",
+    "The JWT signature is weak",
+    "Refresh tokens are not rotated"
+   ],
+   "answer": 1,
+   "why": "CSRF does not read cookies; it relies on automatic attachment. HttpOnly prevents reading but not attachment, which is why SameSite and custom headers are needed."
+  },
+  {
+   "q": "Revocations are published to Kafka. Why must every gateway use its own consumer group?",
+   "options": [
+    "Kafka limits each group to one consumer",
+    "To get exactly-once delivery",
+    "Within one group, partitions are split across members, so each gateway would see only some revocations",
+    "Consumer groups encrypt messages per gateway"
+   ],
+   "answer": 2,
+   "why": "Group semantics divide work. Here every node needs every message. Exactly-once is unrelated and not needed because adding a sid twice is idempotent."
+  },
+  {
+   "q": "Roughly how much memory does a gateway need for the revoked-sid set at 1k revocations/s with a 10-minute access TTL and 16-byte sids?",
+   "options": [
+    "About 10 MB",
+    "About 10 GB",
+    "About 1 GB",
+    "About 100 KB"
+   ],
+   "answer": 0,
+   "why": "1,000 x 600 = 600k entries x 16 bytes is about 10 MB, plus overhead. The TTL bound is what keeps a denylist small."
+  },
+  {
+   "q": "Which claim lets a payout service enforce 'must have re-authenticated in the last 5 minutes'?",
+   "options": [
+    "iat",
+    "auth_time",
+    "exp",
+    "jti"
+   ],
+   "answer": 1,
+   "why": "iat is when this access token was issued, which is refreshed every 10 minutes without re-authentication. auth_time records when the user actually authenticated."
+  },
+  {
+   "q": "Your p99 login latency jumps from 300ms to 4s during a sale but refresh is fine. Most likely cause?",
+   "options": [
+    "JWKS cache expired",
+    "Kafka consumer lag",
+    "Clock skew on gateways",
+    "argon2 hashing pool saturated by a traffic or attack spike, with requests queueing"
+   ],
+   "answer": 3,
+   "why": "Only login does hashing; refresh and verify are on separate pools, which matches the symptom. JWKS or skew problems would hit verification of all requests."
+  },
+  {
+   "q": "Why run a dummy argon2id verify when the identifier does not exist?",
+   "options": [
+    "To warm the CPU cache",
+    "So response time does not reveal whether the account exists",
+    "To populate the rate limiter",
+    "To create a placeholder account"
+   ],
+   "answer": 1,
+   "why": "Skipping the hash makes unknown-user responses about 50ms faster, which enables user enumeration by timing."
+  },
+  {
+   "q": "Which is the best reason to keep sessions in Postgres even though refresh runs from Redis?",
+   "options": [
+    "Postgres is faster than Redis for single-key reads",
+    "Redis cannot set TTLs",
+    "Durable source of truth for listing devices and revoke-all, so losing Redis forces re-login but never loses revocations",
+    "JWT verification needs SQL"
+   ],
+   "answer": 2,
+   "why": "Redis is faster and supports TTLs. The point is durability: a revocation recorded only in a cache could be lost and the session resurrected."
+  },
+  {
+   "q": "A user changes their password. What should happen to other sessions?",
+   "options": [
+    "Nothing; tokens are independent of the password",
+    "Only sessions older than 30 days are revoked",
+    "All refresh tokens are rotated but sessions stay valid",
+    "All other sessions are revoked and their sids broadcast to gateways"
+   ],
+   "answer": 3,
+   "why": "A password change often follows a suspected compromise, so other devices must be cut off immediately. Rotating tokens would just hand fresh tokens to the attacker's device."
+  },
+  {
+   "q": "Which statement about SMS OTP is most accurate for this app?",
+   "options": [
+    "It is phishing resistant",
+    "It is costly and vulnerable to SIM swap and pumping fraud, so use it risk-based and prefer TOTP/passkeys for privileged users",
+    "It removes the need for rate limiting",
+    "It should be required on every login for all shoppers"
+   ],
+   "answer": 1,
+   "why": "OTPs can be relayed by phishing pages; only origin-bound WebAuthn resists phishing. Always-on SMS at 10M DAU is expensive and adds friction."
+  }
+ ],
+ "references": [
+  {
+   "title": "WorkOS - Why your app needs refresh tokens and how they work",
+   "url": "https://workos.com/blog/why-your-app-needs-refresh-tokens-and-how-they-work"
+  },
+  {
+   "title": "OWASP Secure Session Management Cheat Sheet",
+   "url": "https://wiki.owasp.org/index.php/Secure_Session_Management_Cheat_Sheet"
+  },
+  {
+   "title": "Refresh token rotation strategies (OneUptime)",
+   "url": "https://oneuptime.com/blog/post/2026-01-30-token-rotation-strategies/view"
+  },
+  {
+   "title": "Token revocation best practices (Deepak Gupta)",
+   "url": "https://guptadeepak.com/best-practices/token-revocation/"
+  }
+ ]
+}

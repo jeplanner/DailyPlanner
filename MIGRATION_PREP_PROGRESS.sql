@@ -16,7 +16,7 @@ create extension if not exists pgcrypto;
 create table if not exists prep_progress (
   id               uuid primary key default gen_random_uuid(),
   user_id          uuid not null,
-  bank             text not null,          -- 'tpm' | 'behavioral' | 'sysdesign'
+  bank             text not null,          -- 'tpm' | 'behavioral' | 'sysdesign' | 'sddeep'
   entry_title      text not null,
   done             boolean not null default false,
   done_at          timestamptz,
@@ -38,3 +38,8 @@ create index if not exists prep_progress_user_done
 -- The app talks to Supabase with the service key, which bypasses RLS; with
 -- RLS on and no policies, the public anon key can read nothing here.
 alter table prep_progress enable row level security;
+
+-- Best quiz score (0-100) for the system design deep dives; 80%+ marks the
+-- design as studied.
+alter table prep_progress add column if not exists quiz_best_pct smallint
+  check (quiz_best_pct between 0 and 100);

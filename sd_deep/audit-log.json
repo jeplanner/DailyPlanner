@@ -1,0 +1,1212 @@
+{
+ "slug": "audit-log",
+ "title": "Design an audit log and immutable history",
+ "prompt": "Design an audit log and immutable history.",
+ "group": "storage",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "An audit log must answer 'who did what, to which resource, when, from where, and was it allowed' - and be believable when the person asking suspects an insider. The hard parts are not storage volume but guarantees: no business change without its audit record (outbox, not best-effort logging), no silent edit or deletion of history (hash chains, Merkle trees, signed and externally anchored roots, WORM storage), and still being queryable and privacy-compliant even though the history can never change.",
+ "framework": {
+  "clarify": [
+   "Who are the consumers: internal security investigations, external auditors (SOX, PCI DSS, RBI guidelines), or customers viewing their own account activity? This sets query and export needs.",
+   "What must be captured: admin and support-console actions, data access (reads of PII), configuration and permission changes, money movements - or every domain event?",
+   "Completeness requirement: is it acceptable to lose an audit record if the business action succeeded? I will assume no - the audit write must be atomic with the action.",
+   "Threat model: must the log resist a malicious insider with database admin rights? I will assume yes, so tamper-evidence must not rely on access control alone.",
+   "Retention: assume 7 years for financial events and 1-2 years for access logs; plus legal holds.",
+   "Volume: assume 50k audit events per second at peak, 1 KB average, read volume tiny compared to writes but with occasional large investigations.",
+   "Latency: is near-real-time visibility (under 1 minute) needed for security alerting, or is it only forensic?",
+   "Privacy: events contain personal data; how do we honour deletion rights (GDPR, India DPDP Act) against an immutable log?"
+  ],
+  "design": [
+   "Baseline: an append-only table audit_events(id, ts, actor, action, resource, before, after) with INSERT-only grants. I will show why that is not enough - a DBA can still UPDATE, and an app crash between action and log loses records.",
+   "Capture: transactional outbox in each service DB (business change and audit row in one transaction), shipped by CDC to Kafka; an SDK and ingest API for services without a DB.",
+   "Integrity: a single-writer chainer per partition assigns a gapless sequence number and hash chain (entry_hash = SHA-256(prev_hash || canonical_event)); every minute a Merkle tree over new entries is built and its root signed by a KMS/HSM key as a Signed Tree Head (STH).",
+   "Storage: hot ledger (Cassandra or partitioned Postgres) by (stream, day, seq); hourly Parquet segments plus manifests written to S3 Object Lock in compliance mode for 7 years; STHs anchored to a separate account and an external witness.",
+   "Read side (CQRS): indexes by actor, resource, action and time in OpenSearch or ClickHouse; Audit Query API returns events with inclusion proofs; every query to the audit log is itself audited.",
+   "Verification: independent verifier jobs recompute chains and Merkle roots, check consistency proofs between successive STHs, and page security on mismatch or gaps."
+  ],
+  "defend": [
+   "Bottleneck: the hash chain serialises writes. I shard into many independent chains (per tenant or per partition, for example 256), each single-writer, and join them under a global Merkle tree every minute, so throughput scales with partitions.",
+   "Scale reads: reads go to purpose-built indexes, never the ledger; investigations by actor and time hit OpenSearch; bulk exports read Parquet from the archive with min/max pruning.",
+   "Scale writes: Kafka absorbs bursts; chainers batch appends (for example 500 events or 20 ms); ledger writes are sequential appends partitioned by (stream, day).",
+   "Failure behaviour: if the audit pipeline is down, the outbox keeps rows in the service DB (no loss, at-least-once delivery); for critical admin actions we fail closed - no audit record, no action. Retries use exponential backoff with jitter; idempotent appends dedupe on event_id.",
+   "Tamper evidence vs prevention: WORM storage prevents deletion within retention, hash chains and signed anchored roots detect any modification, and separation of duties ensures no single team controls ledger, keys and anchors.",
+   "Measure: outbox age (oldest unshipped row), end-to-end lag, sequence gaps, verifier pass rate and time since last successful verification, STH publication interval, and query latency."
+  ],
+  "script": "Let me start with what an audit log must guarantee, because that drives everything. Three properties: completeness - if an action happened, its record exists; integrity - nobody, including a DBA or an engineer like me, can change or remove history without it being detected; and usability - auditors can find all actions by a person or on a resource quickly, years later. For completeness I use a transactional outbox: the service writes the audit row in the same transaction as the business change, and CDC ships it to Kafka, so there is no window where the action commits and the log does not. For integrity, a single writer per partition assigns a sequence number and chains hashes, every minute I build a Merkle tree over new entries and sign the root with an HSM key, and I anchor those signed roots outside the system and store sealed segments in S3 Object Lock in compliance mode. Reads go to separate indexes, every audit query is itself audited, and verifier jobs continuously recompute the chains. Then I will defend throughput of the chain, privacy deletion against immutability, and what happens when the pipeline is down."
+ },
+ "brd": {
+  "problem": "Regulators, auditors and internal security need a trustworthy record of who changed or accessed sensitive data - seller payouts, refunds, permissions, customer PII. Today audit data is scattered across application logs that rotate after 30 days, can be edited by anyone with server access, and often miss events when a service crashes. Investigations take weeks and audit findings cite the lack of tamper-evident history.",
+  "goals": [
+   "Capture 100 percent of in-scope actions with no gap between business commit and audit record.",
+   "Make any modification, deletion or reordering of history detectable by an independent verifier.",
+   "Retain financial audit history for 7 years and access logs for 2 years at low cost.",
+   "Let investigators query by actor, resource, action and time range in seconds.",
+   "Provide exportable, verifiable evidence packages for external auditors.",
+   "Support customer-facing 'account activity' views from the same source."
+  ],
+  "non_goals": [
+   "Being the primary source of truth for business state (services own their state; the audit log records changes).",
+   "Full observability logging such as debug logs and traces.",
+   "Real-time fraud scoring (consumes audit events but is a separate system).",
+   "Public blockchain anchoring as a requirement; an internal witness and timestamp authority are enough."
+  ],
+  "stakeholders": [
+   {
+    "who": "Security and investigations",
+    "needs": "Fast, complete search across actors and resources; alerts on suspicious admin activity."
+   },
+   {
+    "who": "Compliance and internal audit",
+    "needs": "Evidence that controls work: complete, tamper-evident history with retention proofs."
+   },
+   {
+    "who": "External auditors and regulators",
+    "needs": "Exports they can verify independently of our engineers."
+   },
+   {
+    "who": "Service teams",
+    "needs": "A simple SDK or outbox pattern that adds under 5 ms to write paths."
+   },
+   {
+    "who": "Privacy office (DPO)",
+    "needs": "Honour data-subject deletion and minimisation without breaking integrity."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Audit coverage of in-scope actions (reconciled against service DB changes)",
+    "target": "100 percent, zero unexplained gaps"
+   },
+   {
+    "metric": "End-to-end lag commit to queryable",
+    "target": "p99 < 60 s"
+   },
+   {
+    "metric": "Verifier coverage",
+    "target": "Every entry verified within 24 h of write; full chain re-verified monthly"
+   },
+   {
+    "metric": "Investigation query latency (actor over 90 days)",
+    "target": "p95 < 3 s"
+   },
+   {
+    "metric": "Audit findings related to log integrity",
+    "target": "Zero in next annual audit"
+   },
+   {
+    "metric": "Added write latency to services",
+    "target": "< 5 ms p99"
+   }
+  ],
+  "constraints": [
+   "Regulatory retention: 7 years for financial records; some data must stay in India (data localisation for payments).",
+   "Must not store raw card data or secrets in audit payloads (PCI DSS scope).",
+   "Existing platform: Kafka, MySQL/Postgres service databases, Kubernetes, cloud object storage with object lock and a KMS.",
+   "Separation of duties: the team operating the pipeline must not control signing keys or anchor storage."
+  ],
+  "risks": [
+   {
+    "risk": "Insider with admin rights edits or deletes records to cover tracks.",
+    "mitigation": "Hash chains, signed Merkle roots anchored in a separately-owned account and external witness, WORM storage in compliance mode, independent verifiers."
+   },
+   {
+    "risk": "Audit pipeline outage blocks business operations.",
+    "mitigation": "Outbox decouples: services commit locally, shipping catches up; only a small set of high-risk admin actions fail closed."
+   },
+   {
+    "risk": "Personal data in an immutable log conflicts with deletion rights.",
+    "mitigation": "Minimise payloads, pseudonymise identifiers, encrypt PII fields with per-subject keys and crypto-shred on erasure while hashes remain verifiable."
+   },
+   {
+    "risk": "Signing key compromise lets an attacker forge history.",
+    "mitigation": "HSM-backed non-exportable keys, key rotation with overlapping validity, external anchoring so forged roots conflict with previously witnessed ones."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Security investigator",
+    "needs": "Find every action by an employee or on a seller account over a time range, with context, and prove it was not altered."
+   },
+   {
+    "name": "External auditor",
+    "needs": "Receive an export plus proofs and verify it with an open-source tool, without trusting our staff."
+   },
+   {
+    "name": "Service developer",
+    "needs": "Emit audit events with a one-line SDK call or outbox insert, with schema validation."
+   },
+   {
+    "name": "Customer or seller",
+    "needs": "See recent login and account changes in their activity page."
+   }
+  ],
+  "user_stories": [
+   "As a service developer, I want to record an audit event in the same transaction as my business change so that no action is ever unaudited.",
+   "As an investigator, I want to search all actions by a given employee in the last 90 days so that I can scope an incident.",
+   "As an investigator, I want to see the full history of a resource (refund R123) in order so that I can reconstruct what happened.",
+   "As an auditor, I want an export with inclusion and consistency proofs so that I can verify integrity myself.",
+   "As a security engineer, I want alerts within a minute when someone grants themselves admin rights so that I can respond in time.",
+   "As the DPO, I want to erase a customer's personal data from audit payloads without breaking the integrity proofs.",
+   "As a compliance owner, I want legal holds that block expiry for specific accounts so that litigation evidence is preserved.",
+   "As a seller, I want to see who in my team changed payout bank details and when."
+  ],
+  "functional": [
+   "Ingest via outbox and CDC or via authenticated ingest API, with event schema validation (actor, action, resource, outcome, ts, request context).",
+   "Assign per-stream gapless sequence numbers and hash-chain entries; build per-minute Merkle trees and signed tree heads.",
+   "Store entries append-only in the ledger and in WORM archive segments with retention locks.",
+   "Query by actor, resource, action, tenant and time range with pagination; return inclusion proofs on request.",
+   "Export evidence packages (events, proofs, STHs, public keys) for a scope.",
+   "Continuous verification of chains, Merkle roots, and STH consistency; alert on any failure or gap.",
+   "Retention policies per event class with legal hold override.",
+   "Field-level encryption of personal data with per-subject keys and crypto-shredding on erasure requests.",
+   "Audit-of-audit: every read and export of the audit log is itself recorded."
+  ],
+  "non_functional": [
+   {
+    "name": "Completeness",
+    "target": "No committed business action without an audit record (atomic outbox)"
+   },
+   {
+    "name": "Integrity",
+    "target": "Any modification, deletion, insertion or reordering detectable by verifier within 24 h"
+   },
+   {
+    "name": "Durability",
+    "target": "RF=3 ledger, 11 nines archive, zero loss of acknowledged events"
+   },
+   {
+    "name": "Ingest lag",
+    "target": "p99 < 60 s from commit to queryable; < 10 s to security alert stream"
+   },
+   {
+    "name": "Write overhead to services",
+    "target": "< 5 ms p99 (one extra row insert)"
+   },
+   {
+    "name": "Query latency",
+    "target": "p95 < 3 s for 90-day actor or resource search"
+   },
+   {
+    "name": "Availability",
+    "target": "Ingest 99.99 percent (buffered); query 99.9 percent"
+   },
+   {
+    "name": "Retention",
+    "target": "7 years financial, 2 years access, enforced by object lock"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "50k events/s peak, 15k/s average; 1 KB average canonical event (before/after diffs, not full objects).",
+    "Hash and Merkle overhead: 32 B entry hash plus about 64 B Merkle and sequence metadata per entry.",
+    "Archive compression ratio about 6x in Parquet with zstd.",
+    "Hot ledger and indexes keep 90 days; archive keeps 7 years.",
+    "Investigation queries: about 50 per minute; exports a few per day, up to 100M events each."
+   ],
+   "math": [
+    "Daily events: 15k x 86,400 = about 1.3 billion events/day.",
+    "Raw bytes: 1.3B x 1 KB = 1.3 TB/day; compressed archive about 215 GB/day; 7 years = 215 GB x 2,555 = about 550 TB in object storage.",
+    "Hot ledger 90 days with RF=3: 1.3 TB x 90 x 3 = about 350 TB uncompressed, about 90 TB with LZ4-level compression of 4x.",
+    "Hashing cost: SHA-256 runs at roughly 500 MB/s per core, so 50 MB/s peak needs a fraction of one core; hashing is not the bottleneck, serialisation of the chain is.",
+    "Chain throughput: one single-writer chain with batched appends handles about 5-10k events/s; 50k/s peak needs at least 8 chains, we use 64 partitions for headroom and isolation.",
+    "Merkle tree per minute over 50k x 60 = 3M leaves has depth 22, so an inclusion proof within a minute tree is 22 hashes = 704 B; plus the path in the tree of STHs.",
+    "STHs: 1,440 per day x 64 partitions, tiny (a few hundred bytes each)."
+   ],
+   "summary": "About 1.3 billion events and 1.3 TB raw per day; 64 chained partitions comfortably cover 50k/s peak; 7-year archive is about 550 TB compressed in WORM object storage. Proofs are under 1 KB, so verification is cheap."
+  },
+  "out_of_scope": [
+   "Application debug logs and distributed tracing.",
+   "SIEM correlation rules (the SIEM consumes the audit stream).",
+   "Public blockchain anchoring.",
+   "Business-state reconstruction for all services (only audit-scope events are captured)."
+  ]
+ },
+ "hld": {
+  "overview": "Services write audit events through a transactional outbox (or SDK for stateless services). CDC ships outbox rows to Kafka. A chainer per partition dedupes, assigns sequence numbers and hash-chains entries into an append-only ledger. A Merkle batcher builds per-minute trees per partition, combines partition roots into a global root, signs Signed Tree Heads with an HSM key and anchors them in a separately administered account and an external witness. Sealed hourly segments go to S3 Object Lock in compliance mode. A read model in OpenSearch or ClickHouse serves investigations; verifier jobs continuously recheck integrity.",
+  "diagram": "\n Business services (orders, payments, seller admin, IAM, support console)\n   | same DB txn: business row + outbox row\n   v\n +------------------+   CDC (Debezium)   +-----------------------------+\n | Service DB +     |------------------->| Kafka audit.raw             |\n | outbox table     |                    | key = tenant/stream id      |\n +------------------+                    | RF=3, min.insync=2, acks=all|\n (services without a DB use              +--------------+--------------+\n  Audit SDK -> Ingest API -> Kafka)                     |\n                                         +--------------v--------------+\n                                         | Sequencer / Chainer         |\n                                         | per partition: assign seq,  |\n                                         | prev_hash, entry_hash       |\n                                         | dedupe on event_id          |\n                                         +---+----------+----------+---+\n                                             |          |          |\n                    +------------------------+          |          +----------------------+\n                    v                                   v                                 v\n     +------------------------------+   +------------------------------+   +--------------------+\n     | Ledger store (append-only)   |   | Merkle batcher               |   | Query indexes      |\n     | Cassandra/Postgres partitions|   | every 1 min: tree root,      |   | (OpenSearch /      |\n     | (stream, day) -> seq entries |   | signed tree head (KMS/HSM)   |   |  ClickHouse) by    |\n     +---------------+--------------+   +--------------+---------------+   | actor/resource/time|\n                     |                                 |                   +---------+----------+\n                     v                                 v                             |\n     +------------------------------+   +------------------------------+             |\n     | WORM archive: S3 Object Lock |   | Anchors: STH copied to a     |             |\n     | (compliance mode, 7 yrs)     |   | separate account + external  |             |\n     | hourly Parquet + manifests   |   | witness / timestamp authority|             |\n     +------------------------------+   +------------------------------+             |\n                                                                                    v\n           Auditors / investigators / customers --> Audit Query API --> (every read audited)\n           Verifier jobs: recompute chains and roots, compare to anchored STHs, alert on mismatch\n",
+  "components": [
+   {
+    "name": "Audit SDK and outbox library",
+    "responsibility": "Builds canonical events (actor, action, resource, outcome, request id, ip, ts) and inserts them into the outbox table inside the caller's transaction; redacts secrets; validates against a schema registry."
+   },
+   {
+    "name": "CDC connector (Debezium)",
+    "responsibility": "Tails service DB binlog/WAL for outbox tables and publishes to Kafka audit.raw, at-least-once, preserving per-row order."
+   },
+   {
+    "name": "Ingest API",
+    "responsibility": "Authenticated endpoint (mTLS + service identity) for producers without a DB; persists to Kafka with acks=all before acknowledging."
+   },
+   {
+    "name": "Kafka audit.raw",
+    "responsibility": "Durable buffer with RF=3, min.insync.replicas=2, partitioned by stream key (tenant or resource domain)."
+   },
+   {
+    "name": "Chainer (sequencer)",
+    "responsibility": "Single active writer per partition (leader lease via etcd); dedupes by event_id, assigns seq, computes entry_hash = SHA-256(prev_hash || seq || canonical_bytes), conditional append to ledger."
+   },
+   {
+    "name": "Ledger store",
+    "responsibility": "Append-only rows keyed by (partition, day, seq); no UPDATE/DELETE grants; hot for 90 days."
+   },
+   {
+    "name": "Merkle batcher and signer",
+    "responsibility": "Every 60 s builds Merkle trees over new leaves, computes global root over partition roots, signs STH via KMS/HSM, publishes STH to anchor account and witness."
+   },
+   {
+    "name": "WORM archiver",
+    "responsibility": "Writes hourly Parquet segments with manifest (first seq, last seq, segment hash, STH ref) to S3 Object Lock compliance mode with retain-until date."
+   },
+   {
+    "name": "Read model / indexer",
+    "responsibility": "Builds indexes by actor, resource, action, time in OpenSearch (search) and ClickHouse (aggregations); rebuildable from ledger or archive."
+   },
+   {
+    "name": "Audit Query API",
+    "responsibility": "Authorised search, timeline and export with proofs; enforces need-to-know; writes its own access events to the audit log."
+   },
+   {
+    "name": "Verifier",
+    "responsibility": "Independent service (different team, read-only creds) recomputing chains, roots and consistency proofs; reconciles counts with service outboxes; alerts on mismatch."
+   },
+   {
+    "name": "Key service (per-subject keys)",
+    "responsibility": "Holds per-data-subject keys used to encrypt PII fields; deleting a key crypto-shreds the subject's PII across the log."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Record an action atomically",
+    "steps": [
+     "Support agent issues a refund; the refund service opens a DB transaction.",
+     "It updates the refund row and inserts an outbox row with event_id (UUIDv7), actor, action=REFUND_ISSUED, resource, before/after diff, request context.",
+     "Transaction commits; both rows exist or neither does.",
+     "Debezium reads the binlog and publishes to Kafka partition hash(stream_key).",
+     "Chainer consumes, dedupes on event_id, assigns seq, hash-chains, appends to ledger with a conditional write on (partition, seq), then commits the Kafka offset.",
+     "Indexer updates OpenSearch within seconds; a security rules engine on the same stream alerts on sensitive actions."
+    ]
+   },
+   {
+    "name": "Seal and anchor",
+    "steps": [
+     "Every 60 s the Merkle batcher reads new leaves for each partition and builds a partition tree.",
+     "Partition roots are combined into a global tree; the batcher creates STH {tree_size, root_hash, timestamp, prev_sth_hash}.",
+     "KMS/HSM signs the STH with a non-exportable key; signature and STH are written to the ledger and the anchor account (owned by security, object locked).",
+     "An external witness co-signs or timestamps the STH (RFC 3161 timestamp authority or a peer witness).",
+     "Hourly, the archiver writes Parquet segments with manifests into WORM storage."
+    ]
+   },
+   {
+    "name": "Investigate and verify",
+    "steps": [
+     "Investigator queries actor=emp123 over 90 days via Audit Query API; access is checked and itself logged.",
+     "Read model returns matching events with (partition, seq) references.",
+     "On request, API fetches inclusion proofs from the ledger and the covering STH.",
+     "Investigator's tool or auditor recomputes leaf hash, verifies the proof against the STH root and the STH signature with the published public key.",
+     "Consistency proofs between an older and newer STH show the log only grew, nothing was rewritten."
+    ]
+   }
+  ],
+  "data_flow": "Business txn -> outbox row -> CDC -> Kafka audit.raw -> chainer (dedupe, seq, hash chain) -> ledger (hot, 90 days) -> Merkle batcher -> signed STH -> anchor account + witness. Ledger -> hourly WORM Parquet segments (7 years). Kafka/ledger -> indexer -> OpenSearch/ClickHouse read model -> Audit Query API. Verifier reads ledger, archive and anchors independently. Per-subject keys live in the key service; erasure deletes keys, not entries."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/audit/events",
+    "request": "{event_id, occurred_at, actor: {type, id, on_behalf_of}, action, resource: {type, id, tenant}, outcome: SUCCESS|DENIED|ERROR, context: {request_id, ip, user_agent, session_id}, changes: {before, after}, pii_subject_id}",
+    "response": "202 {event_id, partition}",
+    "notes": "For producers without an outbox; idempotent on event_id; mTLS with service identity; payload max 64 KB; rejects fields tagged secret."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/audit/search",
+    "request": "actor_id | resource_type+resource_id | action, from, to, tenant, cursor, limit<=500",
+    "response": "200 {events: [...], next_cursor, index_lag_s}",
+    "notes": "Requires investigator role and a case_id; the query itself is written as an audit event."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/audit/entries/{partition}/{seq}/proof",
+    "request": "sth_id (optional, default latest)",
+    "response": "200 {entry, leaf_hash, audit_path: [hash...], sth: {tree_size, root, ts, signature, key_id}}",
+    "notes": "Inclusion proof of one entry in a signed tree head."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/audit/sth/consistency",
+    "request": "from_sth, to_sth",
+    "response": "200 {proof: [hash...]}",
+    "notes": "Proves the later tree is an append-only extension of the earlier one."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/audit/exports",
+    "request": "{scope query, case_id, format: parquet|jsonl}",
+    "response": "202 {export_id}; later 200 {url, manifest, proofs, public_keys}",
+    "notes": "Signed, time-limited URL; export manifest itself hashed and logged."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/audit/erasure",
+    "request": "{subject_id, request_ref}",
+    "response": "202 {status: KEY_SCHEDULED_FOR_DESTRUCTION}",
+    "notes": "Crypto-shreds PII fields by destroying the subject key after legal-hold check."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Outbox row",
+    "store": "Each service DB (MySQL/Postgres)",
+    "fields": [
+     "id bigint auto",
+     "event_id uuid",
+     "payload json (canonical)",
+     "created_at"
+    ],
+    "keys": "PK id; unique event_id",
+    "notes": "Deleted after CDC confirms delivery or by a 7-day sweeper; never the system of record."
+   },
+   {
+    "entity": "LedgerEntry",
+    "store": "Cassandra (or partitioned Postgres), append-only",
+    "fields": [
+     "partition smallint",
+     "day date",
+     "seq bigint",
+     "event_id uuid",
+     "ts_ingest",
+     "occurred_at",
+     "canonical_event blob (PII fields encrypted)",
+     "prev_hash bytes32",
+     "entry_hash bytes32",
+     "key_id"
+    ],
+    "keys": "Partition key (partition, day); clustering seq asc; LWT/conditional insert IF NOT EXISTS on seq",
+    "notes": "No UPDATE/DELETE grants; TTL never set on ledger rows; expiry via archive policy."
+   },
+   {
+    "entity": "SignedTreeHead",
+    "store": "Ledger + anchor bucket (separate account, object lock)",
+    "fields": [
+     "sth_id",
+     "tree_size",
+     "root_hash",
+     "partition_roots[]",
+     "timestamp",
+     "prev_sth_hash",
+     "signature",
+     "signing_key_id",
+     "witness_sig"
+    ],
+    "keys": "PK sth_id (monotonic)",
+    "notes": "Chaining STHs (prev_sth_hash) makes deleting an STH detectable too."
+   },
+   {
+    "entity": "ArchiveSegment manifest",
+    "store": "S3 Object Lock compliance mode",
+    "fields": [
+     "partition",
+     "first_seq",
+     "last_seq",
+     "segment_sha256",
+     "row_count",
+     "covering_sth_id",
+     "retain_until"
+    ],
+    "keys": "Object key audit/{partition}/{yyyy}/{mm}/{dd}/{hh}.parquet",
+    "notes": "Retain-until 7 years; legal hold flag per object."
+   },
+   {
+    "entity": "AuditIndexDoc",
+    "store": "OpenSearch (search) / ClickHouse (aggregations)",
+    "fields": [
+     "event_id",
+     "partition",
+     "seq",
+     "actor_id",
+     "action",
+     "resource_type",
+     "resource_id",
+     "tenant",
+     "occurred_at",
+     "outcome"
+    ],
+    "keys": "Time-based indices per day; routing by tenant",
+    "notes": "Derived and rebuildable; not trusted for integrity, only for finding entries."
+   }
+  ],
+  "classes": [
+   {
+    "name": "AuditEmitter",
+    "responsibility": "SDK used inside service transactions to build canonical events and write outbox rows.",
+    "methods": [
+     "record(tx, actor, action, resource, changes, context)",
+     "canonicalize(event) -> bytes",
+     "redact(event)"
+    ]
+   },
+   {
+    "name": "Chainer",
+    "responsibility": "Single writer per partition assigning seq and hash chain.",
+    "methods": [
+     "acquireLease(partition)",
+     "process(batch)",
+     "appendConditional(entry) -> bool",
+     "recoverTail() -> (last_seq, last_hash)"
+    ]
+   },
+   {
+    "name": "MerkleBatcher",
+    "responsibility": "Build trees, sign and publish STHs.",
+    "methods": [
+     "buildTree(leaves) -> root",
+     "makeSTH(roots, prev) -> STH",
+     "sign(sth) -> sig",
+     "anchor(sth)"
+    ]
+   },
+   {
+    "name": "ProofService",
+    "responsibility": "Serve inclusion and consistency proofs.",
+    "methods": [
+     "inclusionProof(partition, seq, sth)",
+     "consistencyProof(sth_a, sth_b)"
+    ]
+   },
+   {
+    "name": "Verifier",
+    "responsibility": "Independently re-check integrity and completeness.",
+    "methods": [
+     "verifyChain(partition, from_seq, to_seq)",
+     "verifyRoot(sth)",
+     "verifyConsistency(prev, next)",
+     "reconcile(service, window)"
+    ]
+   },
+   {
+    "name": "SubjectKeyManager",
+    "responsibility": "Per-subject data keys for PII field encryption and shredding.",
+    "methods": [
+     "keyFor(subject_id)",
+     "encryptFields(event)",
+     "shred(subject_id)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Hash-chained append with single writer",
+    "explain": "Each partition has one leader chainer holding an etcd lease with a fencing token. It keeps the tail (last seq, last hash) in memory, recovered from the ledger on startup. Each event is deduped, given seq+1, and chained. The conditional insert on seq plus the fencing token prevents a deposed leader from forking the chain.",
+    "pseudocode": "def process(batch, token):\n    tail_seq, tail_hash = self.tail\n    for e in batch:\n        if dedupe.seen(e.event_id): continue\n        seq = tail_seq + 1\n        body = canonical(e)                    # sorted keys, UTF-8, no floats\n        h = sha256(tail_hash + u64(seq) + body)\n        ok = ledger.insert_if_not_exists(e.partition, seq, body, tail_hash, h, token)\n        if not ok: raise LostLeadership()      # another writer took seq\n        dedupe.add(e.event_id); tail_seq, tail_hash = seq, h\n    kafka.commit(batch.last_offset)"
+   },
+   {
+    "name": "Merkle tree root and inclusion proof (RFC 6962 style)",
+    "explain": "Leaves are hashed with a 0x00 prefix and internal nodes with a 0x01 prefix to prevent second-preimage tricks. The root commits to every leaf. An inclusion proof is the list of sibling hashes from a leaf to the root (log2 n hashes). A consistency proof shows an older tree of size m is a prefix of a newer tree of size n.",
+    "pseudocode": "def leaf(x):  return sha256(b'\\x00' + x)\ndef node(l, r): return sha256(b'\\x01' + l + r)\n\ndef root(leaves):\n    if len(leaves) == 1: return leaf(leaves[0])\n    k = largest_power_of_two_less_than(len(leaves))\n    return node(root(leaves[:k]), root(leaves[k:]))\n\ndef verify_inclusion(leaf_bytes, index, size, path, root_hash):\n    h = leaf(leaf_bytes)\n    for sib, sib_is_left in path_directions(index, size, path):\n        h = node(sib, h) if sib_is_left else node(h, sib)\n    return h == root_hash"
+   },
+   {
+    "name": "Completeness reconciliation",
+    "explain": "Integrity proves what is in the log was not altered; it does not prove nothing is missing. The verifier compares counts and ids per service per 5-minute window between business-side outbox insert counters and ledger entries, and flags sequence gaps within partitions.",
+    "pseudocode": "def reconcile(service, window):\n    produced = outbox_metrics.count(service, window)   # emitted inside txns\n    ids_ledger = ledger.event_ids(service, window)\n    if produced != len(ids_ledger):\n        missing = outbox_archive.ids(service, window) - ids_ledger\n        alert('AUDIT_GAP', service, window, missing[:100])\n    for p in partitions:\n        assert ledger.max_seq(p) - ledger.min_seq(p) + 1 == ledger.count(p)"
+   }
+  ],
+  "sequence": "\nService      ServiceDB      CDC/Kafka      Chainer        Ledger        MerkleBatcher    KMS\n  | txn: update order +       |               |              |               |            |\n  | insert outbox row         |               |              |               |            |\n  |---------->|               |               |              |               |            |\n  |  commit   |-- binlog ---->| audit.raw     |              |               |            |\n  |           |               |-------------->| dedupe id    |               |            |\n  |           |               |               | seq=n+1      |               |            |\n  |           |               |               | h=H(h_n||e)  |               |            |\n  |           |               |               |------------->| append (cond:|            |\n  |           |               |               |              | seq not used) |            |\n  |           |               |               |<-------------| ok            |            |\n  |           |               |<-- commit off-|              |               |            |\n  |           |               |               |---- leaf hash (async) ------>|            |\n  |           |               |               |              |  every 60 s: root R_k     |\n  |           |               |               |              |               |-- sign --->|\n  |           |               |               |              |               |<-- sig ----|\n  |           |               |               |              |<- STH(k, size, R_k, sig)   |\n  |           |               |               |              |  copy STH to anchor acct   |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Service commits the business change but crashes before calling the audit API.",
+   "handling": "Impossible with the outbox: the audit row is in the same transaction. For SDK-only producers, high-risk actions use synchronous ingest before commit (fail closed) or a local durable spool."
+  },
+  {
+   "case": "CDC redelivers the same outbox row after a connector restart.",
+   "handling": "Chainer dedupes on event_id (persistent dedupe window 7 days plus ledger unique index), so the chain has exactly one entry per event."
+  },
+  {
+   "case": "Two chainer instances believe they are leader for a partition (split brain after a GC pause).",
+   "handling": "Fencing token from the etcd lease is checked on every conditional insert; insert IF NOT EXISTS on (partition, seq) means the second writer fails and steps down instead of forking the chain."
+  },
+  {
+   "case": "DBA runs UPDATE on a ledger row to change the actor.",
+   "handling": "Entry hash no longer matches content and the next entry's prev_hash; the verifier detects it within its cycle; WORM archive and anchored STH hold the original for recovery."
+  },
+  {
+   "case": "Attacker deletes the last 1,000 entries and the latest STHs (truncation).",
+   "handling": "STHs are copied to a separate, object-locked anchor account and an external witness; a newer anchored tree_size than the ledger shows proves truncation. Consistency proofs fail."
+  },
+  {
+   "case": "Clock skew: events from different services have out-of-order occurred_at.",
+   "handling": "Ordering authority is seq within partition plus ingest time; occurred_at is kept as claimed by producer. Timelines sort by occurred_at but show seq; cross-service causality uses request_id correlation."
+  },
+  {
+   "case": "Customer requests erasure of personal data that appears in 7 years of audit history.",
+   "handling": "PII fields are encrypted with a per-subject key; destroy the key (crypto-shred). Hashes cover ciphertext, so proofs still verify; non-PII facts (an action occurred) remain as legally required. Legal hold blocks shredding."
+  },
+  {
+   "case": "Canonicalisation mismatch: a verifier in another language serialises JSON differently and hashes do not match.",
+   "handling": "Hash the stored canonical bytes, not a re-serialisation; specify canonical form (sorted keys, UTF-8 NFC, integers only, RFC 8785 JCS) and ship a reference verifier."
+  },
+  {
+   "case": "Payload accidentally contains a password or access token.",
+   "handling": "SDK redaction by field tags and secret scanners before outbox insert; if one slips through, it cannot be deleted from WORM storage, so rotate the secret immediately and crypto-shred if field was encrypted. This is why redaction happens at source."
+  },
+  {
+   "case": "Hot partition: one huge tenant produces 30k events/s.",
+   "handling": "Partition key includes tenant plus a sub-stream (e.g. resource domain) so a tenant spans several chains; global Merkle root still ties them together."
+  },
+  {
+   "case": "Signing key rotation or compromise.",
+   "handling": "New key id for new STHs, both public keys published with validity windows; on compromise, revoke, re-sign the latest STH with the new key, and rely on previously witnessed STHs to show earlier history was not rewritten."
+  },
+  {
+   "case": "Investigator searches the audit log for a colleague out of curiosity.",
+   "handling": "Search requires a case_id, is itself audited, and a weekly review flags queries without valid cases; sensitive actors (executives) require dual approval."
+  },
+  {
+   "case": "Retention expiry of a 7-year-old segment that is under legal hold.",
+   "handling": "Object lock legal hold prevents deletion regardless of retain-until; retention job skips held objects and records why."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Transactional outbox + Debezium CDC",
+   "layer": "Capture",
+   "overview": "Write events to a table in the same DB transaction as the business change; a CDC tool streams new rows from the database log.",
+   "why": "Atomicity without distributed transactions; no lost audit records when services crash.",
+   "alternatives": "Dual write to DB and Kafka (can diverge on crash); CDC on business tables directly (captures changes but lacks actor and intent context)."
+  },
+  {
+   "name": "Apache Kafka",
+   "layer": "Transport",
+   "overview": "Replicated, partitioned log with ordering per partition.",
+   "why": "Durable buffer, replay, ordering per stream, and a feed for the security alerting engine.",
+   "alternatives": "Pulsar; Kinesis (managed but 1 MB/s per shard write limits)."
+  },
+  {
+   "name": "Cassandra or partitioned PostgreSQL",
+   "layer": "Hot ledger",
+   "overview": "Cassandra: wide-column, partitioned, high write throughput with lightweight transactions; Postgres: relational with partitioning and strong constraints.",
+   "why": "Append-heavy, keyed by (partition, day, seq) with conditional insert to prevent seq reuse.",
+   "alternatives": "Amazon QLDB (managed ledger with built-in digests, being deprecated by AWS - a reminder not to depend on niche managed ledgers); immudb or Trillian (purpose-built verifiable logs)."
+  },
+  {
+   "name": "Trillian / RFC 6962 Merkle log design",
+   "layer": "Integrity",
+   "overview": "Verifiable append-only log using Merkle trees with inclusion and consistency proofs, used by Certificate Transparency.",
+   "why": "Proven, open design for proving entries are included and history only grows.",
+   "alternatives": "Plain hash chain (simple, but proving inclusion needs O(n) hashes); public blockchain anchoring (external trust, cost and latency)."
+  },
+  {
+   "name": "Cloud KMS / HSM",
+   "layer": "Signing keys",
+   "overview": "Hardware-backed key management with non-exportable keys and audited use.",
+   "why": "Signing STHs with keys no engineer can extract gives non-repudiation; key use is itself logged.",
+   "alternatives": "Software keys in Vault (cheaper, weaker guarantee); per-service keys signing each event (heavier, harder to rotate)."
+  },
+  {
+   "name": "S3 Object Lock (compliance mode) or GCS Bucket Lock",
+   "layer": "Archive",
+   "overview": "WORM storage: objects cannot be overwritten or deleted until retain-until, even by the root account in compliance mode; legal holds supported.",
+   "why": "Prevention layer complementing detection; satisfies SEC 17a-4 style requirements and cheap for 7-year retention.",
+   "alternatives": "Governance mode (privileged users can bypass - weaker); tape vaults (cheap, slow retrieval)."
+  },
+  {
+   "name": "OpenSearch and ClickHouse",
+   "layer": "Read model",
+   "overview": "OpenSearch: inverted-index search; ClickHouse: columnar analytics.",
+   "why": "Investigations need fast filters on actor, resource, action and time; aggregations like 'refunds by agent per day' are columnar workloads.",
+   "alternatives": "Query the ledger directly (slow, wrong access pattern); a SIEM like Splunk (powerful, expensive at 1 TB/day)."
+  },
+  {
+   "name": "etcd",
+   "layer": "Coordination",
+   "overview": "Strongly consistent key-value store with leases.",
+   "why": "Leader election and fencing tokens for single-writer chainers.",
+   "alternatives": "ZooKeeper; Kafka consumer group assignment alone (no fencing, unsafe for chain integrity)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Append-only logs and event sourcing",
+   "explain": "An append-only log is a sequence of records where new records are only added at the end and existing records are never modified. Each record has a position (offset or sequence number) that orders it. Because nothing is overwritten, the log is a complete history: replaying it from the start reproduces every state the system went through. Event sourcing builds applications on this idea: instead of storing current state and losing how you got there, you store the events (OrderPlaced, RefundIssued) and derive state by folding over them. Audit logs are a cousin of event sourcing: services usually keep their own current-state databases, but the audit log records each significant change and its context (who, why, from where). The append-only property is a logical promise; physically, storage could still be edited by someone with access. That is why append-only must be combined with technical enforcement (no update grants, WORM storage) and cryptographic evidence (hash chains, Merkle trees). Corrections in an append-only world are new events that reference the old one (a compensating entry), just as accountants never erase a ledger line but post a reversing entry.",
+   "in_this_design": "The ledger only ever appends entries with increasing seq per partition. A wrongly recorded event is followed by a CORRECTION event referencing the original seq; nothing is updated. Downstream indexes are projections that can be rebuilt by replaying the ledger or archive.",
+   "key_points": [
+    "History is never edited; mistakes are corrected with compensating entries.",
+    "Position (seq) gives a total order within a partition.",
+    "Projections (indexes, views) are disposable and rebuildable from the log.",
+    "Append-only is a promise; enforcement and cryptography make it believable."
+   ],
+   "qa": [
+    {
+     "q": "How do you fix a bug that wrote wrong actor ids into 10,000 audit events?",
+     "a": "Never rewrite them. Append correction events that reference each bad entry and carry the right value, and update projections so investigators see the corrected view with the history of the correction. The original remains for integrity."
+    },
+    {
+     "q": "Is the audit log the same as event sourcing?",
+     "a": "Related, not the same. In event sourcing the event log is the system of record for state. Here services keep their own state; the audit log is a parallel, append-only record of changes and access, with context that state tables lack."
+    },
+    {
+     "q": "Why keep the read model separate instead of indexing the ledger heavily?",
+     "a": "Indexes need updates and rebuilds; the ledger must stay simple and append-only. Separating them (CQRS) lets us change search technology without touching the integrity layer."
+    }
+   ]
+  },
+  {
+   "name": "Hash chaining for tamper evidence",
+   "explain": "A cryptographic hash function such as SHA-256 maps any input to a fixed 32-byte digest; changing even one bit of input changes the digest unpredictably, and finding two inputs with the same digest is computationally infeasible. A hash chain links records: each record stores the hash of the previous record, and its own hash covers its content plus that previous hash. So entry_n's hash depends on every entry before it. If someone modifies entry 500, its hash changes, entry 501's stored prev_hash no longer matches, and every later hash is wrong. To hide the change the attacker must recompute all subsequent hashes. That is easy unless some hash in the chain was published somewhere the attacker cannot change, which is why chains must be anchored externally: a signed head hash given to an auditor, stored in another account, or witnessed by a third party. Hash chaining gives tamper evidence, not prevention, and it cannot by itself detect truncation of the newest entries unless the latest head is anchored. Chains also force sequential processing, since each entry needs the previous hash.",
+   "in_this_design": "Each of 64 partitions is an independent chain built by a single-writer chainer: entry_hash = SHA-256(prev_hash || seq || canonical_event). Partition heads are rolled into a per-minute signed tree head that is anchored outside the pipeline team's control, so recomputing a chain after tampering would conflict with already anchored heads.",
+   "key_points": [
+    "Each entry commits to everything before it.",
+    "Detects modification, insertion and reordering; truncation needs anchored heads.",
+    "Without external anchoring, an attacker with write access simply recomputes the chain.",
+    "Chains serialise writes; shard into many chains for throughput."
+   ],
+   "qa": [
+    {
+     "q": "An admin modifies an entry and recomputes all later hashes. How do you catch it?",
+     "a": "The latest head now differs from the STH previously signed and anchored in a separate account and by a witness. The verifier compares and alerts. That is why anchoring outside the attacker's control is essential."
+    },
+    {
+     "q": "Why not one global chain for strict total order?",
+     "a": "One chain means one writer, capping throughput at a few thousand events per second and creating a single point of failure. Many partitioned chains joined by a periodic Merkle root give integrity with horizontal scale; total order across partitions is rarely needed for audit."
+    },
+    {
+     "q": "What exactly do you hash?",
+     "a": "The stored canonical bytes of the event plus seq and prev_hash. Hashing a re-serialised object is fragile because different libraries order keys or format numbers differently."
+    }
+   ]
+  },
+  {
+   "name": "Merkle trees, inclusion proofs and consistency proofs",
+   "explain": "A Merkle tree hashes data in a binary tree: leaves are hashes of records, each internal node is the hash of its two children, and the root summarises all leaves. Changing any leaf changes the root. Two kinds of proofs make it powerful. An inclusion proof shows a specific record is in the tree with a given root: you supply the sibling hashes along the path from the leaf to the root, about log2(n) hashes. For a billion entries that is 30 hashes, under 1 KB, versus scanning the whole hash chain. A consistency proof shows that a tree of size n is an append-only extension of an earlier tree of size m: the first m leaves are unchanged. Certificate Transparency (RFC 6962) uses exactly this so browsers and monitors can check that public certificate logs never rewrite history. A log operator publishes Signed Tree Heads (size, root, timestamp, signature). Clients gossip or witness these heads; if an operator shows different roots for the same size to different parties (a split view), the conflicting signed heads are proof of misbehaviour. Domain-separating leaf and node hashes (prefix bytes 0x00 and 0x01) prevents an attacker from passing an internal node off as a leaf.",
+   "in_this_design": "Every 60 s the batcher builds trees over new entries per partition and a global tree over partition roots, then signs an STH chained to the previous STH. Investigators and auditors receive inclusion proofs with exported events, and the verifier checks consistency proofs between consecutive STHs to prove history only grew.",
+   "key_points": [
+    "Root commits to every leaf; any change changes the root.",
+    "Inclusion proof: log2(n) sibling hashes, tiny and fast.",
+    "Consistency proof: the old tree is a prefix of the new one.",
+    "Signed tree heads plus witnesses defeat rewriting and split views.",
+    "Prefix leaf and node hashes differently to prevent second-preimage tricks."
+   ],
+   "qa": [
+    {
+     "q": "Why add Merkle trees if you already have a hash chain?",
+     "a": "A chain proves integrity only by walking from an anchor to the entry, O(n). A Merkle tree gives O(log n) inclusion proofs for single entries and consistency proofs between heads, so auditors can verify one export without the whole log."
+    },
+    {
+     "q": "What is a split-view attack and how do you defend?",
+     "a": "The operator shows one auditor a log containing an entry and another a log without it, each with valid-looking signed heads. Defence: publish STHs to independent witnesses and anchors; two signed heads of the same size with different roots are cryptographic proof of misbehaviour."
+    },
+    {
+     "q": "How large is an inclusion proof for 3 million leaves?",
+     "a": "About log2(3M) = 22 hashes of 32 bytes, roughly 700 bytes, plus the STH and signature."
+    }
+   ]
+  },
+  {
+   "name": "Transactional outbox and change data capture",
+   "explain": "Services often need to change their database and also notify another system. Doing two separate writes - commit to the DB, then publish to Kafka - creates a dual-write problem: if the process crashes between them, one happens without the other, and retries can reorder or duplicate. Distributed transactions (two-phase commit) across a DB and a message broker are slow, fragile and often unsupported. The transactional outbox pattern avoids them: in the same local database transaction as the business change, insert a row describing the event into an outbox table. Atomicity of the local transaction guarantees both or neither. A separate relay then publishes outbox rows to the broker. The relay can poll the table, but change data capture (CDC) is better: tools like Debezium read the database's replication log (MySQL binlog, Postgres WAL) and stream committed rows in commit order with low latency and no polling load. Delivery from relay to broker is at-least-once, so consumers must be idempotent, deduping by a unique event id. Outbox rows are deleted after delivery or after a retention window.",
+   "in_this_design": "Every in-scope service writes its audit event to an outbox table in the same transaction as the action. Debezium ships rows to Kafka; the chainer dedupes on event_id. If Kafka or the audit pipeline is down, events accumulate safely in service databases and drain later, so business continues without losing audit records.",
+   "key_points": [
+    "Dual writes break on crashes; the outbox makes the event part of the business transaction.",
+    "CDC reads the commit log: ordered, low latency, no polling.",
+    "Delivery is at-least-once; consumers dedupe by event id.",
+    "Monitor outbox age; it is the earliest signal of a stuck pipeline."
+   ],
+   "qa": [
+    {
+     "q": "Why not just log to the audit service via HTTP after commit?",
+     "a": "A crash or network failure after commit loses the audit record, breaking completeness. Calling before commit risks auditing actions that then roll back. The outbox makes the audit record commit atomically with the action."
+    },
+    {
+     "q": "CDC is down for 2 hours. What happens?",
+     "a": "Outbox rows accumulate in service DBs (size the table and alert on age). Business is unaffected. When CDC resumes it reads from its stored log position; if the DB log was purged beyond that position, it re-snapshots the outbox table and the chainer dedupes."
+    },
+    {
+     "q": "What about actions that do not touch a database, like a read of PII through an API?",
+     "a": "Use the SDK with a local durable spool or synchronous ingest. For high-sensitivity reads, fail closed: if the access cannot be audited, deny it."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and exactly-once effects over at-least-once delivery",
+   "explain": "Networks and crashes force a choice: when a sender does not receive an acknowledgement, it either retries (risking duplicates) or gives up (risking loss). At-most-once never retries; at-least-once retries until acknowledged. True exactly-once delivery is impossible in general over unreliable networks, but exactly-once effect is achievable by combining at-least-once delivery with idempotent processing: each message carries a unique id, and the receiver records processed ids and ignores repeats. The dedupe record must be updated atomically with the effect, or stored in the same place as the effect via a unique constraint, otherwise a crash between them reopens the window. Kafka offers idempotent producers and transactions that give exactly-once semantics within Kafka, but once you write to an external store you need your own idempotency. Ids should be generated at the source (for example UUIDv7, which is time-ordered and good for index locality), not by the pipeline, so that a retried event keeps its id.",
+   "in_this_design": "event_id is created in the service when the outbox row is written. The chainer checks a dedupe cache and the ledger's unique index on event_id before assigning a seq, so redelivered outbox rows never create a second chain entry, and Kafka offsets are committed only after the ledger write succeeds.",
+   "key_points": [
+    "Exactly-once delivery is a myth; exactly-once effect is idempotency plus retries.",
+    "Generate ids at the source so retries carry the same id.",
+    "Store dedupe state atomically with the effect (unique constraint).",
+    "Commit consumer offsets after the effect, never before."
+   ],
+   "qa": [
+    {
+     "q": "The chainer writes to the ledger, then crashes before committing the Kafka offset. What happens on restart?",
+     "a": "It re-reads the same events. The dedupe check finds the event_ids already in the ledger and skips them, so no duplicate entries and the chain continues from the recovered tail."
+    },
+    {
+     "q": "Why not let the chainer generate event ids?",
+     "a": "A retried delivery would get a new id and look unique, creating duplicates. The id must be born with the action."
+    },
+    {
+     "q": "How long must you keep dedupe state?",
+     "a": "At least as long as the maximum redelivery window: Kafka retention plus CDC re-snapshot scenarios. We keep a 7-day cache and rely on the ledger unique index as the permanent backstop."
+    }
+   ]
+  },
+  {
+   "name": "WORM storage, retention locks and legal holds",
+   "explain": "Write Once Read Many storage enforces that data, once written, cannot be modified or deleted until a retention period ends. Historically this was optical media or tape; today it is object storage features such as S3 Object Lock or GCS Bucket Lock. Each object gets a retain-until date. In governance mode, specially privileged users can still shorten retention or delete; in compliance mode, nobody, including the cloud account root, can until the date passes, which is what financial regulations like SEC 17a-4 expect. Legal holds are a separate flag that prevents deletion indefinitely until removed, used when litigation or investigation requires preservation regardless of normal retention. WORM is prevention, while hash chains and signatures are detection; strong designs use both, because WORM depends on trusting the storage provider and configuration, while cryptographic evidence lets a third party verify independently. A sharp edge: anything written to compliance-mode storage cannot be removed, including mistakes such as secrets or personal data, so data minimisation and encryption must happen before archiving.",
+   "in_this_design": "Hourly Parquet segments and their manifests go to a bucket with Object Lock in compliance mode and a 7-year default retention; legal holds are applied per object for cases. STHs go to a separate locked bucket in an account owned by security. PII fields are encrypted before archiving so erasure can be done by key destruction.",
+   "key_points": [
+    "Compliance mode: no one can delete before retain-until, not even root.",
+    "Governance mode is bypassable by privileged users; not enough for regulators.",
+    "Legal hold overrides retention expiry until released.",
+    "WORM is prevention; pair it with cryptographic detection.",
+    "Minimise and encrypt before writing, because you cannot undo it."
+   ],
+   "qa": [
+    {
+     "q": "Why not rely on IAM policies that deny delete on the audit bucket?",
+     "a": "IAM can be changed by account administrators, so it protects only against outsiders. Compliance-mode object lock is enforced by the storage service itself and cannot be lifted even by root before expiry."
+    },
+    {
+     "q": "A secret was archived into WORM storage. What now?",
+     "a": "You cannot delete it. Rotate the secret immediately so the archived copy is useless, add redaction rules, and if the field was encrypted with a per-subject or per-field key, destroy that key."
+    },
+    {
+     "q": "How do legal hold and retention interact?",
+     "a": "Retention defines the minimum lifetime; legal hold blocks deletion regardless of retention. Expiry jobs must check both and record why an object was or was not deleted."
+    }
+   ]
+  },
+  {
+   "name": "Leader election and fencing tokens (single-writer per partition)",
+   "explain": "Some work must be done by exactly one process at a time, such as assigning sequence numbers in a chain. Leader election uses a strongly consistent coordinator (etcd, ZooKeeper, a consensus group) to grant a lease to one process; the leader renews it periodically, and if it stops renewing, another process acquires it after expiry. The trap is that a leader can pause - a long garbage-collection pause, a VM freeze, a network partition - and resume believing it is still leader after its lease has expired and a new leader has started. Both now write, causing a split brain. Fencing tokens fix this: each lease grant comes with a monotonically increasing number, and the storage layer rejects writes carrying a token lower than the highest it has seen, or writes are conditional on state that only the true leader can know (insert only if seq is unused). Leases depend on bounded clock drift; fencing at the storage layer makes correctness independent of timing, which is why it is the safer design.",
+   "in_this_design": "Each partition's chainer holds an etcd lease. Ledger appends are conditional (insert if seq not exists) and carry the fencing token, so a paused ex-leader's write fails and it steps down instead of forking the hash chain with two different entries at the same seq.",
+   "key_points": [
+    "Leases expire; paused leaders do not know it.",
+    "Fencing tokens make storage reject stale leaders.",
+    "Conditional writes (compare-and-set on seq) are a natural fence for logs.",
+    "Correctness should not depend on clocks; liveness can."
+   ],
+   "qa": [
+    {
+     "q": "What happens to the chain if two writers append concurrently without fencing?",
+     "a": "They both read tail seq n, both write n+1 with different content, producing a fork; one entry may overwrite the other or two conflicting histories exist, breaking integrity."
+    },
+    {
+     "q": "Can Kafka's consumer group assignment be your leader election?",
+     "a": "It gives each partition to one consumer, but during rebalances two consumers can briefly process the same partition and there is no fencing on the external store. Add conditional writes or an explicit lease with tokens."
+    },
+    {
+     "q": "How fast is failover?",
+     "a": "Lease TTL, typically 10 s, plus tail recovery (read last seq and hash from the ledger), a few seconds. Events buffer in Kafka meanwhile, so nothing is lost; only lag grows."
+    }
+   ]
+  },
+  {
+   "name": "Crypto-shredding: reconciling immutability with the right to erasure",
+   "explain": "Privacy laws such as GDPR and India's Digital Personal Data Protection Act give individuals rights to have personal data erased when it is no longer needed. Immutable logs cannot delete entries, and deleting would break hash chains anyway. Crypto-shredding resolves the conflict: encrypt each data subject's personal fields with a key specific to that subject (envelope encryption: a per-subject data key encrypted by a master key in KMS). Store only ciphertext in the log. To erase, destroy the subject's key; every copy of the ciphertext - in the ledger, archive, backups, exports - becomes permanently unreadable, without touching any immutable record. Integrity proofs still verify because hashes were computed over the ciphertext. Two cautions: first, legal retention obligations may require keeping some data (for example, financial transaction facts for 7 years), so erasure applies only after those obligations end and only to fields not legally required; second, key management becomes critical infrastructure - losing keys accidentally is data loss, and keys themselves must be backed up in a way that still allows reliable destruction.",
+   "in_this_design": "The SDK encrypts PII fields (name, phone, address, IP) with the subject's data key; non-personal facts (action, resource type, outcome, internal actor ids) stay in clear for search. Erasure requests destroy the subject key after a legal-hold check; the indexer drops cleartext-derived index fields for that subject.",
+   "key_points": [
+    "Encrypt personal fields per subject; delete the key to erase everywhere.",
+    "Hash the ciphertext so proofs survive erasure.",
+    "Legal retention can override erasure; check holds and obligations first.",
+    "Keep searchable fields non-personal or pseudonymised."
+   ],
+   "qa": [
+    {
+     "q": "Doesn't deleting the key break the audit trail?",
+     "a": "The record that an action happened, by which internal actor, on which resource, remains and still verifies. Only the personal details of the erased subject become unreadable, which is what the law asks for."
+    },
+    {
+     "q": "Investigators need to search by customer phone number. How, if it is encrypted?",
+     "a": "Store a keyed hash (HMAC with a secret pepper) of the phone as a blind index for equality search. On erasure, delete the index entries too; without the key the HMAC cannot be linked back."
+    },
+    {
+     "q": "Backups contain old copies of the keys. Is the data really erased?",
+     "a": "Only if key backups expire on a bounded schedule (for example 35 days) or are stored as per-key destructible items in KMS. The erasure SLA must account for key backup retention."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Capture mechanism",
+   "options": "Async logging after commit; synchronous call before commit; transactional outbox",
+   "choice": "Transactional outbox with CDC (sync only for fail-closed sensitive actions)",
+   "why": "Atomic with the action, no extra network hop on the write path, tolerant of pipeline outages."
+  },
+  {
+   "decision": "Integrity structure",
+   "options": "Access control only; hash chain; Merkle tree log",
+   "choice": "Partitioned hash chains plus per-minute Merkle trees with signed, anchored heads",
+   "why": "Chains are simple and detect edits; Merkle trees add compact proofs and consistency checks for auditors."
+  },
+  {
+   "decision": "Ordering scope",
+   "options": "Global total order; per-partition order",
+   "choice": "Per-partition order joined by a global root every minute",
+   "why": "Global order caps throughput at one writer; audit questions are per actor or resource, which per-partition order serves."
+  },
+  {
+   "decision": "Archive mode",
+   "options": "Governance mode object lock; compliance mode; no lock",
+   "choice": "Compliance mode",
+   "why": "Only compliance mode prevents deletion by privileged insiders, which is the threat model."
+  },
+  {
+   "decision": "Personal data handling",
+   "options": "Store in clear; never store; per-subject encryption",
+   "choice": "Minimise plus per-subject encryption with crypto-shredding",
+   "why": "Keeps investigative value, satisfies erasure rights, and preserves integrity proofs."
+  },
+  {
+   "decision": "Read model",
+   "options": "Query ledger directly; dedicated search and OLAP indexes",
+   "choice": "Dedicated OpenSearch + ClickHouse projections",
+   "why": "Different access patterns; ledger stays simple and trusted, indexes are rebuildable and untrusted."
+  },
+  {
+   "decision": "Behaviour when audit pipeline is down",
+   "options": "Fail all actions; continue and buffer; mix",
+   "choice": "Buffer via outbox for most; fail closed for a short list of high-risk admin actions",
+   "why": "Avoids turning the audit system into a site-wide outage while keeping the strongest guarantees where risk is highest."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Kafka cluster unavailable.",
+   "behavior": "Outbox rows accumulate in service DBs; CDC resumes from its offset; outbox-age alert pages after 5 minutes; no audit loss, lag grows."
+  },
+  {
+   "failure": "Chainer leader crash.",
+   "behavior": "Lease expires in 10 s; new leader recovers tail from ledger, resumes; events wait in Kafka; fencing prevents the old leader from writing if it returns."
+  },
+  {
+   "failure": "Ledger store partial outage.",
+   "behavior": "Chainer cannot append, stops committing offsets, backpressure into Kafka; no chain gaps because seq is only assigned on successful conditional write."
+  },
+  {
+   "failure": "KMS signing unavailable.",
+   "behavior": "Merkle roots still computed and stored; STHs signed when KMS returns, covering the gap; alert if unsigned period exceeds 15 minutes because detection window widens."
+  },
+  {
+   "failure": "Verifier detects hash mismatch.",
+   "behavior": "Sev-1 security incident: freeze writes to affected partition, compare with WORM archive and anchored STHs to identify altered entries, preserve evidence, start investigation."
+  },
+  {
+   "failure": "Read model (OpenSearch) down or corrupted.",
+   "behavior": "Investigations degrade to slower ClickHouse or archive scans; read model rebuilt from ledger/archive; integrity unaffected because indexes are not trusted."
+  },
+  {
+   "failure": "CDC connector loses its position after DB log purge.",
+   "behavior": "Connector re-snapshots outbox table; chainer dedupes; reconciliation confirms no gaps."
+  }
+ ],
+ "metrics": [
+  "Outbox age: oldest undelivered outbox row per service (alert > 5 min).",
+  "End-to-end lag from commit to ledger and to read model (p50/p99).",
+  "Sequence gaps per partition (must be 0) and duplicate-suppressed count.",
+  "Verifier: entries verified per hour, time since last full verification, mismatches (must be 0).",
+  "STH publication interval and signing failures; anchor write success.",
+  "Reconciliation deltas between service-side emitted counts and ledger counts per window.",
+  "Ingest rate per partition and chainer append latency.",
+  "Query latency p95 and audit-of-audit counts (searches without case ids).",
+  "Archive segments written vs expected per hour; object lock configuration drift checks.",
+  "Erasure requests processed within SLA and keys destroyed."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not use a blockchain?",
+   "a": "We need tamper evidence, not decentralised consensus among mutually distrusting parties. A Merkle log with signed heads, external witnesses and WORM storage gives verifiable integrity at a fraction of the cost and latency. If regulators wanted public anchoring, we could publish an hourly root hash to a public chain or newspaper-style notary without changing the design."
+  },
+  {
+   "q": "How do you prove completeness, not just integrity?",
+   "a": "Integrity proofs cannot show that an event was never logged. Completeness comes from the outbox (atomic with the action), sequence gap checks, and reconciliation of emitted counts versus ledger counts per window, plus periodic control testing where auditors perform known actions and verify they appear."
+  },
+  {
+   "q": "A database admin can still bypass the service and change business data directly in the DB without an audit event. What then?",
+   "a": "Capture database-level activity too: DB audit plugins or CDC on business tables flag changes without a matching outbox event (no application actor). Restrict direct DB access through a bastion with session recording that writes to the audit log."
+  },
+  {
+   "q": "How would you let customers see their own activity?",
+   "a": "A tenant-scoped projection of non-sensitive events (logins, profile changes, orders) served from the read model with per-tenant filters, rate limits and its own access logging; never expose internal investigator actions."
+  },
+  {
+   "q": "What if the signing key is stolen?",
+   "a": "The thief could sign new fake heads, but those conflict with heads already anchored and witnessed. Revoke the key, rotate, re-sign the current head with the new key, and verify history against previously witnessed heads; any rewrite of earlier history is still detectable."
+  },
+  {
+   "q": "How would you scale to 10x volume?",
+   "a": "Increase partitions (more chains), batch larger per append, scale Kafka partitions and ledger nodes; Merkle work grows only logarithmically per proof. The archive scales linearly in cost; keep payloads as diffs, not full objects, to control volume."
+  },
+  {
+   "q": "How long do investigators wait for new events to be searchable?",
+   "a": "Seconds normally: CDC lag of about 1 s, chainer batching up to 20 ms, indexer refresh 1-5 s. The p99 target is 60 s to allow for backlogs. The security alert stream reads from Kafka directly for under 10 s."
+  },
+  {
+   "q": "What evidence do you hand to an external auditor?",
+   "a": "An export of the scoped events in Parquet, inclusion proofs per event, the covering STHs with signatures, consistency proofs to the latest witnessed STH, the public keys with validity windows, and a reference verifier they can run independently."
+  }
+ ],
+ "key_points": [
+  "Three guarantees: completeness, integrity, usability - design for each separately.",
+  "Completeness comes from the transactional outbox, not from best-effort logging.",
+  "Integrity: partitioned hash chains plus Merkle trees with signed tree heads, anchored outside the operating team.",
+  "Prevention plus detection: WORM compliance-mode storage plus cryptographic verification.",
+  "Single writer per chain with fencing tokens; shard into many chains for throughput.",
+  "Exactly-once effect = at-least-once delivery + idempotent append on a source-generated event id.",
+  "Read model is CQRS: rebuildable, untrusted indexes; proofs come from the ledger.",
+  "Privacy vs immutability: minimise, encrypt per subject, crypto-shred.",
+  "Audit the auditors: every search and export is logged, case ids required.",
+  "Verify continuously and reconcile counts; an unverified audit log is just a log."
+ ],
+ "quiz": [
+  {
+   "q": "A service commits a refund and then sends the audit event over HTTP. What is the core weakness?",
+   "options": [
+    "HTTP is too slow for audit events",
+    "The audit service cannot order events from HTTP",
+    "A crash between commit and send loses the audit record (dual-write problem)",
+    "HTTP requests cannot carry actor identity"
+   ],
+   "answer": 2,
+   "why": "Two separate writes can diverge on crash; the outbox makes them atomic. Speed is not the issue - correctness is."
+  },
+  {
+   "q": "An attacker with DB admin rights edits an entry and recomputes all later hashes in the chain. What detects it?",
+   "options": [
+    "A previously signed tree head anchored outside the attacker's control no longer matches",
+    "The database's own checksums",
+    "Recomputing the chain from the first entry",
+    "Kafka consumer offsets"
+   ],
+   "answer": 0,
+   "why": "Recomputing the chain internally will succeed because the attacker fixed all hashes; only an external anchor reveals the change. Database checksums detect disk corruption, not authorised updates."
+  },
+  {
+   "q": "Roughly how many hashes are in a Merkle inclusion proof for a tree with 1 billion leaves?",
+   "options": [
+    "About 1,000",
+    "About 1 million",
+    "About 3",
+    "About 30"
+   ],
+   "answer": 3,
+   "why": "log2(1e9) is about 30 sibling hashes, under 1 KB. Linear-size proofs are a property of plain hash chains, not Merkle trees."
+  },
+  {
+   "q": "What does a Merkle consistency proof between two signed tree heads demonstrate?",
+   "options": [
+    "A particular entry exists in the newer tree",
+    "The newer tree contains the older tree unchanged as a prefix (history only grew)",
+    "Both heads were signed by the same key",
+    "The trees have the same number of leaves"
+   ],
+   "answer": 1,
+   "why": "Consistency proves append-only growth. Proving a particular entry exists is an inclusion proof - the most commonly confused alternative."
+  },
+  {
+   "q": "Why should hash chaining be done by a single writer per partition with fencing?",
+   "options": [
+    "SHA-256 is not thread-safe",
+    "Concurrent writers could both assign the same next sequence and fork the chain",
+    "Kafka requires one consumer per topic",
+    "Fencing makes hashing faster"
+   ],
+   "answer": 1,
+   "why": "Two writers reading the same tail produce conflicting entries at seq n+1. Kafka allows many consumers per topic, just one per partition in a group, and even that is not fenced during rebalances."
+  },
+  {
+   "q": "Which S3 Object Lock configuration resists a malicious account administrator?",
+   "options": [
+    "Governance mode with a retain-until date",
+    "Bucket policy denying DeleteObject",
+    "Versioning enabled with MFA delete",
+    "Compliance mode with a retain-until date"
+   ],
+   "answer": 3,
+   "why": "Compliance mode cannot be lifted by anyone before expiry. Governance mode is tempting but can be bypassed by users with the bypass permission."
+  },
+  {
+   "q": "A customer asks to be erased, but their PII appears in 7 years of immutable audit entries. Best approach?",
+   "options": [
+    "Encrypt PII fields with a per-subject key and destroy the key (crypto-shredding)",
+    "Delete and rewrite the affected entries, then recompute hashes",
+    "Mark the entries hidden in the search index only",
+    "Refuse, because audit logs are exempt from all privacy law"
+   ],
+   "answer": 0,
+   "why": "Crypto-shredding makes every copy unreadable while proofs still verify over ciphertext. Rewriting entries breaks integrity and contradicts WORM; hiding in the index leaves the data readable."
+  },
+  {
+   "q": "CDC redelivers 5,000 outbox rows after a connector restart. What prevents duplicate chain entries?",
+   "options": [
+    "Kafka's exactly-once delivery to the ledger",
+    "The Merkle batcher removing duplicate leaves",
+    "The chainer dedupes on the source-generated event_id before assigning a sequence",
+    "Sorting by occurred_at"
+   ],
+   "answer": 2,
+   "why": "Idempotency keyed on the source id gives exactly-once effect. Kafka transactions are exactly-once only within Kafka, not into an external ledger."
+  },
+  {
+   "q": "Your audit pipeline must sustain 50k events/s and a single hash chain handles about 6k/s. Best design?",
+   "options": [
+    "One chain on a much larger machine",
+    "Skip hashing during peaks and backfill later",
+    "Hash only every 100th event",
+    "Many independent chains (e.g. 64 partitions) joined under a periodic global Merkle root"
+   ],
+   "answer": 3,
+   "why": "Partitioned chains scale horizontally and the global root preserves a single verifiable commitment. Skipping or sampling hashes leaves unprotected windows."
+  },
+  {
+   "q": "Integrity proofs all pass, but auditors ask how you know no events are missing. What answers that?",
+   "options": [
+    "The Merkle root covers all entries",
+    "Outbox atomicity plus sequence-gap checks and count reconciliation with emitting services",
+    "WORM storage prevents deletion",
+    "Signed tree heads are timestamped"
+   ],
+   "answer": 1,
+   "why": "Integrity proves what is present was not changed; it cannot prove something was never written. The Merkle root is the tempting answer but only covers what was logged."
+  },
+  {
+   "q": "Which hash input is most robust for later independent verification?",
+   "options": [
+    "The exact stored canonical bytes of the event plus seq and prev_hash",
+    "A JSON re-serialisation of the event at verify time",
+    "The event's database row id",
+    "The event's occurred_at timestamp and actor only"
+   ],
+   "answer": 0,
+   "why": "Re-serialisation differs across libraries (key order, number formatting) and causes false mismatches. Hashing a subset of fields leaves other fields unprotected."
+  },
+  {
+   "q": "Kafka is down for 30 minutes. With the outbox design, what is the expected business impact?",
+   "options": [
+    "All writes fail until Kafka returns",
+    "Audit events for that window are lost",
+    "None for most actions; audit rows queue in service DBs and drain later",
+    "Events are written but without hashes"
+   ],
+   "answer": 2,
+   "why": "The outbox decouples business commits from pipeline availability. Only an explicitly fail-closed list of sensitive actions would be blocked."
+  },
+  {
+   "q": "What is a split-view attack on a transparency log?",
+   "options": [
+    "Showing different parties different log contents, each with a valid-looking signed head",
+    "Splitting the log into partitions for throughput",
+    "Two replicas disagreeing after a network partition",
+    "Splitting an event across two Kafka messages"
+   ],
+   "answer": 0,
+   "why": "Defence is witnesses and gossip: two signed heads at the same size with different roots prove misbehaviour. Replica disagreement is a consistency issue, not an attack on verifiability."
+  },
+  {
+   "q": "Why are leaf and internal node hashes prefixed differently (0x00 vs 0x01) in RFC 6962 style trees?",
+   "options": [
+    "To make hashing faster",
+    "To support variable-length leaves",
+    "To encode the tree height",
+    "To prevent passing an internal node off as a leaf (second-preimage attack)"
+   ],
+   "answer": 3,
+   "why": "Domain separation stops an attacker constructing a different tree with the same root. Speed and variable length are unrelated."
+  },
+  {
+   "q": "An investigator queries the audit index and it returns an event. What should give the auditor confidence it is genuine?",
+   "options": [
+    "The index document's _version field",
+    "The event appearing in two different index shards",
+    "An inclusion proof from the ledger against a signed, anchored tree head",
+    "The investigator's role-based access"
+   ],
+   "answer": 2,
+   "why": "The index is an untrusted projection; proof from the ledger to a signed head is what establishes authenticity. Access control proves who looked, not what is true."
+  },
+  {
+   "q": "Which events are best put on a fail-closed path (no audit record, no action)?",
+   "options": [
+    "Customer browsing a product page",
+    "Granting admin privileges and bulk export of customer PII",
+    "All order placements",
+    "Service health checks"
+   ],
+   "answer": 1,
+   "why": "Fail closed where audit risk exceeds availability cost. Failing closed on all order placements would turn an audit outage into a revenue outage."
+  },
+  {
+   "q": "A chainer pauses for 40 s due to GC, its lease expires, and a new leader starts. The old one wakes and tries to append. What stops corruption?",
+   "options": [
+    "The old leader checks the wall clock",
+    "Kafka blocks the old consumer automatically",
+    "The Merkle batcher discards its entries",
+    "Conditional insert on (partition, seq) plus a fencing token rejects the stale writer"
+   ],
+   "answer": 3,
+   "why": "Storage-side fencing makes correctness independent of timing. Clock checks are unreliable because the paused process does not know time passed until too late."
+  },
+  {
+   "q": "Why keep the 7-year archive in Parquet on object storage rather than the hot ledger?",
+   "options": [
+    "Roughly 6x compression and object-storage pricing make 550 TB affordable, with WORM locks",
+    "Parquet supports in-place updates for corrections",
+    "The ledger cannot store more than 90 days of data",
+    "Object storage provides strong ordering guarantees"
+   ],
+   "answer": 0,
+   "why": "Cost and WORM capability drive it. Parquet files are immutable, so 'in-place updates' is wrong - and would be undesirable for audit anyway."
+  },
+  {
+   "q": "An auditor wants to verify your export without trusting your engineers. What must you provide?",
+   "options": [
+    "Read access to the production ledger database",
+    "Events, inclusion and consistency proofs, signed tree heads, public keys and a reference verifier",
+    "A screenshot of the verifier dashboard",
+    "The KMS private signing key"
+   ],
+   "answer": 1,
+   "why": "Independent verification needs data plus proofs plus public keys. Production DB access still requires trusting that the DB was not altered; giving out the private key destroys non-repudiation."
+  },
+  {
+   "q": "Which statement about exactly-once in this pipeline is most accurate?",
+   "options": [
+    "Kafka transactions guarantee exactly-once writes to Cassandra",
+    "CDC tools guarantee exactly-once delivery",
+    "Delivery is at-least-once; idempotent appends keyed by event_id give an exactly-once effect",
+    "Exactly-once is impossible, so duplicates must be tolerated in the ledger"
+   ],
+   "answer": 2,
+   "why": "Exactly-once effect is achievable with idempotency. Kafka transactions do not extend to external stores, and tolerating duplicates in an audit ledger would undermine counts and reconciliation."
+  }
+ ],
+ "references": [
+  {
+   "title": "RFC 6962: Certificate Transparency",
+   "url": "https://www.rfc-editor.org/rfc/rfc6962"
+  },
+  {
+   "title": "Transparent Logs for Skeptical Clients (Russ Cox)",
+   "url": "https://research.swtch.com/tlog.pdf"
+  },
+  {
+   "title": "A Tamperproof Logging Implementation (Pangea)",
+   "url": "https://pangea.cloud/blog/a-tamperproof-logging-implementation/"
+  },
+  {
+   "title": "How do you design tamper-evident audit logs (Merkle trees, hashing)? (DesignGurus)",
+   "url": "https://www.designgurus.io/answers/detail/how-do-you-design-tamperevident-audit-logs-merkle-trees-hashing"
+  },
+  {
+   "title": "Delete Kafka Data Without Deleting It: Crypto Shredding for GDPR Compliance (Conduktor)",
+   "url": "https://www.conduktor.io/blog/crypto-shredding-in-kafka-a-cost-effective-way-to-ensure-compliance"
+  }
+ ]
+}

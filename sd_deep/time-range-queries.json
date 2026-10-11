@@ -1,0 +1,1101 @@
+{
+ "slug": "time-range-queries",
+ "title": "Design a time-range query store (time-series and event history)",
+ "prompt": "Design a system that supports time-range queries efficiently.",
+ "group": "storage",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "Almost every product asks 'what happened to X between t1 and t2' - order history, metrics, logs, price changes. The core tension is that time is monotonically increasing, so the layout that makes range scans cheap (data sorted and clustered by time) is the same layout that funnels every new write onto one hot partition. A good design clusters by (entity, time bucket), spreads writes by hashing the entity, prunes reads with bucket and block min/max metadata, and keeps old data cheap through compression, rollups and tiering.",
+ "framework": {
+  "clarify": [
+   "What is being queried: per-entity history (orders of seller X between t1 and t2), per-metric series (CPU of host Y), or ad hoc scans across all entities? This decides the primary key.",
+   "Typical range width and recency: I will assume 80 percent of queries hit the last 24 hours and 95 percent the last 7 days.",
+   "Write volume and shape: assume 500k points per second at peak, append-mostly, with up to 5 percent arriving late (minutes to hours).",
+   "Do we need raw points forever or is downsampled data acceptable for old ranges? Assume raw for 30 days, 1-minute rollups for 13 months.",
+   "Are updates and deletes needed, or is it append-only? Assume append-only with rare corrections expressed as new versions.",
+   "Latency targets: p99 under 300 ms for a 24 hour single-entity range, under 2 s for 30 day aggregations.",
+   "Consistency: is read-your-writes required within seconds, or is 5-10 s ingestion lag fine for dashboards?",
+   "Time semantics: event time or ingestion time, UTC storage, and what timezone users query in (IST for business reports)."
+  ],
+  "design": [
+   "Baseline: one relational table with a B-tree index on (entity_id, ts). Works to a few billion rows on one node; I will say where it breaks (index size, write amplification, hot right edge) before scaling.",
+   "Primary key: partition key = (series_id, time_bucket) with bucket = 1 day for raw data; clustering key = ts. A range query becomes a handful of partition lookups, each a contiguous sorted scan.",
+   "Write path: Ingest API -> Kafka keyed by series_id -> workers -> LSM storage shards (WAL + memtable + immutable sorted blocks of 2 hours), with Gorilla-style delta-of-delta and XOR compression.",
+   "Read path: Query planner aligns the range to buckets, chooses resolution (raw, 1m, 1h) from range width, prunes blocks with min/max time metadata, fans out to hot shards and cold object store in parallel, k-way merges and paginates with a cursor.",
+   "Lifecycle: compaction merges blocks, a rollup job builds 1m and 1h aggregates, sealed blocks older than 7 days move to object storage as columnar files, TTL drops whole buckets instead of deleting rows.",
+   "APIs: POST /v1/points (batched), GET /v1/series/{id}/range?from&to&step&agg&cursor, GET /v1/query for multi-series aggregates, plus an admin API for retention policies."
+  ],
+  "defend": [
+   "Bottleneck: the 'now' bucket. Every write lands in today's bucket, so I hash series_id across shards and, for very hot single series, salt the key with a sub-bucket (series, day, salt 0..N-1) and fan in on read.",
+   "Scale reads: block-level min/max pruning, pre-aggregated rollups for wide ranges, step-aligned result cache (a 5 minute aligned window is immutable once sealed), and read replicas for hot buckets.",
+   "Scale writes: batch on the client, group-commit WAL, LSM absorbs random writes as sequential I/O, add shards by splitting the hash ring; Kafka buffers bursts like sale-day spikes.",
+   "Failure behaviour: RF=3 with W=2; on a shard timeout the planner retries a replica with jittered backoff (50 ms base, 2 tries), then returns partial results flagged as partial rather than failing the whole dashboard; ingest backpressure via Kafka lag.",
+   "Late and out-of-order data: accept writes into a sealed bucket via a small out-of-order memtable, re-trigger rollups for affected windows, and expose a watermark so consumers know when a window is final.",
+   "Measure: ingest lag (Kafka consumer lag in seconds), points per second per shard, p50/p99 query latency by range width, blocks scanned per query, cache hit ratio, compaction backlog, and cost per GB-month per tier."
+  ],
+  "script": "Before drawing anything I want to pin down the query shape. I am assuming most queries ask for one entity's history over a recent window - say a seller's orders or a host's metrics over the last day - with about 500k writes per second, mostly appends, some late. The key idea is to cluster data by entity and time so a range is a contiguous scan, but not let time alone be the partition key, because then every write hits today's partition. So the key is series id plus a day bucket, hashed across shards, with timestamp as the sort key inside. Writes go through Kafka into LSM shards that seal compressed two-hour blocks; old blocks move to object storage as columnar files with min and max time in their metadata, and a rollup job builds one-minute and one-hour aggregates. The query planner turns a time range into a set of buckets and blocks, picks the coarsest resolution that answers the question, fans out, and merges. Then I will defend the hot 'now' partition, late data, and what happens when a shard is slow."
+ },
+ "brd": {
+  "problem": "Teams across the company repeatedly need 'show me X between t1 and t2' - seller order history, delivery event timelines, service metrics, price history. Today each team stores this in a general OLTP database with an index on timestamp; queries over a week time out during sale events, storage cost grows linearly forever, and dashboards are slow exactly when they matter most.",
+  "goals": [
+   "Serve single-entity time-range queries over the last 24 hours with p99 under 300 ms at peak.",
+   "Ingest 500k points per second sustained and 1.5M per second during sale-event bursts without data loss.",
+   "Cut storage cost per retained point by at least 5x through compression, rollups and tiering.",
+   "Offer one shared platform with a stable API so teams stop building their own history tables.",
+   "Make wide-range analytics (30 days, 13 months) answerable in seconds via pre-aggregated rollups."
+  ],
+  "non_goals": [
+   "Full-text search over event payloads (that belongs in a search index).",
+   "Transactional updates across many series; the store is append-mostly.",
+   "Arbitrary joins between unrelated datasets; heavy analytics goes to the warehouse.",
+   "Sub-millisecond trading-grade latency."
+  ],
+  "stakeholders": [
+   {
+    "who": "Product engineering teams",
+    "needs": "A simple API to write events and fetch history per entity without running their own database."
+   },
+   {
+    "who": "SRE and observability",
+    "needs": "Metrics and alerting queries that stay fast during incidents and sale peaks."
+   },
+   {
+    "who": "Business analysts",
+    "needs": "Daily and hourly trends over months without scanning raw data."
+   },
+   {
+    "who": "Finance / infra cost owners",
+    "needs": "Predictable cost per GB and a retention policy that actually removes old data."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "p99 latency, 24h single-series range",
+    "target": "< 300 ms"
+   },
+   {
+    "metric": "p99 latency, 30-day aggregated range",
+    "target": "< 2 s"
+   },
+   {
+    "metric": "Ingest-to-queryable lag",
+    "target": "p99 < 10 s"
+   },
+   {
+    "metric": "Data loss on acknowledged writes",
+    "target": "0"
+   },
+   {
+    "metric": "Storage cost per billion points per month",
+    "target": "5x lower than current OLTP baseline"
+   },
+   {
+    "metric": "Teams migrated off bespoke history tables",
+    "target": "80 percent within 2 quarters"
+   }
+  ],
+  "constraints": [
+   "Must run on the existing Kubernetes and Kafka platform; object storage is the only cheap tier.",
+   "Sale events cause 3x traffic spikes for 6-12 hours; capacity must handle them without manual intervention.",
+   "Personal data in event payloads must respect retention rules (delete or anonymise after policy expiry).",
+   "Budget: hot tier SSD capacity is capped, so anything older than 7 days must live in object storage."
+  ],
+  "risks": [
+   {
+    "risk": "Hot partition on the current time bucket overloads one shard.",
+    "mitigation": "Hash series across shards, salt very hot series, monitor per-shard write rate."
+   },
+   {
+    "risk": "High-cardinality labels (per-user or per-order ids as series) explode the index.",
+    "mitigation": "Cardinality limits per tenant, reject or aggregate unbounded labels, model per-order history as events not series."
+   },
+   {
+    "risk": "Late data makes rollups wrong.",
+    "mitigation": "Watermarks, re-rollup of affected windows, mark windows as provisional until the watermark passes."
+   },
+   {
+    "risk": "Cold reads from object storage are slow and costly.",
+    "mitigation": "Block-level pruning, columnar format, local SSD cache of recently read cold blocks, and rollups for wide ranges."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Service developer",
+    "needs": "Write events from a service and fetch an entity's history in a page-able API."
+   },
+   {
+    "name": "On-call SRE",
+    "needs": "Dashboards over the last 1-6 hours that load in under a second during incidents."
+   },
+   {
+    "name": "Analyst",
+    "needs": "Hourly or daily aggregates over 13 months for trend reports."
+   }
+  ],
+  "user_stories": [
+   "As a service developer, I want to write events in batches so that ingestion is cheap and does not block my request path.",
+   "As a service developer, I want to fetch all events for order or seller X between t1 and t2 in time order so that I can show a timeline.",
+   "As an SRE, I want p95 latency per minute for the last 6 hours so that I can spot regressions during an incident.",
+   "As an analyst, I want daily totals for the past year so that I can compare sale events year over year.",
+   "As a developer, I want a cursor for long ranges so that I can page through millions of points without timeouts.",
+   "As a data owner, I want a per-dataset retention policy so that old raw data is deleted automatically.",
+   "As an SRE, I want to know when a time window is final (watermark passed) so that alerts do not fire on incomplete data."
+  ],
+  "functional": [
+   "Batched write API accepting up to 5,000 points per request with idempotency key per batch.",
+   "Range read for one series with from, to (half-open [from, to)), order, limit and cursor.",
+   "Aggregated read with step (1s to 1d) and functions sum, count, min, max, avg, p50/p95/p99 (via sketches).",
+   "Multi-series query by label filter with group-by, bounded by a series-count limit.",
+   "Automatic resolution selection: raw for ranges up to 2 days, 1m rollups up to 60 days, 1h beyond.",
+   "Retention policies per dataset and per resolution, enforced by dropping whole buckets.",
+   "Late-arriving data accepted up to 7 days back with rollup recomputation.",
+   "Query results include a partial flag and the watermark of the newest complete window."
+  ],
+  "non_functional": [
+   {
+    "name": "Read latency",
+    "target": "p99 < 300 ms for 24h single-series; p99 < 2 s for 30d aggregate"
+   },
+   {
+    "name": "Write latency",
+    "target": "p99 ack < 50 ms (after Kafka acks=all)"
+   },
+   {
+    "name": "Freshness",
+    "target": "Data queryable within 10 s p99 of ack"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95 percent reads, 99.99 percent writes (Kafka buffered)"
+   },
+   {
+    "name": "Durability",
+    "target": "No loss of acknowledged writes; RF=3 hot, 11 nines in object storage"
+   },
+   {
+    "name": "Scalability",
+    "target": "Linear scale-out to 2M points/s by adding shards"
+   },
+   {
+    "name": "Cost",
+    "target": "< 2 bytes per raw point on disk after compression"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "500k points/s average, 1.5M/s peak during sale events.",
+    "Raw point = series_id (8 B) + timestamp (8 B) + value (8 B) + small tags, about 64 B uncompressed on the wire.",
+    "Gorilla-style compression achieves about 1.4-2 bytes per point for regular metric series; event payloads compress about 8x.",
+    "10M active series; 20k read queries/s, 80 percent over the last 24 hours.",
+    "Raw kept 30 days hot+warm, 1m rollups 13 months, 1h rollups 5 years."
+   ],
+   "math": [
+    "Points per day: 500k x 86,400 = 43.2 billion points/day.",
+    "Raw ingest bandwidth: 500k x 64 B = 32 MB/s average, about 96 MB/s at peak.",
+    "Compressed storage: 43.2B x 2 B = about 86 GB/day of metric data; with event payloads assume about 500 GB/day total.",
+    "30 days raw = 15 TB; with RF=3 on the hot 7 days: 7 x 500 GB x 3 = 10.5 TB SSD, the remaining 23 days in object storage (about 11.5 TB).",
+    "1m rollups: 10M series x 1,440 min/day x 5 aggregates x 4 B = 288 GB/day before compression, about 40 GB/day compressed; 13 months about 16 TB.",
+    "Shards: if one shard sustains about 50k points/s comfortably, peak 1.5M/s needs 30 shards x 3 replicas = 90 nodes.",
+    "Reads: a 24h raw query for a 10 s-resolution series returns 8,640 points, about 17 KB compressed; 20k qps x 17 KB = 340 MB/s fan-out, mostly served from page cache."
+   ],
+   "summary": "About 43 billion points and 500 GB compressed per day; 30 shards with RF=3 handle peak ingest; 7 days on SSD (about 10 TB with replicas) and everything older in object storage. Rollups make 13-month queries scan thousands, not billions, of points."
+  },
+  "out_of_scope": [
+   "Free-text search inside event payloads.",
+   "Cross-dataset joins and ad hoc SQL over all history (warehouse handles this).",
+   "Real-time alert evaluation engine (consumes this store but is a separate service).",
+   "Multi-region active-active writes; one primary region with async DR copy."
+  ]
+ },
+ "hld": {
+  "overview": "Writes are batched into Kafka keyed by series_id, consumed by stateless ingest workers that route each point to a storage shard chosen by hash(series_id). Each shard is an LSM engine whose sort order is (series_id, timestamp), sealing compressed 2-hour blocks. Sealed blocks older than 7 days are rewritten as columnar files in object storage with per-block min/max time and series ranges in a block index. A rollup service maintains 1-minute and 1-hour aggregates. The query planner maps a time range to buckets and blocks, chooses resolution, fans out across tiers and merges sorted streams.",
+  "diagram": "\n producers (services, devices, order events)\n        |  batched writes (1-5k points / request)\n        v\n +-------------+      +---------------------+\n | Ingest API  |----->| Kafka (by series_id)|  replay buffer, 72h retention\n +-------------+      +----------+----------+\n                                 |\n                      +----------v----------+\n                      | Ingest workers      |  dedupe, assign time bucket,\n                      | (stateless)         |  route to shard by hash(series,bucket)\n                      +----------+----------+\n                                 |\n     +---------------------------+---------------------------+\n     |                           |                           |\n+----v-----+               +-----v----+               +------v---+\n| Shard A  |  WAL+memtable | Shard B  |               | Shard C  |  3 replicas each\n| LSM, 2h  |  -> SSTable   |          |               |          |  (RF=3, W=2)\n| blocks   |               |          |               |          |\n+----+-----+               +-----+----+               +------+---+\n     |   compaction + rollup (1m, 1h) + upload of sealed blocks  |\n     +---------------------------+---------------------------+\n                                 v\n                    +------------------------+\n                    | Object store (S3/GCS)  |  cold blocks, Parquet, 13 months\n                    +-----------+------------+\n                                ^\n +-----------+   +--------------+-------------+   +-----------------+\n | Query API |-->| Query planner              |-->| Block index     |\n +-----------+   | split range by tier/bucket |   | (series,bucket) |\n      ^          | fan-out, merge, downsample |   | -> blocks,minmax|\n      |          +----------------------------+   +-----------------+\n  dashboards, APIs, analysts   (result cache keyed on aligned windows)\n",
+  "components": [
+   {
+    "name": "Ingest API",
+    "responsibility": "Authenticate, validate timestamps (reject > 10 min in the future), enforce per-tenant rate and cardinality limits, write batches to Kafka with acks=all."
+   },
+   {
+    "name": "Kafka ingest topic",
+    "responsibility": "Durable buffer partitioned by series_id; absorbs bursts and lets shards replay after failures (72 h retention)."
+   },
+   {
+    "name": "Ingest workers",
+    "responsibility": "Dedupe by (series_id, ts, batch id), assign time bucket, route to shard replicas, apply backpressure when shards are slow."
+   },
+   {
+    "name": "Storage shards (LSM)",
+    "responsibility": "WAL plus memtable, flush to immutable sorted blocks of 2 hours, compress with delta-of-delta timestamps and XOR floats, compact and expire."
+   },
+   {
+    "name": "Series index",
+    "responsibility": "Inverted index from labels to series_ids and from series_id to shard; used for multi-series queries."
+   },
+   {
+    "name": "Block index (metadata store)",
+    "responsibility": "Maps (series range, time bucket) to block files with min_ts, max_ts, row count and resolution; enables pruning."
+   },
+   {
+    "name": "Rollup service",
+    "responsibility": "Streaming and batch computation of 1m and 1h aggregates (sum, count, min, max, sketch), recomputed when late data lands."
+   },
+   {
+    "name": "Tiering and retention job",
+    "responsibility": "Moves sealed blocks to object storage as Parquet, drops expired buckets whole, updates the block index."
+   },
+   {
+    "name": "Query planner and executor",
+    "responsibility": "Aligns range, picks resolution, prunes, fans out with timeouts, k-way merges, aggregates, paginates."
+   },
+   {
+    "name": "Result cache",
+    "responsibility": "Caches results for step-aligned, sealed windows (immutable once the watermark passes), keyed by query hash and window."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Write a batch",
+    "steps": [
+     "Client sends POST /v1/points with up to 5,000 points and an idempotency key.",
+     "Ingest API validates, checks tenant limits, produces to Kafka partition hash(series_id) mod P with acks=all, returns 202.",
+     "Ingest worker consumes, dedupes, and sends points to the shard owning hash(series_id); the shard appends to WAL (group commit every 5 ms) and memtable.",
+     "When W=2 of 3 replicas acknowledge, the worker commits the Kafka offset.",
+     "Memtable flushes into the current 2-hour block; when the block window closes plus a 10 minute grace, the block is sealed, compressed and registered in the block index."
+    ]
+   },
+   {
+    "name": "Read a range",
+    "steps": [
+     "Client calls GET /v1/series/{id}/range?from=...&to=...&step=60s.",
+     "Planner computes buckets overlapping [from, to) and picks resolution: raw if range <= 2 days, else 1m or 1h rollups.",
+     "Block index returns candidate blocks; blocks whose [min_ts, max_ts] do not overlap the range are pruned.",
+     "Hot buckets are read from shard replicas, cold blocks from object storage (with local SSD cache), all in parallel with a 250 ms per-leg timeout.",
+     "Executor k-way merges sorted streams, dedupes overlapping versions (latest write wins), aggregates per step and returns a page plus next_cursor = last (ts, seq)."
+    ]
+   },
+   {
+    "name": "Late data and rollup repair",
+    "steps": [
+     "A point arrives with ts in a sealed block's window (for example, a device reconnects after 3 hours).",
+     "Shard writes it into an out-of-order memtable and later a small delta block for that window.",
+     "Rollup service receives a dirty-window event and recomputes the affected 1m and 1h aggregates.",
+     "Result cache entries for that window are invalidated; the watermark for the window is reported as provisional until recompute finishes."
+    ]
+   }
+  ],
+  "data_flow": "Point -> Ingest API -> Kafka (by series) -> ingest worker -> shard WAL + memtable -> sealed 2h block (SSD, RF=3) -> after 7 days rewritten as columnar file in object storage -> expired buckets dropped by retention. In parallel, rollups flow from the stream and from sealed blocks into 1m and 1h tables that follow their own longer retention. Reads go planner -> block index -> hot shards and/or object storage -> merge -> cache -> client."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/points",
+    "request": "{dataset, idempotency_key, points: [{series: {name, labels}, ts_ms, value | payload}]}",
+    "response": "202 {accepted: n, rejected: [{index, reason}]}",
+    "notes": "Max 5,000 points or 1 MB; ts more than 10 min in the future or older than 7 days rejected; per-tenant token bucket."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/series/{series_id}/range",
+    "request": "from, to (ISO or epoch ms, half-open), order=asc|desc, limit<=10000, cursor",
+    "response": "200 {points: [[ts, value]], next_cursor, resolution, partial, watermark}",
+    "notes": "Cursor encodes (last_ts, last_seq, bucket) so pages are stable under concurrent writes."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/query",
+    "request": "{selector: {name, label filters}, from, to, step, agg: sum|avg|max|p95, group_by: [labels]}",
+    "response": "200 {series: [{labels, points}], resolution, scanned_blocks, partial}",
+    "notes": "Rejects queries touching more than 50k series or estimated over 1 billion points; suggests coarser step."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/datasets/{dataset}/retention",
+    "request": "{raw_days: 30, rollup_1m_days: 400, rollup_1h_days: 1825}",
+    "response": "200 {policy, effective_at}",
+    "notes": "Applied by the retention job at bucket granularity; audit-logged."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/datasets/{dataset}/watermark",
+    "request": "-",
+    "response": "200 {complete_until_ts, provisional_windows: [...]}",
+    "notes": "Lets alerting and reports avoid incomplete windows."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "RawPoint (logical)",
+    "store": "LSM storage shard (hot) / Parquet in object store (cold)",
+    "fields": [
+     "series_id u64",
+     "bucket_day u32",
+     "ts_ms i64",
+     "seq u32",
+     "value f64 or payload bytes"
+    ],
+    "keys": "Partition (series_id, bucket_day); clustering ts_ms asc, seq",
+    "notes": "Shard = hash(series_id) mod ring; salted variant (series_id, bucket_day, salt) for series over 5k points/s."
+   },
+   {
+    "entity": "Block",
+    "store": "Block index in a strongly consistent metadata store (etcd/Postgres)",
+    "fields": [
+     "block_id",
+     "shard_id",
+     "series_min",
+     "series_max",
+     "min_ts",
+     "max_ts",
+     "resolution",
+     "rows",
+     "bytes",
+     "tier",
+     "uri"
+    ],
+    "keys": "PK block_id; secondary index (resolution, min_ts, max_ts)",
+    "notes": "About 12 blocks per shard per day; tiny relative to data."
+   },
+   {
+    "entity": "Series",
+    "store": "Series index (inverted index, e.g. per-shard posting lists)",
+    "fields": [
+     "series_id",
+     "metric_name",
+     "labels map",
+     "created_at",
+     "last_seen"
+    ],
+    "keys": "series_id = hash(name + sorted labels); postings label=value -> sorted series_id list",
+    "notes": "Cardinality cap per tenant (for example 1M series)."
+   },
+   {
+    "entity": "Rollup",
+    "store": "Columnar table per resolution (1m, 1h)",
+    "fields": [
+     "series_id",
+     "window_start",
+     "count",
+     "sum",
+     "min",
+     "max",
+     "sketch bytes"
+    ],
+    "keys": "Partition (series_id, month); clustering window_start",
+    "notes": "Sketch (t-digest or DDSketch) makes percentiles mergeable across windows."
+   }
+  ],
+  "classes": [
+   {
+    "name": "QueryPlanner",
+    "responsibility": "Turn a range request into an execution plan of bucket and block reads at one resolution.",
+    "methods": [
+     "plan(req) -> Plan",
+     "chooseResolution(from, to, step) -> Resolution",
+     "bucketsFor(from, to) -> list[Bucket]",
+     "prune(blocks, from, to) -> list[Block]"
+    ]
+   },
+   {
+    "name": "ShardWriter",
+    "responsibility": "Append points to WAL and memtable, flush and seal blocks.",
+    "methods": [
+     "append(points)",
+     "flushMemtable()",
+     "sealBlock(window)",
+     "acceptLate(point)"
+    ]
+   },
+   {
+    "name": "BlockEncoder",
+    "responsibility": "Compress a sorted run of points with delta-of-delta timestamps and XOR values.",
+    "methods": [
+     "encode(points) -> bytes",
+     "decode(bytes, from, to) -> iterator"
+    ]
+   },
+   {
+    "name": "MergeExecutor",
+    "responsibility": "k-way merge of sorted streams with dedupe and step aggregation.",
+    "methods": [
+     "merge(streams) -> iterator",
+     "aggregate(iter, step, fn)",
+     "page(iter, limit) -> (points, cursor)"
+    ]
+   },
+   {
+    "name": "RetentionManager",
+    "responsibility": "Tier and expire buckets according to dataset policy.",
+    "methods": [
+     "tierOut(bucket)",
+     "dropBucket(bucket)",
+     "reconcileIndex()"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Range planning with bucket and block pruning",
+    "explain": "Convert [from, to) to bucket ids, ask the block index only for those buckets, then discard blocks whose [min_ts, max_ts] does not intersect the range. This turns a scan over billions of rows into reading a handful of compressed blocks.",
+    "pseudocode": "def plan(series, frm, to, step):\n    res = RAW if to - frm <= 2*DAY else (M1 if to - frm <= 60*DAY else H1)\n    buckets = range(floor(frm / res.bucket), floor((to - 1) / res.bucket) + 1)\n    blocks = block_index.lookup(series, res, buckets)\n    blocks = [b for b in blocks if b.max_ts >= frm and b.min_ts < to]\n    return Plan(res, sorted(blocks, key=lambda b: b.min_ts))"
+   },
+   {
+    "name": "Delta-of-delta timestamp and XOR value encoding (Gorilla)",
+    "explain": "Regular series have nearly constant intervals, so the second difference of timestamps is usually 0 and fits in 1 bit. Consecutive float values often share sign, exponent and high mantissa bits, so XOR with the previous value yields mostly zeros that encode in a few bits. Result: about 1.4 bytes per point instead of 16.",
+    "pseudocode": "def encode(points):\n    out.write(points[0].ts, 64); out.write_float(points[0].v)\n    prev_ts, prev_delta, prev_v = points[0].ts, 0, points[0].v\n    for p in points[1:]:\n        delta = p.ts - prev_ts; dod = delta - prev_delta\n        if dod == 0: out.bit(0)\n        elif -63 <= dod <= 64: out.bits('10'); out.write(dod, 7)\n        else: out.bits('11'); out.write(dod, 32)\n        x = float_bits(p.v) ^ float_bits(prev_v)\n        if x == 0: out.bit(0)\n        else: out.bit(1); write_leading_trailing_and_meaningful(x)\n        prev_ts, prev_delta, prev_v = p.ts, delta, p.v"
+   },
+   {
+    "name": "k-way merge with dedupe and cursor",
+    "explain": "Each source (hot replica, delta block, cold block) yields points sorted by (ts, seq). A min-heap merges them in O(n log k); equal (ts) entries keep the highest seq (newest correction). The cursor is the last emitted (ts, seq) so the next page restarts exactly after it.",
+    "pseudocode": "def merge(streams, limit, after=None):\n    heap = [(s.peek().ts, s.peek().seq, i) for i, s in enumerate(streams) if s.peek()]\n    heapify(heap); out = []; last = None\n    while heap and len(out) < limit:\n        ts, seq, i = heappop(heap); p = streams[i].next()\n        if after and (ts, seq) <= after: pass\n        elif last and ts == last.ts: out[-1] = max(out[-1], p, key=lambda q: q.seq)\n        else: out.append(p); last = p\n        if streams[i].peek(): heappush(heap, (streams[i].peek().ts, streams[i].peek().seq, i))\n    return out, (out[-1].ts, out[-1].seq) if out else None"
+   }
+  ],
+  "sequence": "\nClient        QueryAPI        Planner         BlockIndex      Shard(hot)    ObjectStore\n  |  GET range    |               |                |               |              |\n  |-------------->| validate,     |                |               |              |\n  |               | align window  |                |               |              |\n  |               |-------------->| pick resolution|               |              |\n  |               |               |  (raw/1m/1h)   |               |              |\n  |               |               |--------------->| blocks for    |              |\n  |               |               |                | (series,bkts) |              |\n  |               |               |<---------------| list+min/max  |              |\n  |               |               |---- scan hot buckets --------->|              |\n  |               |               |---- scan cold blocks (parallel) ------------->|\n  |               |               |<--------- sorted chunks -------|              |\n  |               |               |<------------------------------ sorted chunks -|\n  |               |               | k-way merge, dedupe, aggregate |              |\n  |               |<--------------| page + cursor  |               |              |\n  |<--------------| 200 + next_cursor              |               |              |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Hot 'now' partition: one celebrity seller or one busy host writes 20k points/s into a single (series, day) partition.",
+   "handling": "Detect series above 5k points/s and switch them to salted keys (series, day, salt 0..7); reads fan out to the 8 salts and merge. Alert on per-shard write skew above 2x mean."
+  },
+  {
+   "case": "Late-arriving data from mobile devices that were offline for hours.",
+   "handling": "Accept up to 7 days late into out-of-order delta blocks, mark affected rollup windows dirty, recompute, invalidate cache; beyond 7 days route to a correction pipeline."
+  },
+  {
+   "case": "Clock skew: producer clock is 15 minutes ahead.",
+   "handling": "Reject points more than 10 minutes in the future, record server ingest_ts alongside event ts, and expose a per-producer skew metric."
+  },
+  {
+   "case": "Range boundary semantics: query to=2026-10-11T00:00 should not include points at exactly midnight twice across two pages or two days.",
+   "handling": "Use half-open intervals [from, to) everywhere; buckets are also half-open so a point belongs to exactly one bucket."
+  },
+  {
+   "case": "Timezone and DST: an analyst asks for 'daily totals' in IST, but daily rollups are in UTC.",
+   "handling": "Store UTC; daily rollups at 1h granularity can be re-bucketed to any timezone with whole-hour offsets; for 30-minute offsets like IST keep 30m or 1m rollups to align exactly."
+  },
+  {
+   "case": "Duplicate writes from client retries after a timeout.",
+   "handling": "Idempotency key per batch cached for 24 h at the API, plus dedupe on (series_id, ts, value hash) during compaction, so retries never double-count."
+  },
+  {
+   "case": "Very wide query: 5 years at 1 second step across 10k series.",
+   "handling": "Planner estimates points scanned and returned; reject or auto-coarsen step to keep returned points under 100k per series and scanned points under 1B."
+  },
+  {
+   "case": "Shard fails mid-query.",
+   "handling": "Retry another replica after a 250 ms leg timeout with jitter; if all replicas fail, return partial=true with missing ranges listed rather than failing the whole request."
+  },
+  {
+   "case": "High-cardinality labels such as order_id used as a series label.",
+   "handling": "Per-tenant cardinality limit; new-series rate limit; guidance to model per-order history as events keyed by order_id (entity history) rather than as metric labels."
+  },
+  {
+   "case": "Pagination while new data streams in for a range that includes 'now'.",
+   "handling": "Cursor is (ts, seq) based, not offset based, so new points after the cursor appear on later pages and earlier pages never shift."
+  },
+  {
+   "case": "Retention drop races with a running query on the oldest bucket.",
+   "handling": "Retention marks the bucket as expiring, waits a grace period longer than the max query timeout (for example 5 min), then deletes; queries started earlier still hold block references."
+  },
+  {
+   "case": "Corrections: a value at time t needs to be replaced (wrong price was recorded).",
+   "handling": "Write a new version with higher seq at the same ts; merge keeps the latest seq; compaction eventually removes the older version."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Kafka",
+   "layer": "Ingest buffer",
+   "overview": "Distributed, partitioned, replicated commit log.",
+   "why": "Absorbs 3x sale-day bursts, gives replay for shard rebuilds, and keeps per-series order within a partition.",
+   "alternatives": "Pulsar (tiered storage built in, more moving parts); Kinesis (managed but per-shard throughput limits and cost)."
+  },
+  {
+   "name": "LSM storage engine (e.g. RocksDB-based shards, or Cassandra/ScyllaDB with time-window compaction)",
+   "layer": "Hot storage",
+   "overview": "Log-structured merge tree: writes go to memory and a WAL, flush to sorted immutable files, compaction merges them.",
+   "why": "Turns high-rate random writes into sequential I/O and keeps data sorted by (series, ts), which is exactly the range-scan order.",
+   "alternatives": "B-tree RDBMS (great reads, poor at 500k writes/s and index bloat); in-memory only like Gorilla (fast but limited retention)."
+  },
+  {
+   "name": "Purpose-built TSDB (Prometheus TSDB, InfluxDB, TimescaleDB, VictoriaMetrics)",
+   "layer": "Option for metrics",
+   "overview": "Databases specialised for timestamped numeric data with built-in compression, downsampling and retention.",
+   "why": "For pure metric workloads they deliver most of this design off the shelf; TimescaleDB gives SQL with time-partitioned hypertables.",
+   "alternatives": "Build on generic LSM (more control, more work); ClickHouse (excellent for analytical scans, less ideal for many tiny point lookups)."
+  },
+  {
+   "name": "ClickHouse or Apache Parquet on object storage",
+   "layer": "Cold and analytical tier",
+   "overview": "Columnar storage with sparse primary index and min/max per granule or row group.",
+   "why": "Wide-range scans read only needed columns and skip row groups by min/max timestamp; compresses timestamps and repeated tags very well.",
+   "alternatives": "Keep everything in the hot LSM (expensive); Druid or Pinot (strong for real-time OLAP with rollups, heavier to operate)."
+  },
+  {
+   "name": "Amazon S3 / GCS",
+   "layer": "Object storage",
+   "overview": "Cheap, highly durable blob storage with lifecycle rules.",
+   "why": "About 10x cheaper than replicated SSD; 11 nines durability for older blocks.",
+   "alternatives": "HDFS (self-managed, cheaper at huge scale but ops heavy); colder classes like Glacier (cheap but minutes to hours retrieval)."
+  },
+  {
+   "name": "etcd or PostgreSQL",
+   "layer": "Metadata (block index, shard map)",
+   "overview": "Strongly consistent store for small but critical metadata.",
+   "why": "Block registrations and retention drops must be atomic and consistent so queries never read deleted or half-uploaded blocks.",
+   "alternatives": "ZooKeeper (similar role, older API); embedding metadata in object storage manifests (simpler, slower listing)."
+  },
+  {
+   "name": "Redis",
+   "layer": "Result cache",
+   "overview": "In-memory key-value store.",
+   "why": "Caches step-aligned results for sealed windows, which never change, so hit ratios for dashboards are high.",
+   "alternatives": "Local in-process LRU (no network hop, low hit ratio across pods); CDN caching (only for public data)."
+  },
+  {
+   "name": "Apache Flink",
+   "layer": "Streaming rollups",
+   "overview": "Stateful stream processing with event-time windows and watermarks.",
+   "why": "Computes 1m rollups as data streams in, handles late data through allowed lateness and side outputs.",
+   "alternatives": "Batch rollups from sealed blocks with Spark (simpler, adds hours of delay); Kafka Streams (lighter, fewer windowing features)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Range partitioning vs hash partitioning (and composite keys)",
+   "explain": "When data is too big for one machine we split it into partitions. Hash partitioning computes hash(key) and assigns the key to a partition by that hash, which spreads load very evenly but destroys ordering: neighbouring keys end up on different machines, so a range scan must ask every partition. Range partitioning assigns contiguous key ranges to partitions, for example A-F on node 1, so a range scan touches only the partitions that overlap the range. Its weakness is skew: if keys arrive in order, such as timestamps, all new writes land on the last range and that node melts while others idle. The standard escape is a composite key: a partition key that is hashed for distribution, plus a clustering (sort) key that keeps rows ordered inside the partition. Cassandra, DynamoDB and Bigtable designs all use this split. Choosing the partition key is the most important decision: it must match the query predicate you always have (the entity), while the sort key matches the predicate you range over (time). Partition size also matters: unbounded partitions grow forever and become slow to compact and repair, so time is folded into the partition key as a bucket to cap size.",
+   "in_this_design": "Partition key is (series_id, day bucket), hashed across shards, and timestamp is the clustering key. A query for one series over 3 days touches exactly 3 partitions, each a sorted contiguous scan, while writes for millions of series spread evenly because series_id is hashed.",
+   "key_points": [
+    "Hash for even writes, range for cheap scans; composite keys give you both.",
+    "Never use raw time as the partition key: the newest range becomes a write hotspot.",
+    "Bucket time into the partition key to bound partition size (target tens to hundreds of MB).",
+    "The partition key must be present in every hot query or you are back to scatter-gather."
+   ],
+   "qa": [
+    {
+     "q": "Why not partition purely by timestamp ranges? It makes range queries trivially cheap.",
+     "a": "Because all current writes go to the newest range, so one node takes 100 percent of write traffic while the rest idle. It also makes per-entity queries scan every entity's data in that time slice. Hash the entity to spread writes and use time only inside the partition and as a bucket."
+    },
+    {
+     "q": "How do you pick the bucket size?",
+     "a": "From write rate per series and target partition size. A series at 1 point per 10 s produces 8,640 points per day, a few KB compressed, so a day bucket is fine. A series at 1,000 points per second would make 86M points per day, so it needs hourly buckets or salting. I aim for partitions of 10-100 MB."
+    },
+    {
+     "q": "What happens to a query with no entity id, like 'all orders between t1 and t2'?",
+     "a": "That is a different access pattern; the composite key does not serve it well. I would either maintain a secondary time-ordered index partitioned by (time bucket, shard salt) or send such queries to the columnar analytical tier where min/max pruning by time works across all entities."
+    }
+   ]
+  },
+  {
+   "name": "LSM trees, SSTables and compaction",
+   "explain": "A log-structured merge tree optimises for writes. Each write is appended to a write-ahead log for durability and inserted into an in-memory sorted structure, the memtable. When the memtable reaches a size limit, it is flushed to disk as an immutable sorted file called an SSTable. Because files are never modified in place, writes are sequential and fast. Reads must check the memtable and possibly several SSTables, so engines use Bloom filters to skip files that cannot contain a key and per-file index blocks to jump to the right offset. Over time, background compaction merges SSTables, dropping overwritten values and tombstones and keeping the number of files low. There are compaction strategies: size-tiered (merge similar-sized files, low write amplification, more read amplification), leveled (strict non-overlapping levels, better reads, more write amplification), and time-window compaction (group files by time window and never merge across windows), which suits time-series because old windows become stable and whole windows can be dropped at expiry. The three amplifications - write, read and space - trade against each other and are the vocabulary for tuning.",
+   "in_this_design": "Each storage shard is an LSM keyed by (series_id, bucket, ts). Memtables flush into 2-hour blocks, and time-window compaction merges files only within a window, so expiring 30-day-old data is a cheap file delete instead of row-by-row tombstones.",
+   "key_points": [
+    "LSM = WAL + memtable + immutable sorted files + background compaction.",
+    "Writes are sequential; reads pay for checking multiple files, mitigated by Bloom filters and min/max metadata.",
+    "Time-window compaction is the natural fit for append-mostly time data.",
+    "Drop whole files for retention; row tombstones in time-series are an anti-pattern."
+   ],
+   "qa": [
+    {
+     "q": "Why is an LSM a better fit than a B-tree for 500k writes per second?",
+     "a": "A B-tree updates pages in place, causing random I/O and page splits, and every secondary index multiplies that. An LSM batches writes in memory and writes large sorted files sequentially, so throughput is bounded by sequential disk bandwidth. Reads are slightly worse but range scans over sorted files are still efficient."
+    },
+    {
+     "q": "What goes wrong if you use size-tiered compaction for time-series with TTL?",
+     "a": "Old and new data get merged into the same large files, so expired data cannot be dropped as whole files; you rewrite huge files just to remove expired rows and tombstones linger, inflating space and read cost. Time-window compaction avoids this."
+    },
+    {
+     "q": "How does late data interact with time-window compaction?",
+     "a": "A late point creates a small file in an already-closed window, which triggers a re-compaction of that window. That is acceptable if lateness is bounded and rare; I cap accepted lateness at 7 days and keep out-of-order data in separate delta files to limit rewrites."
+    }
+   ]
+  },
+  {
+   "name": "Columnar storage, zone maps and data skipping",
+   "explain": "Row stores keep all fields of a record together, which is ideal for fetching whole records by key. Columnar stores keep each column contiguous, so a query that needs only timestamp and value reads just those columns, and similar values sit next to each other, which compresses extremely well with run-length, delta and dictionary encoding. The second trick is data skipping. Files are split into row groups or granules (for example 8,192 rows in ClickHouse, 128 MB row groups in Parquet), and for each one the engine stores small statistics such as min and max of each column, sometimes called a zone map or sparse index. A query with a predicate on time first checks the statistics and skips any row group whose [min_ts, max_ts] cannot overlap the range. If data is sorted by the queried columns, the statistics are tight and most groups are skipped; if data is randomly ordered, every group's range covers everything and nothing is skipped. That is why sort order at write time determines read performance later. Bloom filters per row group extend skipping to equality predicates on high-cardinality columns.",
+   "in_this_design": "Blocks older than 7 days are rewritten as columnar Parquet files sorted by (series_id, ts), and the block index stores min/max series and time per block. A 30-day query for one series opens a few dozen row groups out of millions.",
+   "key_points": [
+    "Read only the columns you need; similar values compress 5-20x.",
+    "Min/max metadata per block lets the engine skip data without reading it.",
+    "Skipping only works if the data is sorted (or clustered) by the filter columns.",
+    "The sort order you choose at write time is your read-time index."
+   ],
+   "qa": [
+    {
+     "q": "Why does sorting matter so much for zone maps?",
+     "a": "Zone maps say a block contains timestamps between min and max. If data is sorted by time, each block covers a narrow interval and most blocks are excluded. If unsorted, every block spans nearly the whole range and nothing is pruned, so you scan everything."
+    },
+    {
+     "q": "When would you choose a row store for this data instead?",
+     "a": "For the hot tier, where queries fetch recent points for one series and writes are constant, a row-oriented LSM with sort by (series, ts) is efficient. Columnar wins for older, immutable data and wide scans or aggregations over many series."
+    },
+    {
+     "q": "How do you query 'all events between t1 and t2 for any entity' efficiently in columnar storage?",
+     "a": "Maintain a copy or projection sorted by time first (time bucket, entity) so min/max on time is tight, or partition the files by day so the planner skips whole directories. ClickHouse projections and Iceberg partition pruning do exactly this."
+    }
+   ]
+  },
+  {
+   "name": "Downsampling and pre-aggregated rollups",
+   "explain": "Most questions about long ranges do not need every raw point. A 1-year chart is 1,000 pixels wide, so anything finer than about 8-hour resolution is wasted. Downsampling stores lower-resolution summaries: for each window of 1 minute or 1 hour, keep count, sum, min, max and optionally a sketch for percentiles. Queries over wide ranges read the rollup table instead of raw data, cutting scanned data by 60x to 3,600x. The subtlety is which aggregates are mergeable. Sum, count, min and max combine across windows exactly; average must be computed as sum divided by count, never as an average of averages; percentiles cannot be merged from stored percentiles but can be from mergeable sketches such as t-digest, DDSketch or HDR histograms. Rollups can be built in streaming fashion (event-time windows with watermarks) or in batch from sealed raw blocks; most systems do both, using streaming for freshness and batch to correct late data. Retention is tiered: raw for days, minute rollups for months, hourly for years.",
+   "in_this_design": "The rollup service builds 1m and 1h tables with count, sum, min, max and a DDSketch. The planner automatically uses raw for ranges up to 2 days, 1m up to 60 days, 1h beyond, so a 13-month query scans about 9,500 hourly rows per series instead of 3 million raw points.",
+   "key_points": [
+    "Store mergeable aggregates: count, sum, min, max, sketches.",
+    "Never average averages or merge stored percentiles.",
+    "Pick resolution automatically from the range width and screen resolution.",
+    "Rollups need late-data repair, or long-range charts will silently disagree with raw data."
+   ],
+   "qa": [
+    {
+     "q": "A dashboard shows p99 latency for the month by averaging hourly p99s. What is wrong?",
+     "a": "Percentiles are not averageable; the average of hourly p99s can be far from the true monthly p99, especially when traffic varies by hour. Store a mergeable sketch per window and merge sketches across the month, then read the p99 off the merged sketch."
+    },
+    {
+     "q": "How do you keep rollups correct when data arrives late?",
+     "a": "Track dirty windows when a late point lands, recompute those windows from raw data (or apply the delta for sum and count), and publish a watermark so consumers know which windows are final."
+    },
+    {
+     "q": "What does downsampling cost you?",
+     "a": "You lose detail: short spikes inside a window are hidden unless you keep max and min. You also add storage for extra tables (small) and a pipeline to keep them correct. Once raw expires, you cannot answer new questions at fine resolution."
+    }
+   ]
+  },
+  {
+   "name": "Write hotspots, salting and backpressure",
+   "explain": "A hotspot occurs when a disproportionate share of traffic targets one partition. In time-ordered data the natural hotspot is the present: if the key begins with time, all writes go to the newest range. Even with hashed entity keys, skewed entities - a top seller during a sale, one noisy host - can overload their shard. Salting splits a logical key into N physical keys by appending a salt (0 to N-1), chosen randomly or by hash of a secondary field. Writes spread over N partitions; reads must query all N and merge, so salting trades read fan-out for write spread, and you apply it only to keys that need it. Adaptive systems detect hot keys from per-key counters (for example a count-min sketch) and switch them to salted mode. Backpressure is the complementary defence: when downstream cannot keep up, the system slows producers rather than collapsing, via bounded queues, rate limits, HTTP 429 with Retry-After, or simply letting a durable buffer like Kafka grow while consumers catch up within an agreed lag budget.",
+   "in_this_design": "Series_id hashing spreads normal load. Series over 5k points per second are salted into 8 sub-partitions, recorded in the series index so the planner knows to fan out. Kafka absorbs bursts; if consumer lag exceeds 60 s, the ingest API starts returning 429 to low-priority tenants first.",
+   "key_points": [
+    "Monotonic keys create a 'right edge' hotspot; never lead the key with time.",
+    "Salt only hot keys; every salt multiplies read fan-out.",
+    "Detect hot keys continuously (per-key rate, count-min sketch).",
+    "Backpressure prioritised by tenant beats uniform failure."
+   ],
+   "qa": [
+    {
+     "q": "Why not salt every series with 16 salts to be safe?",
+     "a": "Reads would always fan out 16 ways and merge, multiplying read cost and tail latency for the 99.9 percent of series that never needed it. Salting is a targeted fix."
+    },
+    {
+     "q": "How does the reader know a series is salted?",
+     "a": "The series index stores the salt count and the time it became effective; the planner fans out to all salts for buckets after that time and to the single key before it."
+    },
+    {
+     "q": "During a sale, ingestion lag grows to 5 minutes. What do you do?",
+     "a": "First confirm it is shard capacity, not one hot shard. Scale consumers and shards if the ring allows, salt hot series, and shed or delay low-priority datasets with 429s. Dashboards show the watermark so users know data is behind instead of seeing a false drop."
+    }
+   ]
+  },
+  {
+   "name": "Event time, watermarks and late data",
+   "explain": "Event time is when something actually happened; processing or ingestion time is when the system saw it. They diverge because of network delays, batching, retries, and offline devices. Time-range queries and aggregates should almost always use event time, otherwise a network blip shifts orders from one hour into the next. The difficulty is knowing when a window is complete. A watermark is the system's assertion that no more events with event time earlier than W are expected. Watermarks are usually heuristic, for example the max event time seen minus an allowed lateness of 2 minutes, or the minimum across all input partitions. Events arriving behind the watermark are late; the system can drop them, update results (retractions or recomputation), or route them to a side output for correction. Exposing the watermark to consumers lets them distinguish 'zero orders this minute' from 'this minute is not complete yet', which matters for alerting. Out-of-order arrival within a window is normal and handled by buffering or by storage engines that accept unsorted inserts into an open window.",
+   "in_this_design": "All points carry event ts; ingest_ts is stored for debugging. The rollup pipeline uses a 2-minute allowed lateness for streaming results, and the storage layer accepts up to 7 days late with rollup repair. The API returns the watermark so alerting never evaluates provisional windows.",
+   "key_points": [
+    "Query and aggregate by event time, store ingestion time for diagnostics.",
+    "A watermark says 'complete up to W'; it is a heuristic, not a guarantee.",
+    "Decide policy for late data: drop, update, or side-output.",
+    "Expose completeness to consumers so alerts do not fire on partial windows."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use ingestion time and avoid the whole late-data problem?",
+     "a": "Because results would depend on delays, not reality: a 3-hour mobile outage would show zero orders then a spike. Business and SRE questions are about when things happened."
+    },
+    {
+     "q": "How do you choose allowed lateness?",
+     "a": "From the measured distribution of ingest_ts minus event ts. If p99.9 lateness is 90 s, a 2-minute streaming lateness catches nearly everything, and batch repair handles the rest."
+    },
+    {
+     "q": "An alert on 'orders per minute dropped to 0' fires every time a Kafka consumer restarts. Fix?",
+     "a": "Evaluate alerts only on windows behind the watermark, and treat missing data differently from zero. Watermarks stall when a consumer restarts, so the alert waits instead of firing."
+    }
+   ]
+  },
+  {
+   "name": "Tiered storage and retention by dropping partitions",
+   "explain": "Access frequency for time-ordered data decays sharply with age: most reads target the last day, few target last year. Tiered storage matches cost to access: hot data sits on replicated local SSD or memory, warm data on cheaper disks or a single replica plus erasure coding, cold data in object storage with lifecycle rules, perhaps in archival classes. Moving data between tiers is easy when data is organised by time, because whole immutable files or partitions move at once. Retention follows the same principle. Deleting individual rows in an LSM or a columnar file is expensive: it writes tombstones that must be compacted away and rewrites files. If data is partitioned by time, retention becomes dropping a partition, deleting a directory, or letting an object lifecycle rule expire files - constant work regardless of row count. The design rule is to align physical layout with the lifecycle policy so that every policy action is a metadata operation on large units.",
+   "in_this_design": "Hot: last 7 days on SSD with RF=3. Cold: Parquet in object storage until 30 days for raw. Rollups have their own longer retention. The retention job drops whole day buckets and their blocks after a grace period, and object lifecycle rules act as a backstop.",
+   "key_points": [
+    "Access decays with age; price your storage accordingly.",
+    "Partition by time so moving and deleting is whole-file, not row-level.",
+    "Retention by dropping partitions is O(1) in rows and creates no tombstones.",
+    "Keep a cache in front of cold storage for recently-read old blocks."
+   ],
+   "qa": [
+    {
+     "q": "How do you avoid a query reading a block that the retention job just deleted?",
+     "a": "Two-phase drop: mark expiring in the block index so new plans skip it, wait longer than the max query duration, then delete the files. Readers that already hold the block list finish safely."
+    },
+    {
+     "q": "What is the latency penalty for cold reads and how do you hide it?",
+     "a": "Object storage first-byte latency is roughly 20-100 ms per request versus under 1 ms for local SSD. Hide it with parallel range reads, reading only needed columns and row groups, an SSD cache for recently accessed cold blocks, and using rollups for wide ranges."
+    },
+    {
+     "q": "A user needs one entity's data deleted before its retention expiry (privacy request). How?",
+     "a": "Row-level delete is the exception path: write a deletion marker, filter at read, and rewrite the affected blocks in a background job (or use per-entity encryption keys and destroy the key). Normal expiry still drops whole buckets."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Partition key",
+   "options": "time only; entity only; (entity, time bucket)",
+   "choice": "(entity, time bucket) hashed on entity",
+   "why": "Spreads writes across shards, bounds partition size, and makes the common per-entity range query a few sorted scans."
+  },
+  {
+   "decision": "Storage engine for hot tier",
+   "options": "B-tree RDBMS; LSM; in-memory TSDB",
+   "choice": "LSM with time-window compaction",
+   "why": "Sequential writes at 500k/s, sorted range scans, and whole-window expiry; in-memory only cannot hold 7 days cheaply."
+  },
+  {
+   "decision": "Resolution for long ranges",
+   "options": "always raw; client-side downsampling; server rollups",
+   "choice": "Server-side rollups chosen by planner",
+   "why": "Scanning raw for a year is 3,000x more data; rollups make wide queries sub-second at small storage cost."
+  },
+  {
+   "decision": "Late data policy",
+   "options": "drop; accept forever; accept within bound with repair",
+   "choice": "Accept up to 7 days with rollup repair",
+   "why": "Mobile and batch producers do send late data; unbounded acceptance would keep every window mutable and defeat caching."
+  },
+  {
+   "decision": "Behaviour when a shard is down during a query",
+   "options": "fail the query; wait; return partial",
+   "choice": "Retry replica, then partial with flag",
+   "why": "Dashboards during incidents are more useful partially than not at all; the flag prevents silent wrong answers."
+  },
+  {
+   "decision": "Build vs buy",
+   "options": "managed TSDB; open-source TSDB; custom on LSM + object store",
+   "choice": "Open-source TSDB for metrics, custom entity-history service on Cassandra-style store for events",
+   "why": "Metrics are a solved problem; entity event histories need payloads, corrections and per-entity retention that TSDBs handle poorly."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "A storage shard replica crashes.",
+   "behavior": "W=2 of 3 still succeeds; reads go to other replicas; the replica rebuilds from peers and replays Kafka from the last committed offset."
+  },
+  {
+   "failure": "Kafka consumer lag grows during a sale spike.",
+   "behavior": "Writes stay durable in Kafka; freshness degrades and the watermark lags; the ingest API applies per-tenant 429s if lag exceeds 60 s for low-priority datasets."
+  },
+  {
+   "failure": "Object storage latency spike or regional throttling.",
+   "behavior": "Cold legs time out at 1 s; planner falls back to rollups where possible and marks results partial; SSD cache serves recently read blocks."
+  },
+  {
+   "failure": "Block index (metadata store) unavailable.",
+   "behavior": "Queries for hot data use a cached shard map and recent block list (TTL 60 s); tiering and retention pause, which is safe because they are idempotent and resumable."
+  },
+  {
+   "failure": "Rollup job falls behind or produces bad data.",
+   "behavior": "Planner checks rollup watermark; ranges beyond it are served from raw (slower); a rollup can be rebuilt from raw for any window still within raw retention."
+  },
+  {
+   "failure": "Runaway query scanning billions of points.",
+   "behavior": "Query cost estimator rejects it up front; per-tenant concurrency limits and a 30 s server timeout protect shards; bulkheaded query pools separate dashboards from batch exports."
+  }
+ ],
+ "metrics": [
+  "Ingest rate (points/s) per tenant and per shard, and shard skew (max/mean).",
+  "Ingest-to-queryable lag: Kafka consumer lag in seconds and watermark age.",
+  "Query latency p50/p95/p99 bucketed by range width and resolution.",
+  "Blocks and bytes scanned per query; prune ratio (blocks skipped / candidate blocks).",
+  "Result cache hit ratio for sealed windows.",
+  "Compaction backlog (pending bytes) and write amplification.",
+  "Late-data rate and rollup recompute queue depth.",
+  "Active series count and new-series rate per tenant (cardinality).",
+  "Storage bytes per tier and cost per GB-month; bytes per point after compression.",
+  "Partial-result rate and replica failover count."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just use Postgres with an index on (entity_id, ts)?",
+   "a": "It is the right baseline and works up to a few billion rows on one big node, especially with time partitioning (TimescaleDB). It breaks on sustained 500k inserts per second with index maintenance, on vacuum and bloat from deletes, and on storing months of raw data on replicated SSD. I would start there for a small team and migrate when ingest or size forces it."
+  },
+  {
+   "q": "How do you support 'top 10 sellers by orders between t1 and t2'?",
+   "a": "That is an aggregation across all entities, not a per-entity scan. Serve it from the columnar tier or rollups grouped by seller with time pruning, or pre-compute top-K per hour with mergeable counters. Do not fan out a per-entity query across millions of series."
+  },
+  {
+   "q": "How would you make this multi-region?",
+   "a": "Writes go to the home region of the tenant; Kafka MirrorMaker or object storage replication copies data asynchronously to a DR region with RPO of a few minutes. Reads in other regions can tolerate staleness. Active-active writes would need conflict handling, which append-only data mostly avoids since points are immutable."
+  },
+  {
+   "q": "What if a customer needs an exact count of events in a range, not approximate?",
+   "a": "Counts in rollups are exact (count is mergeable). Approximation only enters with percentiles from sketches and with distinct counts from HyperLogLog; for exact distincts we would scan raw data within raw retention and say it costs more."
+  },
+  {
+   "q": "How do you test that queries are correct after compaction and tiering?",
+   "a": "Shadow-read checks: sample queries are run against both hot and cold copies during transition and compared; checksums per block; and a continuous canary series with known values verified end to end every minute."
+  },
+  {
+   "q": "How do you handle a schema change, like adding a tag?",
+   "a": "Tags are part of the series identity, so a new tag creates new series; old and new are queried together by label selector. For event payloads, use a schema registry with backward-compatible changes and columnar files that tolerate missing columns."
+  },
+  {
+   "q": "What is the single most important metric you would watch?",
+   "a": "Watermark age (how far behind real time the data is complete), because it captures ingest, shard and rollup health in one number and is what users actually feel."
+  }
+ ],
+ "key_points": [
+  "Clarify the query predicate first: the entity you always filter by becomes the partition key, time becomes the sort key.",
+  "Never lead the key with time; hash the entity, bucket the time, salt only the hot keys.",
+  "LSM with time-window compaction: sequential writes, sorted range scans, retention by dropping files.",
+  "Gorilla-style delta-of-delta and XOR compression gets regular series to under 2 bytes per point.",
+  "Prune before you scan: buckets, then block min/max, then columns.",
+  "Rollups with mergeable aggregates (count, sum, min, max, sketches) make long ranges cheap; never average averages.",
+  "Event time plus watermarks; expose completeness so alerts do not fire on partial windows.",
+  "Tier by age: SSD for 7 days, object storage after, with a cache for cold reads.",
+  "Half-open intervals and (ts, seq) cursors avoid duplicate and missing rows at boundaries and across pages.",
+  "Fail partially and say so: replica retry with jitter, then partial=true rather than a blank dashboard."
+ ],
+ "quiz": [
+  {
+   "q": "You partition an event table by hour of event time (range partitioning on timestamp). What problem appears first at high write rates?",
+   "options": [
+    "Range queries become slower because they must scan every partition",
+    "All current writes land on the newest partition, creating a write hotspot",
+    "Partition count grows too slowly to rebalance",
+    "Old partitions cannot be compressed"
+   ],
+   "answer": 1,
+   "why": "Time-only range partitioning sends every write to the current range, so one node takes all writes. The tempting answer about range queries is wrong: time partitioning actually makes pure time-range queries cheap; the problem is write skew."
+  },
+  {
+   "q": "Which key design best serves 'events for seller X between t1 and t2' at 500k writes/s?",
+   "options": [
+    "Partition key timestamp, clustering key seller_id",
+    "Partition key random UUID per event, secondary index on timestamp",
+    "Partition key seller_id only, clustering key timestamp, no bucket",
+    "Partition key (seller_id, day bucket) hashed, clustering key timestamp"
+   ],
+   "answer": 3,
+   "why": "Hashing the seller spreads writes, the bucket bounds partition size, and the timestamp sort makes the range a contiguous scan. Seller_id alone without a bucket is tempting but creates unbounded partitions for busy sellers."
+  },
+  {
+   "q": "Roughly how many points per day does 500k points per second produce?",
+   "options": [
+    "About 43 billion",
+    "About 4.3 billion",
+    "About 430 billion",
+    "About 430 million"
+   ],
+   "answer": 0,
+   "why": "500,000 x 86,400 seconds = 43.2 billion. 4.3 billion is the common off-by-10 mistake from using 8,640 instead of 86,400."
+  },
+  {
+   "q": "Why does Gorilla-style delta-of-delta encoding compress timestamps so well?",
+   "options": [
+    "Timestamps are stored as strings and dictionary-encoded",
+    "It drops the millisecond part of every timestamp",
+    "Regular series have near-constant intervals, so the second difference is usually 0 and fits in one bit",
+    "It stores only the first and last timestamp of each block"
+   ],
+   "answer": 2,
+   "why": "For a series sampled every 10 s, deltas are 10, 10, 10 and the delta-of-delta is 0, encoded as a single bit. Dropping precision would be lossy, which Gorilla is not."
+  },
+  {
+   "q": "A monthly report averages 30 daily p99 latency values. What is the best fix?",
+   "options": [
+    "Use the median of the daily p99s instead",
+    "Take the max of the daily p99s",
+    "Store a mergeable sketch per day (e.g. t-digest or DDSketch) and compute p99 from the merged sketch",
+    "Weight each daily p99 by request count"
+   ],
+   "answer": 2,
+   "why": "Percentiles are not mergeable from stored percentiles; sketches are. Weighting by count looks reasonable but is still mathematically wrong for percentiles."
+  },
+  {
+   "q": "p99 for 30-day queries is 8 s while 24-hour queries are fast. Blocks scanned per query is very high. Most likely cause?",
+   "options": [
+    "The planner is reading raw data instead of rollups for wide ranges",
+    "The result cache is too small",
+    "Kafka consumer lag is high",
+    "Replication factor is 3 instead of 2"
+   ],
+   "answer": 0,
+   "why": "Wide ranges over raw data scan thousands of times more points than hourly rollups. A small cache would hurt repeated queries, but would not explain a high blocks-scanned count on every wide query."
+  },
+  {
+   "q": "Why is time-window compaction preferred over size-tiered compaction for time-series with TTL?",
+   "options": [
+    "It produces fewer Bloom filter false positives",
+    "It eliminates the need for a write-ahead log",
+    "It compresses floats more efficiently",
+    "It keeps each file within one time window, so expired windows are dropped as whole files"
+   ],
+   "answer": 3,
+   "why": "Time-window compaction never merges across windows, so expiry is a file delete. Bloom filters are unrelated; their false-positive rate depends on bits per key, not compaction strategy."
+  },
+  {
+   "q": "Zone maps (min/max per block) give almost no pruning on your cold files. What is the most likely reason?",
+   "options": [
+    "Zone maps only work on string columns",
+    "Files are not sorted or clustered by timestamp, so every block spans nearly the full time range",
+    "The block size is too small",
+    "Object storage does not support range reads"
+   ],
+   "answer": 1,
+   "why": "Min/max skipping requires data to be clustered by the filter column. Smaller blocks would actually tighten ranges, not loosen them."
+  },
+  {
+   "q": "A celebrity seller writes 20k events per second during a sale and its shard is saturated. Best targeted fix?",
+   "options": [
+    "Salt that seller's key into N sub-partitions and fan out reads across them",
+    "Increase the replication factor of the whole cluster",
+    "Switch the whole table to range partitioning by time",
+    "Salt every series with 16 salts"
+   ],
+   "answer": 0,
+   "why": "Salting only the hot key spreads its writes while leaving other reads cheap. Salting everything also spreads load but multiplies read cost for every series that never needed it."
+  },
+  {
+   "q": "Pagination of a range query uses OFFSET. Users report duplicated and missing points while data is streaming in. Best fix?",
+   "options": [
+    "Increase the page size",
+    "Cache the first page for 60 s",
+    "Use a cursor on the last returned (ts, seq) and continue strictly after it",
+    "Sort descending instead of ascending"
+   ],
+   "answer": 2,
+   "why": "Offsets shift when rows are inserted before the offset; a key-based cursor is stable. Larger pages reduce how often it happens but do not fix it."
+  },
+  {
+   "q": "Which interval convention avoids double-counting a point exactly at midnight across two daily queries?",
+   "options": [
+    "Closed [from, to]",
+    "Half-open [from, to)",
+    "Open (from, to)",
+    "Closed on both ends but round to seconds"
+   ],
+   "answer": 1,
+   "why": "Half-open intervals make adjacent ranges partition the timeline exactly. Open intervals would drop the midnight point entirely."
+  },
+  {
+   "q": "Dashboards show orders dropping to zero every time a consumer restarts, then recovering. What should you add?",
+   "options": [
+    "A larger Kafka retention period",
+    "More replicas for the storage shards",
+    "Ingestion-time bucketing instead of event time",
+    "Watermarks so alerts and charts treat incomplete windows as provisional, not zero"
+   ],
+   "answer": 3,
+   "why": "The data is late, not missing; watermarks expose completeness. Switching to ingestion time is tempting but makes data depend on delays and still shows gaps during the outage."
+  },
+  {
+   "q": "What is the main reason to put Kafka in front of the storage shards?",
+   "options": [
+    "To compress data before storage",
+    "To provide secondary indexes on labels",
+    "To reduce query latency for recent data",
+    "Durably buffer bursts and allow replay when shards are slow or rebuilding"
+   ],
+   "answer": 3,
+   "why": "Kafka decouples ingest rate from storage rate and provides replay. It does not speed up queries; reads do not go through Kafka."
+  },
+  {
+   "q": "With RF=3, W=2, R=1 for hot data, which statement is true?",
+   "options": [
+    "Every read is guaranteed to see the latest acknowledged write",
+    "A read may miss a write that has reached only two replicas, if it hits the third",
+    "Writes fail if one replica is down",
+    "Reads require all three replicas to respond"
+   ],
+   "answer": 1,
+   "why": "W + R = 3 is not greater than N = 3, so read and write sets may not overlap; you get eventual consistency. Writes with W=2 survive one replica down, so that option is wrong."
+  },
+  {
+   "q": "Retention is implemented by deleting rows older than 30 days with a nightly DELETE. What problem do you expect in an LSM store?",
+   "options": [
+    "Data is deleted too quickly",
+    "Deletes are not replicated",
+    "Massive tombstones that slow reads and compaction until they are purged",
+    "Compression ratio improves too much"
+   ],
+   "answer": 2,
+   "why": "Row deletes in LSMs write tombstones that readers must skip and compaction must rewrite. Partition-level drops avoid this entirely."
+  },
+  {
+   "q": "A 1-year chart is rendered 1,200 pixels wide. Which resolution is the most sensible for the server to return?",
+   "options": [
+    "Roughly 6-8 hour steps from hourly rollups",
+    "Raw points, the client will downsample",
+    "1-minute rollups",
+    "Daily rollups only, regardless of width"
+   ],
+   "answer": 0,
+   "why": "About 1,200 points over a year is roughly one per 7 hours; hourly rollups aggregated to that step are efficient. 1-minute rollups return 525k points per series, most of which cannot be drawn."
+  },
+  {
+   "q": "Which aggregate cannot be derived exactly by combining per-minute rollups that store count, sum, min and max?",
+   "options": [
+    "Average",
+    "Median",
+    "Maximum",
+    "Total count"
+   ],
+   "answer": 1,
+   "why": "Average = sum / count, max of maxes and sum of counts are exact. Median needs the distribution, so you need a sketch. Average is the tempting wrong one, but sum and count make it exact."
+  },
+  {
+   "q": "Cold reads from object storage take 600 ms each and a 30-day query reads 40 blocks sequentially. Best improvement?",
+   "options": [
+    "Read blocks in parallel with bounded concurrency and cache recently read cold blocks on SSD",
+    "Move all 30 days to SSD with RF=3",
+    "Increase block size to 10 GB",
+    "Reduce Kafka partitions"
+   ],
+   "answer": 0,
+   "why": "Parallelism hides per-request latency and a cache helps repeats. Moving everything to SSD works but costs several times more; giant blocks reduce pruning efficiency."
+  },
+  {
+   "q": "Producer clocks are skewed by up to 15 minutes. Which defence is most appropriate?",
+   "options": [
+    "Overwrite event timestamps with server time",
+    "Use ingestion time for all queries",
+    "Ignore it; LSMs sort by time anyway",
+    "Reject points far in the future, store ingest_ts too, and monitor per-producer skew"
+   ],
+   "answer": 3,
+   "why": "Bounding future timestamps and tracking skew keeps event time meaningful. Overwriting with server time loses the real event time for legitimately delayed events."
+  },
+  {
+   "q": "Which access pattern does the (entity, day bucket) key serve worst?",
+   "options": [
+    "One entity's events for the last 3 days",
+    "One entity's latest 100 events",
+    "All events across every entity between t1 and t2",
+    "One entity's events for a specific day"
+   ],
+   "answer": 2,
+   "why": "Without the entity, every partition must be searched; serve this from a time-sorted columnar copy. The other options all include the entity, which is the partition key."
+  }
+ ],
+ "references": [
+  {
+   "title": "Gorilla: A fast, scalable, in-memory time series database (the morning paper)",
+   "url": "https://blog.acolyer.org/2016/05/03/gorilla-a-fast-scalable-in-memory-time-series-database/"
+  },
+  {
+   "title": "Beringei: A high-performance time series storage engine (Meta engineering)",
+   "url": "https://engineering.fb.com/2017/02/03/core-data/beringei-a-high-performance-time-series-storage-engine/"
+  },
+  {
+   "title": "The Database Zoo: Inside Time-Series Engines (InfluxDB, Prometheus, Timescale)",
+   "url": "https://hackernoon.com/the-database-zoo-inside-time-series-engines-influxdb-prometheus-timescale"
+  },
+  {
+   "title": "Low Level Design: Time-Series Database",
+   "url": "https://www.techinterview.org/post/3233472571/lld-time-series-database/"
+  }
+ ]
+}

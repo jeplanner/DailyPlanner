@@ -1,0 +1,1207 @@
+{
+ "slug": "stock-exchange",
+ "title": "Design a stock exchange (order matching engine)",
+ "prompt": "Design a stock exchange (order matching engine).",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "A stock exchange is the rare system where the right answer is to NOT distribute the hot path: a single-threaded, deterministic matcher per symbol, fed by a sequencer and backed by an append-only journal, beats any clever concurrent design on both latency and correctness. The core tension is microsecond latency and strict fairness (price-time priority, every participant sees the same order of events) versus durability and high availability, which normally cost network round trips. Event sourcing plus deterministic replay on hot standbys is how you get both.",
+ "framework": {
+  "clarify": [
+   "Scope: an exchange (owns the order book and matching) or a broker (routes orders to exchanges)? Assume the exchange.",
+   "Asset class and order types: equities, limit and market orders, cancel and cancel-replace (modify); IOC and FOK as stretch; stop orders out of scope.",
+   "Scale: assume 5,000 symbols, 1 billion orders per day, peak 500k orders/s overall, and a hot symbol at 50k orders/s.",
+   "Latency target: gateway-to-ack p99 under 100 microseconds inside the colo, matching under 10 microseconds per order.",
+   "Fairness rule: strict price-time priority, and all participants must see market data in the same sequence.",
+   "Durability: an acknowledged order or trade must never be lost, even on a matcher crash. RPO = 0.",
+   "Trading hours: continuous session 09:15-15:30 plus opening and closing auctions; we can do maintenance overnight.",
+   "Who settles? Clearing and settlement (T+1) happen downstream at a clearing house; we only emit trades."
+  ],
+  "design": [
+   "Baseline: clients connect over FIX or a binary protocol to order gateways that authenticate, validate and rate-limit.",
+   "Risk check stage (pre-trade): price bands, fat-finger quantity caps, buying power / credit limit per member, self-trade prevention.",
+   "Sequencer: stamps every inbound command with a global monotonic sequence number and writes it to a replicated journal before it reaches the matcher.",
+   "Matching engine: one single-threaded event loop per symbol shard holding the order book in memory; consumes commands in sequence order and emits executions.",
+   "Order book: per side, price levels in a sorted structure (array indexed by tick or a tree), each level a FIFO doubly linked list; hash map orderId -> node for O(1) cancel.",
+   "Outputs: execution reports back to the owning gateway, an incremental market data feed (multicast) with the same sequence numbers, and a trade stream to clearing and the reporting DB.",
+   "Critical path: gateway -> risk -> sequencer (journal + replicate to standby) -> matcher -> execution report + market data, all in-memory, kernel-bypass networking."
+  ],
+  "defend": [
+   "Bottleneck: the hottest symbol's single thread. A tuned in-memory matcher does 1-5 million ops/s per core, far above the 50k/s hot-symbol peak, so we shard by symbol, never within one.",
+   "Scale reads: market data is pushed, not polled; multicast UDP means 10,000 subscribers cost the same as one. Snapshots plus incremental feeds with sequence numbers let receivers detect gaps and recover.",
+   "Scale writes: more symbols mean more matcher shards on more cores and machines; the sequencer can be per-shard so it is not a global choke point.",
+   "Failure: a hot standby consumes the same sequenced journal and replays deterministically; failover is promotion, not rebuild. Journal replicated to 2 of 3 nodes before ack.",
+   "Degradation: circuit breakers (market-wide halts at 10/15/20 percent, per-symbol price bands), throttles per member, and a kill switch to cancel all orders of a misbehaving member.",
+   "Measure: tick-to-trade latency histogram (p50/p99/p99.9/max), sequencer lag, journal replication lag, gap requests on market data, rejects by reason, book integrity checks against replay."
+  ],
+  "script": "I will treat this as an exchange that owns matching, for equities with limit, market and cancel orders. Let me confirm: about 5,000 symbols, a billion orders a day, peak 500 thousand orders a second, p99 order-to-ack under 100 microseconds, and strict price-time priority with zero loss of acknowledged orders. The key insight is that matching for one symbol must be totally ordered, so I will not parallelise inside a symbol. Orders come in through gateways that authenticate and validate, pass a pre-trade risk stage, then a sequencer stamps each one with a sequence number and journals it, replicated to a standby, before the single-threaded matcher for that symbol applies it to an in-memory order book: price levels with FIFO queues. The matcher emits fills, execution reports, and a sequenced market data feed over multicast. For defence: throughput comes from sharding by symbol across cores, durability and HA come from event sourcing plus deterministic replay on a hot standby, and I will talk about circuit breakers, gap recovery on market data, and how I would measure tail latency."
+ },
+ "brd": {
+  "problem": "Buyers and sellers need a fair, transparent and reliable venue to discover prices and trade securities. The exchange must match orders deterministically under strict price-time priority, at microsecond latency, with regulatory-grade audit trails and no loss of acknowledged orders, while surviving hardware failures without halting the market.",
+  "goals": [
+   "Match orders with strict price-time priority and publish every book change in a single global sequence.",
+   "Order acknowledgement p99 under 100 microseconds inside the colocation facility.",
+   "Zero loss of acknowledged orders or trades (RPO 0) and failover under 1 second (RTO).",
+   "Sustain 500k orders/s peak with headroom of 3x for volatility events.",
+   "Provide a complete, replayable audit trail for regulators (every order, modify, cancel, trade).",
+   "Protect market integrity with pre-trade risk checks, price bands and circuit breakers."
+  ],
+  "non_goals": [
+   "Clearing, settlement and custody (handled by the clearing corporation and depository).",
+   "Retail broker features: portfolio views, charts, research, KYC onboarding.",
+   "Smart order routing across venues.",
+   "Derivatives margining and options pricing."
+  ],
+  "stakeholders": [
+   {
+    "who": "Trading members (brokers, market makers, HFT firms)",
+    "needs": "Low, predictable latency, fair queue position, reliable fills and market data."
+   },
+   {
+    "who": "Regulator (e.g. SEBI / SEC)",
+    "needs": "Complete audit trail, surveillance feeds, circuit breakers, fair access."
+   },
+   {
+    "who": "Clearing corporation",
+    "needs": "Accurate, sequenced trade feed with no duplicates or gaps."
+   },
+   {
+    "who": "Exchange operations / SRE",
+    "needs": "Deterministic recovery, kill switches, clear runbooks, observability."
+   },
+   {
+    "who": "Market data vendors",
+    "needs": "Complete, gap-recoverable sequenced feeds."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Order-to-ack latency",
+    "target": "p99 < 100 us, p99.9 < 250 us"
+   },
+   {
+    "metric": "Availability during trading hours",
+    "target": ">= 99.99 percent (under 2 minutes unplanned halt per year per segment)"
+   },
+   {
+    "metric": "Lost acknowledged orders",
+    "target": "0"
+   },
+   {
+    "metric": "Failover time",
+    "target": "< 1 s with no order loss"
+   },
+   {
+    "metric": "Market data gap rate",
+    "target": "< 1 in 10^7 packets, all recoverable within 1 s"
+   },
+   {
+    "metric": "Trade bust rate due to system error",
+    "target": "0"
+   }
+  ],
+  "constraints": [
+   "Regulatory: must keep every order event for years (e.g. 5-7 years) and support replay for investigations.",
+   "Fair access: all members must get equal network path lengths in colo; no participant may see data early.",
+   "Deterministic behaviour: same input sequence must produce the same output, so audits and standbys agree.",
+   "Fixed trading window; maintenance and upgrades only outside market hours."
+  ],
+  "risks": [
+   {
+    "risk": "Runaway algorithm floods orders (Knight Capital 2012 lost about 440 million USD in 45 minutes).",
+    "mitigation": "Per-member throttles, max order value caps, kill switch, cancel-on-disconnect."
+   },
+   {
+    "risk": "Matcher bug causes wrong fills.",
+    "mitigation": "Deterministic replay testing against recorded production journals; shadow engine comparison before release."
+   },
+   {
+    "risk": "Split brain: two matchers both think they are primary.",
+    "mitigation": "Fencing by sequencer epoch; only one engine's output is accepted by the publisher; external arbiter for promotion."
+   },
+   {
+    "risk": "Flash crash from cascading stop orders and thin liquidity.",
+    "mitigation": "Price bands per symbol, volatility auctions, market-wide circuit breakers."
+   },
+   {
+    "risk": "Latency unfairness complaints and lawsuits.",
+    "mitigation": "Equal-length cabling, published latency stats, sequence assigned at a single point."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Market maker",
+    "needs": "Quote both sides on thousands of symbols, cancel and replace in microseconds, never be filled on stale quotes."
+   },
+   {
+    "name": "Retail broker",
+    "needs": "Reliable order entry for millions of client orders, clear rejects, accurate execution reports."
+   },
+   {
+    "name": "Surveillance analyst",
+    "needs": "Replay any symbol's book at any point in time to investigate spoofing or layering."
+   },
+   {
+    "name": "Exchange operator",
+    "needs": "Halt a symbol, trigger a kill switch, fail over a matcher, see health in real time."
+   }
+  ],
+  "user_stories": [
+   "As a trader, I want to place a limit order and get an ack within microseconds so that I know my queue position.",
+   "As a trader, I want to cancel or modify a resting order so that I can manage risk when prices move.",
+   "As a market maker, I want cancel-on-disconnect so that my quotes are pulled if my session drops.",
+   "As a data subscriber, I want a sequenced incremental feed with gap recovery so that my local book is exact.",
+   "As a regulator, I want a full audit trail so that I can reconstruct the book at any timestamp.",
+   "As an operator, I want to halt trading in one symbol so that I can contain a disorderly market.",
+   "As a clearing house, I want every trade exactly once with a unique trade ID so that settlement is correct.",
+   "As a risk officer at a broker, I want hard credit limits enforced pre-trade so that a bad algo cannot exceed our exposure."
+  ],
+  "functional": [
+   "Accept new order (limit, market, IOC, FOK), cancel, and cancel-replace with validation and member auth.",
+   "Pre-trade risk: price band (e.g. +/- 10 percent of reference), max quantity, max notional, credit limit, self-trade prevention.",
+   "Match by price-time priority; trades print at the resting order's price; partial fills supported.",
+   "Emit execution reports (ack, partial fill, fill, cancel, reject) to the order owner.",
+   "Publish level-2 / level-3 market data incrementally with sequence numbers and periodic snapshots.",
+   "Opening and closing call auctions that compute a single equilibrium price maximising matched volume.",
+   "Trading halts, circuit breakers, and member kill switch.",
+   "Publish trades to clearing with unique, monotonic trade IDs."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "Order-to-ack p99 < 100 us; matcher < 10 us per order; market data publish < 20 us after match"
+   },
+   {
+    "name": "Throughput",
+    "target": "500k orders/s peak exchange-wide, 50k/s on the hottest symbol, 3x headroom"
+   },
+   {
+    "name": "Durability",
+    "target": "RPO 0 for acknowledged commands (journaled to 2 of 3 replicas before ack)"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99 percent in trading hours, RTO < 1 s per matcher shard"
+   },
+   {
+    "name": "Consistency",
+    "target": "Total order per symbol; deterministic replay produces bit-identical outputs"
+   },
+   {
+    "name": "Fairness",
+    "target": "Single point of sequencing; equal-latency access for colocated members"
+   },
+   {
+    "name": "Auditability",
+    "target": "100 percent of events retained 7 years, queryable by order ID and time"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "1 billion order messages per day over a 6.25 hour session (22,500 s).",
+    "Peak is 10x average during open, close and news events.",
+    "Order-to-trade ratio about 20:1 (most orders are cancelled or rest), so about 50 million trades per day.",
+    "Each journal record about 128 bytes (binary encoding); market data message about 40 bytes.",
+    "5,000 symbols, highly skewed: top 50 symbols carry about 40 percent of flow."
+   ],
+   "math": [
+    "Average rate = 1e9 / 22,500 s = about 44k orders/s; peak 10x = about 450k, plan for 500k orders/s.",
+    "Hottest symbol: 40 percent across 50 symbols but skewed, say 10 percent of peak on one name = 50k/s, well within one core (1M+ ops/s).",
+    "Journal: 1e9 x 128 B = 128 GB per day; x 3 replicas = 384 GB/day; 250 trading days x 7 years = about 224 TB primary.",
+    "Journal write bandwidth at peak: 500k x 128 B = 64 MB/s, trivially within NVMe and 10 GbE.",
+    "Market data: about 2 messages per order event -> 1M msg/s x 40 B = 40 MB/s = 320 Mbps per feed; multicast so independent of subscriber count.",
+    "Book memory: say 10 million resting orders x 100 B = 1 GB across all shards; fits in RAM and largely in L3 per hot symbol.",
+    "Trades: 50M/day x 200 B = 10 GB/day into the trade store and clearing feed."
+   ],
+   "summary": "Throughput is modest by internet standards (500k/s, 64 MB/s journal); the hard part is microsecond tail latency and determinism, which is why everything on the hot path is in memory, single-threaded per symbol, and journaled sequentially."
+  },
+  "out_of_scope": [
+   "Clearing, netting, settlement and depository integration.",
+   "Broker-side order management systems and retail UI.",
+   "Options and futures margining.",
+   "Cross-venue routing and consolidated tape."
+  ]
+ },
+ "hld": {
+  "overview": "Members connect to order gateways in the colo. Gateways do session handling, parsing, validation and throttling, then pass orders to a risk stage. Accepted commands go to the sequencer, which assigns a monotonic sequence number, appends to a journal replicated synchronously to a standby and an archiver, and then hands the command to the matching engine shard that owns the symbol. Each shard is a single-threaded loop over an in-memory order book. Its output events (acks, fills, book changes) are fanned out by a publisher to gateways (execution reports), the multicast market data feed, and the trade capture / clearing pipeline. A hot standby per shard replays the same journal and can take over within a second.",
+  "diagram": "  Members (FIX / binary, colo)\n        |\n  +-----v------+     +------------+\n  | Order      |---->| Pre-trade  |\n  | Gateways   |     | Risk       |\n  +-----^------+     +-----+------+\n        |                  |\n        | exec reports     v\n        |           +-------------+   replicate   +-----------------+\n        |           | Sequencer + |-------------->| Standby journal |\n        |           | Journal     |               | + hot standby   |\n        |           +------+------+               | matcher (replay)|\n        |                  | ring buffer          +-----------------+\n        |                  v\n        |   +-----------------------------+\n        |   | Matching engine shards      |  (1 thread per symbol group)\n        |   | [AAPL book] [INFY book] ... |\n        |   +--------------+--------------+\n        |                  | output events\n        |           +------v------+\n        +-----------| Publisher   |------> Market data (UDP multicast A/B)\n                    +------+------+------> Snapshot / recovery server\n                           |\n                           v\n              Trade capture -> Clearing feed, Audit store, Reporting DB\n",
+  "components": [
+   {
+    "name": "Order gateway",
+    "responsibility": "FIX/binary session management, auth, message parsing, field validation, per-session throttles, cancel-on-disconnect, routing exec reports back."
+   },
+   {
+    "name": "Pre-trade risk",
+    "responsibility": "Price bands, fat-finger caps, credit and position limits per member, self-trade prevention; in-memory, no DB calls on the hot path."
+   },
+   {
+    "name": "Sequencer",
+    "responsibility": "Assigns a global (or per-shard) monotonic sequence number, appends to the journal and replicates before releasing to the matcher; single source of ordering truth."
+   },
+   {
+    "name": "Journal / event store",
+    "responsibility": "Append-only log of every inbound command and engine output; basis of recovery, standby replay and audit."
+   },
+   {
+    "name": "Matching engine shard",
+    "responsibility": "Single-threaded event loop owning the order books for a set of symbols; applies commands, generates fills and book deltas deterministically."
+   },
+   {
+    "name": "Order book",
+    "responsibility": "Per-symbol bid and ask sides as price levels with FIFO queues; best bid/ask pointers; orderId index."
+   },
+   {
+    "name": "Hot standby matcher",
+    "responsibility": "Replays the same sequenced stream in lockstep; promoted on primary failure with no rebuild."
+   },
+   {
+    "name": "Publisher / market data",
+    "responsibility": "Turns engine events into sequenced multicast packets on redundant A/B lines plus periodic snapshots; serves retransmit requests."
+   },
+   {
+    "name": "Trade capture and clearing feed",
+    "responsibility": "Assigns trade IDs, persists trades, publishes to the clearing corporation exactly once."
+   },
+   {
+    "name": "Surveillance and audit store",
+    "responsibility": "Columnar store of all events for regulators and market abuse detection, fed asynchronously."
+   },
+   {
+    "name": "Control plane",
+    "responsibility": "Symbol reference data, trading phases (pre-open, continuous, halt, close), circuit breakers, kill switches, failover orchestration."
+   }
+  ],
+  "flows": [
+   {
+    "name": "New limit order that partially fills",
+    "steps": [
+     "Member sends NewOrderSingle (BUY 300 INFY @ 1500.00) to its gateway.",
+     "Gateway validates fields and session throttle, tags member and client order ID, forwards to risk.",
+     "Risk checks price band (reference 1495, band +/- 10 percent ok), credit limit, and reserves 4.5 lakh notional against the member's limit.",
+     "Sequencer assigns seq 4,812,005, appends to the journal, waits for the standby journal ack, publishes to the shard's ring buffer.",
+     "Matcher walks the ask side: 200 at 1499.50 fill, 100 at 1500.00 fill; book updated, trades printed at maker prices.",
+     "Outputs: ack + two fill reports to the taker, fill reports to the two makers, trade messages and book deltas to market data, trades to clearing.",
+     "Gateway returns exec reports; risk releases the unused credit reservation."
+    ]
+   },
+   {
+    "name": "Matcher failover",
+    "steps": [
+     "Primary shard stops heartbeating (missed 3 x 100 ms) or the host fails.",
+     "Control plane (with an external arbiter) bumps the epoch and promotes the standby, which has applied every journaled command up to the last replicated sequence.",
+     "Sequencer and publisher fence the old epoch: any output tagged with the old epoch is dropped.",
+     "New primary resumes consuming from the next sequence; publisher dedups output by sequence number so subscribers see no duplicates.",
+     "A new standby is built from the latest snapshot plus journal tail."
+    ]
+   },
+   {
+    "name": "Market data gap recovery",
+    "steps": [
+     "Subscriber receives packet with seq 1001 after 998; detects a gap of 999-1000.",
+     "It first checks the redundant B line, which usually has the packets.",
+     "If still missing, it requests a TCP retransmit of 999-1000 from the retransmit server.",
+     "If too far behind, it loads the latest snapshot (tagged with its sequence) and applies incrementals after it."
+    ]
+   }
+  ],
+  "data_flow": "Command path: gateway -> risk -> sequencer/journal -> matcher (all in memory, kernel bypass). Output path: matcher -> publisher -> exec reports, multicast market data, trade capture. Async path: journal -> archiver -> audit/surveillance store and reporting DB; trades -> clearing. Only the journal is on the synchronous durability path; every other store is a projection of it."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "FIX 35=D",
+    "path": "NewOrderSingle",
+    "request": "ClOrdID, Symbol, Side, OrdType(limit/market), Price, OrderQty, TimeInForce(DAY/IOC/FOK), Account",
+    "response": "ExecutionReport 35=8 with ExecType=New (ack) or Rejected, OrderID, plus later Trade reports",
+    "notes": "ClOrdID unique per session per day for idempotency; duplicate ClOrdID is rejected not re-applied."
+   },
+   {
+    "method": "FIX 35=F",
+    "path": "OrderCancelRequest",
+    "request": "ClOrdID, OrigClOrdID or OrderID, Symbol, Side",
+    "response": "ExecutionReport ExecType=Canceled, or OrderCancelReject if already filled",
+    "notes": "Race with fill is resolved by sequence order: whichever command is sequenced first wins."
+   },
+   {
+    "method": "FIX 35=G",
+    "path": "OrderCancelReplaceRequest",
+    "request": "OrigClOrdID, new Price and/or Qty",
+    "response": "ExecutionReport ExecType=Replaced",
+    "notes": "Price change or qty increase loses time priority; qty decrease keeps it."
+   },
+   {
+    "method": "UDP multicast",
+    "path": "MarketDataIncremental",
+    "request": "n/a (subscribe to group)",
+    "response": "Packet: seq, [AddOrder | ModifyOrder | DeleteOrder | Trade | Status]",
+    "notes": "Lines A and B carry identical packets; consumers arbitrate by sequence."
+   },
+   {
+    "method": "TCP",
+    "path": "RetransmitRequest / SnapshotRequest",
+    "request": "channel, fromSeq, toSeq",
+    "response": "Missing packets or a full book snapshot tagged with lastSeq",
+    "notes": "Rate-limited per subscriber to prevent recovery storms."
+   },
+   {
+    "method": "Admin RPC",
+    "path": "POST /control/symbols/{sym}/halt",
+    "request": "reason, until",
+    "response": "ack with sequence of the halt command",
+    "notes": "Halt is itself a sequenced command, so all replicas see it at the same point."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Order (in memory)",
+    "store": "Matcher RAM (object pool)",
+    "fields": [
+     "orderId u64",
+     "memberId u32",
+     "side u8",
+     "price i64 ticks",
+     "qtyOpen u32",
+     "qtyFilled u32",
+     "seq u64",
+     "prev/next pointers",
+     "level pointer"
+    ],
+    "keys": "orderId -> node via open-addressing hash map",
+    "notes": "Prices as fixed-point integers (ticks), never floats; objects pre-allocated to avoid GC."
+   },
+   {
+    "entity": "Journal record",
+    "store": "Append-only file on NVMe, replicated (Aeron Cluster / Chronicle Queue style)",
+    "fields": [
+     "seq u64",
+     "epoch u32",
+     "ts_ns u64",
+     "type",
+     "payload (binary SBE)",
+     "crc32"
+    ],
+    "keys": "seq (dense, monotonic) per shard",
+    "notes": "Daily roll files; snapshot every N million records or 1 minute."
+   },
+   {
+    "entity": "Trade",
+    "store": "Trade capture DB (e.g. PostgreSQL / kdb+), partitioned by trade date and symbol",
+    "fields": [
+     "tradeId",
+     "seq",
+     "symbol",
+     "price",
+     "qty",
+     "buyOrderId",
+     "sellOrderId",
+     "buyMember",
+     "sellMember",
+     "aggressorSide",
+     "ts_ns"
+    ],
+    "keys": "PK tradeId; unique (shard, seq, matchIndex)",
+    "notes": "tradeId derived deterministically from seq + match index so replay regenerates the same IDs."
+   },
+   {
+    "entity": "Member risk state",
+    "store": "Risk engine RAM, snapshotted",
+    "fields": [
+     "memberId",
+     "creditLimit",
+     "usedNotional",
+     "openOrderCount",
+     "maxOrderQty",
+     "killSwitch"
+    ],
+    "keys": "memberId",
+    "notes": "Rebuilt from journal on restart; changes to limits are sequenced commands."
+   },
+   {
+    "entity": "Audit event",
+    "store": "Columnar store (kdb+ / ClickHouse) + object storage",
+    "fields": [
+     "seq",
+     "ts_ns",
+     "symbol",
+     "eventType",
+     "orderId",
+     "member",
+     "price",
+     "qty"
+    ],
+    "keys": "partition by date, sort by (symbol, seq)",
+    "notes": "Retained 7 years; supports point-in-time book reconstruction."
+   }
+  ],
+  "classes": [
+   {
+    "name": "OrderBook",
+    "responsibility": "Holds bid and ask sides for one symbol and performs matching.",
+    "methods": [
+     "addLimit(order) -> List<Fill>",
+     "cancel(orderId) -> bool",
+     "replace(orderId, newPx, newQty)",
+     "bestBid() / bestAsk()",
+     "snapshot() -> BookSnapshot"
+    ]
+   },
+   {
+    "name": "PriceLevel",
+    "responsibility": "FIFO intrusive doubly linked list of orders at one price with aggregate quantity.",
+    "methods": [
+     "append(order)",
+     "remove(order)",
+     "head()",
+     "totalQty()"
+    ]
+   },
+   {
+    "name": "MatchingEngine",
+    "responsibility": "Single-threaded loop: poll ring buffer, dispatch command to the right OrderBook, emit events.",
+    "methods": [
+     "onCommand(seq, cmd)",
+     "emit(event)",
+     "takeSnapshot()",
+     "restore(snapshot, journalTail)"
+    ]
+   },
+   {
+    "name": "Sequencer",
+    "responsibility": "Assigns sequence numbers, journals and replicates, publishes to matcher ring buffer.",
+    "methods": [
+     "submit(cmd) -> seq",
+     "awaitReplicated(seq)",
+     "fence(epoch)"
+    ]
+   },
+   {
+    "name": "RiskChecker",
+    "responsibility": "Pre-trade checks against in-memory member limits.",
+    "methods": [
+     "check(order) -> Accept|Reject(reason)",
+     "reserve(member, notional)",
+     "release(member, notional)"
+    ]
+   },
+   {
+    "name": "MarketDataPublisher",
+    "responsibility": "Batch engine events into sequenced packets on A/B multicast and serve snapshots.",
+    "methods": [
+     "publish(events)",
+     "onRetransmit(from, to)",
+     "snapshot(symbol)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Price-time priority matching for an incoming limit order",
+    "explain": "Walk the opposite side from the best price while the incoming order crosses. At each level, fill against the oldest order first. Trades print at the resting order's price, which rewards liquidity providers. Whatever remains rests on the book at the tail of its own price level.",
+    "pseudocode": "def add_limit(o):\n    fills = []\n    opp = book.asks if o.side == BUY else book.bids\n    crosses = (lambda px: px <= o.price) if o.side == BUY else (lambda px: px >= o.price)\n    while o.qty > 0 and opp.best() and crosses(opp.best().price):\n        lvl = opp.best()\n        while o.qty > 0 and lvl.head:\n            m = lvl.head\n            if m.member == o.member and stp_enabled:\n                cancel_resting(m); continue        // self-trade prevention\n            q = min(o.qty, m.qty)\n            fills.append(Trade(px=lvl.price, qty=q, taker=o.id, maker=m.id))\n            o.qty -= q; m.qty -= q\n            if m.qty == 0: lvl.pop_head(); index.remove(m.id)\n        if lvl.empty(): opp.remove_level(lvl)\n    if o.qty > 0 and o.tif == DAY:\n        same = book.side(o.side).level(o.price, create=True)\n        same.append(o); index[o.id] = o\n    return fills\n"
+   },
+   {
+    "name": "Snapshot + journal replay recovery",
+    "explain": "Because the engine is deterministic, its state is a pure function of the command sequence. We periodically snapshot the books with the last applied sequence, and on restart we load the snapshot and replay only the journal tail. A standby that applies the same stream in lockstep is always ready.",
+    "pseudocode": "def recover(shard):\n    snap = latest_snapshot(shard)            // contains books + last_seq + risk state\n    engine.restore(snap)\n    for rec in journal.read_from(snap.last_seq + 1):\n        assert rec.crc_ok()\n        engine.on_command(rec.seq, rec.cmd, emit=False)   // suppress duplicate output\n    engine.ready(next_seq=journal.last_seq + 1)\n"
+   },
+   {
+    "name": "Opening call auction (equilibrium price)",
+    "explain": "During pre-open, orders accumulate without matching. At the open, pick the price that maximises executable volume; tie-break by minimum imbalance, then closest to the reference price. This avoids a chaotic first trade.",
+    "pseudocode": "def auction_price(bids, asks, ref):\n    best = None\n    for p in candidate_prices(bids, asks):\n        demand = sum(q for px, q in bids if px >= p)\n        supply = sum(q for px, q in asks if px <= p)\n        vol, imb = min(demand, supply), abs(demand - supply)\n        key = (vol, -imb, -abs(p - ref))\n        if best is None or key > best[0]: best = (key, p)\n    return best[1]\n"
+   }
+  ],
+  "sequence": "Member     Gateway     Risk      Sequencer   Standby    Matcher    Publisher\n  |  NewOrder |          |           |          |          |           |\n  |---------->| validate |           |          |          |           |\n  |           |--------->| check px  |          |          |           |\n  |           |          | band,cred |          |          |           |\n  |           |          |---------->| seq=N    |          |           |\n  |           |          |           | journal  |          |           |\n  |           |          |           |--------->| append N |           |\n  |           |          |           |<---------| ack N    |           |\n  |           |          |           |--------------------->| match   |\n  |           |          |           |          | replay N | fills     |\n  |           |          |           |          |          |---------->|\n  |           |<-----------------------------------------------| exec rpt\n  |<----------| ack + fills         |          |          |  mcast MD |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Cancel and fill race: a cancel arrives while an aggressive order is filling the same resting order.",
+   "handling": "Whatever the sequencer orders first wins. If the fill is sequenced first, the cancel gets OrderCancelReject 'too late to cancel'. No locks needed because one thread owns the book."
+  },
+  {
+   "case": "Duplicate order from a client retry after a network blip.",
+   "handling": "ClOrdID is unique per session per day; the gateway keeps a set of seen ClOrdIDs and rejects duplicates, returning the original status."
+  },
+  {
+   "case": "Member session disconnects with hundreds of resting quotes.",
+   "handling": "Cancel-on-disconnect: the gateway injects sequenced mass-cancel commands for that session after a configurable grace (e.g. 0-5 s)."
+  },
+  {
+   "case": "Runaway algorithm sends 100k orders/s.",
+   "handling": "Per-session throttle (e.g. 2,000 msg/s), message-to-trade ratio limits, max open orders, and a kill switch that mass-cancels and blocks the member."
+  },
+  {
+   "case": "Fat-finger price: sell 1,000,000 shares at 1 rupee.",
+   "handling": "Price band check against reference (last trade or close) rejects outside +/- N percent; notional cap per order."
+  },
+  {
+   "case": "Hot symbol on news: 20x normal traffic on one name.",
+   "handling": "That symbol is pinned to its own core; ring buffer absorbs bursts; gateways apply backpressure and throttle rather than letting queues grow unbounded."
+  },
+  {
+   "case": "Floating point rounding in prices.",
+   "handling": "Prices are fixed-point integers in ticks (e.g. 0.05 rupee tick -> price x 20). Never use doubles on the hot path."
+  },
+  {
+   "case": "Matcher crashes mid-match after journaling the command but before emitting all fills.",
+   "handling": "Output is derived deterministically from journaled input; standby replays command N and emits the same fills with the same trade IDs; publisher dedups by (seq, index)."
+  },
+  {
+   "case": "Split brain: network partition makes the standby think the primary died while it is still alive.",
+   "handling": "Epoch fencing: promotion increments epoch via an external arbiter (quorum); sequencer and publisher reject outputs with a stale epoch."
+  },
+  {
+   "case": "Self-trade: the same member's buy hits its own sell (wash trade risk).",
+   "handling": "Self-trade prevention mode per member: cancel newest, cancel oldest, or cancel both, applied inside the matching loop."
+  },
+  {
+   "case": "Market order with an empty opposite side.",
+   "handling": "Market orders are converted to IOC with a protection price (e.g. best + band); unfilled remainder is cancelled, never rests unpriced."
+  },
+  {
+   "case": "Market data packet loss on one multicast line.",
+   "handling": "A/B line arbitration by sequence; TCP retransmit for small gaps; snapshot plus replay for large gaps."
+  },
+  {
+   "case": "Clock skew between servers in audit timestamps.",
+   "handling": "Ordering never depends on wall clocks, only on sequence numbers; timestamps come from PTP-synced clocks (sub-microsecond) for regulatory reporting only."
+  },
+  {
+   "case": "Circuit breaker trigger during an in-flight burst.",
+   "handling": "The halt is a sequenced command; orders sequenced after it are queued or rejected per rules; everything before it matched normally. All replicas agree."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "C++ / Java with low-latency discipline (LMAX style)",
+   "layer": "Matching engine",
+   "overview": "Single-threaded business logic in C++ or GC-free Java (object pools, primitive collections, no allocation on hot path).",
+   "why": "Deterministic microsecond latency; LMAX showed about 6 million orders/s on one Java thread.",
+   "alternatives": "Rust (safe, similar speed, smaller talent pool); FPGA matching (nanoseconds, very hard to change)."
+  },
+  {
+   "name": "LMAX Disruptor (ring buffer)",
+   "layer": "Inter-thread messaging",
+   "overview": "Pre-allocated lock-free ring buffer with sequence barriers between producers and consumers.",
+   "why": "Avoids locks and queue allocation; mechanical sympathy with CPU caches; batches naturally under load.",
+   "alternatives": "ArrayBlockingQueue (locks, GC churn); Chronicle Queue (persisted, slightly slower)."
+  },
+  {
+   "name": "Aeron / Aeron Cluster",
+   "layer": "Transport and replicated log",
+   "overview": "Reliable UDP unicast/multicast messaging with a Raft-based cluster for replicated state machines.",
+   "why": "Sub-10 microsecond replication and a ready-made deterministic replicated log for the sequencer.",
+   "alternatives": "Kafka (ms latency, fine for downstream but not the hot path); custom TCP replication."
+  },
+  {
+   "name": "Kernel bypass NICs (Solarflare/OpenOnload, DPDK)",
+   "layer": "Network",
+   "overview": "User-space networking that avoids syscalls and kernel copies.",
+   "why": "Shaves tens of microseconds off each hop; essential for p99 under 100 us.",
+   "alternatives": "Standard Linux sockets with busy polling (simpler, slower, more jitter)."
+  },
+  {
+   "name": "SBE (Simple Binary Encoding) and FIX",
+   "layer": "Protocol",
+   "overview": "FIX for member connectivity; SBE fixed-layout binary encoding internally.",
+   "why": "Zero-copy decode, no parsing allocations, standard for trading.",
+   "alternatives": "Protobuf (allocates, variable length), JSON (far too slow)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Downstream fan-out",
+   "overview": "Durable partitioned log.",
+   "why": "Feeds trades and audit events to clearing, surveillance and reporting at millisecond latency where that is fine.",
+   "alternatives": "Pulsar; direct journal tailing."
+  },
+  {
+   "name": "kdb+ / ClickHouse",
+   "layer": "Tick and audit store",
+   "overview": "Columnar time-series databases.",
+   "why": "Fast point-in-time queries on billions of ticks for surveillance and replay.",
+   "alternatives": "Parquet on object storage with Spark (cheaper, slower interactive queries)."
+  },
+  {
+   "name": "PTP (IEEE 1588) clocks",
+   "layer": "Time sync",
+   "overview": "Precision Time Protocol with hardware timestamping.",
+   "why": "Regulatory timestamp accuracy (MiFID II requires 100 us or better for HFT).",
+   "alternatives": "NTP (millisecond accuracy, not enough)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Deterministic state machine replication",
+   "explain": "A state machine is deterministic if, given the same starting state and the same ordered list of inputs, it always produces the same outputs and ends in the same state. That simple property is the foundation of most fault tolerant systems. If you can get several replicas to agree on the order of inputs, you do not need to copy their state around: each replica applies the same log and arrives at the same place. This is the idea behind Paxos and Raft based systems such as ZooKeeper and etcd, and behind LMAX's architecture. The catch is that determinism is fragile. Anything that differs between replicas breaks it: reading the wall clock, iterating a hash map whose order depends on memory addresses, random numbers, thread scheduling, or calling an external service. Disciplined designs pass time and randomness in as part of the input (the sequencer stamps a timestamp into the command), use ordered data structures, and keep business logic single-threaded. The payoff is huge: replication, recovery, auditing and testing all become 'replay the log'.",
+   "in_this_design": "The matcher is a deterministic state machine. Its inputs are sequenced commands from the journal; time is a field in the command, not a system call. The hot standby replays the same stream and is byte-for-byte identical, so failover is just promotion. Regulators can replay any day, and every release is regression-tested by replaying a recorded production journal and diffing outputs.",
+   "key_points": [
+    "Same ordered input plus same start state gives the same output: replicate the input, not the state.",
+    "Never read clocks, randomness or external services inside the state machine; inject them as input.",
+    "Single-threaded logic removes scheduling nondeterminism.",
+    "Replay is your recovery, your HA and your test harness."
+   ],
+   "qa": [
+    {
+     "q": "How do you make sure the standby is truly identical?",
+     "a": "Feed it the identical sequenced journal, keep logic deterministic (no wall clock, no unordered iteration), and continuously compare a rolling hash of output events between primary and standby; a mismatch pages immediately."
+    },
+    {
+     "q": "What breaks determinism in practice?",
+     "a": "Using System.currentTimeMillis inside matching, iterating a HashMap, floating point differences across CPU flags, lazy initialisation order, and any I/O. We ban them on the hot path and enforce it in code review and replay tests."
+    },
+    {
+     "q": "Why not replicate the order book state directly?",
+     "a": "State is large and changes on every message; shipping diffs is complex and slow. The input log is compact (about 128 bytes per command) and naturally ordered, so replicating it is cheaper and simpler."
+    }
+   ]
+  },
+  {
+   "name": "Total ordering with a sequencer",
+   "explain": "Fairness in an exchange means everyone is processed in a single agreed order. The simplest way to achieve total order in a distributed system is to route every event through one component that assigns a monotonically increasing sequence number: a sequencer. All downstream consumers process events strictly in sequence order and can detect gaps (seq 1001 after 999 means 1000 is missing). A sequencer is a deliberate single point of serialisation, so it must be fast and highly available. It is usually built on a replicated log: the leader assigns numbers and replicates each entry to a quorum before it becomes visible. Alternatives to a central sequencer include Lamport or vector clocks, which give causal or partial order but not a fair total order, and consensus per message, which is slower. You can also scale a sequencer by partitioning: if ordering only matters within a symbol, each symbol shard gets its own sequence. Sequence numbers also make idempotency trivial: a consumer that has applied up to N simply ignores anything at or below N.",
+   "in_this_design": "Every command (new, cancel, replace, halt, limit change) passes through the sequencer, which assigns the sequence number that defines time priority. Market data carries the same sequence numbers so subscribers can detect gaps and order book reconstructions match the engine exactly. We partition sequencing by symbol group to avoid one global bottleneck.",
+   "key_points": [
+    "A sequencer turns a distributed problem into a log problem.",
+    "Order only needs to be total per symbol, so partition sequencing by symbol.",
+    "Dense sequence numbers give gap detection and idempotent consumers for free.",
+    "Time priority is defined by sequence, not by any wall clock."
+   ],
+   "qa": [
+    {
+     "q": "Isn't the sequencer a single point of failure?",
+     "a": "It is a single point of ordering, not of failure: it runs as a Raft-style replicated log (3 nodes), so a leader loss elects a new leader in milliseconds without losing committed entries."
+    },
+    {
+     "q": "Why not timestamp at each gateway and sort?",
+     "a": "Gateway clocks are never perfectly synced; sorting introduces waiting for stragglers and disputes about fairness. A single sequencing point is both faster and indisputable."
+    },
+    {
+     "q": "How does a consumer handle a gap?",
+     "a": "It buffers later messages, requests a retransmit for the missing range, and only applies in order. If the gap is too large it loads a snapshot tagged with its sequence and resumes from there."
+    }
+   ]
+  },
+  {
+   "name": "Event sourcing and snapshots",
+   "explain": "Event sourcing stores the sequence of changes (events or commands) as the system of record, rather than only the current state. Current state is a projection computed by folding events in order. This gives a full audit trail, time travel (reconstruct state at any point), and the ability to build new read models later by replaying history. The cost is that replaying from the beginning gets slow as the log grows, so systems take periodic snapshots: a serialised copy of state along with the sequence number it reflects. Recovery is then snapshot plus replay of the tail. Snapshots must be consistent, meaning taken at an exact sequence boundary; in a single-threaded engine that is easy because you can serialise between two commands, or fork a copy-on-write image. Event schemas must be versioned because old events live for years, and projections must be idempotent. Event sourcing pairs naturally with CQRS: the write side appends events, many read sides consume them.",
+   "in_this_design": "The journal of sequenced commands is the source of truth. The in-memory order book, member risk state, trade store, market data snapshots and the surveillance database are all projections. Snapshots every minute (or every few million commands) keep recovery to seconds, and regulators can rebuild any book at any microsecond by replay.",
+   "key_points": [
+    "Log first, state second: the journal is the database.",
+    "Snapshots bound recovery time; replay only the tail.",
+    "Every downstream store is a rebuildable projection.",
+    "Version event schemas because the log outlives the code."
+   ],
+   "qa": [
+    {
+     "q": "How long does recovery take?",
+     "a": "Load snapshot (about 1 GB, under a second from local NVMe) plus replay of at most one minute of commands (up to 30 million at peak, at several million per second) gives a few seconds. The hot standby avoids even that."
+    },
+    {
+     "q": "How do you take a snapshot without pausing trading?",
+     "a": "The single-threaded engine can serialise between commands in milliseconds, or the standby takes snapshots so the primary never pauses."
+    },
+    {
+     "q": "What if a projection like the trade DB has a bug?",
+     "a": "Fix the code, drop the projection, and rebuild it by replaying the journal. Because trade IDs are derived from sequence numbers, rebuilt rows are identical."
+    }
+   ]
+  },
+  {
+   "name": "Single-writer principle and mechanical sympathy",
+   "explain": "Locks are expensive not only because threads wait, but because contended cache lines bounce between CPU cores, costing hundreds of nanoseconds each time. The single-writer principle says that any piece of mutable state should be written by exactly one thread. Other threads communicate with it through messages, typically over lock-free queues. Mechanical sympathy means designing software that works with the hardware: keep the working set in L1/L2 cache, use arrays instead of pointer-heavy structures, avoid false sharing by padding hot counters to separate cache lines, pre-allocate objects to avoid garbage collection, and pin threads to isolated cores so the OS does not migrate them. The LMAX Disruptor is the canonical example: a pre-allocated ring buffer where each consumer tracks its own sequence, so producers and consumers coordinate through memory barriers, not locks. Under load it batches naturally, because a consumer that falls behind can process many entries at once. A single core running tight code processes millions of simple operations per second, which is often more than a lock-based multi-threaded design achieves.",
+   "in_this_design": "Each matcher shard is one thread pinned to an isolated core, owning its books outright. Gateways, risk, journaling and publishing run on other cores and hand messages through Disruptor ring buffers. No locks exist on the order book.",
+   "key_points": [
+    "One writer per piece of state removes locks and contention.",
+    "Ring buffers with sequence counters replace queues and locks.",
+    "Pin threads, isolate cores, pre-allocate memory, avoid GC.",
+    "One fast core usually beats many contended cores for ordered work."
+   ],
+   "qa": [
+    {
+     "q": "Why not use multiple threads with fine-grained locks per price level?",
+     "a": "Matching an aggressive order touches several levels and both sides, so you would need multi-lock protocols, which add latency and nondeterminism. One thread is simpler, deterministic and fast enough (millions of ops/s)."
+    },
+    {
+     "q": "What is false sharing?",
+     "a": "Two independent variables on the same 64-byte cache line written by different cores cause the line to bounce; padding them onto separate lines fixes it."
+    },
+    {
+     "q": "How does the Disruptor achieve batching?",
+     "a": "A consumer reads the producer's published sequence; if it is several slots ahead, the consumer processes all of them in one go without further coordination, amortising overhead under load."
+    }
+   ]
+  },
+  {
+   "name": "Sharding (partitioning) by symbol",
+   "explain": "Sharding splits data and work across independent nodes so that throughput scales horizontally. The art is picking a shard key so that most operations touch a single shard. Good keys have high cardinality, spread load evenly and align with the transaction boundary of the domain. Bad keys create cross-shard transactions or hot shards. Common strategies are hash partitioning (even spread, no locality), range partitioning (locality, risk of hotspots) and directory-based assignment, where a lookup table maps keys to shards and allows manual placement of heavy keys. Skew is the enemy: a single very hot key cannot be split by any of these strategies if the work on that key must be serialised. In that case the answer is to make the per-key path as fast as possible and give it dedicated hardware.",
+   "in_this_design": "A trade only ever involves one symbol's book, so the symbol is the natural shard key and there are no cross-shard transactions in matching. We use a directory (symbol -> shard) so the hottest names (e.g. NIFTY constituents) each get a dedicated core while thousands of illiquid names share one. Member credit limits do span symbols; they live in the risk stage, which reserves credit before sequencing.",
+   "key_points": [
+    "Shard on the transaction boundary: one trade, one symbol, one shard.",
+    "Use directory placement so hot symbols get their own core.",
+    "A hot key cannot be split if it must be serialised; make its path fast instead.",
+    "Cross-shard state (member credit) is handled before sequencing, not inside matching."
+   ],
+   "qa": [
+    {
+     "q": "What if one symbol exceeds a single core's capacity?",
+     "a": "It practically does not: one core matches 1-5 million orders/s versus peaks of tens of thousands per symbol. If needed, reduce work per order (offload validation, logging, publishing) rather than split the book."
+    },
+    {
+     "q": "How is a member's credit limit enforced across shards?",
+     "a": "The risk stage reserves notional for the member before the order is sequenced, and releases it on fill or cancel. It is a single in-memory component per member partition, so no distributed transaction is needed."
+    },
+    {
+     "q": "How do you move a symbol to another shard?",
+     "a": "At a sequenced boundary (or overnight): halt the symbol, snapshot its book, load it on the target shard, update the directory, resume. Typically done between sessions."
+    }
+   ]
+  },
+  {
+   "name": "Reliable multicast and gap recovery",
+   "explain": "UDP multicast lets one sender transmit a packet that the network switch replicates to every subscriber that joined the group. Cost is independent of subscriber count, and every subscriber receives the data at the same moment, which is important for fairness. But UDP is unreliable: packets can be dropped or arrive out of order and there is no retransmission built in. Market data protocols layer reliability on top: every packet carries a sequence number; the same stream is sent over two physically separate networks (A and B lines) so a loss on one is usually covered by the other; a retransmit service answers TCP requests for small missing ranges; and periodic snapshots allow a subscriber that is far behind, or just joined, to start from a known state and then apply incremental updates after the snapshot's sequence. Rate limiting the recovery services is essential so a widespread loss does not cause a stampede.",
+   "in_this_design": "Book changes and trades go out on A/B multicast lines with sequence numbers. Subscribers arbitrate A/B, request retransmits for small gaps and fall back to snapshot plus replay for large ones. Feeds are partitioned into channels by symbol range.",
+   "key_points": [
+    "Multicast gives equal-time delivery at constant cost per subscriber.",
+    "Sequence numbers plus A/B lines plus retransmit plus snapshot make UDP reliable enough.",
+    "Rate-limit recovery services to avoid a recovery storm.",
+    "Partition feeds into channels so a subscriber only processes what it needs."
+   ],
+   "qa": [
+    {
+     "q": "Why not TCP for market data?",
+     "a": "TCP to thousands of subscribers means per-connection buffers and head-of-line blocking; a slow consumer can delay others and fairness suffers. Multicast sends once and everyone gets it at the same time."
+    },
+    {
+     "q": "How does a late joiner build the book?",
+     "a": "Start buffering incrementals, fetch a snapshot tagged with seq S, apply buffered incrementals with seq > S, then continue live."
+    },
+    {
+     "q": "What happens if both A and B lose the same packet?",
+     "a": "The subscriber requests a retransmit over TCP; if the retransmit window has passed, it re-snapshots."
+    }
+   ]
+  },
+  {
+   "name": "Leader election and fencing (split brain prevention)",
+   "explain": "When a primary fails, a standby must take over, but in a distributed system you can never be certain the primary is dead rather than slow or partitioned. If both act as leader you get split brain: two matchers producing conflicting fills. The standard defence is a quorum-based election (Raft, ZooKeeper, or an external arbiter) combined with fencing tokens. Each new leader term gets a monotonically increasing epoch number. Every write or output carries the epoch, and the resources that accept writes (the journal, the publisher) reject anything with an epoch lower than the highest they have seen. That way a zombie old leader that wakes up after a GC pause cannot do damage even though it still believes it is the leader. Heartbeat timeouts trade detection speed against false failovers; for an exchange, a few hundred milliseconds is typical.",
+   "in_this_design": "Primary and standby matchers are coordinated by the replicated log's leader election (Aeron Cluster uses Raft). Promotion increments the epoch. The publisher and the clearing feed accept only outputs from the current epoch, so a resurrected old primary is fenced off automatically.",
+   "key_points": [
+    "You cannot distinguish dead from slow; design for zombies.",
+    "Quorum election picks one leader per term.",
+    "Fencing tokens (epochs) make stale leaders harmless.",
+    "Timeout choice trades detection speed against false failovers."
+   ],
+   "qa": [
+    {
+     "q": "What if the old primary already emitted some fills before dying?",
+     "a": "Those fills were derived from journaled commands; the new primary replays the same commands and produces identical fills with identical trade IDs, which the publisher dedups by (seq, index)."
+    },
+    {
+     "q": "Why do you need an odd number of nodes?",
+     "a": "A majority of 3 is 2, so one node can fail and a quorum remains; with 2 nodes, a partition leaves neither side with a majority."
+    },
+    {
+     "q": "How do you pick the heartbeat timeout?",
+     "a": "Long enough to ride out GC or network jitter (we avoid GC, so 300 ms is plenty) and short enough that halting a symbol for that long is acceptable."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Concurrency model of the matcher",
+   "options": "Multi-threaded with locks per book vs single-threaded per symbol shard",
+   "choice": "Single-threaded per shard",
+   "why": "Deterministic, lock-free, faster in practice, and enables replay-based HA and testing."
+  },
+  {
+   "decision": "Durability before ack",
+   "options": "Async journal (fast, may lose data) vs fsync locally vs synchronous replication to a standby in memory",
+   "choice": "Synchronous replication to at least one other node's memory/NVMe before ack",
+   "why": "Network replication in colo costs single-digit microseconds; it gives RPO 0 without waiting on disk fsync on the hot path."
+  },
+  {
+   "decision": "HA strategy",
+   "options": "Cold restart from journal vs warm standby restoring snapshots vs hot standby replaying live",
+   "choice": "Hot standby replaying live",
+   "why": "Failover under 1 second with no state rebuild; cost is double hardware, trivial for an exchange."
+  },
+  {
+   "decision": "Market data transport",
+   "options": "TCP per subscriber vs UDP multicast with recovery",
+   "choice": "Multicast A/B with retransmit and snapshots",
+   "why": "Fair simultaneous delivery and constant cost for thousands of subscribers."
+  },
+  {
+   "decision": "Price representation",
+   "options": "Double vs decimal object vs fixed-point integer ticks",
+   "choice": "Fixed-point integers",
+   "why": "Exact, comparable, cache friendly and allocation free."
+  },
+  {
+   "decision": "Order book level structure",
+   "options": "Tree map of price -> level vs array indexed by tick offset",
+   "choice": "Array indexed by tick within the price band, tree fallback",
+   "why": "Price bands bound the range, so an array gives O(1) level lookup and cache locality."
+  },
+  {
+   "decision": "Risk check placement",
+   "options": "Inside the matching loop vs before sequencing",
+   "choice": "Before sequencing, in memory",
+   "why": "Keeps the matcher minimal; risk state spanning symbols does not need to live in symbol shards."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Primary matcher host dies",
+   "behavior": "Standby promoted in under 1 s via quorum and epoch bump; orders journaled but unmatched are replayed; subscribers see a short pause then continuous sequence."
+  },
+  {
+   "failure": "Sequencer leader dies",
+   "behavior": "Raft elects a new leader from the replicas holding all committed entries; uncommitted (unacked) commands are retried by gateways using ClOrdID idempotency."
+  },
+  {
+   "failure": "Gateway dies",
+   "behavior": "Members reconnect to a backup gateway; cancel-on-disconnect may fire per member preference; resend requests use FIX sequence numbers."
+  },
+  {
+   "failure": "Market data packet loss",
+   "behavior": "A/B arbitration covers most; retransmit and snapshot cover the rest; trading is unaffected."
+  },
+  {
+   "failure": "Downstream clearing feed or Kafka slow",
+   "behavior": "Matching continues; the journal is the buffer; downstream consumers catch up from their offsets. Alert if lag exceeds minutes."
+  },
+  {
+   "failure": "Bug produces wrong fills",
+   "behavior": "Halt the symbol, replay the journal on a fixed build to confirm, bust or adjust trades per exchange rules; this is why shadow replay testing gates every release."
+  },
+  {
+   "failure": "Whole data centre loss",
+   "behavior": "DR site with asynchronously replicated journal (few ms lag); market is halted, DR is brought up, members reconcile open orders. RPO is a few ms here, accepted by regulators for DR."
+  }
+ ],
+ "metrics": [
+  "Order-to-ack and tick-to-trade latency histograms: p50, p99, p99.9, max, per gateway and per shard.",
+  "Sequencer and journal replication latency and lag in sequence numbers.",
+  "Ring buffer occupancy per shard (backpressure early warning).",
+  "Primary vs standby output hash divergence (must be zero).",
+  "Reject counts by reason (price band, credit, throttle, duplicate).",
+  "Market data gap and retransmit request rates per channel.",
+  "Messages per second per member, message-to-trade ratio, kill switch activations.",
+  "Downstream lag: clearing feed, audit store, reporting DB."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just use a relational database with row locks for the order book?",
+   "a": "A DB round trip is milliseconds; we need microseconds. Locks also add nondeterminism. The book is small enough to live in memory, and durability comes from the journal, not the database."
+  },
+  {
+   "q": "How do you guarantee no acknowledged order is lost?",
+   "a": "We ack only after the command is journaled and replicated to a second node. On any failure, the standby or recovery replays the journal, so every acked command is applied."
+  },
+  {
+   "q": "How do you scale to 10x volume?",
+   "a": "Add matcher shards and spread symbols across more cores and hosts; partition sequencing and market data channels by symbol group. Per-symbol single-thread capacity is already 20-100x the hottest symbol's peak."
+  },
+  {
+   "q": "How would you implement stop orders?",
+   "a": "Keep a separate trigger book per symbol keyed by stop price; after each trade, check if the last price crossed any stops and inject them as new sequenced orders in a deterministic order (by stop price then time)."
+  },
+  {
+   "q": "How do you prevent HFT firms from getting an unfair advantage?",
+   "a": "Equal-length cables in colo, a single sequencing point, simultaneous multicast. Some venues add speed bumps (IEX 350 microseconds) or frequent batch auctions; that is a policy choice."
+  },
+  {
+   "q": "How do you test the matching engine?",
+   "a": "Unit tests on the book, property tests (no crossed book, quantities conserved), and replay of recorded production journals through the new build, diffing every output event against production."
+  },
+  {
+   "q": "What about a broker system like Zerodha instead?",
+   "a": "Then the hard problems are fan-out of market data to millions of retail clients over WebSockets, OMS state, and integrating with exchange gateways; matching is not ours."
+  },
+  {
+   "q": "How do you handle an opening auction?",
+   "a": "Collect orders in pre-open without matching, compute the equilibrium price that maximises traded volume with imbalance and reference tie-breakers, match at that single price, then switch to continuous trading via a sequenced phase change."
+  }
+ ],
+ "key_points": [
+  "Ordering is the product: one sequencer per symbol group defines time priority and fairness.",
+  "Do not parallelise inside a symbol; shard by symbol and run one single-threaded matcher per shard.",
+  "The journal is the source of truth; the order book and every database are projections (event sourcing).",
+  "Determinism gives HA (hot standby replay), recovery (snapshot + tail) and testing (replay prod journals).",
+  "Ack only after replication to a second node: RPO 0 at microsecond cost.",
+  "Order book: price levels with FIFO linked lists, best pointers, orderId hash map for O(1) cancel; integer ticks.",
+  "Market data over A/B multicast with sequence numbers, retransmit and snapshots.",
+  "Risk checks before sequencing, kill switches, price bands and circuit breakers protect market integrity.",
+  "Fencing epochs prevent split brain during failover.",
+  "Measure p99.9 and max latency, not averages; tail is what traders feel."
+ ],
+ "quiz": [
+  {
+   "q": "Why do most exchanges run the matching logic for a symbol on a single thread?",
+   "options": [
+    "Because exchange vendors cannot afford multi-core servers",
+    "Because Java cannot do multi-threading safely",
+    "Because it gives a deterministic total order with no lock contention, and one core is fast enough for a symbol",
+    "Because regulators require single-threaded software"
+   ],
+   "answer": 2,
+   "why": "Single-threaded matching is deterministic and lock-free, and a core can match millions of orders per second. The tempting wrong answer is a regulatory requirement; regulators require fairness and auditability, which determinism makes easy, but they do not mandate threading."
+  },
+  {
+   "q": "A trader sends a cancel at the same moment another trader's market order would fill the resting order. Who wins?",
+   "options": [
+    "Whichever command the sequencer assigned the lower sequence number",
+    "The cancel always wins to protect the resting trader",
+    "The fill always wins because trades are final",
+    "Whichever gateway timestamp is earlier"
+   ],
+   "answer": 0,
+   "why": "The sequencer defines order; the matcher applies commands strictly by sequence. Gateway timestamps are tempting but clocks differ across machines, so they cannot define fairness."
+  },
+  {
+   "q": "Roughly how many orders per second must the hottest symbol handle in our assumptions, and can one core do it?",
+   "options": [
+    "About 5 million/s; no, it needs a cluster",
+    "About 500/s; yes, trivially",
+    "About 500k/s; no, the book must be split by price",
+    "About 50k/s; yes, one core does 1M+ simple matches per second"
+   ],
+   "answer": 3,
+   "why": "We assumed 10 percent of a 500k/s peak on one symbol, about 50k/s, far below a tuned core's capacity. Splitting a book by price is a tempting idea but breaks atomic matching across levels."
+  },
+  {
+   "q": "What is the main purpose of the journal in this design?",
+   "options": [
+    "To store user profiles",
+    "To be the source of truth from which the book, trades and audit data can be rebuilt by replay",
+    "To speed up reads of the order book",
+    "To cache market data for subscribers"
+   ],
+   "answer": 1,
+   "why": "Event sourcing makes the journal the system of record. It does not speed up reads; the in-memory book does that."
+  },
+  {
+   "q": "Why are prices stored as integer ticks rather than doubles?",
+   "options": [
+    "Integers use less disk",
+    "Integer comparison is exact and deterministic, while binary floating point cannot represent values like 0.05 exactly",
+    "Doubles cannot represent negative numbers",
+    "FIX protocol forbids decimals"
+   ],
+   "answer": 1,
+   "why": "Floating point rounding can make equal prices compare unequal and break determinism. FIX does carry decimal prices on the wire; internally we convert to ticks."
+  },
+  {
+   "q": "A standby matcher is promoted while the old primary is merely frozen by a long pause. What prevents both from publishing fills?",
+   "options": [
+    "TCP keepalives",
+    "The standby deletes the primary's journal",
+    "Members manually choose which engine to trust",
+    "Fencing with an epoch number that downstream components check"
+   ],
+   "answer": 3,
+   "why": "Epoch fencing makes stale leaders harmless. Keepalives only detect failure; they cannot stop a zombie from writing."
+  },
+  {
+   "q": "Why does market data use UDP multicast instead of TCP connections?",
+   "options": [
+    "Multicast delivers the same packet to all subscribers at the same time with cost independent of subscriber count",
+    "UDP is encrypted by default",
+    "TCP cannot carry binary data",
+    "Multicast guarantees delivery"
+   ],
+   "answer": 0,
+   "why": "Fairness and constant cost drive the choice. Multicast does not guarantee delivery, which is why sequence numbers, A/B lines and retransmits exist."
+  },
+  {
+   "q": "A subscriber sees sequence 1001 right after 998. What should it do first?",
+   "options": [
+    "Ignore the gap; market data is best effort",
+    "Apply 1001 and hope 999-1000 arrive later",
+    "Check the redundant B line, then request a retransmit, buffering 1001 until the gap is filled",
+    "Disconnect and reconnect via TCP"
+   ],
+   "answer": 2,
+   "why": "Arbitrate A/B, then retransmit, applying strictly in order. Applying 1001 out of order would corrupt the local book."
+  },
+  {
+   "q": "Where should the member credit limit check run?",
+   "options": [
+    "Inside the matching loop after each fill",
+    "In a nightly batch job",
+    "In the clearing house only",
+    "In a pre-trade risk stage before sequencing, with in-memory reservations"
+   ],
+   "answer": 3,
+   "why": "Credit spans symbols, so it does not belong in a symbol shard, and it must be pre-trade to stop runaway algos. Checking after fills is tempting but too late."
+  },
+  {
+   "q": "Which modification usually causes an order to lose its time priority?",
+   "options": [
+    "Reducing quantity",
+    "Changing the client's account reference",
+    "Increasing quantity or changing price",
+    "Querying its status"
+   ],
+   "answer": 2,
+   "why": "Increasing size or changing price would let a trader jump the queue, so it gets a new time stamp. Reducing quantity does not harm others, so priority is kept."
+  },
+  {
+   "q": "p99 order latency suddenly jumps from 40 us to 2 ms every few seconds on a Java matcher. Most likely cause?",
+   "options": [
+    "Network bandwidth exhaustion",
+    "Garbage collection pauses from allocation on the hot path",
+    "Too many symbols on the exchange",
+    "Disk is full"
+   ],
+   "answer": 1,
+   "why": "Periodic millisecond spikes are classic GC pauses; the fix is pre-allocated pools and allocation-free code. Bandwidth exhaustion at 64 MB/s on 10 GbE is implausible."
+  },
+  {
+   "q": "How is RPO 0 achieved without fsync on every message?",
+   "options": [
+    "By replicating each command to another node's memory or NVMe before acknowledging",
+    "By batching acks every second",
+    "By using RAID 5",
+    "By writing to Kafka asynchronously"
+   ],
+   "answer": 0,
+   "why": "Synchronous replication to a second machine means a single failure cannot lose an acked command. Async Kafka writes are tempting but the ack would precede durability."
+  },
+  {
+   "q": "At what price does a trade execute when an incoming buy at 101 matches a resting sell at 100?",
+   "options": [
+    "100, the resting order's price",
+    "101, the aggressor's price",
+    "100.5, the midpoint",
+    "The last traded price"
+   ],
+   "answer": 0,
+   "why": "Continuous matching prints at the resting (maker) price, so the aggressor gets price improvement. Midpoint is used only by some special order types or dark pools."
+  },
+  {
+   "q": "Why use a directory (symbol -> shard map) rather than hash(symbol) mod N?",
+   "options": [
+    "Hashing is too slow",
+    "A directory lets you place hot symbols on dedicated cores and move them deliberately",
+    "Hash partitioning cannot handle strings",
+    "Directories avoid needing a sequencer"
+   ],
+   "answer": 1,
+   "why": "Skewed load needs manual placement. Hashing spreads keys evenly by count, not by load, so two hot symbols could land together."
+  },
+  {
+   "q": "Approximately how much journal data does 1 billion orders per day at 128 bytes each produce, before replication?",
+   "options": [
+    "About 1.3 GB",
+    "About 1.3 TB",
+    "About 128 GB",
+    "About 12.8 TB"
+   ],
+   "answer": 2,
+   "why": "1e9 x 128 B = 1.28e11 B, about 128 GB. The 1.3 TB option is the common off-by-ten slip."
+  },
+  {
+   "q": "What is the main benefit of a hot standby that replays the journal live versus restoring from a snapshot on failure?",
+   "options": [
+    "It uses less hardware",
+    "It removes the need for a sequencer",
+    "It allows the standby to accept writes too",
+    "Failover is promotion with no rebuild, so RTO is sub-second"
+   ],
+   "answer": 3,
+   "why": "Hot standby trades double hardware for near-instant takeover. Accepting writes on both would be active-active and break total order."
+  },
+  {
+   "q": "Which property most directly enables regression testing a new matcher build against production?",
+   "options": [
+    "Horizontal scaling",
+    "Multicast market data",
+    "Determinism: replaying the same journal must produce identical outputs",
+    "Microservices"
+   ],
+   "answer": 2,
+   "why": "Determinism lets you diff outputs across builds. Scaling and microservices do not help verify correctness."
+  },
+  {
+   "q": "A broker's algo goes rogue and floods orders. What is the fastest containment?",
+   "options": [
+    "Restart the matcher",
+    "Ask the broker to call support",
+    "Halt the whole market",
+    "Member kill switch that mass-cancels its orders and blocks new ones, plus per-session throttles"
+   ],
+   "answer": 3,
+   "why": "A targeted kill switch contains damage without hurting others. Halting the whole market is tempting but disproportionate."
+  },
+  {
+   "q": "Why should the cancel path look up orders via a hash map from orderId to node?",
+   "options": [
+    "To make cancel O(1): find the node and unlink it from its level's doubly linked list",
+    "To sort orders by price",
+    "To persist orders to disk",
+    "To compute market data snapshots"
+   ],
+   "answer": 0,
+   "why": "Market makers cancel far more than they trade, so cancel must be O(1). A sorted structure gives log n at best and is used for levels, not lookup."
+  },
+  {
+   "q": "Which latency statistic should an exchange SLO focus on?",
+   "options": [
+    "Average latency",
+    "p99.9 and max latency, since tail spikes affect fairness and risk",
+    "Median latency only",
+    "Throughput per day"
+   ],
+   "answer": 1,
+   "why": "Traders and regulators care about worst cases; averages hide GC pauses and jitter. Median is tempting but ignores the tail entirely."
+  },
+  {
+   "q": "If ordering matters only within a symbol, how can you avoid a single global sequencer bottleneck?",
+   "options": [
+    "Use wall clock timestamps instead",
+    "Remove sequencing and let matchers race",
+    "Use a two-phase commit across all symbols",
+    "Partition sequencing by symbol group, each with its own sequence"
+   ],
+   "answer": 3,
+   "why": "Per-shard sequencers keep total order where it matters. Wall clocks cannot define fair order and 2PC adds latency."
+  },
+  {
+   "q": "Opening auctions choose the price that...",
+   "options": [
+    "Maximises executable volume, with tie-breaks on imbalance and reference price",
+    "Equals yesterday's close",
+    "Is the highest bid",
+    "Is the average of all order prices"
+   ],
+   "answer": 0,
+   "why": "The equilibrium price maximises matched volume. Using yesterday's close is a common guess but ignores overnight information."
+  }
+ ],
+ "references": [
+  {
+   "title": "Designing a matching engine that keeps price-time priority (techinterview.org)",
+   "url": "https://www.techinterview.org/post/3233477258/matching-engine-price-time-priority-system-design/"
+  },
+  {
+   "title": "Designing a stock exchange matching engine: the order book and price-time priority (DEV)",
+   "url": "https://dev.to/roni_das_b1b76c5ee6583027/designing-a-stock-exchange-matching-engine-the-order-book-and-price-time-priority-km9"
+  },
+  {
+   "title": "Modern trading application architectures: LMAX Disruptor pattern (Wyden)",
+   "url": "https://www.wyden.io/news/modern-trading-applications-architectures-an-overview-of-the-lmax-disruptor-pattern-and-project-reactor/"
+  },
+  {
+   "title": "exchange-core: open source matching engine on LMAX Disruptor",
+   "url": "https://github.com/laxpio/exchange-core"
+  },
+  {
+   "title": "System Design: Electronic Trading Platform (techinterview.org)",
+   "url": "https://www.techinterview.org/post/3233474476/system-design-design-electronic-trading-platform-order-book-matching-engine-market-data-feed-low-latency-colocation/"
+  }
+ ]
+}

@@ -19,7 +19,7 @@
 
 <div class="nav-icons">{% include "_top_nav.html" %}</div>
 
-<main class="ip-wrap" id="ip" data-initial-tab="{{ initial_tab or 'overview' }}">
+<main class="ip-wrap" id="ip" data-initial-tab="{{ initial_tab or 'overview' }}" data-deep="{{ deep_slug or '' }}">
   <header class="ip-head">
     <h1>Interview Prep</h1>
     <div class="ip-stats" aria-live="polite">
@@ -171,16 +171,27 @@
 
   <!-- ═════════ SYSTEM DESIGN ═════════ -->
   <section class="ip-panel" data-panel="design" role="tabpanel" hidden>
-    <div class="toolbar">
-      <input type="search" id="sdbank-search" placeholder="Search — TiDB, Aerospike, RAG, Kafka…" aria-label="Search designs">
-      <select id="sdbank-cat" aria-label="Category"><option value="">All categories</option></select>
-      <label class="toggle"><input type="checkbox" id="sdbank-unpracticed"> Not studied</label>
-      <button class="btn sm" id="sdbank-pdf" type="button"><i data-feather="download"></i>PDF</button>
+    <div class="seg" role="group" aria-label="System design view">
+      <button type="button" data-sdmode="deep" aria-pressed="true">Deep dives <span class="n" id="dd-n"></span></button>
+      <button type="button" data-sdmode="concepts" aria-pressed="false">Concepts <span class="n" id="dc-n"></span></button>
+      <button type="button" data-sdmode="quick" aria-pressed="false">Quick reference <span class="n" id="sq-n"></span></button>
     </div>
-    <div class="sync-note" id="sdbank-sync" hidden></div>
-    <div class="progress-line" id="sdbank-prog"></div>
-    <div id="sdbank-list"></div>
-    <div class="more-row" id="sdbank-more"></div>
+
+    <div id="dd-view"></div>
+    <div id="dc-view" hidden></div>
+
+    <div id="sd-quick" hidden>
+      <div class="toolbar">
+        <input type="search" id="sdbank-search" placeholder="Search — TiDB, Aerospike, RAG, Kafka…" aria-label="Search designs">
+        <select id="sdbank-cat" aria-label="Category"><option value="">All categories</option></select>
+        <label class="toggle"><input type="checkbox" id="sdbank-unpracticed"> Not studied</label>
+        <button class="btn sm" id="sdbank-pdf" type="button"><i data-feather="download"></i>PDF</button>
+      </div>
+      <div class="sync-note" id="sdbank-sync" hidden></div>
+      <div class="progress-line" id="sdbank-prog"></div>
+      <div id="sdbank-list"></div>
+      <div class="more-row" id="sdbank-more"></div>
+    </div>
   </section>
 </main>
 
@@ -192,5 +203,6 @@
 <script src="{{ url_for('static', filename='js/countdown.js') }}"></script>
 <script src="{{ url_for('static', filename='js/prep_hub.js') }}"></script>
 <script src="{{ url_for('static', filename='js/prep_cases.js') }}"></script>
+<script src="{{ url_for('static', filename='js/prep_deep.js') }}"></script>
 </body>
 </html>

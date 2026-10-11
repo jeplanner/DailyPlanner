@@ -1,0 +1,1121 @@
+{
+ "slug": "personalized-fast-serving",
+ "title": "Design Fast Personalized Data Serving (personalized home page)",
+ "prompt": "Design a system that serves personalized data fast.",
+ "group": "caching",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "Personalized data cannot sit behind a CDN, because every user's response is different, yet it must load in tens of milliseconds for hundreds of millions of users and survive 10x sale-day spikes. The core tension is freshness versus latency and cost: computing everything per request is fresh but slow and expensive, precomputing everything is fast but stale and wasteful for users who never return. The senior answer is a hybrid: precompute candidates offline into a low-latency key-value cache, re-rank a small set online with fresh session features, cache aggressively at several layers, and always have a non-personalized fallback.",
+ "framework": {
+  "clarify": [
+   "What is 'personalized data' here? Assume an e-commerce home page and widgets: recommended products, recently viewed, deals for you, plus profile-driven banners.",
+   "Scale: assume 100M daily active users, 300M total profiles, about 20 personalized page or widget loads per user per day, and 10x peak on sale days.",
+   "Latency target: assume p99 under 100 ms at the personalization service, so the app shell can render above-the-fold in under 1 s on 4G.",
+   "Freshness: how quickly must a new action (add to cart, view) change what we show? Assume within the same session (seconds) for session signals, and within a day for long-term taste.",
+   "Read/write ratio: reads dominate (page views), but every click is also a write of a signal. Assume 50:1 reads to writes on the serving store.",
+   "Is it acceptable to show a non-personalized or stale result under failure? Assume yes: a stale or popular-items fallback is far better than an error.",
+   "Privacy and consent: assume we must honour opt-out of personalization and data deletion within 30 days.",
+   "Are we designing the ML models? Assume no: we serve model outputs and features; model training is a dependency."
+  ],
+  "design": [
+   "Baseline: on each request call the recommendation model with the user's history from the main database. Simple and fresh, but it costs 300-800 ms and scales cost linearly with traffic, so it fails the target.",
+   "Offline precompute: nightly and hourly batch jobs generate per-user candidate lists (about 500 item ids per user across widgets) and write them to a sharded in-memory key-value store (EVCache/Redis-style), keyed by user id.",
+   "Online re-rank: the personalization service reads the precomputed candidates plus fresh session features from a feature store (last 20 views, cart, location) and re-ranks the top 200 with a lightweight model in under 20 ms.",
+   "Hydration: item ids are turned into renderable cards (title, price, image, stock) from an item cache that is shared across users and therefore highly cacheable, including at the CDN for images.",
+   "Event path: clicks and views go to Kafka; a stream processor updates session features in the online feature store within 1-2 s and triggers incremental recompute for active users.",
+   "Layered caching: in-process L1 for hot item data (seconds TTL), regional L2 key-value cluster for user candidates and features, CDN for static assets and non-personalized fallbacks.",
+   "Critical path: app -> edge -> page service -> personalization service (parallel fetch candidates + features) -> re-rank -> hydrate from item cache -> response, all with per-call timeouts."
+  ],
+  "defend": [
+   "Bottleneck: hydration fan-out, since a page may show 100 items and each needs price and stock. Batch multi-get from the item cache in one call per shard and keep prices in a separate short-TTL key.",
+   "Scaling reads: replicate cache clusters across zones (Netflix EVCache keeps a copy per zone), use client-side consistent hashing, and serve item data from L1 with 5-30 s TTL to absorb hot items.",
+   "Scaling writes: precompute is bulk-loaded in throttled batches; online signal writes are partitioned by user id in Kafka and the feature store, so there is no global hot spot.",
+   "Tail latency: parallel fetches with per-call budgets (candidates 10 ms, features 10 ms, hydration 20 ms), hedged requests to a second replica after p95, and partial responses where a widget can be dropped.",
+   "Failure behaviour: if the user's candidates are missing or the cache is down, fall back to segment-level lists (city x category) then global popular lists cached at the edge; never fail the page.",
+   "Measure: p50/p99 latency per stage, cache hit ratio for candidates (target 98%+), fallback rate, freshness lag of session features, and business metrics like click-through and conversion per widget."
+  ],
+  "script": "Let me start by pinning down what personalized means here. I will assume an e-commerce home page with recommendation widgets, 100 million daily users, about 20 loads each per day, 10x spikes on sale days, and a p99 of 100 ms at the service. Session actions should show up within seconds and long-term taste within a day, and a stale or popular fallback is acceptable under failure. The naive design calls the model per request against the main database, which is too slow and too expensive. So I split the work: offline jobs precompute about 500 candidates per user into a sharded in-memory key-value cache, an online service fetches those plus fresh session features in parallel, re-ranks a couple of hundred items with a light model, and hydrates them from a shared item cache. Events flow through Kafka to keep session features fresh within a couple of seconds. To defend it: hydration fan-out and tail latency are the bottlenecks, so I batch, replicate per zone, use per-call budgets and hedged requests, and fall back to segment and global popular lists so the page never fails. I would track per-stage p99, candidate hit ratio, fallback rate and click-through."
+ },
+ "brd": {
+  "problem": "The home page and recommendation widgets drive a large share of product discovery, but today they are either generic (same for everyone) or slow when personalized, because recommendations are computed on request against operational databases. On sale days the personalization path is switched off to protect capacity, exactly when relevance matters most. We need a serving system that returns personalized content in tens of milliseconds at 10x peak, with predictable cost.",
+  "goals": [
+   "Serve personalized home and widget data with p99 under 100 ms at the service and under 1 s first meaningful paint on 4G.",
+   "Keep personalization on during sale peaks of 10x normal traffic.",
+   "Reflect in-session behaviour within seconds so recommendations react to what the user is doing now.",
+   "Degrade gracefully to segment or popular content without errors when any dependency fails.",
+   "Reduce compute cost per personalized page view by at least 50% versus on-request model inference."
+  ],
+  "non_goals": [
+   "Training or improving recommendation models (owned by the ML team).",
+   "Search ranking and query understanding.",
+   "Personalized pricing (out of policy).",
+   "Building the client-side rendering framework."
+  ],
+  "stakeholders": [
+   {
+    "who": "Shoppers",
+    "needs": "A relevant, fast home page that reacts to what they just did."
+   },
+   {
+    "who": "Growth and merchandising teams",
+    "needs": "Higher click-through and conversion, plus control over campaigns and boosted placements."
+   },
+   {
+    "who": "ML and data science",
+    "needs": "A reliable path to ship model outputs and features to production, with A/B testing and logging."
+   },
+   {
+    "who": "SRE and platform",
+    "needs": "Predictable cost, capacity headroom for sale days, and clear fallbacks."
+   },
+   {
+    "who": "Privacy and legal",
+    "needs": "Consent-aware personalization and timely deletion of user data."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Personalization service latency",
+    "target": "p50 under 30 ms, p99 under 100 ms"
+   },
+   {
+    "metric": "Personalized coverage",
+    "target": "over 97% of page views served with user-level personalization (not fallback)"
+   },
+   {
+    "metric": "Session freshness",
+    "target": "95% of click and view events reflected in features within 2 s"
+   },
+   {
+    "metric": "Home page click-through rate",
+    "target": "+8% relative versus non-personalized control"
+   },
+   {
+    "metric": "Cost per 1,000 personalized responses",
+    "target": "50% lower than on-request inference baseline"
+   },
+   {
+    "metric": "Availability of home page data",
+    "target": "99.95%, counting fallbacks as available"
+   }
+  ],
+  "constraints": [
+   "Must run in the existing cloud regions with in-memory clusters sized for 10x sale peaks.",
+   "Item price and stock shown must not be more than 60 s stale; checkout re-validates anyway.",
+   "Personalization must respect opt-out and deletion requests within 30 days.",
+   "Mobile clients on 3G/4G in tier-2 and tier-3 cities, so payloads must stay small (under 50 KB compressed)."
+  ],
+  "risks": [
+   {
+    "risk": "Precompute job fails overnight, leaving stale or missing candidates.",
+    "mitigation": "Keep previous version with TTL of 3 days, versioned keys, alert on job SLA, fallback lists."
+   },
+   {
+    "risk": "Cache cluster loss causes a stampede onto the model and databases.",
+    "mitigation": "Zone replicas, request coalescing, rate-limited recompute, segment fallbacks instead of recompute on miss."
+   },
+   {
+    "risk": "Showing out-of-stock or wrong-price items damages trust.",
+    "mitigation": "Separate short-TTL price and stock keys, event-driven invalidation, filter at hydration."
+   },
+   {
+    "risk": "Feedback loops narrow recommendations and hurt discovery.",
+    "mitigation": "Exploration slots, diversity constraints in re-rank, A/B guardrail metrics."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Returning shopper",
+    "needs": "Sees items related to past purchases and recent browsing, loaded instantly."
+   },
+   {
+    "name": "New or logged-out visitor",
+    "needs": "Sees sensible content based on location, device and session, not an empty page."
+   },
+   {
+    "name": "Merchandiser",
+    "needs": "Can boost campaigns and pin placements without breaking personalization."
+   }
+  ],
+  "user_stories": [
+   "As a returning shopper, I want my home page to show items related to what I bought last month so that I find relevant products quickly.",
+   "As a shopper, I want items I just viewed to influence the next widget I scroll to so that the page feels responsive to my intent.",
+   "As a new visitor, I want popular items in my city so that the page is useful before I log in.",
+   "As a shopper, I want prices and stock on cards to be accurate so that I am not disappointed at checkout.",
+   "As a merchandiser, I want to pin a campaign banner into a slot for a segment so that sale promotions get visibility.",
+   "As a data scientist, I want to ship a new ranking model behind an A/B flag so that I can measure lift safely.",
+   "As a privacy-conscious user, I want to turn off personalization so that my history is not used.",
+   "As an SRE, I want the page to fall back automatically when personalization is slow so that the site stays up on sale day."
+  ],
+  "functional": [
+   "GET personalized page layout and widget contents for a user and context (device, location, page type).",
+   "Store and serve precomputed per-user candidate lists per widget with versioning.",
+   "Online re-rank using session and real-time features, with business rules (pins, boosts, filters, diversity).",
+   "Hydrate item ids into cards with title, image URL, price, discount and stock status.",
+   "Ingest user events (view, click, add to cart, purchase) and update online features within seconds.",
+   "Support A/B experiments by assigning users to variants and logging exposures.",
+   "Serve segment-level and global fallback lists when user-level data is missing or slow.",
+   "Honour opt-out by serving non-personalized content and deleting per-user keys on request."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "service p99 under 100 ms; candidate fetch p99 under 10 ms; feature fetch p99 under 10 ms"
+   },
+   {
+    "name": "Throughput",
+    "target": "25k QPS average, 250k QPS sale-day peak"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95% with fallbacks; 99.9% for full user-level personalization"
+   },
+   {
+    "name": "Freshness",
+    "target": "session features within 2 s; candidates recomputed at least daily, hourly for active users"
+   },
+   {
+    "name": "Consistency",
+    "target": "eventual; price and stock at most 60 s stale on cards"
+   },
+   {
+    "name": "Payload size",
+    "target": "under 50 KB compressed per home page response"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "100M DAU, 300M profiles, 20 personalized loads per DAU per day.",
+    "Peak hour is 3x average; sale day peak is 10x average.",
+    "Precomputed candidates: about 500 item ids per user across widgets, stored as compressed arrays with scores.",
+    "Each page shows about 60 items needing hydration.",
+    "Catalog of 150M items, of which about 5M are active in recommendations on a given day."
+   ],
+   "math": [
+    "Average QPS = 100M x 20 / 86,400 = about 23k QPS; sale peak about 230-250k QPS.",
+    "Candidate storage: 500 ids x (8 B id + 2 B score) = 5 KB raw, about 3 KB compressed; 300M x 3 KB = about 0.9 TB; with 2 zone copies about 1.8 TB of RAM.",
+    "Only about 120M users are active in 30 days; storing only them cuts it to about 0.36 TB per copy.",
+    "Hydration: 250k QPS x 60 items = 15M item lookups per second at peak; with L1 hit ratio 90% on hot items, L2 sees 1.5M keys/s, batched into about 250k multi-gets per second.",
+    "Item cache size: 5M active items x 2 KB card = 10 GB, small enough to replicate fully in every zone.",
+    "Event ingest: 100M users x 60 events per day = 6B events/day = about 70k events/s average, 700k/s at peak; at 300 B each that is about 210 MB/s at peak into Kafka.",
+    "Bandwidth out: 250k QPS x 40 KB = 10 GB/s at peak, which is why images go to the CDN and the JSON stays compact."
+   ],
+   "summary": "The hot path is about 250k QPS at peak with a 15M per second item-lookup fan-out. Precomputed candidates need under 1 TB of RAM per copy for active users; the item cache is only about 10 GB and can be replicated everywhere."
+  },
+  "out_of_scope": [
+   "Model training pipelines and offline evaluation.",
+   "Search results personalization.",
+   "Email and push notification recommendation delivery.",
+   "Client-side rendering performance beyond payload size."
+  ]
+ },
+ "hld": {
+  "overview": "The system separates heavy, slow work from the request path. Offline, batch jobs compute candidate lists per user and per segment and bulk-load them into a regional in-memory key-value cache. Online, the personalization service fetches candidates and real-time features in parallel, re-ranks a few hundred items with a light model and business rules, and hydrates ids from a shared item cache. A streaming pipeline keeps session features fresh and nudges incremental recompute. Every stage has a timeout and a fallback, so the page always renders.",
+  "diagram": "  Mobile / Web\n       |\n    [CDN] ---- images, static, fallback popular lists (TTL 60 s)\n       |\n    [Page / BFF service] -- layout + experiment assignment\n       |\n    [Personalization service] (stateless, L1 in-process cache)\n       |  parallel fetch                 |                 |\n       v                                 v                 v\n  [Candidate KV cache]          [Online feature store]  [Item cache]\n   user -> ranked ids            session + user feats    id -> card\n   (EVCache/Redis, per zone)     (Redis/Aerospike)       price/stock keys\n       ^                                 ^                 ^\n       | bulk load                       | stream update   | CDC invalidation\n  [Batch precompute (Spark)]     [Stream processor]   [Catalog / Pricing DBs]\n       ^                                 ^\n  [Data lake: history, models]  <---  [Kafka: user events] <--- clients\n",
+  "components": [
+   {
+    "name": "Page / BFF service",
+    "responsibility": "Builds page layout, assigns experiment variants, calls personalization per widget, enforces the overall page deadline."
+   },
+   {
+    "name": "Personalization service",
+    "responsibility": "Stateless; fetches candidates and features in parallel, re-ranks with a light model, applies business rules, hydrates and returns widgets."
+   },
+   {
+    "name": "Candidate KV cache",
+    "responsibility": "Sharded, zone-replicated in-memory store of precomputed per-user and per-segment candidate lists with versioned keys."
+   },
+   {
+    "name": "Online feature store",
+    "responsibility": "Low-latency store of user and session features (recent views, cart, affinities) updated by the stream processor."
+   },
+   {
+    "name": "Item cache",
+    "responsibility": "Shared cache of item cards, with separate short-TTL price and stock keys invalidated by catalog change events."
+   },
+   {
+    "name": "Batch precompute",
+    "responsibility": "Spark jobs that run candidate generation models for all active users daily and for recently active users hourly, then bulk-load."
+   },
+   {
+    "name": "Stream processor",
+    "responsibility": "Consumes user events, updates session features within seconds, and flags users for incremental recompute."
+   },
+   {
+    "name": "Fallback service and CDN lists",
+    "responsibility": "Segment and global popular lists precomputed every few minutes and served from edge cache."
+   },
+   {
+    "name": "Experiment and logging",
+    "responsibility": "Assigns variants, logs impressions and served lists for training and A/B analysis."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Serve home page",
+    "steps": [
+     "Client requests home page; CDN passes the personalized API call through (static parts are edge cached).",
+     "BFF authenticates, assigns experiment variant, and requests widgets with an overall budget of 80 ms.",
+     "Personalization service checks consent; if opted out, serves segment lists.",
+     "In parallel: multi-get candidates for user (10 ms budget) and features for user and session (10 ms budget).",
+     "Re-rank top 200 candidates with a light model (gradient boosted trees or small MLP) using fresh features, about 5-15 ms.",
+     "Apply business rules: remove purchased and out-of-stock, pins, boosts, diversity per brand and category.",
+     "Hydrate top 60 ids via batched multi-get from L1 then item cache (20 ms budget); drop items that fail to hydrate.",
+     "Return widgets; log impression asynchronously to Kafka."
+    ]
+   },
+   {
+    "name": "Session signal update",
+    "steps": [
+     "Client sends a view or add-to-cart event to the event collector, which writes to Kafka partitioned by user id.",
+     "Stream processor updates session features (last N views, category affinities with decay) in the feature store within about 1 s.",
+     "If the event is strong (add to cart, purchase), mark the user for priority incremental recompute.",
+     "Next widget request reads the new features and re-ranks accordingly."
+    ]
+   },
+   {
+    "name": "Nightly precompute and load",
+    "steps": [
+     "Spark job reads 90 days of history and current model, generates candidates for about 120M active users.",
+     "Writes output as versioned files; loader bulk-writes to cache with keys user:{id}:v{date}, throttled to 30% of cluster capacity.",
+     "Once loaded and validated (coverage, sample quality checks), flips the version pointer; old version expires after 3 days."
+    ]
+   }
+  ],
+  "data_flow": "User events flow from clients into Kafka, then to the stream processor (fresh features) and the data lake (training and batch). Batch jobs read the lake and write candidate lists into the candidate cache. Catalog and pricing changes flow via change data capture to invalidate item cache keys. On the read path, the personalization service pulls from candidate cache, feature store and item cache, and writes impression logs back to Kafka, closing the loop for training."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/home?user_id&device&city&session_id",
+    "request": "Query params and auth token",
+    "response": "{layout_version, widgets: [{widget_id, title, items: [{item_id, title, img, price, mrp, in_stock}], source: user|segment|global}]}",
+    "notes": "Overall deadline 80 ms; partial widgets allowed; Cache-Control private."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/widgets/{widget_id}?user_id&cursor",
+    "request": "widget id, cursor for infinite scroll",
+    "response": "{items[], next_cursor}",
+    "notes": "Used for lazy loading below the fold; re-ranks with latest session features."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/events",
+    "request": "{user_id, session_id, events: [{type, item_id, ts, context}]}",
+    "response": "202 Accepted",
+    "notes": "Batched from client every 5 s or on strong events; idempotent by (session_id, seq)."
+   },
+   {
+    "method": "INTERNAL",
+    "path": "CandidateStore.multiGet(keys)",
+    "request": "[user:{id}:{widget}:v{ver}]",
+    "response": "map key -> packed ids and scores",
+    "notes": "Client-side consistent hashing; zone-local replica first."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/users/{id}/personalization",
+    "request": "{enabled: false}",
+    "response": "{enabled, effective_at}",
+    "notes": "Consent; triggers deletion of per-user keys and features."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "UserCandidates",
+    "store": "Candidate KV cache (EVCache/Redis)",
+    "fields": [
+     "packed int64 item ids",
+     "int16 scores",
+     "model_version",
+     "generated_at"
+    ],
+    "keys": "cand:{user_id}:{widget}:v{yyyymmdd}; pointer key cand:ver -> current version",
+    "notes": "About 3 KB per user compressed; TTL 3 days; replicated per zone."
+   },
+   {
+    "entity": "SessionFeatures",
+    "store": "Online feature store (Redis/Aerospike)",
+    "fields": [
+     "last_20_viewed ids",
+     "cart item ids",
+     "category_affinity map with decay",
+     "updated_at"
+    ],
+    "keys": "feat:{user_id}; session sub-key feat:{user_id}:{session_id}",
+    "notes": "Partitioned by user_id; TTL 30 days for user, 2 h for session."
+   },
+   {
+    "entity": "ItemCard",
+    "store": "Item cache",
+    "fields": [
+     "item_id",
+     "title",
+     "image_url",
+     "brand",
+     "category",
+     "rating"
+    ],
+    "keys": "item:{id}; TTL 10 min plus CDC invalidation",
+    "notes": "Slow-changing fields only."
+   },
+   {
+    "entity": "ItemPriceStock",
+    "store": "Item cache",
+    "fields": [
+     "price",
+     "mrp",
+     "in_stock",
+     "updated_at"
+    ],
+    "keys": "ps:{id}; TTL 60 s plus CDC invalidation",
+    "notes": "Kept separate so price changes do not evict card data."
+   },
+   {
+    "entity": "SegmentList",
+    "store": "Candidate KV cache + CDN",
+    "fields": [
+     "segment id (city x category x age band)",
+     "ranked item ids"
+    ],
+    "keys": "seg:{segment_id}:{widget}",
+    "notes": "Recomputed every 5-15 min; global list cached at CDN."
+   },
+   {
+    "entity": "Impression",
+    "store": "Kafka -> data lake",
+    "fields": [
+     "user_id",
+     "request_id",
+     "widget",
+     "item_ids",
+     "positions",
+     "variant",
+     "source",
+     "ts"
+    ],
+    "keys": "partition by user_id",
+    "notes": "Ground truth for training and A/B analysis."
+   }
+  ],
+  "classes": [
+   {
+    "name": "HomeOrchestrator",
+    "responsibility": "Fans out widget requests with deadlines and assembles partial results.",
+    "methods": [
+     "build(user, ctx, deadline) -> Page",
+     "with_budget(call, ms)"
+    ]
+   },
+   {
+    "name": "CandidateFetcher",
+    "responsibility": "Reads versioned candidate keys with zone-local preference, hedging and fallback chain.",
+    "methods": [
+     "fetch(user, widgets) -> map",
+     "fallback(segment) -> list"
+    ]
+   },
+   {
+    "name": "Reranker",
+    "responsibility": "Scores candidates with a light model and fresh features; applies business rules and diversity.",
+    "methods": [
+     "score(cands, feats) -> list",
+     "apply_rules(list, ctx) -> list",
+     "diversify(list, k)"
+    ]
+   },
+   {
+    "name": "Hydrator",
+    "responsibility": "Batch multi-get of cards and price/stock, L1 cache, request coalescing.",
+    "methods": [
+     "hydrate(ids) -> list[Card]",
+     "invalidate(id)"
+    ]
+   },
+   {
+    "name": "FeatureUpdater (stream)",
+    "responsibility": "Consumes events, updates session features and affinity decay, flags recompute.",
+    "methods": [
+     "on_event(e)",
+     "decay(affinity, dt)",
+     "flag_recompute(user)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Deadline-bounded parallel fetch with fallback chain",
+    "explain": "Fetch candidates and features in parallel, each with its own budget. If candidates are late or missing, use segment list; if features are late, re-rank with user-level features only or skip re-rank. The page deadline is never exceeded.",
+    "pseudocode": "def widget(user, w, deadline):\n    c_f = async(cand.fetch(user, w), timeout=10ms)\n    f_f = async(feats.get(user), timeout=10ms)\n    cands = c_f.result_or(None)\n    source = 'user'\n    if not cands:\n        cands, source = seg.get(segment_of(user), w), 'segment'\n    feats = f_f.result_or(DEFAULT_FEATS)\n    ranked = reranker.score(cands[:200], feats) if time_left(deadline) > 15ms else cands\n    ranked = rules.apply(ranked, user)\n    return hydrator.hydrate(ranked[:60], budget=min(20ms, time_left(deadline)))"
+   },
+   {
+    "name": "Request coalescing for cache misses (single flight)",
+    "explain": "When a hot item's cache entry expires, thousands of concurrent requests would all miss and hit the database. Coalescing lets the first miss load the value while others wait on the same future, so the backend sees one request per key per instance.",
+    "pseudocode": "inflight = {}\ndef get(key):\n    v = l1.get(key)\n    if v: return v\n    if key in inflight: return inflight[key].wait()\n    fut = inflight[key] = Future()\n    try:\n        v = l2.get(key) or db.load(key)\n        l1.put(key, v, ttl=jitter(30s, 20%))\n        fut.set(v); return v\n    finally:\n        del inflight[key]"
+   },
+   {
+    "name": "Exponentially decayed category affinity",
+    "explain": "Keep one score per category; on each event multiply the old score by exp(-dt/half_life_constant) and add the event weight. This gives recency-weighted interest in O(1) per event without storing full history.",
+    "pseudocode": "W = {'view': 1, 'cart': 5, 'purchase': 10}\ndef on_event(user, cat, type, now):\n    s, t = aff.get(user, cat) or (0, now)\n    s = s * exp(-(now - t) / TAU) + W[type]   # TAU ~ 3 days\n    aff.put(user, cat, (s, now))"
+   }
+  ],
+  "sequence": "App      BFF        Personalization   CandidateKV   FeatureStore   ItemCache\n | GET /home |             |               |              |             |\n |---------->| build(80ms) |               |              |             |\n |           |------------>|               |              |             |\n |           |             |-- multiGet -->|              |             |\n |           |             |-- get feats ---------------->|             |\n |           |             |<- 500 ids ----|              |             |\n |           |             |<- session feats -------------|             |\n |           |             | rerank top 200 (10 ms)       |             |\n |           |             | rules + diversity            |             |\n |           |             |-- batch multiGet 60 ids ------------------>|\n |           |             |<- cards + price/stock ---------------------|\n |           |<- widgets --|               |              |             |\n |<- 200 ----|             |               |              |             |\n |           |             |-- impression log (async) --> Kafka         |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "New user with no history (cold start).",
+   "handling": "Serve segment list based on city, device, acquisition channel and session clicks; switch to user list once the stream processor builds features."
+  },
+  {
+   "case": "Nightly precompute fails or lands late.",
+   "handling": "Version pointer stays on yesterday's data (TTL 3 days); alert on SLA; hourly incremental job covers active users."
+  },
+  {
+   "case": "Celebrity or viral item makes one item key extremely hot.",
+   "handling": "L1 in-process cache with short TTL absorbs it; keys replicated across zones; consider key replication with random suffix."
+  },
+  {
+   "case": "Many cache keys expire at the same moment and stampede the database.",
+   "handling": "TTL jitter of plus or minus 20%, request coalescing, and stale-while-revalidate for item cards."
+  },
+  {
+   "case": "Price changes during a flash sale but card shows old price.",
+   "handling": "Price and stock in separate keys with 60 s TTL plus CDC invalidation; checkout re-validates and the cart shows the updated price."
+  },
+  {
+   "case": "User buys an item and then sees it recommended again.",
+   "handling": "Purchase event updates session features within seconds; re-rank filters recently purchased items for that category."
+  },
+  {
+   "case": "Cache zone fails, halving capacity mid-sale.",
+   "handling": "Clients fail over to other zone replicas; precompute does not recompute on miss; fall back to segment lists to avoid overload."
+  },
+  {
+   "case": "User switches devices mid-session.",
+   "handling": "Session features keyed by user id as well as session; both are merged at read time."
+  },
+  {
+   "case": "User opts out of personalization.",
+   "handling": "Consent flag checked before fetch; serve non-personalized lists; asynchronous deletion of per-user keys within SLA."
+  },
+  {
+   "case": "Bot traffic inflates popularity and pollutes features.",
+   "handling": "Filter bot sessions in the stream processor using rate and behaviour signals before updating affinities and popular lists."
+  },
+  {
+   "case": "Slow 3G network makes a 200 KB response time out.",
+   "handling": "Keep payload under 50 KB, lazy-load lower widgets, send image URLs sized for the device."
+  },
+  {
+   "case": "Model version changes and old and new candidates mix across shards during load.",
+   "handling": "Versioned keys and an atomic pointer flip after full load and validation; never overwrite in place."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "EVCache / Redis Cluster",
+   "layer": "Candidate and item cache",
+   "overview": "Distributed in-memory key-value stores; EVCache is Netflix's memcached-based cache with zone replication and client-side sharding.",
+   "why": "Sub-millisecond multi-get for precomputed lists, zone replicas for availability, simple TTL semantics.",
+   "alternatives": "Aerospike (SSD-backed, larger datasets at lower cost), DynamoDB with DAX (managed, higher latency), Cassandra (durable but slower reads)."
+  },
+  {
+   "name": "Aerospike or Redis",
+   "layer": "Online feature store",
+   "overview": "Low-latency key-value stores used to hold features for real-time inference.",
+   "why": "Per-user features need single-digit ms reads and frequent writes from the stream; Aerospike's hybrid memory keeps costs down at hundreds of millions of keys.",
+   "alternatives": "Feast with Redis online store (open-source feature store framework), Tecton (managed), Cassandra (cheaper, slower)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Event bus",
+   "overview": "Partitioned, replicated log for high-throughput event streams.",
+   "why": "Hundreds of thousands of events per second at peak, partitioned by user id for ordered per-user processing; fans out to stream, lake and training.",
+   "alternatives": "Kinesis or Pub/Sub (managed), Pulsar (tiered storage, multi-tenant)."
+  },
+  {
+   "name": "Flink",
+   "layer": "Stream processing",
+   "overview": "Stateful stream processor with exactly-once state and event-time windows.",
+   "why": "Maintains per-user session state and decayed affinities with second-level latency.",
+   "alternatives": "Kafka Streams (simpler, library-based), Spark Structured Streaming (micro-batch, higher latency)."
+  },
+  {
+   "name": "Spark",
+   "layer": "Batch precompute",
+   "overview": "Distributed batch processing engine.",
+   "why": "Runs candidate generation for over 100M users nightly and writes bulk output for loading.",
+   "alternatives": "Flink batch, BigQuery or Snowflake SQL plus UDFs for simpler models."
+  },
+  {
+   "name": "CDN (Akamai/CloudFront)",
+   "layer": "Edge",
+   "overview": "Globally distributed caches for static content and cacheable API responses.",
+   "why": "Serves images and global or segment fallback lists close to users, removing most bytes from the origin.",
+   "alternatives": "Self-hosted edge caches; no CDN (unacceptable for images at this scale)."
+  },
+  {
+   "name": "gRPC + Envoy",
+   "layer": "Service-to-service",
+   "overview": "Binary RPC with HTTP/2 multiplexing; Envoy sidecars for timeouts, retries, hedging and outlier detection.",
+   "why": "Low overhead for fan-out calls and consistent deadline propagation.",
+   "alternatives": "REST/JSON (simpler, more overhead), Thrift."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Caching patterns (cache-aside, read-through, write-through, write-behind, stale-while-revalidate)",
+   "explain": "A cache stores a copy of data closer to the reader so most reads avoid the slower source. How the cache is populated and kept in sync defines the pattern. Cache-aside (lazy loading) has the application check the cache, and on a miss read the source and populate the cache; it is simple and only caches what is read, but the first read is slow and a burst of misses can overload the source. Read-through moves that logic into the cache layer itself. Write-through writes to cache and source together, keeping them in sync at the cost of write latency. Write-behind writes to the cache and flushes to the source asynchronously, which is fast but risks losing writes. A different approach is to treat the cache as the primary serving store for derived data: compute values ahead of time and push them in, so reads never miss in normal operation. Stale-while-revalidate serves a slightly stale value immediately while refreshing it in the background. Each pattern trades freshness, latency, complexity and failure behaviour, and large systems mix them by data type.",
+   "in_this_design": "Candidate lists use the precompute-and-push pattern: the cache is the primary store for derived data, as Netflix does for its home page. Item cards use cache-aside with stale-while-revalidate and CDC invalidation. Price and stock use cache-aside with a 60 s TTL. Fallback lists are pushed to the CDN.",
+   "key_points": [
+    "Cache-aside is simple but exposes the source to miss storms.",
+    "Precompute-and-push makes the cache a primary store for derived data.",
+    "Write-behind is fast but can lose writes; avoid it for critical data.",
+    "Pick the pattern per data type based on freshness needs.",
+    "Stale-while-revalidate hides refresh latency for slowly changing data."
+   ],
+   "qa": [
+    {
+     "q": "Why not cache-aside for candidate lists too?",
+     "a": "A miss would mean running the candidate model inline, costing hundreds of milliseconds and expensive compute. On a sale day a cache loss would cascade into model servers. Pushing precomputed lists means a miss falls back to a segment list, not to recompute."
+    },
+    {
+     "q": "What is the risk of treating a cache as a primary store?",
+     "a": "Data loss on node failure. It is acceptable here because the data is derived and can be regenerated from the lake, and we keep zone replicas plus the previous version, so a single failure does not lose coverage."
+    },
+    {
+     "q": "How do you keep price in the item cache correct?",
+     "a": "Separate short-TTL key for price and stock, explicit invalidation from catalog change events, and the checkout always re-reads the source of truth. The cache is allowed to be briefly stale but never authoritative for payment."
+    }
+   ]
+  },
+  {
+   "name": "Precomputation vs on-demand computation (batch, streaming, lambda/kappa)",
+   "explain": "Any derived result can be computed when it is requested or computed ahead of time. On-demand gives perfect freshness and does no wasted work for users who never come, but puts the full cost and latency on the request path and scales cost with traffic peaks. Precomputation moves the work offline where it can be batched efficiently, so serving becomes a lookup, but results are as stale as the last run and you pay to compute for users who may not return. Streaming sits in between: incremental updates as events arrive give second-level freshness for features that can be updated incrementally, such as counts, last-N lists and decayed scores. The lambda architecture runs batch and streaming paths side by side and merges them at query time; kappa uses one streaming path and replays the log to recompute. In serving systems the practical split is: heavy, slowly changing computation in batch, cheap incremental signals in streaming, and only a light final step on demand. The key question is which parts of the answer change fast enough to matter within a session.",
+   "in_this_design": "Candidate generation (expensive, taste changes slowly) runs in batch nightly and hourly for active users. Session features (last viewed, cart, decayed affinities) are streamed within seconds. Re-ranking of 200 items is on demand, cheap enough at about 10 ms. This hybrid keeps the request path light while reacting to in-session intent.",
+   "key_points": [
+    "On-demand is fresh but slow and costly at peak.",
+    "Precompute turns serving into a lookup but is stale and may waste work.",
+    "Stream the signals that change within a session.",
+    "Keep only a cheap final step (re-rank) on the request path.",
+    "Precompute only for active users to cut storage and compute."
+   ],
+   "qa": [
+    {
+     "q": "Why not precompute for all 300M profiles?",
+     "a": "About 60% have not been active in 30 days; computing and storing lists for them wastes compute and RAM. Inactive users who return get segment lists for their first page, then a priority recompute is triggered."
+    },
+    {
+     "q": "How fresh does the precompute need to be?",
+     "a": "Long-term taste drifts over days, so nightly is fine for most users, and hourly for recently active users captures new purchases. Anything faster belongs in streaming features, not batch."
+    },
+    {
+     "q": "Is this lambda architecture?",
+     "a": "Effectively yes: a batch path for candidates and a streaming path for features, merged at the re-rank step. The merge is simple because they produce different things rather than two versions of the same number."
+    }
+   ]
+  },
+  {
+   "name": "Consistent hashing, replication and zone-aware caching",
+   "explain": "A cache cluster spreads keys across many nodes. With modulo hashing, adding or removing a node remaps most keys, which empties the cache and stampedes the source. Consistent hashing places nodes at many virtual positions on a hash ring and maps each key to the next node clockwise, so a node change moves only about 1/N of keys. Virtual nodes smooth out uneven load. For availability, data is replicated: either each key is stored on R successive nodes, or whole copies of the cluster are kept in each availability zone. Zone replication lets a client read from the copy in its own zone, which cuts latency and cross-zone data transfer cost, and if a zone fails clients switch to another copy. Writes must go to all copies, usually in parallel and asynchronously for a cache, accepting brief divergence. Client-side hashing, where the client library knows the ring, avoids an extra proxy hop; a proxy such as twemproxy or mcrouter centralises routing logic at the cost of a hop.",
+   "in_this_design": "The candidate and item caches are sharded with client-side consistent hashing and fully replicated per availability zone, as EVCache does. Reads go to the local zone copy and fail over to another zone on error. Bulk loads write to all zone copies; a zone outage leaves full data available elsewhere.",
+   "key_points": [
+    "Consistent hashing moves about 1/N of keys when the cluster changes.",
+    "Virtual nodes even out load across physical nodes.",
+    "Zone-local replicas cut latency and cross-zone cost.",
+    "Cache writes to replicas are async; brief divergence is acceptable.",
+    "Client-side routing saves a proxy hop."
+   ],
+   "qa": [
+    {
+     "q": "Why replicate the whole cache per zone instead of R replicas per key across zones?",
+     "a": "Reads stay in-zone, which is lower latency and avoids cross-zone transfer charges at millions of reads per second. The extra RAM is affordable for under 1 TB of active-user data."
+    },
+    {
+     "q": "What happens when you add 10 nodes to a 100-node ring?",
+     "a": "About 10% of keys move to the new nodes and miss once. With precomputed data the loader can warm the new nodes before they take traffic, so there is no visible miss spike."
+    },
+    {
+     "q": "How do you handle a node that is slow but not dead?",
+     "a": "Per-call timeouts plus hedged reads to the replica in another zone after the p95 latency, and outlier detection that ejects the node from the client's view for a cool-down."
+    }
+   ]
+  },
+  {
+   "name": "Cache stampede, request coalescing and TTL jitter",
+   "explain": "A cache stampede (or thundering herd) happens when a popular key expires or is evicted and many concurrent requests miss at the same moment, all go to the source, and overload it. It also happens after a cold start or a cache node failure. Several techniques prevent it. Request coalescing, also called single flight, ensures only one request per key per process fetches from the source while others wait for the same result. A distributed lock or lease extends this across processes: the first miss gets a lease token, others wait briefly or get the stale value. TTL jitter randomises expiry times so keys written together do not expire together. Probabilistic early expiration refreshes a key before it expires, with a probability that grows as expiry approaches, so one request refreshes it while others still hit. Stale-while-revalidate serves the old value while a background refresh runs. Finally, warming caches before they take traffic avoids cold starts after deploys or failovers.",
+   "in_this_design": "Hydrator uses single-flight per item key and TTL jitter of plus or minus 20%. Item cards use stale-while-revalidate. The candidate cache never recomputes on miss, it falls back to segment lists, which removes the largest stampede risk. New cache nodes are warmed by the loader before joining.",
+   "key_points": [
+    "Stampede = many concurrent misses on one key overloading the source.",
+    "Single flight collapses concurrent misses into one fetch per key.",
+    "TTL jitter prevents synchronized expiry.",
+    "Stale-while-revalidate keeps serving while refreshing.",
+    "Never recompute expensive data on miss under peak; fall back instead."
+   ],
+   "qa": [
+    {
+     "q": "A sale banner item is viewed 100k times per second and its card expires. What happens without protection?",
+     "a": "Every instance misses at once and sends a database query, maybe thousands per second for one row, exhausting connections. With single flight each instance sends one query; with stale-while-revalidate users still see the old card meanwhile."
+    },
+    {
+     "q": "Why jitter TTLs?",
+     "a": "Bulk loads and deploys write many keys at the same time. Fixed TTLs make them all expire together, producing a periodic miss spike. Jitter spreads expiries uniformly."
+    },
+    {
+     "q": "Is a distributed lock needed for coalescing?",
+     "a": "Usually per-process coalescing is enough because it caps source load at one request per key per instance. A distributed lease helps when there are thousands of instances and the source is very fragile."
+    }
+   ]
+  },
+  {
+   "name": "Tail latency, fan-out and hedged requests",
+   "explain": "When a request fans out to many backends and must wait for all of them, its latency is the maximum of their latencies. If each backend has a 1% chance of being slow, a request touching 100 backends is slow about 63% of the time. This is why p99 matters more than averages in fan-out systems. Techniques to tame the tail include: setting per-call deadlines derived from an overall budget and propagating them; hedged requests, where a second copy is sent to another replica if the first has not answered by about the p95 time, and the first response wins, costing only a few percent extra load; tied requests that cancel the duplicate when one starts; batching many keys into one multi-get per shard to reduce the number of parallel calls; and designing for partial results, so a late optional component is dropped rather than delaying everything. Background work such as compaction or garbage collection often causes tail spikes, so isolating it or scheduling it away from peak also helps.",
+   "in_this_design": "The home page touches candidate cache, feature store and item cache shards. Each call gets its own budget from the 80 ms page deadline, multi-gets are batched per shard, reads are hedged to the other zone replica after the p95, and widgets can be dropped or served from fallback rather than delaying the page.",
+   "key_points": [
+    "Fan-out latency is the max of the parts; tails compound.",
+    "Budget every call from an overall deadline and propagate it.",
+    "Hedge after p95 to cut p99 at a few percent extra load.",
+    "Batch keys per shard to reduce parallel calls.",
+    "Allow partial responses for optional components."
+   ],
+   "qa": [
+    {
+     "q": "Why does p99 of the page exceed the p99 of each dependency?",
+     "a": "Because the page waits on many calls. Even if each is fast 99% of the time, the probability that at least one is slow grows with the number of calls, so the page sees the tail far more often."
+    },
+    {
+     "q": "Don't hedged requests double the load?",
+     "a": "Only requests slower than the hedge threshold are duplicated. Hedging at p95 adds about 5% load and can cut the p99 dramatically. It must be disabled when the cluster is overloaded so it does not add fuel."
+    },
+    {
+     "q": "What do you return if hydration runs out of time?",
+     "a": "The items that hydrated in time, as long as the widget has a minimum count, otherwise drop the widget. The page still renders and the user rarely notices one fewer row."
+    }
+   ]
+  },
+  {
+   "name": "Event-driven invalidation and change data capture (CDC)",
+   "explain": "Caches go stale when the source changes. TTL-based expiry bounds staleness but either expires too often (wasting work) or too rarely (serving stale data). Event-driven invalidation deletes or updates a cache entry when the source changes. The difficulty is reliably detecting every change: application code that writes to the database and then publishes an event can fail between the two steps (the dual write problem). Change data capture solves this by reading the database's own replication log (MySQL binlog, Postgres WAL) and emitting an event for every committed change, so nothing is missed and order per row is preserved. The transactional outbox pattern is an alternative: write the event into an outbox table in the same transaction, then relay it. Consumers must handle reordering across partitions and duplicates, typically by comparing version numbers or timestamps before overwriting. A safe default is to delete rather than update on invalidation, so the next read repopulates from the source, combined with a TTL as a safety net in case an event is lost.",
+   "in_this_design": "Catalog and pricing databases stream changes via Debezium CDC into Kafka; a consumer deletes item:{id} and ps:{id} keys in every zone. TTLs (10 min for cards, 60 s for price and stock) remain as a backstop. This keeps flash-sale price changes visible within seconds.",
+   "key_points": [
+    "TTL alone forces a choice between staleness and waste.",
+    "CDC reads the commit log, so no change is missed.",
+    "Outbox pattern avoids the dual-write problem from application code.",
+    "Prefer delete over update on invalidation; keep TTL as backstop.",
+    "Use versions to ignore out-of-order events."
+   ],
+   "qa": [
+    {
+     "q": "Why not have the pricing service publish an event after updating the DB?",
+     "a": "If it crashes after commit but before publish, the cache stays stale until TTL. CDC or an outbox ties the event to the commit, so it is emitted exactly when the change is durable."
+    },
+    {
+     "q": "Why delete on change instead of writing the new value?",
+     "a": "Two concurrent updates can arrive out of order and an older value could overwrite a newer one. Deleting forces the next read to fetch the current value from the source."
+    },
+    {
+     "q": "What if the CDC pipeline lags by 5 minutes?",
+     "a": "The 60 s TTL on price and stock caps staleness regardless; we alert on CDC lag; checkout always validates against the source."
+    }
+   ]
+  },
+  {
+   "name": "Graceful degradation and fallback hierarchies",
+   "explain": "Graceful degradation means a system keeps delivering the most important part of its function when some parts fail or are slow, instead of failing completely. It requires deciding up front what is essential and what is optional, and building cheaper substitutes for the optional parts. Common forms are: serving stale data, serving less personalized or less precise data, dropping optional features, and reducing quality (fewer items, smaller images). The mechanism is usually a fallback chain with increasing robustness and decreasing quality, each level cheaper and more cacheable than the last. Fallbacks must be precomputed and tested, because a fallback that itself calls a struggling dependency only spreads the failure. Load shedding and circuit breakers decide when to switch; feature flags let operators force degradation ahead of a known peak. Fallback rate must be measured, because silent degradation can hide real problems and erode business metrics for days. Game days that kill a dependency on purpose are the only reliable way to prove each level of the chain works.",
+   "in_this_design": "The chain is: user-level candidates with re-rank, then user-level without re-rank, then segment lists (city x category x age band) from the KV cache, then a global popular list from the CDN. Each widget declares whether it is optional. Operators can force segment mode on sale day if capacity is short.",
+   "key_points": [
+    "Decide what is essential before the incident.",
+    "Fallbacks get cheaper and more cacheable at each level.",
+    "Never let a fallback depend on the failing component.",
+    "Allow operators to force degradation ahead of known peaks.",
+    "Measure fallback rate; silent degradation hides problems."
+   ],
+   "qa": [
+    {
+     "q": "What is the last resort if everything behind the CDN is down?",
+     "a": "The global popular list cached at the CDN with a long stale-if-error window. The page renders generic but valid content, and checkout works independently."
+    },
+    {
+     "q": "How do you know degradation is costing money?",
+     "a": "Track fallback rate per widget alongside click-through and conversion per source. Experiments show the uplift of user-level over segment lists, which converts fallback rate into revenue impact."
+    },
+    {
+     "q": "Would you ever deliberately degrade?",
+     "a": "Yes: during the first minutes of a big sale, forcing segment mode for below-the-fold widgets frees capacity for checkout. It is a business decision made beforehand with a feature flag."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "When to compute recommendations",
+   "options": "Fully on demand; fully precomputed; precompute candidates plus online re-rank",
+   "choice": "Precompute plus online re-rank",
+   "why": "Keeps the request path to lookups plus a cheap re-rank, while session features still change results within seconds."
+  },
+  {
+   "decision": "Who gets precomputed lists",
+   "options": "All 300M profiles; 30-day active users only",
+   "choice": "30-day active users",
+   "why": "Cuts RAM and batch compute by about 60%; returning inactive users get segment lists for one page, then a priority recompute."
+  },
+  {
+   "decision": "Cache topology",
+   "options": "Single cluster with cross-zone replicas per key; full copy per zone",
+   "choice": "Full copy per zone",
+   "why": "In-zone reads are faster and avoid cross-zone transfer cost; RAM for active users is affordable."
+  },
+  {
+   "decision": "Item data freshness",
+   "options": "Long TTL only; short TTL only; TTL plus CDC invalidation",
+   "choice": "TTL plus CDC invalidation with separate price/stock keys",
+   "why": "Prices change fast during sales; separating keys avoids evicting card data on every price change."
+  },
+  {
+   "decision": "Feature store technology",
+   "options": "Redis all in RAM; Aerospike hybrid SSD; Cassandra",
+   "choice": "Aerospike (or Redis for smaller scale)",
+   "why": "Hundreds of millions of feature records at single-digit ms; SSD-backed index-in-RAM costs far less than full RAM."
+  },
+  {
+   "decision": "Behaviour on candidate miss",
+   "options": "Recompute inline; fall back to segment list",
+   "choice": "Fall back to segment list",
+   "why": "Inline recompute at peak would stampede model servers; fallback is cheap and nearly as good for one page."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Candidate cache zone outage",
+   "behavior": "Clients read from another zone's copy with slightly higher latency; if both slow, segment lists served; no recompute storm."
+  },
+  {
+   "failure": "Feature store slow (p99 50 ms)",
+   "behavior": "Feature fetch times out at 10 ms; re-rank uses default or user-level features; personalization quality dips slightly, latency holds."
+  },
+  {
+   "failure": "Nightly batch fails",
+   "behavior": "Pointer stays on previous version; hourly job covers active users; alert to data team; users see day-old recommendations."
+  },
+  {
+   "failure": "Kafka or stream processor lag",
+   "behavior": "Session features become stale; recommendations stop reacting in-session but still serve; lag alert triggers scale-out."
+  },
+  {
+   "failure": "Item cache stampede after mass expiry",
+   "behavior": "Single flight and jitter cap DB load; stale-while-revalidate keeps serving old cards; DB protected by connection pool limits."
+  },
+  {
+   "failure": "Bad model version pushed",
+   "behavior": "Guardrail metrics (CTR, empty widgets) in canary trigger automatic rollback of the version pointer to the previous candidates."
+  }
+ ],
+ "metrics": [
+  "Latency p50/p99 per stage: candidate fetch, feature fetch, re-rank, hydration, total.",
+  "Candidate cache hit ratio and source mix (user, segment, global) per widget.",
+  "Item cache hit ratio for L1 and L2, and DB queries per second from misses.",
+  "Session feature freshness lag (event time to feature update) p95.",
+  "Precompute job completion time, coverage and validation pass rate.",
+  "Hedged request rate and timeout rate per dependency.",
+  "Business: click-through, add-to-cart and conversion per widget and per source.",
+  "Payload size distribution and client-side time to first meaningful paint."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you make recommendations react to the item the user viewed one second ago?",
+   "a": "The view event goes to Kafka and the stream processor updates last-viewed and affinities within about a second. The next widget call re-ranks with those features, and for 'similar to what you just viewed' we look up a precomputed item-to-item neighbour list keyed by item, which is shared and highly cacheable."
+  },
+  {
+   "q": "What changes if the target is p99 20 ms?",
+   "a": "Drop the online model or move it in-process with a tiny model, colocate the candidate cache in the same zone, use L1 caching for the user's own candidates during a session, and push more into precompute. Possibly ship candidates to the client for local re-ordering."
+  },
+  {
+   "q": "How do you test a new ranking model safely?",
+   "a": "Deploy it as a variant in the re-ranker, assign a small percentage of users, log impressions with variant ids, and compare CTR and conversion with guardrails on latency and empty widgets. Ramp up only if the lift is significant."
+  },
+  {
+   "q": "How do you handle a 10x sale-day spike?",
+   "a": "Pre-scale stateless services and caches based on forecast, warm item caches with sale SKUs, disable hedging under high load, raise L1 TTLs, and use a flag to force segment lists for below-the-fold widgets if needed."
+  },
+  {
+   "q": "Can you cache personalized responses at the CDN?",
+   "a": "Not per user in general, but you can cache per segment: compute the response for a segment key (city, language, new versus returning) and vary on it. That is how the fallback lists are served."
+  },
+  {
+   "q": "How do you delete a user's data for privacy?",
+   "a": "Consent service emits a deletion event; consumers delete candidate keys, feature store records and session data, and the batch job excludes the user. The lake is purged by the data platform's deletion pipeline within 30 days."
+  },
+  {
+   "q": "Why not store everything in one database like Cassandra?",
+   "a": "Cassandra could store candidates durably, but read p99 of 5-15 ms per lookup across many keys would blow the budget. Derived data can be regenerated, so an in-memory cache as primary store is the cheaper, faster choice."
+  }
+ ],
+ "key_points": [
+  "Personalized data cannot be CDN-cached per user, so speed comes from precompute plus in-memory serving.",
+  "Split work: heavy candidate generation in batch, session signals in streaming, cheap re-rank online.",
+  "The cache is the primary store for derived candidates; a miss falls back, never recomputes inline at peak.",
+  "Capacity: about 23k QPS average, 250k peak; under 1 TB of RAM per copy for active users; item cache only about 10 GB.",
+  "Hydration fan-out is the hidden bottleneck: batch per shard, L1 for hot items, separate price/stock keys.",
+  "Tail latency compounds with fan-out: per-call budgets, hedged reads after p95, partial responses.",
+  "Zone-replicated caches with client-side consistent hashing give low latency and survive a zone loss.",
+  "Prevent stampedes with single flight, TTL jitter and stale-while-revalidate.",
+  "CDC-driven invalidation keeps prices fresh; TTL is the backstop.",
+  "Fallback chain: user, segment, global popular at CDN; measure fallback rate as a business metric."
+ ],
+ "quiz": [
+  {
+   "q": "Why can't the personalized home page response simply be cached at the CDN?",
+   "options": [
+    "CDNs cannot cache JSON",
+    "CDNs only cache content for 1 second",
+    "Each user's response differs, so per-user CDN entries would have near-zero hit ratio",
+    "Personalized responses are too large for CDNs"
+   ],
+   "answer": 2,
+   "why": "Hit ratio depends on many users sharing a key. JSON is cacheable, so the first distractor is a misconception; segment-level responses can be CDN cached."
+  },
+  {
+   "q": "With 100M DAU and 20 loads each per day, what is the average QPS?",
+   "options": [
+    "About 2.3k",
+    "About 23k",
+    "About 230k",
+    "About 2.3M"
+   ],
+   "answer": 1,
+   "why": "100M x 20 / 86,400 = about 23k. 230k is the sale-day peak at 10x, not the average."
+  },
+  {
+   "q": "What is the main reason to precompute candidates instead of running the model per request?",
+   "options": [
+    "Moves expensive computation off the request path so serving becomes a fast lookup",
+    "Precomputed results are always fresher",
+    "Models cannot run on servers",
+    "It reduces Kafka load"
+   ],
+   "answer": 0,
+   "why": "Precompute trades freshness for latency and cost. It is not fresher; freshness is restored by streaming features."
+  },
+  {
+   "q": "A user's candidate key is missing during a sale-day peak. Best behaviour?",
+   "options": [
+    "Run the candidate model inline for that user",
+    "Return an error so the client retries",
+    "Show an empty widget",
+    "Serve a segment-level list and queue a priority recompute"
+   ],
+   "answer": 3,
+   "why": "Inline recompute under peak risks a stampede on model servers. Segment lists are cheap and nearly as relevant for one page."
+  },
+  {
+   "q": "A page fans out to 100 shards, each slow 1% of the time. Roughly how often is the page slow?",
+   "options": [
+    "About 1%",
+    "About 10%",
+    "About 63%",
+    "About 99%"
+   ],
+   "answer": 2,
+   "why": "1 - 0.99^100 is about 0.63. The 1% answer forgets that any one slow call delays the whole page."
+  },
+  {
+   "q": "Hedged requests are sent after about the p95 latency. What do they cost?",
+   "options": [
+    "About 5% extra load in exchange for a much lower p99",
+    "Double the load on every request",
+    "No extra load because the first request is cancelled",
+    "They increase p50 latency"
+   ],
+   "answer": 0,
+   "why": "Only slow requests get a duplicate. Cancellation of the loser saves some work, but the duplicate is still sent, so it is not free."
+  },
+  {
+   "q": "Why keep price and stock in separate cache keys from the item card?",
+   "options": [
+    "Redis cannot store numbers and strings together",
+    "It reduces the number of cache lookups",
+    "Cards are stored in the CDN only",
+    "Price changes often; separate short-TTL keys avoid evicting the rest of the card on every change"
+   ],
+   "answer": 3,
+   "why": "It actually adds a lookup, but each changes on its own schedule. The trade is one more key for far fewer evictions and fresher prices."
+  },
+  {
+   "q": "A hot item's cache entry expires and 50k concurrent requests miss. Which technique most directly protects the database?",
+   "options": [
+    "Longer TTL on cold items",
+    "Request coalescing (single flight) per key",
+    "Adding read replicas to Kafka",
+    "Increasing the page deadline"
+   ],
+   "answer": 1,
+   "why": "Single flight collapses concurrent misses into one fetch per instance. Longer TTLs on cold items do nothing for this hot key."
+  },
+  {
+   "q": "Why add random jitter to cache TTLs?",
+   "options": [
+    "So keys written together do not all expire at the same instant",
+    "To make cache hits faster",
+    "To spread keys across shards",
+    "To comply with privacy rules"
+   ],
+   "answer": 0,
+   "why": "Synchronized expiry causes periodic miss spikes. Shard distribution is a hashing concern, not a TTL one."
+  },
+  {
+   "q": "How much RAM per copy for 120M active users at about 3 KB of candidates each?",
+   "options": [
+    "About 36 GB",
+    "About 3.6 TB",
+    "About 360 GB",
+    "About 36 TB"
+   ],
+   "answer": 2,
+   "why": "120M x 3 KB = 360 GB. Storing all 300M profiles would be about 0.9 TB, which is why only active users are kept."
+  },
+  {
+   "q": "Why invalidate the price cache using CDC rather than having the pricing service publish events after its DB write?",
+   "options": [
+    "CDC is lower latency than any application event",
+    "CDC emits from the commit log, so a crash between commit and publish cannot lose the event",
+    "Application events cannot be consumed by caches",
+    "CDC removes the need for TTLs"
+   ],
+   "answer": 1,
+   "why": "The dual-write problem is the reason. CDC still benefits from a TTL backstop, so the last distractor is wrong."
+  },
+  {
+   "q": "Why replicate the full cache in each availability zone?",
+   "options": [
+    "It is required for consistent hashing to work",
+    "It halves RAM usage",
+    "It makes writes strongly consistent",
+    "Reads stay in-zone for lower latency and no cross-zone transfer cost, and a zone loss leaves full copies elsewhere"
+   ],
+   "answer": 3,
+   "why": "Zone copies cost more RAM, not less, and writes are asynchronous. The benefit is latency, cost and availability."
+  },
+  {
+   "q": "Session features are updated from Kafka by a stream processor. What freshness target is realistic?",
+   "options": [
+    "About 1-2 seconds from event to feature",
+    "About 1 millisecond",
+    "About 1 hour",
+    "About 1 day"
+   ],
+   "answer": 0,
+   "why": "Kafka plus a stateful stream job typically gives second-level latency. An hour is batch territory."
+  },
+  {
+   "q": "The p99 of the personalization service jumps to 300 ms but cache and feature store p99 look normal. What is the likely culprit?",
+   "options": [
+    "Nightly batch job running late",
+    "CDN cache misses for images",
+    "Hydration fan-out waiting on many item lookups or an unbatched path",
+    "Kafka consumer lag"
+   ],
+   "answer": 2,
+   "why": "Hydration touches 60 items across shards; unbatched or unbounded calls create the tail. A late batch job would change content, not latency."
+  },
+  {
+   "q": "Which data is best stored with the precompute-and-push pattern?",
+   "options": [
+    "The item's live stock count",
+    "Per-user candidate lists generated by the nightly model",
+    "The user's payment methods",
+    "The current cart contents"
+   ],
+   "answer": 1,
+   "why": "Candidates are derived, expensive to compute and tolerate staleness. Stock and cart change constantly and need the source of truth."
+  },
+  {
+   "q": "A returning user who has been inactive for 6 months opens the app. What do they see first?",
+   "options": [
+    "An error until precompute finishes",
+    "Their recommendations from 6 months ago",
+    "A blank home page",
+    "Segment-level recommendations, with a priority recompute so the next page is personalized"
+   ],
+   "answer": 3,
+   "why": "Inactive users are not precomputed to save cost. Six-month-old lists would have expired and would be poor anyway."
+  },
+  {
+   "q": "What is the safest order of operations when loading a new day's candidates?",
+   "options": [
+    "Write versioned keys, validate coverage, then flip a version pointer",
+    "Overwrite each user's key in place as the job runs",
+    "Delete all old keys first, then write new ones",
+    "Write to the database and let cache-aside populate"
+   ],
+   "answer": 0,
+   "why": "Versioned keys plus a pointer flip are atomic from the reader's view. Overwriting in place mixes versions mid-load."
+  },
+  {
+   "q": "Why is the item cache (about 10 GB) handled differently from candidate cache (hundreds of GB)?",
+   "options": [
+    "It changes less often than candidates",
+    "It must be strongly consistent",
+    "It is small and shared across users, so it can be fully replicated and heavily L1 cached",
+    "It is stored only at the CDN"
+   ],
+   "answer": 2,
+   "why": "Shared data gets high hit ratios and is cheap to replicate. Items change more often than candidates (prices), not less."
+  },
+  {
+   "q": "During a sale, operators want to free capacity for checkout. Which action fits the design?",
+   "options": [
+    "Disable the CDN",
+    "Flip a flag to serve segment lists for below-the-fold widgets",
+    "Turn off TTLs on item cache",
+    "Increase hedging to all requests"
+   ],
+   "answer": 1,
+   "why": "Planned degradation trades a little relevance for capacity. More hedging adds load, the opposite of what is needed."
+  },
+  {
+   "q": "Which metric best reveals silent degradation in this system?",
+   "options": [
+    "Average CPU of the personalization service",
+    "Kafka topic size",
+    "Number of cache nodes",
+    "Fallback rate by widget (share of segment or global responses)"
+   ],
+   "answer": 3,
+   "why": "If fallbacks rise, users get generic content while latency looks fine. CPU can look healthy while quality drops."
+  },
+  {
+   "q": "Which statement about exponentially decayed affinity scores is correct?",
+   "options": [
+    "They give recency-weighted interest in O(1) state per category without storing full history",
+    "They require storing every event to recompute",
+    "They cannot be updated in a stream",
+    "They make old events count more than new ones"
+   ],
+   "answer": 0,
+   "why": "Decay multiplies the old score by a factor based on elapsed time, so older events fade. No full history is needed."
+  }
+ ],
+ "references": [
+  {
+   "title": "ByteByteGo: 4 ways Netflix uses caching to hold user attention",
+   "url": "https://bytebytego.com/guides/4-ways-netflix-uses-caching-to-hold-user-attention"
+  },
+  {
+   "title": "Netflix EVCache wiki",
+   "url": "https://github.com/netflix/evcache/wiki"
+  },
+  {
+   "title": "InfoQ: Netflix global cache",
+   "url": "https://infoq.com/articles/netflix-global-cache"
+  },
+  {
+   "title": "ByteByteGo: How Netflix warms petabytes of cache",
+   "url": "https://blog.bytebytego.com/p/how-netflix-warms-petabytes-of-cache"
+  }
+ ]
+}

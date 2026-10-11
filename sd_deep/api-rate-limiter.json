@@ -1,0 +1,1133 @@
+{
+ "slug": "api-rate-limiter",
+ "title": "Design an API Gateway Rate Limiter",
+ "prompt": "Design a rate limit system for an API gateway.",
+ "group": "caching",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 120,
+ "summary": "A rate limiter sits on the hot path of every API call, so it must add well under a millisecond while enforcing quotas that are global across hundreds of gateway nodes. The core tension is accuracy versus latency and availability: a perfectly global, strongly consistent counter would make every request wait on a remote store, while purely local counters drift by a factor of the fleet size. The senior answer layers a cheap local check, an atomic shared counter in Redis, and load shedding, and it fails open when the limiter itself is sick.",
+ "framework": {
+  "clarify": [
+   "What are we protecting: backend capacity, fairness between tenants, cost control, or abuse prevention? The answer decides the algorithm and whether limits are hard or soft.",
+   "What is the limit keyed on: API key, user id, tenant, IP, endpoint, or a combination such as (tenant, endpoint)? Assume API key plus endpoint class, with an IP limit for unauthenticated calls.",
+   "Scale: assume 1M requests per second at peak across about 400 gateway nodes in 3 regions, 50M issued API keys, 10M active per day.",
+   "Latency budget for the limiter: assume p99 under 1 ms added to the request, because the gateway itself has a 10 ms budget.",
+   "Accuracy: is it acceptable to let through 5-10% over the limit for a few seconds? Assume yes for throughput limits, but billing-grade quotas (monthly call allowance) must be exact.",
+   "Global or per-region limits? Assume per-region enforcement with a global budget split across regions, since cross-region coordination costs 60-150 ms.",
+   "What happens when a client is limited: HTTP 429 with Retry-After and X-RateLimit headers, or queueing? Assume reject, never queue at the gateway.",
+   "How are rules configured and how fast must a change apply? Assume a rules service with per-plan defaults and per-customer overrides, propagating within 30 s.",
+   "Should the limiter fail open or closed if its store is down? Assume fail open for rate limits, with local fallback limits so we never become a single point of failure."
+  ],
+  "design": [
+   "Baseline: an in-process token bucket per key on each gateway node. Simple and fast, but with N nodes a client can get N times the limit, so it is only a first line of defence.",
+   "Shared state: a sharded Redis Cluster per region holding one small hash per (key, rule). An atomic Lua script refills and consumes tokens in one round trip (about 0.3 ms in-region).",
+   "Rule service: rules stored in Postgres, compiled into a versioned snapshot, pushed to gateways via a config channel (etcd watch or polling every 10 s) and cached in memory, so the hot path never reads the rules database.",
+   "Critical path: request arrives, gateway authenticates and resolves (tenant, plan, endpoint class), looks up matching rules from memory, checks the local deny cache, runs the Redis Lua script for each rule (pipelined), then forwards or returns 429 with Retry-After.",
+   "Layered limiters, Stripe style: request-rate limiter per key, concurrent in-flight limiter for expensive endpoints, fleet-wide load shedder that reserves 20% capacity for critical traffic, and a worker utilisation shedder as the last line of defence.",
+   "Headers and API: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After; an admin API for rules and a read API for customers to see their usage.",
+   "Async analytics: every decision is sampled into Kafka for dashboards, abuse detection and tuning, never on the request path."
+  ],
+  "defend": [
+   "Bottleneck: Redis operations per second. At 1M RPS with 2 rules each that is 2M ops/s; a Redis shard does about 100k Lua calls/s, so we need about 20-30 primary shards per region, or we cut calls with local token leasing.",
+   "Scaling reads and writes: every check is a write, so replicas do not help; we scale by sharding on the limit key with consistent hashing (Redis Cluster's 16,384 hash slots), and by leasing batches of tokens to each node for hot keys.",
+   "Hot keys: one huge tenant at 50k RPS lands on one shard. We split its bucket into K sub-buckets (key#0..key#K-1) each with limit/K, chosen by random, or lease 100 tokens at a time to each gateway.",
+   "Failure: Redis call timeout of 5 ms; on timeout or error fail open using a conservative local bucket (limit divided by node count); a circuit breaker stops calling a sick shard for 10 s. Never retry a limiter call on the hot path.",
+   "Degradation: if the backend is overloaded, the load shedder drops lowest-priority classes first (test-mode, batch, then free tier) and restores slowly to avoid flapping.",
+   "Measure: limiter added latency p50/p99, Redis errors and fail-open count, 429 rate by key and endpoint, false-positive complaints, shard CPU and hot-key skew, rule propagation lag."
+  ],
+  "script": "Before drawing anything I want to pin down what the limiter protects and how exact it must be. I will assume 1M requests per second across about 400 gateway nodes in three regions, limits keyed by API key and endpoint class, a budget of under a millisecond at p99, and that short bursts a few percent over the limit are fine but monthly billing quotas must be exact. The baseline is a token bucket in each gateway's memory, which is fast but lets a client get N times its limit across N nodes. So the real design keeps the bucket in a sharded Redis cluster per region and updates it with one atomic Lua script per check, with rules pushed to gateways and cached in memory. On top of the per-key limiter I add a concurrency limiter for expensive endpoints and a fleet load shedder that reserves capacity for critical calls. To defend it: the bottleneck is Redis ops, so I shard by key and lease tokens in batches for hot tenants; the limiter has a 5 ms timeout and fails open to a conservative local bucket, because the limiter must never take the API down; and I would watch added latency, fail-open counts and 429 rates per tenant."
+ },
+ "brd": {
+  "problem": "The public API gateway fronts order, catalog and payment APIs used by sellers, partners and internal apps. A single misbehaving client, a retry storm, or a scraper can consume backend capacity meant for everyone, causing outages during sale events and unpredictable cloud cost. We need a rate limiting system that enforces fair, plan-based quotas consistently across the whole gateway fleet without adding noticeable latency.",
+  "goals": [
+   "Protect backend services from overload so that p99 latency for well-behaved clients holds during spikes.",
+   "Enforce per-plan and per-customer quotas fairly across all gateway nodes and regions.",
+   "Give clients clear, actionable feedback (429 plus Retry-After and remaining-quota headers) so they can back off correctly.",
+   "Let operators change limits and add emergency blocks within 30 seconds without a deploy.",
+   "Keep limiter overhead under 1 ms p99 and never let a limiter failure cause an API outage."
+  ],
+  "non_goals": [
+   "Full bot detection or WAF functionality (handled by the edge security layer).",
+   "Billing and invoicing; we only emit usage events for the billing system.",
+   "Request queueing or traffic shaping that delays requests at the gateway.",
+   "DDoS protection at the network layer (L3/L4), which the CDN provider handles."
+  ],
+  "stakeholders": [
+   {
+    "who": "API platform team",
+    "needs": "A reliable, low-latency limiter with clear operational controls and dashboards."
+   },
+   {
+    "who": "Backend service owners",
+    "needs": "Assurance that their service capacity is not exceeded and that critical calls get priority."
+   },
+   {
+    "who": "External developers and sellers",
+    "needs": "Predictable, documented limits, clear headers, and the ability to see current usage."
+   },
+   {
+    "who": "Product and business teams",
+    "needs": "Plan-based tiers that can be monetised and adjusted per enterprise customer."
+   },
+   {
+    "who": "SRE and security",
+    "needs": "Emergency kill switches, per-IP limits during attacks, and alerts on abnormal 429 rates."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Added latency from the limiter",
+    "target": "p50 under 0.3 ms, p99 under 1 ms"
+   },
+   {
+    "metric": "Backend overload incidents caused by a single client",
+    "target": "zero per quarter"
+   },
+   {
+    "metric": "Accuracy of enforcement",
+    "target": "observed rate within 10% of the configured limit over any 60 s window"
+   },
+   {
+    "metric": "Rule propagation time",
+    "target": "under 30 s to 99% of gateway nodes"
+   },
+   {
+    "metric": "API outages caused by the limiter",
+    "target": "zero; fail-open path exercised in game days"
+   },
+   {
+    "metric": "Support tickets about wrong 429s",
+    "target": "under 5 per month"
+   }
+  ],
+  "constraints": [
+   "Must run inside the existing gateway (Envoy or NGINX based) as a filter or sidecar call.",
+   "Cross-region round trips of 60-150 ms rule out synchronous global coordination.",
+   "Budget: the limiter store must cost less than 3% of gateway infrastructure.",
+   "Limits must be expressible per plan, per customer override, per endpoint class and per IP."
+  ],
+  "risks": [
+   {
+    "risk": "Redis outage blocks or slows every API request.",
+    "mitigation": "5 ms timeout, circuit breaker, fail open to local buckets, multi-AZ replicas."
+   },
+   {
+    "risk": "A bad rule (limit set to 0) blocks a major customer.",
+    "mitigation": "Rules validated, dark-launched in shadow mode, staged rollout, one-click rollback."
+   },
+   {
+    "risk": "Hot tenants overload a single Redis shard.",
+    "mitigation": "Sub-bucket splitting and local token leasing for keys above a QPS threshold."
+   },
+   {
+    "risk": "Clients retry immediately on 429 and amplify load.",
+    "mitigation": "Retry-After header, documented exponential backoff with jitter, escalating penalties for clients that ignore it."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Seller integration developer",
+    "needs": "Know their limits, see remaining quota, and get a clear signal when to retry."
+   },
+   {
+    "name": "Platform operator (SRE)",
+    "needs": "Change limits quickly, block abusive keys or IPs, and see who is being limited and why."
+   },
+   {
+    "name": "Backend service owner",
+    "needs": "Declare capacity per endpoint and get priority protection for critical operations like checkout."
+   }
+  ],
+  "user_stories": [
+   "As a seller developer, I want X-RateLimit-Remaining headers so that I can pace my bulk catalog uploads.",
+   "As a seller developer, I want a Retry-After value on 429 responses so that my client backs off for the right time.",
+   "As an enterprise customer, I want a higher negotiated limit applied to my key so that my integration is not throttled at the default tier.",
+   "As an SRE, I want to block or tighten an abusive API key or IP range within 30 seconds so that an attack stops quickly.",
+   "As an SRE, I want to run a new limit in shadow mode so that I can see who would be blocked before enforcing it.",
+   "As a payments service owner, I want checkout calls to keep capacity reserved during overload so that revenue-critical traffic survives.",
+   "As a product manager, I want usage per key per day exported so that plans can be priced and upsold.",
+   "As a free-tier developer, I want a modest burst allowance so that short spikes in my app do not fail."
+  ],
+  "functional": [
+   "Evaluate one or more limit rules per request, keyed on any combination of API key, tenant, user, IP, endpoint class and HTTP method.",
+   "Support token bucket (rate plus burst), sliding window counter, and concurrent in-flight limits.",
+   "Return 429 with Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset headers; 503 for load shedding.",
+   "Rules service with CRUD API, plan defaults, per-customer overrides, validation, versioning and rollback.",
+   "Shadow (dry-run) mode per rule that logs would-be rejections without enforcing them.",
+   "Emergency block lists for keys and CIDR ranges with TTLs.",
+   "Priority classes so load shedding drops lower classes first.",
+   "Emit sampled decision events and per-key usage aggregates to Kafka."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "limiter adds p99 under 1 ms, p999 under 5 ms (bounded by timeout)"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for the gateway; limiter failure must degrade to fail-open, never to failed requests"
+   },
+   {
+    "name": "Accuracy",
+    "target": "within 10% of limit over 60 s windows for rate limits; exact for monthly quotas (reconciled offline)"
+   },
+   {
+    "name": "Throughput",
+    "target": "1M decisions per second per region at peak, 2M Redis ops per second"
+   },
+   {
+    "name": "Config freshness",
+    "target": "rule changes live on 99% of nodes within 30 s"
+   },
+   {
+    "name": "Durability",
+    "target": "counters are ephemeral and may be lost on failover; rules are durable (Postgres, RPO 0)"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "Peak 1M requests per second per region during sale events; 300k RPS normal.",
+    "About 400 gateway nodes per region, each about 2,500 RPS at peak.",
+    "10M active API keys per day, average 2 rules evaluated per request.",
+    "Each token bucket state is a Redis hash of 2 fields: about 100 bytes with key overhead.",
+    "A Redis shard sustains about 100k simple Lua script calls per second at under 1 ms."
+   ],
+   "math": [
+    "Redis ops: 1M RPS x 2 rules = 2M ops/s; pipelining both rules in one round trip keeps it to 1M round trips/s.",
+    "Shards: 2M ops/s / 100k per shard = 20 primaries; provision 30 for 50% headroom, each with 1 replica = 60 nodes.",
+    "Memory: 10M keys x 3 buckets (per key, per endpoint class, per IP) x 100 B = 3 GB, about 100 MB per shard. Memory is not the constraint; CPU is.",
+    "Network: each call about 200 B request plus 50 B reply; 1M/s x 250 B = 250 MB/s across the cluster, about 8 MB/s per shard.",
+    "With token leasing for the top 1% of keys that send 60% of traffic, leases of 50 tokens cut their Redis calls by 50x, roughly halving total Redis ops.",
+    "Decision events sampled at 1%: 10k events/s x 300 B = 3 MB/s into Kafka, about 260 GB/day."
+   ],
+   "summary": "CPU on Redis is the scaling dimension: about 2M ops/s per region needs 20-30 shards, while memory is only a few GB. Token leasing for hot keys and pipelining cut that roughly in half."
+  },
+  "out_of_scope": [
+   "Network-layer DDoS mitigation and bot fingerprinting.",
+   "Billing, invoicing and plan purchase flows.",
+   "Per-user limits inside downstream services (they may keep their own).",
+   "Queueing or deferred execution of rejected requests."
+  ]
+ },
+ "hld": {
+  "overview": "Each region runs its own limiter: gateway nodes embed a rate limit filter that holds compiled rules and a small local cache, and calls a regional Redis Cluster for shared counters. A rules service owns configuration and pushes versioned snapshots. A load shedder inside the gateway watches backend health and fleet utilisation. Decisions are sampled into Kafka for analytics and abuse detection. Global quotas are split into regional shares and rebalanced every few seconds by a quota coordinator.",
+  "diagram": "  Clients\n     |\n  [CDN / L4 LB] --- per-IP edge limits\n     |\n  +---------------------- Region ----------------------------------+\n  |  Gateway node x400                                              |\n  |  +-----------------------------------------+                    |\n  |  | auth -> RateLimitFilter -> LoadShedder  | --> Backend APIs   |\n  |  |   rules cache | deny cache | lease pool |                    |\n  |  +--------|-----------------------|--------+                    |\n  |           | Lua (pipelined)       | sampled decisions           |\n  |           v                       v                             |\n  |   [Redis Cluster 30 shards]   [Kafka] --> analytics, abuse,     |\n  |      primary + replica                    usage for billing     |\n  |           ^                                                     |\n  |   [Quota coordinator] <-- regional usage (every 5 s)            |\n  +-----------|-----------------------------------------------------+\n              |\n  [Rules service + Postgres] -- versioned snapshot --> all gateways\n",
+  "components": [
+   {
+    "name": "RateLimitFilter (in gateway)",
+    "responsibility": "Resolves rule set for the request from in-memory snapshot, checks deny cache and local leases, calls Redis, sets headers, returns 429."
+   },
+   {
+    "name": "Redis Cluster (counter store)",
+    "responsibility": "Holds token bucket and window counters, sharded by hash slot of the limit key; executes atomic Lua scripts."
+   },
+   {
+    "name": "Rules service",
+    "responsibility": "CRUD for plans, overrides, block lists and shadow rules; validates and publishes versioned snapshots."
+   },
+   {
+    "name": "Config distribution",
+    "responsibility": "Pushes rule snapshots to gateways (etcd watch or long-poll) with version numbers so nodes can report what they run."
+   },
+   {
+    "name": "Concurrency limiter",
+    "responsibility": "Tracks in-flight requests per key for expensive endpoints using a Redis sorted set of request ids with expiry."
+   },
+   {
+    "name": "Load shedder",
+    "responsibility": "Uses fleet utilisation and backend latency signals to drop low-priority traffic first, returning 503."
+   },
+   {
+    "name": "Quota coordinator",
+    "responsibility": "Splits global quotas into regional shares based on recent demand and rebalances every 5 s."
+   },
+   {
+    "name": "Decision pipeline (Kafka + stream jobs)",
+    "responsibility": "Collects sampled decisions and usage aggregates for dashboards, abuse detection and billing."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Request admission",
+    "steps": [
+     "Client request reaches a gateway node; auth resolves API key to tenant, plan and priority class.",
+     "Filter looks up matching rules from the in-memory snapshot (per key, per endpoint class, per IP).",
+     "If the key is in the local deny cache (blocked until time T), return 429 immediately without Redis.",
+     "If the key holds a local lease with tokens remaining, consume locally and admit.",
+     "Otherwise pipeline one Lua call per rule to Redis; each script refills by elapsed time and tries to take 1 token.",
+     "If any rule denies, compute Retry-After from the deficit and refill rate, cache the deny until then, return 429.",
+     "If all allow, set X-RateLimit headers and pass to the load shedder, which may still return 503 for low priority under overload.",
+     "Emit a 1% sampled decision event asynchronously."
+    ]
+   },
+   {
+    "name": "Rule change",
+    "steps": [
+     "Operator edits a rule via admin API; service validates (no zero limits on paid plans without approval).",
+     "Rule is written to Postgres with a new version and optional shadow flag.",
+     "Snapshot builder compiles all rules into a lookup structure and publishes version v+1.",
+     "Gateways receive the push within seconds, swap the snapshot atomically, and report their version.",
+     "Dashboards show propagation; shadow rules emit would-deny events for review before enforcement."
+    ]
+   },
+   {
+    "name": "Redis shard failure",
+    "steps": [
+     "Lua call times out after 5 ms; filter counts the error and admits the request using a local fallback bucket.",
+     "Circuit breaker for that shard opens after 50% errors over 2 s; calls are skipped for 10 s.",
+     "Redis Cluster promotes the replica in about 10-15 s; counters on that shard reset, which briefly allows extra burst.",
+     "Breaker half-opens, probes succeed, and normal enforcement resumes."
+    ]
+   }
+  ],
+  "data_flow": "Rules flow from Postgres through the snapshot builder to every gateway's memory. Requests flow through the gateway filter, which reads and writes counters in Redis with one atomic script per rule. Decisions flow asynchronously to Kafka, then to stream jobs that compute usage per key for dashboards, abuse signals and billing. Regional usage flows to the quota coordinator, which writes adjusted regional shares back into Redis."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "INTERNAL",
+    "path": "RateLimitFilter.check(ctx)",
+    "request": "ctx = {api_key, tenant, plan, endpoint_class, client_ip, priority}",
+    "response": "{allowed, limit, remaining, reset_at, retry_after_ms, rule_id}",
+    "notes": "In-process call; never blocks more than 5 ms."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/ratelimit/rules",
+    "request": "{scope: {plan|key|ip_cidr|endpoint_class}, algorithm, rate, burst, window_s, priority, shadow: bool}",
+    "response": "{rule_id, version}",
+    "notes": "Validated; requires approval for limits below 10% of plan default."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/ratelimit/blocks/{key_or_cidr}",
+    "request": "{reason, ttl_s}",
+    "response": "{block_id, expires_at}",
+    "notes": "Emergency block, propagated with highest priority."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/usage/{api_key}?window=1h",
+    "request": "path and query only",
+    "response": "{rules: [{rule_id, limit, used, remaining, reset_at}]}",
+    "notes": "Customer-facing usage; reads from aggregates, not hot counters."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/ratelimit/snapshot?since_version=v",
+    "request": "since_version",
+    "response": "{version, rules[], blocks[]} or 304",
+    "notes": "Long-poll used by gateways as a fallback to the push channel."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "TokenBucket",
+    "store": "Redis Cluster",
+    "fields": [
+     "tokens (float)",
+     "ts_ms (last refill time)"
+    ],
+    "keys": "rl:{tenant}:{rule_id}:{key} hashed on {tenant} tag or on full key; TTL = 2 x time to refill",
+    "notes": "Hash tag chosen per rule so multi-rule checks for one key can live on the same slot when needed."
+   },
+   {
+    "entity": "WindowCounter",
+    "store": "Redis Cluster",
+    "fields": [
+     "count for current window",
+     "count for previous window"
+    ],
+    "keys": "rlw:{rule_id}:{key}:{window_start}; TTL = 2 windows",
+    "notes": "Sliding window counter approximation; INCR plus GET."
+   },
+   {
+    "entity": "InFlight",
+    "store": "Redis Cluster",
+    "fields": [
+     "sorted set member = request_id",
+     "score = expiry_ms"
+    ],
+    "keys": "rlc:{key}; members expire after 60 s if never released",
+    "notes": "Concurrency limit; ZREMRANGEBYSCORE then ZCARD then ZADD in one script."
+   },
+   {
+    "entity": "Rule",
+    "store": "Postgres",
+    "fields": [
+     "rule_id",
+     "scope_type",
+     "scope_value",
+     "algorithm",
+     "rate_per_s",
+     "burst",
+     "window_s",
+     "priority",
+     "shadow",
+     "version",
+     "created_by",
+     "updated_at"
+    ],
+    "keys": "PK rule_id; index on (scope_type, scope_value)",
+    "notes": "Source of truth; every change creates an audit row."
+   },
+   {
+    "entity": "UsageAggregate",
+    "store": "ClickHouse",
+    "fields": [
+     "api_key",
+     "rule_id",
+     "minute",
+     "allowed",
+     "denied",
+     "shadow_denied"
+    ],
+    "keys": "ORDER BY (api_key, minute)",
+    "notes": "Built from Kafka; feeds dashboards and billing exports."
+   }
+  ],
+  "classes": [
+   {
+    "name": "RuleSnapshot",
+    "responsibility": "Immutable compiled rules indexed by scope for O(1) lookup per request.",
+    "methods": [
+     "match(ctx) -> list[Rule]",
+     "version()",
+     "static build(rules, blocks)"
+    ]
+   },
+   {
+    "name": "RateLimitFilter",
+    "responsibility": "Orchestrates deny cache, leases, Redis calls, headers and fail-open.",
+    "methods": [
+     "check(ctx) -> Decision",
+     "on_response(ctx)",
+     "fallback_decision(rule, key)"
+    ]
+   },
+   {
+    "name": "RedisLimiterClient",
+    "responsibility": "Runs Lua scripts with EVALSHA, pipelining, 5 ms timeout and per-shard circuit breakers.",
+    "methods": [
+     "take(rules, key, n) -> list[Result]",
+     "lease(rule, key, n) -> granted",
+     "release_inflight(key, req_id)"
+    ]
+   },
+   {
+    "name": "LeasePool",
+    "responsibility": "Holds pre-acquired tokens for hot keys locally; refills asynchronously when below low watermark.",
+    "methods": [
+     "try_take(key) -> bool",
+     "refill_async(key)",
+     "expire()"
+    ]
+   },
+   {
+    "name": "LoadShedder",
+    "responsibility": "Computes per-priority admission probability from utilisation and backend latency.",
+    "methods": [
+     "admit(priority) -> bool",
+     "update(signal)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Token bucket in one atomic Lua script",
+    "explain": "Store tokens and the last refill timestamp. On each call compute elapsed time, add elapsed x rate up to the burst capacity, then try to take n tokens. Using Redis server time (TIME) instead of the caller's clock avoids skew between gateway nodes. Because the script runs atomically, two concurrent requests cannot both see the last token.",
+    "pseudocode": "-- KEYS[1]=bucket  ARGV: rate_per_s, burst, n\nlocal t = redis.call('TIME')\nlocal now = t[1]*1000 + math.floor(t[2]/1000)\nlocal b = redis.call('HMGET', KEYS[1], 'tokens', 'ts')\nlocal tokens = tonumber(b[1]) or burst\nlocal ts = tonumber(b[2]) or now\ntokens = math.min(burst, tokens + (now - ts) * rate_per_s / 1000)\nlocal allowed = 0\nif tokens >= n then tokens = tokens - n; allowed = 1 end\nredis.call('HSET', KEYS[1], 'tokens', tokens, 'ts', now)\nredis.call('PEXPIRE', KEYS[1], math.ceil(burst / rate_per_s * 1000) * 2)\nlocal retry_ms = 0\nif allowed == 0 then retry_ms = math.ceil((n - tokens) * 1000 / rate_per_s) end\nreturn {allowed, math.floor(tokens), retry_ms}"
+   },
+   {
+    "name": "Sliding window counter",
+    "explain": "Keep a counter for the current fixed window and the previous one. Estimate the rate over the last W seconds as prev x (fraction of previous window still inside the sliding window) + current. Cloudflare measured this approximation at about 0.003% wrong decisions over 400M requests, with two integers of state per key.",
+    "pseudocode": "def allow(key, limit, W, now):\n    cur_start = now - now % W\n    prev = GET(f'{key}:{cur_start - W}') or 0\n    cur = INCR(f'{key}:{cur_start}'); EXPIRE(.., 2*W)\n    overlap = (W - (now - cur_start)) / W\n    est = prev * overlap + cur\n    return est <= limit"
+   },
+   {
+    "name": "Token leasing for hot keys",
+    "explain": "For keys above about 1k RPS, a gateway node takes a batch of tokens (for example 50, or rate x 50 ms) from the shared bucket in one call and serves them locally. Unused tokens expire after 1 s so a node going idle cannot hoard capacity. This trades a small over-admission window for a 50x drop in Redis calls on the hottest keys.",
+    "pseudocode": "def try_admit(key, rule):\n    lease = pool.get(key)\n    if lease and lease.tokens > 0 and lease.expires > now():\n        lease.tokens -= 1\n        if lease.tokens < LOW_WATER: refill_async(key, rule)\n        return True\n    granted = redis.take(rule, key, n=batch_size(rule))\n    if granted == 0: return False\n    pool.put(key, Lease(tokens=granted - 1, expires=now() + 1.0))\n    return True"
+   },
+   {
+    "name": "Fail-open with local fallback",
+    "explain": "If Redis is slow or the breaker is open, use a local token bucket with rate = limit / active_nodes (learned from the config service). The fleet as a whole still enforces roughly the right limit, and no request waits more than the 5 ms timeout.",
+    "pseudocode": "def check(ctx):\n    try:\n        return redis_client.take(rules, key, timeout_ms=5)\n    except (Timeout, BreakerOpen, RedisError):\n        metrics.inc('ratelimit.fail_open')\n        return local_bucket(key, rate=rule.rate / fleet_size()).take()"
+   }
+  ],
+  "sequence": "Client      Gateway filter        LeasePool      Redis shard        Backend\n  |  POST /orders  |                  |               |                 |\n  |--------------->|                  |               |                 |\n  |                | rules.match(ctx) |               |                 |\n  |                | deny cache? no   |               |                 |\n  |                |---try_take(key)->|               |                 |\n  |                |<---- no lease ---|               |                 |\n  |                |------- EVALSHA bucket (5 ms timeout) --->|          |\n  |                |<------ {1, remaining=37, retry=0} -------|          |\n  |                | shedder.admit(priority) -> yes           |          |\n  |                |--------------------------------------------------->|\n  |                |<---------------------------------------------------|\n  |<-- 200 + X-RateLimit-Remaining: 37                                   |\n  |                |                  |               |                 |\n  |  (bucket empty case)              |               |                 |\n  |<-- 429 Retry-After: 2, deny cached locally for 2 s                   |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Two gateway nodes check the same bucket at the same instant with one token left.",
+   "handling": "The Lua script is atomic on the shard, so exactly one gets the token; never implement read-then-write from the client."
+  },
+  {
+   "case": "Clock skew between gateway nodes of several hundred milliseconds.",
+   "handling": "Use Redis server TIME inside the script so all refill math uses one clock per shard."
+  },
+  {
+   "case": "Burst at a fixed-window boundary lets a client send 2x the limit in one second.",
+   "handling": "Use token bucket or sliding window counter instead of fixed windows for anything user-facing."
+  },
+  {
+   "case": "One enterprise tenant sends 50k RPS, all hashing to one Redis shard.",
+   "handling": "Detect keys above a threshold, split into K sub-buckets or switch to leasing; alert on per-shard CPU skew."
+  },
+  {
+   "case": "Redis primary fails over and counters on that shard reset to empty.",
+   "handling": "Accept a brief over-admission window (at most one burst per key); backend load shedder remains the safety net."
+  },
+  {
+   "case": "Client ignores Retry-After and hammers with retries.",
+   "handling": "Deny cache absorbs repeats locally without Redis; escalate to a temporary block after N violations in a minute."
+  },
+  {
+   "case": "Many clients behind one NAT or corporate proxy share an IP.",
+   "handling": "Prefer authenticated keys over IP; IP limits set high, with allowlists for known partner egress ranges."
+  },
+  {
+   "case": "Long-running requests (report export) under a concurrency limit crash without releasing their slot.",
+   "handling": "In-flight entries carry an expiry score; the script evicts expired members before counting."
+  },
+  {
+   "case": "Rule rollout reaches only half the fleet, so limits differ by node.",
+   "handling": "Snapshots are versioned; dashboards track version skew; rollout completes within 30 s or auto-rolls back."
+  },
+  {
+   "case": "A bad rule sets a paid plan's limit to 0.",
+   "handling": "Validation rejects it without approval, shadow mode first, and a one-click rollback to the previous version."
+  },
+  {
+   "case": "Global quota of 10k RPS but traffic shifts entirely to one region after a failover.",
+   "handling": "Quota coordinator rebalances shares every 5 s based on demand; during the gap each region allows its floor share plus burst."
+  },
+  {
+   "case": "Monthly quota exactly at the limit with concurrent requests across regions.",
+   "handling": "Monthly quotas use a soft check on the hot path plus exact offline reconciliation; small overage is billed or forgiven, not blocked mid-request."
+  },
+  {
+   "case": "Batch request containing 100 operations counted as one call.",
+   "handling": "Charge cost-weighted tokens (n = number of operations or a per-endpoint cost) in the same script."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Envoy (or NGINX/OpenResty)",
+   "layer": "API gateway",
+   "overview": "High-performance L7 proxy with a filter chain; Envoy has local and global rate limit filters with a gRPC rate limit service API.",
+   "why": "The limiter runs as a filter on the existing request path with access to auth context and minimal overhead.",
+   "alternatives": "Kong (plugin ecosystem, Lua based), AWS API Gateway usage plans (managed but coarse, per-stage limits), custom Go gateway (full control, more to build)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Counter store",
+   "overview": "In-memory key-value store sharded across 16,384 hash slots, with single-threaded atomic Lua scripts and replicas.",
+   "why": "Sub-millisecond atomic read-modify-write is exactly what a token bucket needs; TTLs clean up idle keys.",
+   "alternatives": "Memcached (only INCR, so fine for window counters but not token bucket atomicity), DynamoDB conditional writes (durable but 5-10 ms), in-gateway gossip counters (no store but weak accuracy)."
+  },
+  {
+   "name": "Postgres",
+   "layer": "Rules store",
+   "overview": "Relational database with transactions and strong consistency.",
+   "why": "Rules are low volume, need audit history, validation and versioning; correctness matters more than throughput.",
+   "alternatives": "etcd as the only store (simple, but weak querying and audit), DynamoDB (managed, but awkward for relational scopes)."
+  },
+  {
+   "name": "etcd (config push)",
+   "layer": "Config distribution",
+   "overview": "Raft-backed consistent key-value store with watch streams.",
+   "why": "Gateways watch one key for the snapshot version and fetch the blob, giving seconds-level propagation with consistency.",
+   "alternatives": "Polling an HTTP endpoint every 10 s (simpler, slower), Consul KV, a Kafka compacted topic."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Decision and usage events",
+   "overview": "Partitioned, replicated append-only log for high-throughput event streams.",
+   "why": "Decouples the hot path from analytics, billing and abuse detection; handles bursts during sales.",
+   "alternatives": "Kinesis (managed), direct writes to ClickHouse (couples hot path to analytics store)."
+  },
+  {
+   "name": "ClickHouse",
+   "layer": "Usage analytics",
+   "overview": "Columnar OLAP database built for fast aggregations over large event tables.",
+   "why": "Per-key, per-minute usage queries over billions of rows for dashboards and customer usage APIs.",
+   "alternatives": "Druid or Pinot (real-time OLAP), BigQuery (managed batch, higher latency)."
+  },
+  {
+   "name": "Prometheus + Grafana",
+   "layer": "Observability",
+   "overview": "Pull-based metrics with a time-series store and dashboards.",
+   "why": "Tracks limiter latency, fail-open counts, 429 rates, shard skew and config version skew.",
+   "alternatives": "Datadog (managed, costly at high cardinality), OpenTelemetry to any backend."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Rate limiting algorithms (token bucket, leaky bucket, fixed window, sliding log, sliding window counter)",
+   "explain": "A rate limiter answers one question per request: has this caller exceeded R requests per unit of time? The simplest approach is a fixed window counter: count requests in the current minute and reject above R. It needs one integer per key but allows a burst of 2R across a window boundary (R at 0:59 and R at 1:00). A sliding log stores the timestamp of every request and counts those in the last W seconds; it is exact but costs memory proportional to the rate, which is expensive for high-limit keys. The sliding window counter blends the two: keep the previous and current window counts and weight the previous one by how much of it overlaps the sliding window. It uses two integers and is accurate to a few percent. The token bucket models capacity: a bucket holds up to B tokens and refills at R tokens per second; each request takes one. B controls burst and R controls sustained rate, and state is just tokens plus a timestamp, because refill can be computed lazily from elapsed time. The leaky bucket is the mirror image: requests enter a queue that drains at a constant rate, which smooths output but adds queueing delay. Generic cell rate algorithm (GCRA) is an equivalent formulation of the token bucket that stores a single theoretical arrival time. Choosing among these is about burst semantics, memory and accuracy.",
+   "in_this_design": "Token bucket is the default for per-key limits because customers understand rate plus burst and the state is two numbers. Sliding window counter is used for per-IP and abuse rules where only INCR is needed. Fixed windows are only used for daily and monthly quotas, which are reconciled offline anyway.",
+   "key_points": [
+    "Fixed window allows up to 2x the limit at boundaries.",
+    "Sliding log is exact but O(rate) memory per key.",
+    "Sliding window counter is two integers and within a few percent.",
+    "Token bucket separates sustained rate (R) from burst (B) and refills lazily.",
+    "Leaky bucket smooths output but adds latency, so it suits egress shaping, not API admission."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use fixed windows? They are the simplest.",
+     "a": "Because a client can send the full limit at the end of one window and again at the start of the next, doubling the instantaneous rate exactly when the backend is most likely to be stressed. A sliding window counter costs only one more integer and removes that edge effect."
+    },
+    {
+     "q": "How do you pick the burst size for a token bucket?",
+     "a": "Start from the client's legitimate pattern and the backend's tolerance: a burst of 1-2 seconds of sustained rate is a common default. Too small and normal jitter causes 429s; too large and a client can dump a big spike on a backend. I would tune it from shadow-mode data."
+    },
+    {
+     "q": "When would you use a leaky bucket?",
+     "a": "When the goal is to smooth traffic to a downstream with a fixed processing rate, such as sending SMS through a provider capped at 100 per second. At an API gateway we would rather reject quickly than hold requests in a queue."
+    },
+    {
+     "q": "Is the sliding window counter accurate enough?",
+     "a": "It assumes requests in the previous window were evenly spread. Cloudflare measured about 0.003% wrong decisions over 400 million requests, which is plenty for abuse and fairness limits. For billing we reconcile exactly offline."
+    }
+   ]
+  },
+  {
+   "name": "Atomicity and race conditions on shared counters (Lua scripts, compare-and-set)",
+   "explain": "When many servers update the same counter, a read-modify-write sequence is unsafe: two servers can both read tokens = 1, both decide to allow, and both write tokens = 0, letting two requests through for one token. This is the classic lost update race. There are three standard fixes. First, use an atomic primitive the store already offers, such as INCR, which is enough for window counters because the server increments and returns the new value in one step. Second, use optimistic concurrency: read a version, compute, then write only if the version is unchanged (WATCH/MULTI in Redis, conditional writes in DynamoDB), retrying on conflict; this works but conflicts rise sharply on hot keys. Third, move the whole computation to the server so it executes atomically; Redis runs Lua scripts on its single command thread, so no other command interleaves. The cost is that a slow script blocks the shard, so scripts must be short and O(1). Using the store's clock inside the script also removes a second race: callers with skewed clocks would otherwise compute different refill amounts.",
+   "in_this_design": "Every token bucket check is one EVALSHA of a short Lua script that reads tokens and timestamp, refills using Redis TIME, decrements and writes back. Window counters use plain INCR. Concurrency limits use a script over a sorted set. No client ever does GET then SET.",
+   "key_points": [
+    "Read-then-write from clients loses updates under concurrency.",
+    "INCR is enough for counters; token buckets need a script.",
+    "Redis Lua scripts are atomic because Redis executes commands on one thread per shard.",
+    "Keep scripts O(1) and short, or they block the whole shard.",
+    "Use the server clock in the script to avoid skew-driven drift."
+   ],
+   "qa": [
+    {
+     "q": "Why not use WATCH/MULTI transactions instead of Lua?",
+     "a": "Optimistic transactions retry on conflict, and a hot key under heavy concurrency would see many retries, multiplying round trips and latency. A Lua script never conflicts; it simply executes in order on the shard."
+    },
+    {
+     "q": "Can a multi-key script work in Redis Cluster?",
+     "a": "Only if all keys hash to the same slot, which we force with a hash tag such as {tenant}. Otherwise we issue one script per rule and pipeline them; the decision is the AND of results, accepting that a token may be taken from rule A while rule B denies."
+    },
+    {
+     "q": "What does the leaked token from a partially denied multi-rule check cost?",
+     "a": "At most one token per denied request from the rules that passed. It slightly under-admits for that client, which is safe. If it matters, the script can be split into check-all then commit-all on the same slot."
+    }
+   ]
+  },
+  {
+   "name": "Sharding with consistent hashing and hot-key mitigation",
+   "explain": "When one machine cannot handle all keys, we partition them. Hash partitioning maps key to shard with hash(key) mod N, but changing N remaps almost every key. Consistent hashing places shards and keys on a ring so adding a shard moves only about 1/N of keys; Redis Cluster uses a related scheme with 16,384 fixed hash slots assigned to nodes, so resharding moves whole slots. Partitioning spreads keys, but not load per key: if one key gets 50 times the traffic of others, the shard holding it is hot no matter how many shards exist. Hot-key mitigations include splitting a logical key into K physical sub-keys and choosing one at random (each with 1/K of the limit), caching or batching on the client side so fewer requests reach the store, and replicating read-only hot data. For writes, splitting and batching are the main tools. Skew is the rule, not the exception: in API traffic a small fraction of keys typically send most requests, so the design must detect hot keys automatically from sampled traffic rather than wait for a shard to saturate.",
+   "in_this_design": "Bucket keys are spread across about 30 Redis Cluster primaries per region by hash slot. The top keys by QPS, found from sampled decisions, are switched to leased tokens or K sub-buckets so no single shard exceeds about 60% CPU.",
+   "key_points": [
+    "Consistent hashing or hash slots minimise key movement when resharding.",
+    "Sharding spreads keys, not load per key; hot keys need separate treatment.",
+    "Split a hot bucket into K sub-buckets each with limit/K.",
+    "Lease batches of tokens to cut store calls for hot keys.",
+    "Detect hot keys from sampled traffic before a shard saturates."
+   ],
+   "qa": [
+    {
+     "q": "If you split a bucket into 8 sub-buckets, what goes wrong?",
+     "a": "Randomly chosen sub-buckets drain unevenly, so a client may be rejected by one sub-bucket while others still have tokens, slightly under-admitting. With high traffic the law of large numbers evens it out, which is exactly when we split, so the error stays small."
+    },
+    {
+     "q": "Why not just add more shards?",
+     "a": "Adding shards helps aggregate throughput but a single key always lives on one shard. A 50k RPS key on a shard that handles 100k ops per second with other keys is the problem, and only splitting or leasing fixes it."
+    },
+    {
+     "q": "How does Redis Cluster differ from a pure consistent hashing ring?",
+     "a": "It uses fixed 16,384 slots computed by CRC16 of the key, assigned to nodes explicitly. Rebalancing migrates slots rather than relying on ring position, and clients cache the slot map and follow MOVED redirects."
+    }
+   ]
+  },
+  {
+   "name": "Fail-open vs fail-closed and graceful degradation",
+   "explain": "Every dependency can fail, and the design must decide in advance what a component does when its dependency is unavailable. Fail-closed means deny when unsure: correct for security checks such as authentication or authorisation, where a wrong allow is a breach. Fail-open means allow when unsure: correct when the check protects something else and a wrong allow is merely a temporary loss of protection, while a wrong deny is an outage. Graceful degradation adds middle ground: fall back to a less accurate but local mechanism, serve stale data, or drop optional features. The building blocks are tight timeouts so callers do not hang, circuit breakers that stop calling a failing dependency for a cool-down period and probe it with a few requests before closing, and bulkheads that isolate resources so one failing dependency cannot exhaust shared thread pools. Retries on the hot path are usually a mistake for protective checks: they multiply load on a struggling dependency and add latency. The decision must be tested in game days, because the fallback path is rarely exercised in normal operation.",
+   "in_this_design": "The limiter calls Redis with a 5 ms timeout and a per-shard circuit breaker. On failure it fails open to a local bucket sized limit/fleet_size, so enforcement is approximate but present. Emergency blocks are the exception: they are held in each gateway's memory and fail closed. The backend load shedder remains as a second layer.",
+   "key_points": [
+    "Fail closed for security decisions, fail open for protective limits.",
+    "Tight timeout plus circuit breaker keeps a sick dependency off the hot path.",
+    "Degrade to local approximate limits rather than none at all.",
+    "Do not retry limiter calls inline; it amplifies the outage.",
+    "Exercise the fallback in game days so it actually works."
+   ],
+   "qa": [
+    {
+     "q": "Stripe and most gateways fail open. When would you fail closed?",
+     "a": "For limits that exist for security or cost safety rather than capacity, such as login attempt limits, OTP send limits or an expensive paid third-party API. There a wrong allow is worse than a wrong deny, so those rules are marked fail-closed explicitly."
+    },
+    {
+     "q": "Isn't failing open dangerous during an attack?",
+     "a": "It removes per-key accuracy, not all protection: the local fallback bucket still limits each key per node, edge per-IP limits still apply, and the load shedder protects backends. The window is also short because the breaker probes and recovers in seconds."
+    },
+    {
+     "q": "How do you choose the 5 ms timeout?",
+     "a": "From the limiter's latency budget and Redis p99. In-region Redis p99 is under 1 ms, so 5 ms catches real trouble without false timeouts, and it caps the worst case added latency per request."
+    }
+   ]
+  },
+  {
+   "name": "Consistency vs latency for distributed counters (CAP/PACELC, approximate limits)",
+   "explain": "CAP says that during a network partition a system must choose between consistency and availability. PACELC extends it: else, when there is no partition, the system still trades latency against consistency. A globally exact rate limit requires every check to agree on one counter, which means a synchronous call to a single authority or a quorum, costing a network round trip each time and becoming unavailable when that authority is unreachable. The alternative is to accept bounded inaccuracy: each node or region enforces a share of the limit locally and periodically reconciles with others. The error is bounded by the reconciliation interval times the rate. This is the same trade-off as in eventually consistent databases: you get low latency and availability by allowing temporary divergence, then converge. For rate limiting, divergence means letting a few percent extra through for a few seconds, which is almost always acceptable, while a 100 ms cross-region call on every request is not. The skill is stating the error bound explicitly so the business can accept it.",
+   "in_this_design": "Within a region, Redis gives one authoritative counter per key at about 0.3 ms. Across regions we choose latency over consistency: global quotas are split into regional shares, adjusted every 5 s by the quota coordinator, so worst-case over-admission is about 5 s of one region's surplus. Monthly quotas are reconciled exactly offline.",
+   "key_points": [
+    "Exact global limits cost a cross-region round trip per request.",
+    "Regional shares plus periodic rebalance bound the error by interval x rate.",
+    "PACELC: even without partitions, we trade consistency for latency here.",
+    "State the error bound, e.g. at most 5% over for at most 5 s.",
+    "Exactness belongs to offline reconciliation for billing quotas."
+   ],
+   "qa": [
+    {
+     "q": "A customer has a global 10k RPS limit and uses two regions. How do you enforce it?",
+     "a": "Give each region a share proportional to recent demand, say 7k and 3k, with a floor so neither starves. The coordinator reads regional usage every 5 s and shifts shares. Over-admission is bounded by how much demand moves within one interval."
+    },
+    {
+     "q": "What happens during a partition between regions?",
+     "a": "Each region keeps enforcing its last share, so the global total stays at or below the limit. Rebalancing pauses, which may under-admit if traffic shifts, a safe failure."
+    },
+    {
+     "q": "Could you use a CRDT counter instead?",
+     "a": "A G-Counter or PN-Counter merges per-region counts without coordination and suits window counts that are summed. It still converges only after gossip, so it has the same staleness bound; it just removes the central coordinator."
+    }
+   ]
+  },
+  {
+   "name": "Load shedding and priority-based admission control",
+   "explain": "Per-client rate limits protect against one client using too much, but they do not protect a backend when many clients are each within limits and the total exceeds capacity, or when capacity drops because servers failed. Load shedding is admission control based on the server's own health: when utilisation, queue depth or latency crosses a threshold, reject some requests early and cheaply so the rest are served well. Without it, an overloaded server accepts everything, queues grow, every request times out and goodput collapses. Shedding should be prioritised: classify requests (critical, normal, batch, test) and drop the lowest first. It must also be stable: increase shedding quickly but restore slowly with hysteresis to avoid oscillation. Signals include CPU, concurrency in flight versus a target derived from Little's law (concurrency = throughput x latency), and queue wait time. Rejected requests should be cheap to reject, which is why shedding happens at the gateway before any expensive work, and responses should be 503 with Retry-After so clients back off.",
+   "in_this_design": "After per-key limits pass, the gateway's LoadShedder admits by priority class. Following Stripe's pattern, 20% of fleet capacity is reserved for critical operations (checkout, payment); non-critical traffic gets 503 beyond its 80% share. A worker utilisation shedder drops test-mode, then batch, then free-tier traffic during incidents.",
+   "key_points": [
+    "Rate limits protect from one client; load shedding protects from everyone at once.",
+    "Shed early and cheaply, before expensive work.",
+    "Drop lowest priority first; reserve capacity for revenue-critical calls.",
+    "Fast to shed, slow to restore, to avoid flapping.",
+    "Use 503 for overload, 429 for a client exceeding its quota."
+   ],
+   "qa": [
+    {
+     "q": "Why return 503 for shedding but 429 for rate limits?",
+     "a": "429 tells the client it personally exceeded its quota and should slow down. 503 tells it the service is overloaded regardless of its behaviour, so it should retry later, possibly elsewhere. Mixing them confuses client retry logic and dashboards."
+    },
+    {
+     "q": "How do you decide what to shed during a big sale?",
+     "a": "Agree priority classes with business beforehand: checkout and payment are critical, browse is normal, seller bulk uploads and analytics exports are batch. Batch sheds first, then normal, never critical unless the service itself is failing."
+    },
+    {
+     "q": "What signal would you use to trigger shedding?",
+     "a": "In-flight concurrency against a target, because it reacts faster than CPU averages and directly reflects queueing. Combined with backend p99 latency, it gives a clear early warning."
+    }
+   ]
+  },
+  {
+   "name": "Client backoff, retries with jitter, and idempotency",
+   "explain": "A rejected request is not the end of the story; what the client does next decides whether the system recovers. If every client retries immediately, a brief overload becomes a retry storm: load multiplies by the retry count exactly when capacity is lowest. Exponential backoff spaces retries out (100 ms, 200 ms, 400 ms and so on, capped), and jitter randomises each delay so clients that failed together do not retry together. Full jitter, where the delay is uniform between 0 and the backoff cap, spreads load best. Servers help by sending Retry-After with an exact wait time, which a well-behaved client honours over its own schedule. Retries are only safe if the operation is idempotent: a retried POST that creates an order must not create two orders, so clients send an idempotency key and the server stores the result keyed by it for some hours. Retry budgets (for example at most 10% extra requests from retries) cap amplification across a whole fleet of clients.",
+   "in_this_design": "Every 429 carries Retry-After computed from the token deficit and refill rate, plus X-RateLimit headers. SDKs implement full-jitter exponential backoff and idempotency keys. The gateway caches recent denials so a client that ignores Retry-After costs no Redis calls, and repeat offenders are escalated to temporary blocks.",
+   "key_points": [
+    "Immediate retries turn overload into a retry storm.",
+    "Exponential backoff plus full jitter de-synchronises clients.",
+    "Retry-After is the server telling the client exactly when to come back.",
+    "Retries require idempotency keys on non-idempotent operations.",
+    "Retry budgets cap total amplification."
+   ],
+   "qa": [
+    {
+     "q": "How is Retry-After computed for a token bucket?",
+     "a": "The time until enough tokens refill for this request: (n - tokens) / rate, rounded up. For a bucket at 0.2 tokens with rate 5 per second and n = 1, that is 160 ms, rounded to 1 s in the header since Retry-After is in whole seconds."
+    },
+    {
+     "q": "Why does jitter matter if everyone backs off exponentially anyway?",
+     "a": "Without jitter, clients that failed at the same moment compute the same delays and retry in synchronized waves. Jitter spreads them across the interval so the server sees a smooth trickle instead of spikes."
+    },
+    {
+     "q": "Should the gateway itself retry requests to the backend after a 503?",
+     "a": "Only for idempotent requests, at most once, with a retry budget, and never when the 503 came from load shedding, since that adds load to an overloaded system."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Where counters live",
+   "options": "In-process only; central Redis per region; global store across regions",
+   "choice": "Central Redis per region with local leases for hot keys",
+   "why": "In-process allows N x limit; global store adds 60-150 ms. Regional Redis is about 0.3 ms and accurate within the region."
+  },
+  {
+   "decision": "Algorithm",
+   "options": "Fixed window; sliding log; sliding window counter; token bucket",
+   "choice": "Token bucket for per-key limits, sliding window counter for IP and abuse rules",
+   "why": "Token bucket expresses rate and burst with two numbers; sliding window counter needs only INCR and is within a few percent."
+  },
+  {
+   "decision": "Behaviour when the store is down",
+   "options": "Fail closed; fail open with no limits; fail open to local approximate limits",
+   "choice": "Fail open to local approximate limits",
+   "why": "A limiter outage must not become an API outage, but keeping per-node limits preserves most protection."
+  },
+  {
+   "decision": "Global limits across regions",
+   "options": "Synchronous global counter; regional shares with periodic rebalance; CRDT counters with gossip",
+   "choice": "Regional shares rebalanced every 5 s",
+   "why": "Bounded error, no cross-region call on the hot path, and safe under partition (each region stays within its share)."
+  },
+  {
+   "decision": "Limiter deployment",
+   "options": "Separate rate limit service over gRPC; library or filter in the gateway calling Redis directly",
+   "choice": "Filter in the gateway calling Redis directly",
+   "why": "Removes a network hop and a service to operate; a separate service is worth it only when many non-gateway callers need limits."
+  },
+  {
+   "decision": "Exactness of monthly quotas",
+   "options": "Exact on hot path; soft on hot path plus offline reconciliation",
+   "choice": "Soft plus offline reconciliation",
+   "why": "Exactness on the hot path would need global coordination; a small overage on a monthly quota is cheaper to bill or forgive."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Redis shard primary crashes",
+   "behavior": "Calls time out at 5 ms and fail open to local buckets; breaker opens; replica promoted in 10-15 s; counters on that shard restart full, allowing one extra burst."
+  },
+  {
+   "failure": "Whole Redis cluster unreachable",
+   "behavior": "All gateways enforce local buckets at limit / fleet_size; alerts fire; load shedder protects backends; no customer-visible errors from the limiter."
+  },
+  {
+   "failure": "Rules service or Postgres down",
+   "behavior": "Gateways keep running their last snapshot indefinitely; rule changes are blocked until recovery; emergency blocks can be pushed via a break-glass etcd key."
+  },
+  {
+   "failure": "Bad rule deployed",
+   "behavior": "Spike in 429s for affected keys detected by alert within a minute; operator rolls back to previous snapshot version in one action."
+  },
+  {
+   "failure": "Backend overload despite all clients within limits",
+   "behavior": "Load shedder drops batch then normal priority with 503 and Retry-After; critical traffic keeps reserved capacity."
+  },
+  {
+   "failure": "Kafka unavailable",
+   "behavior": "Decision events are dropped from a bounded in-memory buffer; enforcement is unaffected; usage dashboards show a gap that is backfilled from aggregates where possible."
+  }
+ ],
+ "metrics": [
+  "Limiter added latency p50, p99, p999 per gateway node.",
+  "Redis call errors, timeouts and fail-open decisions per second.",
+  "429 rate overall and by API key, endpoint class and plan; 503 shed rate by priority.",
+  "Per-shard Redis CPU and ops per second; top-N hot keys by QPS.",
+  "Rule snapshot version skew across gateways and propagation time.",
+  "Shadow-mode would-deny counts per rule before enforcement.",
+  "Clients ignoring Retry-After (repeat 429 within the Retry-After window).",
+  "Backend p99 latency and in-flight concurrency, to verify the limiter protects them."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you make the limiter itself not a single point of failure?",
+   "a": "It is a library inside every gateway, not a central service; Redis is sharded with replicas; every call has a 5 ms timeout and circuit breaker; and on failure we fall back to local per-node buckets. The worst case is looser limits, never failed requests."
+  },
+  {
+   "q": "How would you rate limit by cost rather than request count?",
+   "a": "Assign each endpoint a cost in tokens, for example a search is 1, a bulk update of 100 items is 100 or a weighted cost, and take n tokens in the same Lua script. This matches the limit to backend work rather than call count."
+  },
+  {
+   "q": "A customer says they are being limited below their plan. How do you debug?",
+   "a": "Check the rule snapshot version their requests hit, the decision events for their key (which rule denied), whether they share an IP limit with others, and whether hot-key splitting is under-admitting. Shadow decisions and per-rule IDs in the 429 response make this quick."
+  },
+  {
+   "q": "How would you support 1,000 distinct rules per tenant?",
+   "a": "Compile rules into an index keyed by scope so each request matches only the few rules that apply, typically 2-4. Rule count affects snapshot size and match time in memory, not Redis load, which scales with matched rules per request."
+  },
+  {
+   "q": "Why not let each backend service rate limit itself?",
+   "a": "Services should still protect themselves, but centralising at the gateway rejects bad traffic before it consumes network, auth and service resources, gives one consistent customer experience and one place to configure plans."
+  },
+  {
+   "q": "How do you roll out a new, tighter limit safely?",
+   "a": "Ship it in shadow mode, look at which keys would be denied and how often, contact affected customers, then enforce for a percentage of nodes, then all, with a kill switch. Stripe recommends exactly this dark-launch approach."
+  },
+  {
+   "q": "What changes if limits must be exact, for example a paid API with strict quotas?",
+   "a": "Route all checks for that key to a single authority with strong consistency, accept the extra latency for that product only, and fail closed. Or sell prepaid credits and decrement with idempotent, durable writes."
+  }
+ ],
+ "key_points": [
+  "The limiter is on every request, so the budget is under 1 ms p99 and it must fail open.",
+  "Token bucket = sustained rate plus burst in two numbers; sliding window counter fixes the fixed-window 2x edge.",
+  "Atomic Lua script per check in Redis; never read-then-write from clients; use Redis TIME to dodge clock skew.",
+  "Redis CPU is the bottleneck: about 2M ops/s per region needs 20-30 shards; memory is only a few GB.",
+  "Hot keys need splitting or token leasing; sharding alone does not fix per-key load.",
+  "Per-region enforcement with global quotas split into shares, rebalanced every 5 s: bounded error, no cross-region hop.",
+  "Layer the defences: per-key rate, concurrency limit, fleet load shedder with reserved capacity for critical calls.",
+  "429 plus Retry-After and X-RateLimit headers; clients use jittered exponential backoff and idempotency keys.",
+  "Rules are pushed and cached in memory, versioned, shadow-tested and instantly reversible.",
+  "Measure added latency, fail-open count, 429 rate per tenant, shard skew and config version skew."
+ ],
+ "quiz": [
+  {
+   "q": "A fixed-window limiter allows 100 requests per minute. What is the most a client can send in any 2-second span?",
+   "options": [
+    "100, because the window caps it",
+    "About 200, by sending 100 at the end of one window and 100 at the start of the next",
+    "About 103, since the limit is spread over 60 s",
+    "50, because the limit is halved across boundaries"
+   ],
+   "answer": 1,
+   "why": "Fixed windows reset at the boundary, so two full windows of traffic can land back to back. The tempting answer 100 assumes a sliding view, which fixed windows do not have."
+  },
+  {
+   "q": "Why does the token bucket check run as a Lua script in Redis rather than as GET then SET from the gateway?",
+   "options": [
+    "The script executes atomically on the shard, so concurrent checks cannot both consume the last token",
+    "Lua is faster than GET and SET because it is compiled",
+    "Redis Cluster does not support SET on hash keys",
+    "It lets the gateway avoid network calls entirely"
+   ],
+   "answer": 0,
+   "why": "Atomicity prevents lost updates. Speed is a side benefit (one round trip), but the core reason is correctness under concurrency, not compilation."
+  },
+  {
+   "q": "At 1M requests per second with 2 rules per request, and about 100k script calls per second per Redis shard, roughly how many primary shards do you need before headroom?",
+   "options": [
+    "About 20",
+    "About 2",
+    "About 200",
+    "About 10,000"
+   ],
+   "answer": 0,
+   "why": "2M ops per second divided by 100k per shard is 20. Pipelining reduces round trips but not script executions, so 10 is too low."
+  },
+  {
+   "q": "A Redis shard fails and the limiter starts timing out. What should the gateway do?",
+   "options": [
+    "Reject all requests with 429 until Redis recovers",
+    "Retry the Redis call three times before deciding",
+    "Admit using a local bucket sized to limit divided by fleet size, and open a circuit breaker",
+    "Queue requests until the replica is promoted"
+   ],
+   "answer": 2,
+   "why": "Fail open with approximate local limits keeps the API up. Retrying inline seems safe but adds latency and load to a struggling dependency."
+  },
+  {
+   "q": "Which limit should fail closed when its store is unavailable?",
+   "options": [
+    "General per-key API rate limit",
+    "Per-endpoint read limit on catalog search",
+    "Burst limit on product listing pages",
+    "OTP SMS send limit per phone number"
+   ],
+   "answer": 3,
+   "why": "An OTP limit protects against cost and abuse; a wrong allow costs money and enables attacks. The others protect capacity, where a brief wrong allow is far cheaper than an outage."
+  },
+  {
+   "q": "One tenant sends 50k RPS and its bucket key saturates one Redis shard. What is the best fix?",
+   "options": [
+    "Add more shards to the cluster",
+    "Split the bucket into K sub-buckets with limit/K each, or lease tokens in batches to gateways",
+    "Move the tenant to a fixed window algorithm",
+    "Increase the key's TTL"
+   ],
+   "answer": 1,
+   "why": "A single key always lives on one shard, so more shards do not help it. Splitting or leasing reduces calls per key."
+  },
+  {
+   "q": "Why use Redis server TIME inside the script instead of passing the gateway's timestamp?",
+   "options": [
+    "Redis rejects scripts that take time arguments",
+    "It avoids the cost of serializing a timestamp",
+    "Gateway clocks can be skewed, making refill amounts inconsistent between nodes",
+    "Gateway clocks only have second precision"
+   ],
+   "answer": 2,
+   "why": "Clock skew of hundreds of milliseconds would let some nodes refill more than others. Serialisation cost is negligible and not the reason."
+  },
+  {
+   "q": "A customer has a global limit and traffic in two regions 120 ms apart. What is the recommended approach?",
+   "options": [
+    "Check a single global counter synchronously on every request",
+    "Let each region enforce the full global limit",
+    "Use the slower region's counter for both",
+    "Split the limit into regional shares and rebalance every few seconds from observed demand"
+   ],
+   "answer": 3,
+   "why": "Regional shares bound the error with no cross-region hop. Enforcing the full limit in each region doubles the allowance."
+  },
+  {
+   "q": "What is the main difference between the HTTP 429 and 503 responses from the gateway?",
+   "options": [
+    "429 means this client exceeded its quota; 503 means the service is overloaded regardless of the client",
+    "429 is retryable and 503 is not",
+    "503 is for authentication failures",
+    "They are interchangeable; pick one consistently"
+   ],
+   "answer": 0,
+   "why": "Distinct codes drive different client behaviour and dashboards. Both are retryable after waiting, so the first distractor is wrong."
+  },
+  {
+   "q": "The sliding window counter estimates the rate as previous_count x overlap + current_count. Previous minute had 42, current has 18, and we are 15 s into the current minute. What is the estimate?",
+   "options": [
+    "60",
+    "28.5",
+    "52.5",
+    "49.5"
+   ],
+   "answer": 3,
+   "why": "Overlap is (60 - 15) / 60 = 0.75, so 42 x 0.75 + 18 = 49.5. 60 is just the sum, which ignores the sliding weight."
+  },
+  {
+   "q": "p99 latency of the gateway jumps from 8 ms to 25 ms but the backend is healthy. Redis CPU on one shard is at 100%. Most likely cause?",
+   "options": [
+    "A hot key or slow script saturating that shard, so calls wait in its queue",
+    "Too many rules in the in-memory snapshot",
+    "Kafka backpressure on decision events",
+    "Clients ignoring Retry-After headers"
+   ],
+   "answer": 0,
+   "why": "A single saturated shard delays all calls routed to it. Kafka is asynchronous and off the hot path, so it would not raise request latency."
+  },
+  {
+   "q": "What does token leasing trade off?",
+   "options": [
+    "Exact accuracy in exchange for higher latency",
+    "Fewer Redis calls for hot keys in exchange for a small over-admission window per node",
+    "Lower memory in exchange for more Redis calls",
+    "Durability of counters in exchange for speed"
+   ],
+   "answer": 1,
+   "why": "A node holding 50 leased tokens can spend them even if others have exhausted the bucket, briefly over-admitting. It does not improve accuracy."
+  },
+  {
+   "q": "Which algorithm best expresses 'sustained 10 requests per second with bursts up to 50'?",
+   "options": [
+    "Fixed window of 600 per minute",
+    "Leaky bucket draining at 50/s",
+    "Token bucket with rate 10/s and capacity 50",
+    "Sliding log with a 5 s window of 50"
+   ],
+   "answer": 2,
+   "why": "Token bucket directly separates rate and burst. A fixed window of 600 per minute would allow all 600 in one second."
+  },
+  {
+   "q": "Why push rules to gateways instead of reading them from Postgres per request?",
+   "options": [
+    "Postgres cannot store rule JSON",
+    "Pushing makes rules strongly consistent across all nodes",
+    "Gateways cannot open database connections",
+    "The hot path must not depend on a database round trip or its availability"
+   ],
+   "answer": 3,
+   "why": "Caching rules in memory removes latency and a dependency. Pushing does not make rules strongly consistent; nodes briefly run different versions."
+  },
+  {
+   "q": "A client keeps sending requests during its Retry-After window. What should the gateway do?",
+   "options": [
+    "Call Redis each time so the counter stays accurate",
+    "Answer from a local deny cache without calling Redis, and escalate repeat offenders to a temporary block",
+    "Silently drop the TCP connection",
+    "Increase the client's limit to stop the errors"
+   ],
+   "answer": 1,
+   "why": "The decision is already known until the reset time, so calling Redis just wastes capacity. Dropping connections hides the reason from legitimate clients."
+  },
+  {
+   "q": "Which statement about concurrency limiters is correct?",
+   "options": [
+    "They cap in-flight requests and need expiry on entries so crashed requests release their slot",
+    "They are the same as token buckets with burst 1",
+    "They only work for GET requests",
+    "They require sticky routing to a single gateway"
+   ],
+   "answer": 0,
+   "why": "Concurrency is about requests in progress, not arrival rate, and leaked slots must expire. A token bucket with burst 1 still limits rate, not concurrency."
+  },
+  {
+   "q": "How should a limit change be rolled out to avoid surprising customers?",
+   "options": [
+    "Deploy to all nodes at once so behaviour is consistent",
+    "Apply only during low-traffic hours",
+    "Shadow mode logging would-deny decisions, then staged enforcement with a kill switch",
+    "Announce it and enforce immediately"
+   ],
+   "answer": 2,
+   "why": "Shadow mode shows real impact before anyone is blocked. Consistent instant rollout sounds tidy but has no safety net."
+  },
+  {
+   "q": "Roughly how much Redis memory do 10M active keys x 3 buckets x 100 bytes need?",
+   "options": [
+    "About 30 MB",
+    "About 3 GB",
+    "About 300 GB",
+    "About 30 TB"
+   ],
+   "answer": 1,
+   "why": "10M x 3 x 100 B = 3 GB. Memory is small; CPU throughput drives the shard count."
+  },
+  {
+   "q": "Under a network partition between regions, how does the regional-share approach behave?",
+   "options": [
+    "Both regions block all traffic until reconnected",
+    "Each region switches to the full global limit",
+    "The coordinator forces strong consistency via quorum",
+    "Each region keeps enforcing its last share, so the global total does not exceed the limit"
+   ],
+   "answer": 3,
+   "why": "Shares sum to the limit, so enforcement stays safe and may only under-admit. Switching to the full limit would double it."
+  },
+  {
+   "q": "Why is retrying a limiter Redis call inline usually a bad idea?",
+   "options": [
+    "It adds latency to every request and multiplies load on an already struggling shard",
+    "Redis rejects duplicate script calls",
+    "Retries make the token bucket non-atomic",
+    "It causes the circuit breaker to never open"
+   ],
+   "answer": 0,
+   "why": "Retries amplify outages and blow the latency budget. Atomicity is per call, so retries do not break it."
+  },
+  {
+   "q": "Which client behaviour best avoids synchronized retry waves after a burst of 429s?",
+   "options": [
+    "Fixed 1 s retry delay for all clients",
+    "Exponential backoff without jitter",
+    "Exponential backoff with full jitter, honouring Retry-After when present",
+    "Immediate retry once, then give up"
+   ],
+   "answer": 2,
+   "why": "Jitter de-correlates clients that failed together. Backoff without jitter still sends them back in lockstep."
+  },
+  {
+   "q": "For billing-grade monthly quotas, what is the pragmatic design?",
+   "options": [
+    "A global strongly consistent counter checked on every request",
+    "Soft check on the hot path plus exact offline reconciliation from usage events",
+    "Ignore quotas and bill purely on usage",
+    "Count only in each gateway's memory"
+   ],
+   "answer": 1,
+   "why": "Exact enforcement inline would need global coordination. Offline reconciliation gives exact billing with no hot path cost."
+  }
+ ],
+ "references": [
+  {
+   "title": "Stripe: Scaling your API with rate limiters",
+   "url": "https://stripe.com/blog/rate-limiters"
+  },
+  {
+   "title": "Cloudflare: Counting things, a lot of different things",
+   "url": "https://blog.cloudflare.com/counting-things-a-lot-of-different-things/"
+  },
+  {
+   "title": "Stripe docs: Rate limits",
+   "url": "https://docs.stripe.com/rate-limits"
+  },
+  {
+   "title": "How to Design a Rate Limiter Using Redis in a System Design Interview",
+   "url": "https://oneuptime.com/blog/post/2026-03-31-redis-design-rate-limiter-interview/view"
+  }
+ ]
+}

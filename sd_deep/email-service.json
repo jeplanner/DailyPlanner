@@ -1,0 +1,1165 @@
+{
+ "slug": "email-service",
+ "title": "Design an email service (Gmail)",
+ "prompt": "Design an email service (Gmail-scale).",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "Email is two systems glued together: an internet-facing SMTP mail transfer system that must interoperate with millions of hostile or sloppy servers, and a per-user mailbox store that must be durable for decades, searchable in milliseconds and synced to many devices. The core tensions are exabyte-scale storage with near-zero data loss tolerance, spam and abuse arriving faster than legitimate mail, and a user who expects a sent message to appear instantly on every device while delivery to other domains is fundamentally asynchronous and retry-based.",
+ "framework": {
+  "clarify": [
+   "Scope: web and mobile clients, send and receive with external domains over SMTP, folders/labels, threads, search, attachments, spam filtering. Calendar, chat and Docs are out.",
+   "Scale: assume 1.8B users, ~500M daily actives, ~100B inbound messages/day of which 50-80% is spam rejected or quarantined, ~10B legitimate deliveries/day.",
+   "Storage quota: 15 GB per free user; average mailbox well under that (assume ~2 GB used). Retention is forever unless the user deletes.",
+   "Durability: losing an accepted email is unacceptable; once we return SMTP 250 OK we own the message. Target 11 nines durability for message bodies.",
+   "Latency: intra-domain delivery under 1 s, inbox list p99 under 200 ms, search p99 under 500 ms; cross-domain delivery is best effort with retries up to 5 days per RFC 5321.",
+   "Consistency: a user must read their own writes (sent mail, label changes) across devices within a second or two; global strong consistency is not required.",
+   "Protocols: our own JSON API for web/mobile plus IMAP/POP3/SMTP submission for third-party clients? Assume yes, as adapters.",
+   "Compliance: data residency and legal hold for enterprise tenants; assume a few regions with users homed in one."
+  ],
+  "design": [
+   "Baseline: SMTP inbound gateways (MX) -> anti-abuse pipeline -> durable delivery queue -> mailbox service writes metadata + blob -> index -> notify clients. Outbound: API -> outbound queue -> SMTP relays -> recipient MX.",
+   "Split storage: message bodies and attachments as immutable compressed blobs (content-addressed, deduplicated) in a blob store; per-user metadata (headers, labels, flags, thread id) in a wide-column store partitioned by user_id.",
+   "Mailbox service is the only writer for a user's metadata and orders mutations with a per-user monotonically increasing history id (modseq) so clients sync incrementally.",
+   "Search: per-user inverted index sharded by user, updated asynchronously from the delivery stream within seconds.",
+   "Client sync: long-lived connection or push (FCM/APNs, IMAP IDLE) carrying 'history id advanced'; client fetches deltas since its last history id.",
+   "Critical path for receive: TCP accept -> SPF/DKIM/DMARC + reputation -> 250 OK only after the message is durably written to a replicated queue -> async delivery into mailbox -> push."
+  ],
+  "defend": [
+   "Bottleneck: storage cost and write amplification. Dedupe attachments and bulk mail by content hash, compress, tier old mail to cold storage with erasure coding (1.5x) instead of 3x replication.",
+   "Scale reads: inbox list is a range scan on (user_id, label, -timestamp) in a single partition; cache the first page per label; bodies fetched lazily.",
+   "Scale writes: partition by user_id so one mailbox's writes serialize on one shard; huge mailing lists fan out asynchronously with per-recipient-domain queues.",
+   "Failure: inbound gateways never ack before durable enqueue, so sender retries cover our crashes. Outbound uses exponential backoff with jitter for 4xx, bounces on 5xx, and per-domain circuit breakers.",
+   "Degradation: if search indexing lags, serve search from the index plus a 'recent mail' scan; if spam ML is down, fall back to rules and reputation and quarantine borderline mail rather than reject.",
+   "Measure: SMTP accept rate, queue age per stage, delivery latency p50/p99, spam false positive/negative rates, index lag, sync lag, blob durability audits."
+  ],
+  "script": "I will treat email as two systems: an SMTP edge that talks to the rest of the internet, and a mailbox platform for our own users. Let me confirm scope: send and receive, labels, threads, search and attachments, at roughly two billion users and tens of billions of deliveries a day, with fifteen gig quotas and zero tolerance for losing mail we have accepted. On the design side, inbound mail hits MX gateways that check SPF, DKIM, DMARC and sender reputation, then we write it to a replicated queue before we say 250 OK. Delivery workers run spam classification, store the body as a deduplicated compressed blob, and write per-user metadata into a wide-column store partitioned by user id, bumping a per-user history id. Search indexing and device push hang off that same stream. Outbound mail goes through a queue with per-domain retries. To defend it, I will talk about storage cost and dedupe, partitioning by user, the ack-after-durable rule, spam as the real bottleneck, and how clients sync incrementally off the history id."
+ },
+ "brd": {
+  "problem": "Users and businesses need a free or low-cost, reliable and secure way to exchange messages with anyone on the internet, keep them for years, and find any of them in seconds. Email is an open federated protocol, so the service must interoperate with every other mail server while defending users from the spam, phishing and malware that make up most inbound traffic.",
+  "goals": [
+   "Never lose a message once accepted; 99.99% availability for read and send.",
+   "Deliver intra-domain mail in under 1 s and inter-domain mail within seconds when the remote side is healthy.",
+   "Keep inbox spam below 0.1% while keeping false positives (legit mail in spam) below 0.05%.",
+   "Instant search across a user's entire history (p99 under 500 ms).",
+   "Keep storage cost per user low enough to offer 15 GB free (dedupe, compression, tiering).",
+   "Seamless multi-device sync: a change on one device shows on others within 2 s."
+  ],
+  "non_goals": [
+   "Real-time chat or video; email is store-and-forward.",
+   "End-to-end encryption by default (would break server-side search and spam filtering).",
+   "Replacing the SMTP standard; we interoperate with it as is.",
+   "Marketing bulk-send platform features (campaign analytics) beyond fair-use limits."
+  ],
+  "stakeholders": [
+   {
+    "who": "Consumers",
+    "needs": "Fast, clean inbox, reliable delivery, generous free storage, good search, mobile push."
+   },
+   {
+    "who": "Workspace / enterprise admins",
+    "needs": "Custom domains, data residency, retention and legal hold, audit logs, DLP rules, SSO."
+   },
+   {
+    "who": "Trust and safety team",
+    "needs": "Signals, models and levers to block spam, phishing, malware and account takeover quickly."
+   },
+   {
+    "who": "Other mail providers and bulk senders",
+    "needs": "Standards compliance, clear bounce codes, feedback loops, postmaster tools."
+   },
+   {
+    "who": "SRE / storage teams",
+    "needs": "Predictable cost per GB, durability audits, safe rolling upgrades, regional failover."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Accepted-message loss",
+    "target": "0 (durability 99.999999999% for stored bodies)"
+   },
+   {
+    "metric": "Intra-domain delivery latency p99",
+    "target": "< 1 s"
+   },
+   {
+    "metric": "Spam in inbox rate",
+    "target": "< 0.1% of delivered mail"
+   },
+   {
+    "metric": "Inbox list latency p99",
+    "target": "< 200 ms"
+   },
+   {
+    "metric": "Search latency p99",
+    "target": "< 500 ms over full history"
+   },
+   {
+    "metric": "Storage cost per active user per year",
+    "target": "Down 20% YoY via dedupe and tiering"
+   }
+  ],
+  "constraints": [
+   "Must speak SMTP (RFC 5321), MIME (RFC 2045), and support SPF, DKIM, DMARC, ARC, MTA-STS and TLS.",
+   "Remote servers may retry for up to 5 days and may be slow, malicious or non-compliant.",
+   "Regulatory: GDPR deletion, data residency for some tenants, lawful access processes.",
+   "Free tier economics: storage and compute must fit within ad-supported or bundled revenue."
+  ],
+  "risks": [
+   {
+    "risk": "Our IPs land on blocklists after a compromised account spams",
+    "mitigation": "Outbound rate limits per user, outbound spam scoring, separate IP pools for risky traffic, fast account lockdown."
+   },
+   {
+    "risk": "Phishing campaign bypasses filters",
+    "mitigation": "Layered defenses (auth, reputation, URL scanning, ML), user report loop retrains within hours, retroactive removal from inboxes."
+   },
+   {
+    "risk": "Storage cost explodes from attachments",
+    "mitigation": "Content-addressed dedupe, compression, cold tier with erasure coding, quota enforcement."
+   },
+   {
+    "risk": "Region outage loses recent mail",
+    "mitigation": "Synchronous replication of the delivery queue across zones before ack; async cross-region replication of mailbox data."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Everyday consumer (Priya, Android)",
+    "needs": "Push notification within seconds, clean inbox, find an old ticket by searching 'PNR'."
+   },
+   {
+    "name": "Knowledge worker (Arjun, Workspace)",
+    "needs": "Threads, labels, filters, large attachments via links, delegate access, offline on laptop."
+   },
+   {
+    "name": "Third-party client user",
+    "needs": "IMAP/SMTP access from Outlook or Thunderbird with app passwords or OAuth."
+   },
+   {
+    "name": "Domain admin",
+    "needs": "Routing rules, retention policies, audit and compliance search."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want to compose and send an email with attachments so that it reaches any address on the internet.",
+   "As a user, I want new mail to appear on my phone within seconds so that I can act on it quickly.",
+   "As a user, I want replies grouped into conversations so that I can follow a discussion.",
+   "As a user, I want to search by sender, subject, words in the body or attachment name so that I can find old mail instantly.",
+   "As a user, I want spam and phishing kept out of my inbox, with the option to mark mistakes, so that the filter learns.",
+   "As a user, I want to apply labels, archive, star and delete, and see those changes on all my devices.",
+   "As a user, I want to undo send within 5-30 s so that I can fix a mistake.",
+   "As an admin, I want to place mailboxes on legal hold so that nothing is purged during litigation."
+  ],
+  "functional": [
+   "Send: compose, reply, forward, CC/BCC, attachments up to 25 MB (larger via drive links), scheduled send, undo send window.",
+   "Receive: accept mail from any SMTP server for our domains, authenticate, classify, deliver to inbox/spam/category.",
+   "Organise: labels (many-to-many, not folders), archive, star, read/unread, mute, snooze, filters run at delivery time.",
+   "Threading: group by In-Reply-To/References headers with subject fallback.",
+   "Search: full text over headers, body, attachment names and extracted text, with operators (from:, has:attachment, before:).",
+   "Sync: incremental delta sync by history id for web, mobile, and IMAP clients; push notifications.",
+   "Bounces and DSNs: generate non-delivery reports for permanent failures; retry transient ones.",
+   "Quota: per-user storage accounting and enforcement with warnings at 80/90/100%."
+  ],
+  "non_functional": [
+   {
+    "name": "Durability",
+    "target": "No loss after SMTP 250 OK; bodies 11 nines; metadata 3-way replicated across zones."
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for read/send API; inbound MX must accept mail even if mailbox tier is degraded (queue absorbs)."
+   },
+   {
+    "name": "Latency",
+    "target": "Inbox list p99 200 ms; open message p99 300 ms; search p99 500 ms; intra-domain delivery p99 1 s."
+   },
+   {
+    "name": "Consistency",
+    "target": "Read-your-writes per user across devices; eventual (seconds) for search index and counters."
+   },
+   {
+    "name": "Security",
+    "target": "TLS everywhere, encryption at rest, per-user index isolation, attachment malware scanning, 2FA."
+   },
+   {
+    "name": "Scalability",
+    "target": "Linear with users via user-id partitioning; handle 3x daily peaks and spam floods of 10x."
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "1.8B accounts, 500M DAU; each DAU receives ~40 legit emails/day and sends ~5.",
+    "Inbound SMTP attempts ~100B/day; ~70% rejected or junked at the edge or by classifiers.",
+    "Average message 75 KB including MIME overhead; 20% carry attachments averaging 500 KB.",
+    "Average stored mailbox 2 GB; dedupe + compression save ~40%.",
+    "Each user opens the app ~15 times a day and does ~1 search per day."
+   ],
+   "math": [
+    "Legit deliveries: 500M x 40 = 20B/day; ~230k deliveries/s average, ~700k/s peak (3x).",
+    "Inbound SMTP connections: 100B/day = ~1.15M/s average; edge must reject cheaply (IP reputation before DATA).",
+    "Ingest bytes: 20B x 75 KB = 1.5 PB/day raw before dedupe; attachments ~2B x 500 KB = 1 PB/day.",
+    "Total stored: 1.8B x 2 GB = 3.6 EB logical; ~2.2 EB after dedupe/compression; with erasure coding 1.5x = ~3.3 EB physical.",
+    "Metadata rows: ~20B new/day x ~1 KB = 20 TB/day; x3 replicas = 60 TB/day.",
+    "Read QPS: 500M x 15 opens = 7.5B list calls/day = ~87k/s average, ~250k/s peak; searches ~6k/s average.",
+    "Push notifications: ~20B/day = 230k/s average; batch per device when bursty."
+   ],
+   "summary": "Roughly 230k deliveries/s (700k peak), a million SMTP connections/s mostly spam, ~2.5 PB/day of new raw bytes and an exabyte-scale corpus. Storage cost and spam rejection, not request rate, dominate the design."
+  },
+  "out_of_scope": [
+   "Calendar, contacts sync and chat integrations.",
+   "Ads targeting and the ranking of promotions tab content.",
+   "Full end-to-end encryption (S/MIME/PGP support only as passthrough).",
+   "Building our own DNS or certificate authority."
+  ]
+ },
+ "hld": {
+  "overview": "Inbound SMTP gateways (MX hosts behind anycast/DNS) accept connections, apply cheap checks (IP reputation, rate limits, recipient validation) before the DATA phase, then SPF/DKIM/DMARC after. A message is acknowledged with 250 only after it is written to a zone-replicated delivery queue. Delivery workers run content classification (spam/phishing/malware), resolve recipients to home cells, apply user filters, store the body in the blob store (content hash, dedupe) and write metadata to the mailbox store, incrementing the user's history id. The change stream feeds the search indexer and the notification service. Clients (web, mobile, IMAP adapters) talk to the Mail API, which reads metadata, fetches bodies lazily and syncs by history id. Outbound mail goes from the Mail API into an outbound queue, through outbound spam scoring, DKIM signing and per-destination-domain SMTP relays with retry scheduling.",
+  "diagram": "  Internet MTAs                                         Web / Mobile / IMAP clients\n       |  SMTP :25                                              |  HTTPS / IMAP\n  +----v-----------+                                   +--------v---------+\n  | MX gateways    |  IP rep, rate limit, SPF/DKIM     | Mail API / IMAP  |\n  | (edge, TLS)    |------------+                      | adapters         |\n  +----------------+            |                      +--+-----+------+--+\n                                v                         |     |      |\n                  +--------------------------+  send      |     |      | search\n                  | Delivery queue (Kafka,   |<-----------+     |      v\n                  | RF=3, acks=all)          |  (internal)      |  +---------------+\n                  +------------+-------------+                  |  | Search svc    |\n                               v                                |  | per-user idx  |\n                  +--------------------------+                  |  +-------^-------+\n                  | Delivery workers: spam ML|                  |          | index\n                  | AV scan, filters, thread |                  |          |\n                  +-----+--------------+-----+                  |  +-------+-------+\n                        |              |                        |  | Change stream |\n             body blob  v              v metadata               |  | (history ids) |\n        +----------------+   +----------------------+<----------+  +-------+-------+\n        | Blob store     |   | Mailbox store        |------------------------^  |\n        | (CAS, EC, tier)|   | (Bigtable/Cassandra) |                           v\n        +----------------+   +----------------------+              +----------------+\n                                                                   | Notifier: push |\n  Outbound: Mail API -> Outbound queue -> spam score -> DKIM sign   | FCM/APNs, IDLE |\n            -> per-domain SMTP relays (retry 4xx w/ backoff, bounce 5xx)  +----------------+\n",
+  "components": [
+   {
+    "name": "MX gateway (SMTP inbound)",
+    "responsibility": "Terminate SMTP+STARTTLS, connection-level reputation and rate limits, recipient validation, SPF/DKIM/DMARC/ARC verification, write to delivery queue then reply 250."
+   },
+   {
+    "name": "Delivery queue",
+    "responsibility": "Durable, zone-replicated log (Kafka-like, RF=3, min.insync=2) decoupling acceptance from mailbox writes; absorbs spikes and downstream outages."
+   },
+   {
+    "name": "Delivery workers",
+    "responsibility": "Spam/phishing ML, attachment AV, user filters, threading, blob write, metadata write, quota accounting; idempotent on message id."
+   },
+   {
+    "name": "Blob store",
+    "responsibility": "Immutable content-addressed storage for raw MIME and attachments; dedupe by SHA-256; hot tier replicated, cold tier erasure-coded (e.g. RS 6+3)."
+   },
+   {
+    "name": "Mailbox store",
+    "responsibility": "Per-user metadata: messages, labels, flags, threads, history log; wide-column, partitioned by user_id, 3 replicas."
+   },
+   {
+    "name": "Search service",
+    "responsibility": "Per-user inverted indexes, sharded by user_id, near-real-time updates from change stream; supports operators and ranking."
+   },
+   {
+    "name": "Mail API / IMAP adapters",
+    "responsibility": "Auth, list/read/modify/send, delta sync by history id, translate IMAP UIDs and flags."
+   },
+   {
+    "name": "Notifier",
+    "responsibility": "Fan out 'mailbox changed' to devices via FCM/APNs, WebSocket and IMAP IDLE, with coalescing."
+   },
+   {
+    "name": "Outbound pipeline",
+    "responsibility": "Outbound spam scoring and per-user send limits, DKIM signing, MX lookup, per-domain queues, retry scheduler, bounce generation, IP pool management."
+   },
+   {
+    "name": "Abuse / reputation service",
+    "responsibility": "IP and domain reputation, user reports, feedback loops, model training and rule pushes."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Receive external mail",
+    "steps": [
+     "Remote MTA resolves our MX and opens SMTP; gateway checks IP reputation and connection rate; rejects known-bad IPs with 554 before DATA.",
+     "RCPT TO validated against directory (unknown user -> 550). Greylisting or tarpitting for suspicious senders.",
+     "DATA received (max 25-50 MB); SPF, DKIM, DMARC evaluated; DMARC p=reject failures rejected.",
+     "Message written to delivery queue with message_id + recipient list; once acks=all succeeds, gateway returns 250 OK.",
+     "Delivery worker consumes, runs spam/phishing/AV, computes body hash, writes blob if absent, applies user filters and threading.",
+     "Worker writes metadata row(s) and appends history entry for the user (history id +1) in one per-user transaction; commits offset.",
+     "Change stream event triggers search indexing (target < 5 s) and push notification to devices."
+    ]
+   },
+   {
+    "name": "Send to external recipient",
+    "steps": [
+     "Client POST /messages/send with idempotency key; API checks quota and per-user send rate (e.g. 500/day consumer).",
+     "Message stored in user's Sent label immediately (read-your-writes), and enqueued to outbound queue after undo-send delay.",
+     "Outbound spam scoring; high-risk messages held or routed to a low-reputation IP pool.",
+     "DKIM sign, group recipients by domain, MX lookup (cached per TTL), open TLS connection (MTA-STS enforced).",
+     "4xx -> retry with exponential backoff and jitter (e.g. 1m, 5m, 15m, 1h ... up to 5 days); 5xx -> bounce DSN to sender."
+    ]
+   },
+   {
+    "name": "Client delta sync",
+    "steps": [
+     "Device holds last history id H. On push or app open, GET /history?since=H.",
+     "API reads the user's history log range (H, now]; returns added/removed message ids and label changes.",
+     "If H is older than the retained history window (e.g. 30 days), API returns 410 and the client does a full resync of recent pages."
+    ]
+   }
+  ],
+  "data_flow": "Bytes flow edge -> durable queue -> workers -> blob store, while small metadata flows to the mailbox store and a change stream. Everything downstream of the mailbox store (search index, push, IMAP IDLE, counters) is derived and rebuildable from the history log, so only the queue, blob store and mailbox store need strict durability. Outbound is the mirror image: API -> mailbox (Sent) -> outbound queue -> relays."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/users/me/messages?label=INBOX&pageToken=&limit=50",
+    "request": "Auth token; label filter; page token (encoded last timestamp+id)",
+    "response": "{messages:[{id, threadId, snippet, from, subject, date, labels, unread}], nextPageToken, historyId}",
+    "notes": "Range scan on (user, label, -ts). First page cached per user/label for 30 s."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/users/me/messages/{id}?format=full",
+    "request": "Message id",
+    "response": "{id, headers, bodyParts:[{mime, size, blobRef or inline}], attachments:[{id, name, size}]}",
+    "notes": "Body streamed from blob store; large attachments via signed URL, 15 min TTL."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/users/me/messages/send",
+    "request": "Idempotency-Key header; {to, cc, bcc, subject, body, attachmentIds, threadId, sendAt}",
+    "response": "202 {id, threadId, state: 'scheduled'|'queued'}",
+    "notes": "Dedupe on idempotency key for 24 h; undo-send cancels while state=scheduled."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/users/me/messages/{id}/modify",
+    "request": "{addLabels:[], removeLabels:[]}",
+    "response": "{id, labels, historyId}",
+    "notes": "Conditional on message existing; bumps history id."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/users/me/history?startHistoryId=H",
+    "request": "Last history id",
+    "response": "{history:[{id, messagesAdded, labelsAdded, labelsRemoved, messagesDeleted}], historyId}",
+    "notes": "410 Gone if H expired -> full sync."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/users/me/search?q=from:irctc has:attachment before:2025/01/01",
+    "request": "Query string with operators",
+    "response": "{messageIds:[...], nextPageToken}",
+    "notes": "Search svc returns ids; API hydrates metadata."
+   },
+   {
+    "method": "SMTP",
+    "path": "MAIL FROM / RCPT TO / DATA on port 25",
+    "request": "RFC 5321 envelope + MIME",
+    "response": "250 OK (queued as <id>) | 4xx temp | 5xx perm",
+    "notes": "250 only after durable enqueue."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "MessageMeta",
+    "store": "Bigtable / Cassandra (mailbox store)",
+    "fields": [
+     "user_id",
+     "message_id",
+     "thread_id",
+     "rfc822_msgid",
+     "from",
+     "to",
+     "subject",
+     "snippet",
+     "internal_date",
+     "size",
+     "labels (set)",
+     "flags",
+     "blob_refs",
+     "spam_score"
+    ],
+    "keys": "Partition key user_id; clustering message_id (time-sortable, e.g. Snowflake)",
+    "notes": "Row per message per recipient user. Labels stored as set; label index rows below."
+   },
+   {
+    "entity": "LabelIndex",
+    "store": "Bigtable / Cassandra",
+    "fields": [
+     "user_id",
+     "label_id",
+     "reverse_ts",
+     "message_id",
+     "thread_id"
+    ],
+    "keys": "Partition (user_id, label_id); clustering reverse_ts, message_id",
+    "notes": "Powers inbox listing as a single-partition range scan. Updated in same batch as MessageMeta."
+   },
+   {
+    "entity": "History",
+    "store": "Bigtable / Cassandra",
+    "fields": [
+     "user_id",
+     "history_id",
+     "op (add/del/label)",
+     "message_id",
+     "labels_delta",
+     "ts"
+    ],
+    "keys": "Partition user_id; clustering history_id ascending",
+    "notes": "Retained 30 days; drives delta sync and change stream."
+   },
+   {
+    "entity": "Blob",
+    "store": "Blob store (Colossus/S3-like)",
+    "fields": [
+     "sha256",
+     "size",
+     "compression",
+     "refcount",
+     "tier",
+     "encryption_key_id"
+    ],
+    "keys": "Key sha256 of normalized content",
+    "notes": "Immutable; refcount for GC; per-tenant keys for enterprise (dedupe only within key domain)."
+   },
+   {
+    "entity": "UserQuota",
+    "store": "Spanner / strongly consistent KV",
+    "fields": [
+     "user_id",
+     "bytes_used",
+     "limit",
+     "updated_at"
+    ],
+    "keys": "Primary key user_id",
+    "notes": "Updated transactionally with message insert/delete via delta counters."
+   },
+   {
+    "entity": "OutboundJob",
+    "store": "Outbound queue + scheduler table",
+    "fields": [
+     "job_id",
+     "message_id",
+     "recipient_domain",
+     "rcpts",
+     "attempt",
+     "next_attempt_at",
+     "last_code"
+    ],
+    "keys": "Partition by recipient_domain hash",
+    "notes": "Per-domain concurrency limits; expire after 5 days with bounce."
+   }
+  ],
+  "classes": [
+   {
+    "name": "SmtpSession",
+    "responsibility": "One inbound SMTP conversation state machine.",
+    "methods": [
+     "onConnect(ip)",
+     "onMailFrom(addr)",
+     "onRcptTo(addr)",
+     "onData(stream)",
+     "verifyAuth(): AuthResult",
+     "enqueueDurably(msg): QueueAck"
+    ]
+   },
+   {
+    "name": "DeliveryWorker",
+    "responsibility": "Consume queue and deliver each message idempotently to each recipient mailbox.",
+    "methods": [
+     "process(record)",
+     "classify(msg): Verdict",
+     "storeBlob(bytes): sha256",
+     "applyFilters(user, msg)",
+     "thread(user, msg): threadId",
+     "commit(user, meta)"
+    ]
+   },
+   {
+    "name": "MailboxRepository",
+    "responsibility": "Per-user metadata reads and writes with history ids.",
+    "methods": [
+     "insertMessage(user, meta)",
+     "modifyLabels(user, id, add, rm)",
+     "listByLabel(user, label, page)",
+     "historySince(user, h)"
+    ]
+   },
+   {
+    "name": "OutboundScheduler",
+    "responsibility": "Per-domain retry, backoff and bounce handling.",
+    "methods": [
+     "enqueue(job)",
+     "nextDue(domain)",
+     "onResult(job, code)",
+     "backoff(attempt): duration",
+     "bounce(job)"
+    ]
+   },
+   {
+    "name": "SearchIndexer",
+    "responsibility": "Consume change stream and update per-user index.",
+    "methods": [
+     "onAdd(user, msg)",
+     "onDelete(user, id)",
+     "onLabelChange(user, id, labels)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Idempotent delivery with per-user history id",
+    "explain": "Queue is at-least-once, so a worker crash after writing but before committing the offset causes a redelivery. We make the insert conditional on (user_id, rfc822_msgid + envelope hash) not existing, and allocate the history id in the same row transaction so retries are no-ops.",
+    "pseudocode": "def deliver(rec):\n  msg = parse(rec)\n  verdict = classify(msg)\n  sha = blob.put_if_absent(normalize(msg.body))\n  for user in msg.local_rcpts:\n    key = (user, dedupe_key(msg))\n    with mailbox.row_txn(user) as t:\n      if t.exists(key): continue        # duplicate redelivery\n      h = t.incr('history_id')\n      labels = apply_filters(user, msg, verdict)\n      tid = thread(user, msg)\n      t.put_meta(key, sha, labels, tid); t.put_label_index(labels)\n      t.append_history(h, 'add', key)\n      quota.add(user, msg.size)\n  queue.commit(rec.offset)"
+   },
+   {
+    "name": "Threading",
+    "explain": "Use the References and In-Reply-To headers to find an existing thread in the same mailbox; fall back to normalized subject match within a time window. Store a per-user map rfc822_msgid -> thread_id.",
+    "pseudocode": "def thread(user, msg):\n  for ref in [msg.in_reply_to] + reversed(msg.references):\n    tid = idmap.get(user, ref)\n    if tid: break\n  else:\n    s = normalize_subject(msg.subject)  # strip Re:, Fwd:, whitespace\n    tid = recent_subject_thread(user, s, within=7d) or new_thread_id()\n  idmap.put(user, msg.rfc822_msgid, tid)\n  return tid"
+   },
+   {
+    "name": "Outbound retry with jittered backoff",
+    "explain": "Transient failures (421, 450, 451, timeouts) retry with exponential backoff and full jitter, capped, for up to 5 days; per-domain concurrency limits protect remote servers and our reputation.",
+    "pseudocode": "def on_result(job, code):\n  if code.startswith('2'): mark_delivered(job); return\n  if code.startswith('5') or job.age > 5d: send_bounce(job); return\n  base = min(4h, 60s * 2 ** job.attempt)\n  job.next_attempt_at = now() + random(0, base)\n  job.attempt += 1; schedule(job)"
+   }
+  ],
+  "sequence": "Remote MTA      MX gateway     Delivery queue   Delivery worker   Mailbox/Blob    Notifier  Phone\n    | EHLO/MAIL/RCPT |               |                |               |             |        |\n    |--------------->| rep + rcpt ok |                |               |             |        |\n    | DATA (MIME)    |               |                |               |             |        |\n    |--------------->| SPF/DKIM/DMARC|                |               |             |        |\n    |                |-- produce --->| acks=all (3 AZ)|               |             |        |\n    |                |<-- acked -----|                |               |             |        |\n    |<-- 250 OK -----|               |                |               |             |        |\n    |                |               |--- consume --->| spam/AV/filter|             |        |\n    |                |               |                |-- put blob -->|             |        |\n    |                |               |                |-- meta+hist ->| h=1042      |        |\n    |                |               |<-- commit off -|               |             |        |\n    |                |               |                |               |-- change -->|        |\n    |                |               |                |               |             |-push-->|\n    |                |               |                |               |<-- GET /history?h=1041 |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Worker crashes after writing metadata but before committing the queue offset",
+   "handling": "Redelivery is detected by the per-user dedupe key in the same row transaction; no duplicate in the inbox, history id not bumped twice."
+  },
+  {
+   "case": "Mail to a 10,000-member mailing list or a 'reply all' storm",
+   "handling": "Expand recipients into per-recipient (or per-cell) delivery tasks asynchronously; store the body once by hash; rate limit reply-all storms per thread and collapse duplicates."
+  },
+  {
+   "case": "Same attachment (a 10 MB PDF) sent to 1M users by a bank",
+   "handling": "Content-addressed blob stored once with refcount; each mailbox row references the hash. Encryption domains limit dedupe for enterprise tenants with their own keys."
+  },
+  {
+   "case": "User deletes mail (and GDPR erasure)",
+   "handling": "Metadata deleted and history entry appended; blob refcount decremented; GC deletes blobs at refcount 0 after a grace period; backups age out on a fixed schedule so erasure completes within the documented window."
+  },
+  {
+   "case": "Legal hold on a mailbox",
+   "handling": "Deletes become soft (hidden from user, retained) while hold is active; GC skips held references."
+  },
+  {
+   "case": "Clock skew: messages with Date headers in the future or past",
+   "handling": "Sort by server internal_date at receipt, not the sender's Date header; show the header only for display."
+  },
+  {
+   "case": "Device offline for 60 days then reconnects",
+   "handling": "History window (30 days) exceeded; API returns 410 and the client performs a full sync of recent pages, then resumes delta sync."
+  },
+  {
+   "case": "Remote server greylists or rate limits us (421/450)",
+   "handling": "Per-domain backoff and lower concurrency; do not count as user-visible failure until 4 hours; warn sender after 24 hours, bounce after 5 days."
+  },
+  {
+   "case": "Compromised account starts sending 50k spam/hour",
+   "handling": "Outbound per-user limits (e.g. 500 recipients/day consumer), outbound spam score, anomaly detection triggers lock and session revocation; route remaining traffic to quarantine IP pool."
+  },
+  {
+   "case": "Backscatter: spam with forged MAIL FROM we would bounce to innocent people",
+   "handling": "Reject during SMTP (5xx) instead of accepting then bouncing; only generate DSNs for mail that passed SPF/DKIM alignment."
+  },
+  {
+   "case": "Quota full",
+   "handling": "Inbound: return 452 (temporary) for a grace period then 552; user notified; system mail (security alerts) exempt."
+  },
+  {
+   "case": "Very large mailbox (500k messages) hot partition",
+   "handling": "Partition is still one user, but split metadata into time-bucketed rows; cache the first page; search index for that user may be split into multiple segments."
+  },
+  {
+   "case": "Same message received twice from remote (they retried after a timeout on our 250)",
+   "handling": "Dedupe key includes Message-ID plus envelope and body hash with a 24 h window, so the duplicate is dropped."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Postfix-like custom SMTP edge (Go/C++)",
+   "layer": "Edge",
+   "overview": "SMTP server implementation handling TLS, pipelining and the RFC 5321 state machine.",
+   "why": "Needs to handle ~1M connections/s cheaply with early rejection; custom code lets us integrate reputation lookups and durable enqueue.",
+   "alternatives": "Stock Postfix/Exim (mature but harder to integrate with internal queues), Haraka (Node, plugin-friendly but lower throughput)."
+  },
+  {
+   "name": "Kafka (or equivalent replicated log)",
+   "layer": "Messaging",
+   "overview": "Partitioned, replicated append-only log with consumer offsets.",
+   "why": "Durable acceptance buffer (RF=3, acks=all) and change stream; replay lets us rebuild indexes.",
+   "alternatives": "Pulsar (tiered storage built in), SQS (simpler, but no ordered replay per user)."
+  },
+  {
+   "name": "Bigtable / Cassandra",
+   "layer": "Metadata store",
+   "overview": "Wide-column stores with partition + clustering keys and high write throughput.",
+   "why": "Per-user partition with sorted clustering keys gives single-partition inbox scans and fast writes at millions of ops/s.",
+   "alternatives": "Spanner/CockroachDB (stronger transactions, higher cost/latency), sharded MySQL (good per-shard transactions, manual resharding)."
+  },
+  {
+   "name": "Object store with erasure coding (Colossus / S3-like)",
+   "layer": "Blob storage",
+   "overview": "Durable blob storage with replication or Reed-Solomon coding and lifecycle tiers.",
+   "why": "Exabyte scale at low cost; erasure coding 1.5x overhead vs 3x replication for cold mail.",
+   "alternatives": "HDFS (operational burden), Ceph (self-managed, flexible)."
+  },
+  {
+   "name": "Elasticsearch / custom per-user inverted index",
+   "layer": "Search",
+   "overview": "Inverted index over tokens with postings lists.",
+   "why": "Search must be per user and isolated; small per-user indexes grouped into shards keep queries local.",
+   "alternatives": "One global index filtered by user (bad isolation, huge postings), Vespa (strong, more ops)."
+  },
+  {
+   "name": "FCM / APNs + WebSocket",
+   "layer": "Notification",
+   "overview": "Platform push services and persistent connections.",
+   "why": "Wake mobile devices efficiently; web gets push over WebSocket or long-poll.",
+   "alternatives": "Polling (battery and load heavy), IMAP IDLE only for third-party clients."
+  },
+  {
+   "name": "TensorFlow-based spam classifiers + rules engine",
+   "layer": "Anti-abuse",
+   "overview": "ML models over content, sender, URL and behavioural features plus fast rules.",
+   "why": "Spam evolves daily; ML plus user feedback catches what static rules miss.",
+   "alternatives": "Bayesian filters like SpamAssassin (simpler, weaker against adversarial campaigns)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Store-and-forward and the ack-after-durable rule",
+   "explain": "Email is a store-and-forward system: each hop (sender's MTA, relays, our MX) takes full responsibility for a message once it says '250 OK', and the previous hop deletes its copy. There is no end-to-end acknowledgement and no global transaction. That makes the moment of acknowledgement the single most important durability boundary in the design. If a server says OK and then crashes before persisting, the message is gone forever and nobody knows. If it persists but crashes before saying OK, the sender retries and the worst case is a duplicate, which is recoverable. The general principle, true for any ingestion API, is: acknowledge only after the data is durable to the level you promise, and design downstream steps to be idempotent so that the inevitable retries are harmless. In practice durable means written to a log replicated across failure domains (for example Kafka with replication factor 3, min.insync.replicas=2 and acks=all), not merely to local disk on one host. Everything after the log (classification, storage, indexing) can be asynchronous because the log holds the truth and can be replayed.",
+   "in_this_design": "The MX gateway writes the message to the zone-replicated delivery queue and only then returns 250. Delivery workers consume at least once and dedupe per user. During a mailbox store outage the queue simply grows and SMTP acceptance continues; if the queue itself is unavailable, the gateway returns 451 so the remote MTA retries.",
+   "key_points": [
+    "Acknowledge only after durable, replicated write; never before.",
+    "A crash before ack yields a retry (duplicate); a crash after a premature ack yields silent loss.",
+    "Downstream of the durable log everything is async, at-least-once and idempotent.",
+    "Return 4xx, not 5xx, when we are temporarily unable to store; senders retry for days."
+   ],
+   "qa": [
+    {
+     "q": "Why not write directly to the mailbox store before replying 250?",
+     "a": "It couples SMTP acceptance latency and availability to the most complex tier; a mailbox shard hiccup would make us defer mail from the whole internet. The queue isolates them and absorbs spikes."
+    },
+    {
+     "q": "What if the queue has acks=1 and the leader dies right after the 250?",
+     "a": "The message can be lost because followers had not replicated it. We use acks=all with min.insync.replicas=2 across zones, trading a few ms of latency for durability."
+    },
+    {
+     "q": "How do you handle the duplicate created when our 250 reply is lost on the network?",
+     "a": "The remote resends; we dedupe on Message-ID plus envelope and body hash within a 24 h window at delivery time, so the user sees one copy."
+    }
+   ]
+  },
+  {
+   "name": "Partitioning by user (sharding) and hot partitions",
+   "explain": "Sharding splits data across many machines by a partition key so each machine holds a manageable slice and handles a slice of the traffic. The choice of key decides which queries are cheap: a query that names the partition key touches one shard; a query that does not must scatter to all shards and gather results. Good keys have high cardinality, spread load evenly, and match the dominant access pattern. Wide-column stores such as Bigtable and Cassandra add a clustering key inside each partition, keeping rows sorted so a range scan within one partition (for example the newest 50 rows) is a sequential read. Partitions are mapped to nodes with consistent hashing or range splitting, so adding nodes moves only a fraction of data. The failure mode of any partitioning scheme is skew: one key that is far bigger or hotter than the rest. Mitigations include splitting a hot key into sub-partitions (bucketing by time or hash suffix), caching, and isolating heavy tenants.",
+   "in_this_design": "Every mailbox access names the user, so user_id is the partition key for messages, label indexes, history and the search index. The inbox list is a single-partition scan on (user_id, label) ordered by reverse timestamp. Huge mailboxes or shared enterprise mailboxes are bucketed by time, and global queries (admin compliance search) run as offline scatter-gather jobs rather than on the hot path.",
+   "key_points": [
+    "Choose the partition key from the dominant query; here it is always 'this user'.",
+    "Clustering keys turn 'latest 50 in label X' into one sequential read.",
+    "Skew is the enemy: bucket very large mailboxes by time.",
+    "Cross-user queries become offline scatter-gather jobs."
+   ],
+   "qa": [
+    {
+     "q": "Why not partition by message_id for perfect spread?",
+     "a": "Then listing a user's inbox becomes a scatter across all shards. User-level locality is worth the mild skew."
+    },
+    {
+     "q": "How do you handle a support mailbox receiving 1M emails a day?",
+     "a": "Bucket its partition by day (user_id, yyyymmdd), cache recent pages, and give it its own search index shard."
+    },
+    {
+     "q": "How does adding capacity work?",
+     "a": "Range-based stores split hot tablets automatically; hash-based ones use consistent hashing with virtual nodes so only about 1/N of data moves."
+    }
+   ]
+  },
+  {
+   "name": "Content-addressed storage and deduplication",
+   "explain": "Content-addressed storage names a blob by a cryptographic hash of its bytes (for example SHA-256) instead of by an arbitrary id. Two identical blobs get the same name, so storing the second one is a no-op: you only add a reference. The blobs are immutable, which makes caching, replication and integrity checking simple, since the name doubles as a checksum. Deletion is done with reference counting or periodic mark-and-sweep garbage collection: when no metadata row points to a hash any more, the blob can be deleted after a grace period. The risks are (a) refcount bugs causing premature deletion, which is why GC uses a grace period and a reachability scan, (b) side-channel leaks where a user can learn that someone else already stored a file because upload was instant, mitigated by scoping dedupe to a tenant or key domain, and (c) normalisation: tiny differences such as a per-recipient header defeat dedupe unless you hash the body part separately from headers. Combined with compression and erasure coding for cold data, dedupe is the main lever for storage cost.",
+   "in_this_design": "Each MIME body part and attachment is hashed separately, so a newsletter or a bank statement PDF sent to millions of users is stored once. Metadata rows hold blob references; quota still charges each user the logical size. Enterprise tenants with customer-managed keys dedupe only within their tenant.",
+   "key_points": [
+    "Name blobs by hash; identical content is stored once.",
+    "Hash parts, not the whole message, because headers differ per recipient.",
+    "Delete with refcount plus a grace-period sweep, never eagerly.",
+    "Scope dedupe to a key domain to avoid cross-tenant side channels."
+   ],
+   "qa": [
+    {
+     "q": "Why not dedupe across all users including enterprise tenants?",
+     "a": "Cross-tenant dedupe leaks existence information and conflicts with per-tenant encryption keys; we scope it to a key domain."
+    },
+    {
+     "q": "What saving do you expect?",
+     "a": "Bulk and attachment-heavy mail dedupes well; with compression public estimates of 30-50% savings are realistic, which at exabyte scale is huge."
+    },
+    {
+     "q": "How do you avoid deleting a blob still referenced?",
+     "a": "Refcounts are adjusted transactionally with metadata; GC only deletes after a grace period and verifies by a reachability scan."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and at-least-once delivery",
+   "explain": "Distributed messaging offers three delivery guarantees: at-most-once (may lose), at-least-once (may duplicate) and effectively-once. True exactly-once delivery across independent systems is impossible in the presence of failures, because a sender can never distinguish 'the receiver crashed before processing' from 'the ack was lost'. Real systems therefore choose at-least-once delivery and make processing idempotent: applying the same message twice has the same effect as applying it once. Idempotency is achieved with a stable key per logical operation (a message id, an idempotency key header, or a natural key) and a conditional write that records the key atomically with the effect, so the second attempt sees the key and skips. The dedupe record needs a retention window longer than the maximum retry horizon. Where effects span stores, you either put the dedupe check in the same transaction as the main write, or make each effect individually idempotent (put-if-absent blobs, set semantics for labels).",
+   "in_this_design": "The delivery queue is consumed at least once. The worker inserts the message row only if the per-user dedupe key is absent, in the same row transaction that bumps the history id. Blob writes are put-if-absent by hash. The send API takes an Idempotency-Key so a mobile client retrying on a flaky network does not send twice.",
+   "key_points": [
+    "Exactly-once delivery is a myth; exactly-once effect is achievable with idempotency.",
+    "Store the dedupe key atomically with the effect.",
+    "Retention of dedupe keys must exceed the retry horizon.",
+    "Prefer naturally idempotent operations: put-if-absent, set add, absolute values."
+   ],
+   "qa": [
+    {
+     "q": "A mobile user taps Send, loses signal, the app retries. How do you avoid two emails?",
+     "a": "Client generates an Idempotency-Key per compose; server stores key -> result for 24 h and returns the original result on retry."
+    },
+    {
+     "q": "Could Kafka transactions give you exactly-once here?",
+     "a": "Only within Kafka. Our effects land in Bigtable and the blob store, so we still need idempotent writes."
+    },
+    {
+     "q": "Is dedupe by Message-ID header enough?",
+     "a": "No, Message-ID is set by the sender and can be missing or reused; combine it with envelope and body hash."
+    }
+   ]
+  },
+  {
+   "name": "Email authentication: SPF, DKIM, DMARC and sender reputation",
+   "explain": "SMTP was designed without authentication, so anyone can claim any From address. Three DNS-based standards retrofit trust. SPF lets a domain publish which IP addresses may send mail using its envelope sender; the receiver checks the connecting IP against the TXT record. DKIM has the sending server sign selected headers and the body with a private key; the receiver fetches the public key from DNS (selector._domainkey.domain) and verifies, which survives relays that do not modify the message. DMARC ties these to the visible From domain via alignment and lets the domain owner publish a policy (none, quarantine, reject) and receive aggregate reports. ARC preserves authentication results across forwarders such as mailing lists. Authentication proves who sent a message, not that it is wanted, so receivers also maintain reputation scores per IP, per domain and per DKIM signer, built from volume, complaint rates, spam trap hits and user reports. Reputation drives connection throttling, greylisting and filter thresholds. Since 2024 large providers require bulk senders to have SPF, DKIM, DMARC and one-click unsubscribe.",
+   "in_this_design": "The MX gateway evaluates SPF at MAIL FROM and DKIM/DMARC after DATA, rejecting DMARC p=reject failures in-session to avoid backscatter. Results and reputation become features for the spam model. On outbound we DKIM-sign every message and protect our IP reputation with per-user send limits and separate IP pools.",
+   "key_points": [
+    "SPF authorises IPs, DKIM signs content, DMARC aligns with the visible From and sets policy.",
+    "Authentication is not legitimacy; reputation and content models decide spam.",
+    "Reject in-session rather than bounce later to avoid backscatter.",
+    "Our own outbound reputation is a shared asset; one compromised account can poison it."
+   ],
+   "qa": [
+    {
+     "q": "Why does forwarding break SPF and how is it handled?",
+     "a": "The forwarder's IP is not in the original domain's SPF. DKIM survives if the body is unchanged, and ARC records upstream results so we can trust a known forwarder."
+    },
+    {
+     "q": "A phishing mail passes SPF, DKIM and DMARC. How?",
+     "a": "The attacker owns a lookalike domain and authenticated it properly. Content, URL and newness-of-domain features in the ML layer must catch it."
+    },
+    {
+     "q": "How do you protect outbound reputation?",
+     "a": "Per-user and per-tenant rate limits, outbound spam scoring, fast lockout of compromised accounts, and isolating risky traffic to separate IP pools."
+    }
+   ]
+  },
+  {
+   "name": "Inverted index search per user",
+   "explain": "An inverted index maps each term to a postings list of document ids that contain it, plus positions and frequencies. A query intersects or unions postings lists and ranks the results, which is far faster than scanning documents. Indexes are built from immutable segments: new documents go into a small in-memory buffer that is flushed as a segment every second or so (near-real-time search), and segments are merged in the background. Deletes are tombstones until a merge. The big design choice in multi-tenant search is how to lay out tenants: one huge global index filtered by tenant is simple but makes postings lists enormous and creates isolation risk; one index per tenant gives isolation and small postings but millions of tiny indexes are expensive to open. The common middle ground packs many tenants into shards routed by tenant id, with the tenant id as a mandatory filter and doc ids local to the tenant. Most users search rarely, so their index data can sit on cheaper storage and be loaded on demand.",
+   "in_this_design": "The search service shards by user_id and keeps each user's postings contiguous, so a query touches one shard and only that user's data. The indexer consumes the change stream and makes new mail searchable within about 5 s; attachment text is extracted asynchronously. Search returns message ids; the Mail API hydrates metadata and re-checks labels for freshness.",
+   "key_points": [
+    "Inverted index: term -> postings list; queries intersect lists.",
+    "Near-real-time via small segments flushed every ~1 s and merged later.",
+    "Route by user_id so each query hits one shard and only one user's data.",
+    "Index is derived data: rebuildable from the mailbox store and history log."
+   ],
+   "qa": [
+    {
+     "q": "Why not one global Elasticsearch index with a user_id filter?",
+     "a": "Common terms produce postings lists across billions of docs; every query pays for others' data and a filter bug leaks mail. Per-user routing keeps it small and isolated."
+    },
+    {
+     "q": "Indexing is 10 minutes behind after a spike. What does the user see?",
+     "a": "Search results plus a fallback scan of the user's mail received after the index watermark, so new mail is still found."
+    },
+    {
+     "q": "How do you handle label changes in search?",
+     "a": "Labels are filter fields updated from the change stream; for correctness the API re-applies current labels from the mailbox store at hydration."
+    }
+   ]
+  },
+  {
+   "name": "Incremental sync with a change log (history ids)",
+   "explain": "When many clients mirror server state (phones, laptops, IMAP clients), shipping the full state on every change is wasteful. Instead the server keeps an ordered change log per scope and a monotonically increasing version number; each client remembers the last version it saw and asks for changes since then. This is the same idea as database replication logs, IMAP CONDSTORE modseq values and Gmail's historyId. Correct ordering requires a single writer or a serialised counter per scope, which is natural when the scope is one user's mailbox on one partition. The log cannot be kept forever, so it has a retention window; a client that falls behind it gets an explicit 'too old' error and does a full resync. Push notifications then only need to say 'something changed, version is now N', and clients pull the delta, which keeps push payloads tiny and makes duplicate or out-of-order pushes harmless.",
+   "in_this_design": "Each mailbox mutation bumps the user's history id in the same row transaction and appends a history entry. Clients call /history?startHistoryId=H. History is retained 30 days; older cursors get 410 and do a full sync. Push only carries the new history id, coalesced over 1-2 s bursts.",
+   "key_points": [
+    "Per-scope monotonic version plus change log enables cheap delta sync.",
+    "Serialise version allocation per user; the partition makes this natural.",
+    "Retention window bounds storage; expired cursors force full resync.",
+    "Push says 'pull now'; idempotent and order-insensitive."
+   ],
+   "qa": [
+    {
+     "q": "Why not push the full message content to devices?",
+     "a": "Payload limits, privacy on lock screens, and duplicates; a small 'changed' signal plus pull is robust and idempotent."
+    },
+    {
+     "q": "How do two devices changing labels concurrently converge?",
+     "a": "Both writes go through the single per-user partition, which orders them and assigns history ids; last-writer-wins per label op is acceptable for flags."
+    },
+    {
+     "q": "What happens if history ids are not monotonic?",
+     "a": "Clients could skip changes. That is why the id is allocated inside the per-user transaction, not by a clock."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Where to persist before acking SMTP",
+   "options": "Local disk spool / replicated log / mailbox store directly",
+   "choice": "Replicated log (RF=3, acks=all)",
+   "why": "Survives host loss, decouples acceptance from mailbox tier, enables replay; mailbox-direct couples availability."
+  },
+  {
+   "decision": "Metadata store",
+   "options": "Sharded SQL / wide-column (Bigtable, Cassandra) / Spanner",
+   "choice": "Wide-column partitioned by user",
+   "why": "Per-user range scans and very high write throughput; cross-user transactions are not needed. Quota uses a small strongly consistent store."
+  },
+  {
+   "decision": "Body storage redundancy",
+   "options": "3x replication / erasure coding / mixed by age",
+   "choice": "Replicate hot (last 30 days), erasure code cold",
+   "why": "Recent mail is read often and needs fast reads; old mail is rarely read, and EC cuts cost from 3x to ~1.5x."
+  },
+  {
+   "decision": "Labels vs folders",
+   "options": "Folders (message in exactly one) / labels (many-to-many)",
+   "choice": "Labels with a label index table",
+   "why": "Labels are more flexible and map to folders for IMAP; the cost is an extra index row per label."
+  },
+  {
+   "decision": "Search freshness",
+   "options": "Synchronous indexing on delivery / async within seconds",
+   "choice": "Async from change stream (< 5 s)",
+   "why": "Keeps delivery latency low and isolates search outages; fallback scan covers the gap."
+  },
+  {
+   "decision": "Spam decisions",
+   "options": "Reject at SMTP / accept and junk / accept and quarantine",
+   "choice": "Reject obvious (reputation, DMARC reject), junk-folder the rest",
+   "why": "Rejecting avoids storage and backscatter; junking borderline mail preserves recall when we are wrong."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Mailbox store shard unavailable",
+   "behavior": "Delivery workers for that shard back off; queue lag grows; SMTP acceptance continues; users on that shard see stale inbox and get a banner; no loss."
+  },
+  {
+   "failure": "Delivery queue cluster unavailable in a zone",
+   "behavior": "Remaining replicas keep ISR >= 2; if ISR drops below 2, producers fail and MX returns 451, so remote MTAs retry later."
+  },
+  {
+   "failure": "Spam ML service down",
+   "behavior": "Fall back to rules, reputation and authentication results; quarantine borderline instead of inbox; alert trust and safety."
+  },
+  {
+   "failure": "Search cluster degraded",
+   "behavior": "Search returns partial results with a notice, plus recent-mail scan; mail delivery unaffected because indexing is async."
+  },
+  {
+   "failure": "Our sending IPs blocklisted by a major provider",
+   "behavior": "Route traffic to alternate IP pools, throttle the offending source, engage feedback loops and postmaster channels; queued mail retries for up to 5 days."
+  },
+  {
+   "failure": "Region loss",
+   "behavior": "Users homed there fail over to replica region with async replication (RPO of seconds for metadata); in-flight queue data is in multi-zone storage; MX DNS lists other regions so remote MTAs reroute."
+  }
+ ],
+ "metrics": [
+  "SMTP accept / temp-fail / reject rates per gateway and per reason code.",
+  "Delivery queue lag (age of oldest unconsumed message) per partition; alert at > 60 s.",
+  "End-to-end delivery latency p50/p99 (SMTP accept to mailbox commit, and to push sent).",
+  "Spam inbox rate (from user reports) and false positive rate (not-spam clicks).",
+  "Search index lag and search latency p99; history sync 410 rate.",
+  "Outbound deferral and bounce rates per destination domain; blocklist status of our IPs.",
+  "Storage: bytes ingested/day, dedupe ratio, cold-tier migration rate, blob audit failures (must be 0)."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you guarantee you never lose an email?",
+   "a": "Ack only after a replicated durable write across zones; idempotent at-least-once downstream; blobs on replicated or erasure-coded storage with continuous checksum audits; backups for logical corruption."
+  },
+  {
+   "q": "How would you implement undo send?",
+   "a": "Hold the outbound job in a scheduled state for 5-30 s; the client can cancel by job id; only after the delay does it enter the outbound queue. Intra-domain mail is also delayed so recipients never see it."
+  },
+  {
+   "q": "How do you scale to a celebrity or a support address receiving millions of messages?",
+   "a": "Bucket that mailbox partition by time, give it a dedicated search shard, cache first pages, and rate limit senders per destination mailbox."
+  },
+  {
+   "q": "What is the hardest part of this system in practice?",
+   "a": "Abuse. Spam volume exceeds legit volume, attackers adapt daily, and both false positives and false negatives hurt trust. Most engineering effort and compute goes into the anti-abuse pipeline."
+  },
+  {
+   "q": "How do you support IMAP clients on this model?",
+   "a": "An IMAP adapter maps labels to folders, assigns per-folder UIDs and UIDVALIDITY, maps history ids to CONDSTORE modseq, and supports IDLE via the notifier."
+  },
+  {
+   "q": "Would you end-to-end encrypt mail?",
+   "a": "Not by default; it breaks server-side search and spam filtering. Offer S/MIME for enterprises and client-side encryption for regulated tenants with the trade-off explained."
+  },
+  {
+   "q": "How do you migrate a user's mailbox between cells or regions?",
+   "a": "Copy snapshot plus tail the history log, then a brief write freeze to switch the home pointer in the directory, then drain; MX routing reads the directory."
+  }
+ ],
+ "key_points": [
+  "Email is two systems: an SMTP edge facing a hostile internet, and a per-user mailbox platform.",
+  "The 250 OK is the durability boundary; ack only after a zone-replicated write.",
+  "Everything after the queue is at-least-once and idempotent per user.",
+  "Partition everything by user_id; inbox list is a single-partition range scan.",
+  "Bodies are immutable, content-addressed and deduped; metadata is small and mutable.",
+  "Storage cost dominates: dedupe, compression, hot replication, cold erasure coding.",
+  "Spam is the real scale problem; reject cheaply at the edge, layered auth + reputation + ML.",
+  "Clients sync by a per-user history id; push just says 'pull since H'.",
+  "Search and notifications are derived from a change stream and can lag or be rebuilt.",
+  "Outbound is per-domain queues with jittered backoff and our IP reputation to protect."
+ ],
+ "quiz": [
+  {
+   "q": "When should the MX gateway return 250 OK for an inbound message?",
+   "options": [
+    "As soon as the DATA phase finishes",
+    "After the message is in a zone-replicated durable queue",
+    "After the message is indexed for search",
+    "After the recipient's device is notified"
+   ],
+   "answer": 1,
+   "why": "250 transfers responsibility, so it must follow a durable replicated write. Acking right after DATA (the tempting option) risks silent loss if the gateway crashes; waiting for indexing or push couples the internet-facing path to slow derived systems."
+  },
+  {
+   "q": "Which partition key best serves 'show the newest 50 messages in Inbox'?",
+   "options": [
+    "(user_id, label) with reverse timestamp clustering",
+    "message_id",
+    "thread_id",
+    "sender domain"
+   ],
+   "answer": 0,
+   "why": "The query always names the user and label, so it becomes one sequential partition scan. message_id spreads evenly but turns every inbox load into a scatter-gather."
+  },
+  {
+   "q": "A worker writes a message then crashes before committing its queue offset. What prevents a duplicate in the inbox?",
+   "options": [
+    "Kafka exactly-once semantics",
+    "The client hides duplicates",
+    "Shorter consumer session timeouts",
+    "A per-user dedupe key checked in the same transaction as the insert"
+   ],
+   "answer": 3,
+   "why": "The effect lands outside Kafka, so idempotency must be enforced at the mailbox write. Kafka transactions only cover Kafka-to-Kafka pipelines."
+  },
+  {
+   "q": "Roughly how many legitimate deliveries per second for 500M DAU receiving 40 emails/day each?",
+   "options": [
+    "About 23k/s",
+    "About 2.3M/s",
+    "About 230k/s",
+    "About 23M/s"
+   ],
+   "answer": 2,
+   "why": "500M x 40 = 20B/day; divided by 86,400 is about 230k/s. 2.3M/s would be ten times that, closer to raw SMTP attempts including spam."
+  },
+  {
+   "q": "Why hash attachments separately from the whole MIME message?",
+   "options": [
+    "Hashing is faster on small parts",
+    "Per-recipient headers differ, so whole-message hashes rarely match",
+    "Attachments cannot be compressed",
+    "To make search faster"
+   ],
+   "answer": 1,
+   "why": "Headers like To and Received differ per copy, defeating dedupe. Speed of hashing is not the reason."
+  },
+  {
+   "q": "A message passes SPF, DKIM and DMARC but is phishing. What does that tell you?",
+   "options": [
+    "Authentication proves domain control, not intent; content and reputation layers must catch it",
+    "The verification code is buggy",
+    "DMARC should be set to reject",
+    "SPF records were spoofed"
+   ],
+   "answer": 0,
+   "why": "Attackers authenticate their own lookalike domains. Tightening DMARC policy is the sender's choice and does not apply to the attacker's domain."
+  },
+  {
+   "q": "What should the gateway return if the delivery queue cannot reach min in-sync replicas?",
+   "options": [
+    "250 and store locally",
+    "550 permanent failure",
+    "Close the connection silently",
+    "451 temporary failure"
+   ],
+   "answer": 3,
+   "why": "4xx makes the remote MTA retry later, which is safe. 250 with local storage is the tempting option but violates the durability promise; 550 would bounce good mail."
+  },
+  {
+   "q": "A phone was offline for 45 days and the history window is 30 days. Best behaviour?",
+   "options": [
+    "Return all history since the old id",
+    "Silently return an empty delta",
+    "Return 410 and have the client do a full resync of recent pages",
+    "Reset the user's history ids"
+   ],
+   "answer": 2,
+   "why": "Expired cursors must be explicit so the client does not miss changes. Returning empty is the dangerous option because the device would show a stale mailbox."
+  },
+  {
+   "q": "Why reject DMARC-failing spam during the SMTP session rather than accept and bounce?",
+   "options": [
+    "Bouncing is not allowed by RFCs",
+    "Accepting then bouncing sends backscatter to forged, innocent addresses",
+    "Rejecting is slower",
+    "So that spam goes into the spam folder"
+   ],
+   "answer": 1,
+   "why": "The MAIL FROM is forged, so bounces hit innocent people and hurt our reputation. Bounces are allowed, just harmful here."
+  },
+  {
+   "q": "Cold mailbox data is rarely read. Which redundancy scheme saves most cost while keeping durability?",
+   "options": [
+    "Reed-Solomon erasure coding (e.g. 6+3)",
+    "Single copy on SSD",
+    "3x replication",
+    "RAID 0 striping"
+   ],
+   "answer": 0,
+   "why": "Erasure coding gives similar fault tolerance at ~1.5x overhead versus 3x replication. A single copy is cheapest but loses data on one failure."
+  },
+  {
+   "q": "Search indexing lags 10 minutes after a spike. Best user experience?",
+   "options": [
+    "Block delivery until the index catches up",
+    "Disable search",
+    "Return index results only",
+    "Return index results plus a scan of mail received after the index watermark"
+   ],
+   "answer": 3,
+   "why": "The fallback scan covers the gap cheaply. Blocking delivery couples a derived system to the critical path."
+  },
+  {
+   "q": "Which is the strongest reason for per-user index routing instead of one global index with a user filter?",
+   "options": [
+    "Elasticsearch cannot filter",
+    "Global indexes cannot be sharded",
+    "Small postings lists and strong isolation; a filter bug cannot leak other users' mail",
+    "Per-user indexes need no merging"
+   ],
+   "answer": 2,
+   "why": "Isolation and query cost both improve. Global indexes can be sharded; the issue is that every query pays for everyone's postings."
+  },
+  {
+   "q": "Outbound mail to a domain gets 421 'try again later' repeatedly. Correct action?",
+   "options": [
+    "Bounce immediately",
+    "Retry with exponential backoff, jitter and lower per-domain concurrency, bounce after ~5 days",
+    "Retry every second until success",
+    "Switch the message to another recipient domain"
+   ],
+   "answer": 1,
+   "why": "4xx is transient; jittered backoff protects both sides. Tight retry loops look like abuse and worsen blocklisting."
+  },
+  {
+   "q": "Approximately how much raw new data per day at 20B deliveries of 75 KB?",
+   "options": [
+    "1.5 PB",
+    "15 TB",
+    "150 TB",
+    "15 PB"
+   ],
+   "answer": 0,
+   "why": "20e9 x 75e3 bytes = 1.5e15 bytes = 1.5 PB/day before dedupe and compression."
+  },
+  {
+   "q": "Why does a push notification carry only the new history id rather than the email?",
+   "options": [
+    "Push services cannot carry text",
+    "To save server CPU on encryption",
+    "Because IMAP requires it",
+    "Small idempotent signal; client pulls delta, so duplicate or reordered pushes are harmless"
+   ],
+   "answer": 3,
+   "why": "Pull-on-signal is robust and private. Push services can carry small payloads, so the claim that they cannot carry text is false."
+  },
+  {
+   "q": "A compromised account starts sending 50k messages/hour. First-line defense?",
+   "options": [
+    "Inbound spam filter",
+    "DMARC policy on our domain",
+    "Outbound per-user rate limits and outbound spam scoring with automatic lock",
+    "Bigger outbound IP pool"
+   ],
+   "answer": 2,
+   "why": "Outbound controls protect our IP reputation directly. Our DMARC policy does nothing because the mail is genuinely from our domain."
+  },
+  {
+   "q": "Which property makes content-addressed blobs easy to cache and replicate?",
+   "options": [
+    "They are small",
+    "They are immutable and self-verifying via their hash name",
+    "They are stored in memory",
+    "They are encrypted"
+   ],
+   "answer": 1,
+   "why": "Immutability means no invalidation; the hash is a checksum. Size varies widely."
+  },
+  {
+   "q": "You must enforce a 15 GB quota accurately. Where should usage live?",
+   "options": [
+    "In a strongly consistent per-user counter updated with message inserts and deletes",
+    "Computed nightly by scanning blobs",
+    "In the search index",
+    "In the client"
+   ],
+   "answer": 0,
+   "why": "Atomic counters give immediate enforcement. Nightly scans are accurate eventually but allow large overshoots."
+  },
+  {
+   "q": "What is the main reason labels need a separate label index table?",
+   "options": [
+    "To compress messages",
+    "Because labels are encrypted",
+    "IMAP requires it",
+    "So listing by label is a single sorted partition scan rather than a filter over all messages"
+   ],
+   "answer": 3,
+   "why": "The index materialises the access path. Without it, listing a label scans the whole mailbox partition."
+  },
+  {
+   "q": "The same newsletter arrives twice because the sender retried after a lost 250. Best dedupe key?",
+   "options": [
+    "Subject line",
+    "Message-ID header alone",
+    "Message-ID plus envelope and body hash within a time window",
+    "Sender IP"
+   ],
+   "answer": 2,
+   "why": "Message-ID alone is sender controlled and may be missing or reused; combining with the body hash is robust. Subject lines collide constantly."
+  },
+  {
+   "q": "If the mailbox tier is down for 20 minutes, inbound mail should...",
+   "options": [
+    "Be rejected with 5xx",
+    "Accumulate in the durable queue while SMTP keeps accepting",
+    "Be stored only on gateway disks",
+    "Be dropped and recovered from senders"
+   ],
+   "answer": 1,
+   "why": "The queue is sized to absorb outages. Rejecting with 5xx bounces legitimate mail permanently."
+  }
+ ],
+ "references": [
+  {
+   "title": "System Design Interview: Design an Email System (Gmail) - techinterview.org",
+   "url": "https://www.techinterview.org/post/3233463497/system-design-email-system-gmail/"
+  },
+  {
+   "title": "System Design Interview: Email System at Gmail Scale - techinterview.org",
+   "url": "https://www.techinterview.org/post/3233460504/system-design-email-system/"
+  },
+  {
+   "title": "Design Gmail - ByteByteGo",
+   "url": "https://blog.bytebytego.com/p/design-gmail"
+  },
+  {
+   "title": "Design Gmail guide - ByteByteGo",
+   "url": "https://bytebytego.com/guides/design-gmail/"
+  }
+ ]
+}

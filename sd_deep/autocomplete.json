@@ -1,0 +1,1100 @@
+{
+ "slug": "autocomplete",
+ "title": "Design Autocomplete (search typeahead suggestions)",
+ "prompt": "Design autocomplete suggestions.",
+ "group": "search",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 105,
+ "summary": "Autocomplete must answer on every keystroke, so the budget is about 100 ms end to end and under 20 ms on the server, at a QPS several times higher than search itself. The design trick is to precompute: aggregate query logs offline into top-k suggestions per prefix, serve them from an in-memory trie or prefix map replicated widely and cached at the edge, and blend in a small real-time layer for trending queries. The tensions are freshness versus precomputation, personalization versus cacheability, and filtering offensive or manipulated suggestions.",
+ "framework": {
+  "clarify": [
+   "What are we completing: search queries (Google/Flipkart search box), entity names (people, products), or both? I will assume query completion for an e-commerce or web search box, with a small entity layer.",
+   "Scale: assume 200 million daily active users, 10 searches each per day, and about 5 to 6 keystroke requests per search after client debouncing.",
+   "How many suggestions and how are they ranked? Assume top 10 by popularity with recency decay, optionally personalized and localized by language and region.",
+   "Latency target: suggestions must appear while typing, so p99 under 100 ms at the client and under 20 ms server time.",
+   "Freshness: is it acceptable for a new popular query to show up after an hour, or within minutes (news, flash sales)? I will assume a daily full rebuild plus a trending layer with about 5 minute freshness.",
+   "Languages and input: support for transliteration (Hinglish), typos, and mid-word matches? I will assume prefix match plus light fuzzy matching on the last token, multiple languages.",
+   "Safety: must we filter offensive, illegal or defamatory suggestions? Yes, with a blocklist and a removal path that takes effect within minutes.",
+   "Personalization: should recent searches of the user be shown? Yes, from on-device history plus a small per-user server store."
+  ],
+  "design": [
+   "Baseline: a single trie with each node storing the top 10 completions for its prefix; lookup is O(length of prefix) and needs no subtree traversal at query time.",
+   "Offline pipeline: query logs to Kafka to the data lake; a daily Spark job normalizes, filters, counts with time decay, keeps queries above a frequency threshold, and builds per-shard trie snapshots that are published to object storage with a version.",
+   "Serving: stateless Suggest Service fronted by CDN; Suggest Nodes load the trie snapshot into memory, sharded by prefix range and replicated; the API is GET /suggest?q=prefix&lang=&region=.",
+   "Real-time layer: a streaming job (Flink) counts queries in sliding 5 to 15 minute windows, detects trending terms, and pushes a small delta map that Suggest Nodes merge with the base top-k at read time.",
+   "Client: debounce 50 to 100 ms, cancel in-flight requests on new keystrokes, cache responses per prefix locally, prefetch the next likely prefix, and merge device-local recent searches.",
+   "Personalization and filtering at read time: blend per-user recent queries and apply the blocklist and policy filters before returning."
+  ],
+  "defend": [
+   "Bottleneck: request rate. Each search generates several keystroke requests, so QPS is about 100K average and 300K+ peak; handled by CDN and browser caching for short prefixes plus in-memory serving with no disk or DB on the hot path.",
+   "Scaling reads: replicate trie shards widely (they are read-only snapshots); short prefixes (1-2 characters) are a tiny hot set cached at the CDN with 5 to 15 minute TTL.",
+   "Scaling writes: there are no per-request writes on the hot path; query logging is async fire-and-forget to Kafka, and aggregation is batch plus stream.",
+   "Hot keys: prefixes like 'i' or 'ip' during an iPhone launch concentrate traffic; mitigate with CDN, in-process caches on every node, and replicating hot shards more.",
+   "Failure: if the trending layer is down, serve base suggestions; if a shard is down, route to replica; if all fails, the client simply shows no suggestions and search still works. Rollouts of new snapshots are canaried and can be rolled back by version.",
+   "Measure: keystrokes saved, suggestion acceptance rate, p99 latency at client and server, CDN hit ratio, snapshot age, and number of blocked-suggestion reports."
+  ],
+  "script": "Let me pin down scope: query autocomplete for a large search box, around 200 million daily users, top 10 suggestions ranked by popularity and recency, p99 under 100 ms on the client, and freshness of a day for the long tail but minutes for trending queries. Every keystroke is a request, so we are looking at a hundred thousand QPS or more, which means nothing on the hot path can touch a database. My design precomputes top-k suggestions per prefix offline from query logs, builds trie snapshots, and loads them into memory on suggest nodes sharded by prefix and heavily replicated, with short prefixes cached at the CDN. A streaming job adds a small trending layer that is merged at read time, and the client debounces, cancels stale requests and caches prefixes. To defend: the bottleneck is QPS and hot prefixes, solved by caching layers and read-only replication; writes are async log events; failures degrade to base suggestions or no suggestions, never a broken search box. I would measure acceptance rate, keystrokes saved, latency and snapshot freshness."
+ },
+ "brd": {
+  "problem": "Users type slowly on phones, misspell product and brand names, and often do not know the exact words to use. Without good suggestions they type longer queries, make more typos, hit zero results and abandon. Autocomplete shortens time to results, steers users toward queries that convert and is the most visible surface of search quality.",
+  "goals": [
+   "Show relevant suggestions within 100 ms of a keystroke at p99 on mobile networks.",
+   "Reduce characters typed per search by at least 30%.",
+   "Reflect trending queries within 5 to 15 minutes.",
+   "Never show offensive or legally problematic suggestions; remove reported ones within 15 minutes.",
+   "Support Indian languages and transliterated input.",
+   "Operate cost-efficiently at 300K+ peak QPS."
+  ],
+  "non_goals": [
+   "Full search result retrieval (handled by the search service).",
+   "Spell correction of entire submitted queries (separate query-understanding service).",
+   "Generative or conversational query rewriting in v1.",
+   "Rich product cards in the dropdown for every suggestion."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users",
+    "needs": "Instant, relevant, safe suggestions that save typing."
+   },
+   {
+    "who": "Search and relevance team",
+    "needs": "Control over ranking, blending and experiments."
+   },
+   {
+    "who": "Trust and safety / legal",
+    "needs": "Blocklists, fast takedown, audit trail."
+   },
+   {
+    "who": "Merchandising / marketing",
+    "needs": "Ability to promote campaign queries during sales, within policy."
+   },
+   {
+    "who": "SRE",
+    "needs": "Simple read-only serving with safe snapshot rollouts."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Suggestion acceptance rate",
+    "target": "> 35% of searches start from a suggestion"
+   },
+   {
+    "metric": "Keystrokes saved per search",
+    "target": "> 30%"
+   },
+   {
+    "metric": "Client-observed p99 latency",
+    "target": "< 100 ms"
+   },
+   {
+    "metric": "Server p99 latency",
+    "target": "< 20 ms"
+   },
+   {
+    "metric": "Trending freshness",
+    "target": "< 15 min from spike to suggestion"
+   },
+   {
+    "metric": "Offensive suggestion reports",
+    "target": "< 1 per 10 million impressions"
+   }
+  ],
+  "constraints": [
+   "No synchronous database calls on the hot path.",
+   "Logs must be anonymized and minimum-frequency thresholded for privacy (k-anonymity style).",
+   "Mobile clients on 3G/4G with 50 to 300 ms RTT.",
+   "Must work during big sale events with 5x traffic spikes."
+  ],
+  "risks": [
+   {
+    "risk": "Offensive or defamatory suggestions damage the brand",
+    "mitigation": "Blocklists, classifier filter, frequency thresholds, fast takedown path."
+   },
+   {
+    "risk": "Manipulation by bots pumping queries",
+    "mitigation": "Count distinct users not raw queries, bot filtering, rate-limited logging."
+   },
+   {
+    "risk": "Leaking private queries (names, phone numbers)",
+    "mitigation": "Only queries issued by at least N distinct users become suggestions; PII detectors."
+   },
+   {
+    "risk": "Snapshot bug ships garbage to all users",
+    "mitigation": "Validation checks, canary rollout, instant rollback by version."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Mobile shopper",
+    "needs": "Find 'redmi note 13 pro' after typing 'redm' on a slow network."
+   },
+   {
+    "name": "Returning user",
+    "needs": "See own recent searches first."
+   },
+   {
+    "name": "Regional language user",
+    "needs": "Type in Hindi or Hinglish and get matching suggestions."
+   },
+   {
+    "name": "Relevance engineer",
+    "needs": "Run ranking experiments and see acceptance metrics."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want suggestions after each keystroke so that I can tap instead of typing.",
+   "As a shopper, I want popular completions first so that I reach common products quickly.",
+   "As a returning user, I want my recent searches shown when I focus the box so that I can repeat them.",
+   "As a user, I want minor typos tolerated so that 'samsng' still suggests 'samsung'.",
+   "As a user during a live event, I want trending queries to appear so that I can find what everyone is searching.",
+   "As a regional user, I want transliterated suggestions so that 'joote' suggests 'shoes' or 'joote' items.",
+   "As a trust and safety analyst, I want to block a suggestion globally within 15 minutes so that harmful completions disappear.",
+   "As a user, I want to delete a suggestion from my history so that others using my device do not see it."
+  ],
+  "functional": [
+   "Return up to 10 suggestions for a prefix, ranked by score.",
+   "Support prefix matching on the full query and on word boundaries (typing 'pro max' finds 'iphone 15 pro max').",
+   "Fuzzy match the last token with edit distance 1 for prefixes of length >= 4.",
+   "Blend personal history, trending and global suggestions with configurable weights.",
+   "Localize by language and region.",
+   "Filter by blocklist and policy classifier before returning.",
+   "Log impressions and selections for metrics and the next aggregation cycle.",
+   "Allow users to remove items from their history."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "Server p99 < 20 ms; client p99 < 100 ms including network"
+   },
+   {
+    "name": "Availability",
+    "target": "99.9%; failure must degrade silently, never block search"
+   },
+   {
+    "name": "Throughput",
+    "target": "100K QPS average, 350K QPS peak"
+   },
+   {
+    "name": "Freshness",
+    "target": "Base daily; trending < 15 min; blocklist < 15 min"
+   },
+   {
+    "name": "Consistency",
+    "target": "Eventual; replicas may differ for a few minutes during snapshot rollout"
+   },
+   {
+    "name": "Privacy",
+    "target": "Only queries from >= 50 distinct users per window become global suggestions"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "200 million DAU, 10 searches per user per day = 2 billion searches per day.",
+    "After debounce, about 5 suggest requests per search.",
+    "Peak-to-average 3.5x.",
+    "About 100 million distinct queries per day before thresholding; 20 million survive the frequency threshold.",
+    "Average query length 20 bytes; top 10 suggestions per prefix stored as ids."
+   ],
+   "math": [
+    "Requests: 2e9 x 5 = 1e10 per day / 86,400 = about 116K QPS average, about 400K QPS peak.",
+    "CDN and client caching for prefixes of length <= 3 absorbs about 50%: origin about 200K QPS peak.",
+    "Per node at about 20K QPS (in-memory lookup, about 50 microseconds CPU each), origin needs about 10 nodes per replica set; with 3 regions and headroom, about 60 to 80 nodes.",
+    "Prefix entries: 20M queries x average 20 chars = 400M prefixes, but trie sharing reduces nodes to about 150M; storing top 10 ids (4 bytes each) per node = 6 GB plus about 4 GB node overhead = about 10 GB.",
+    "Query strings: 20M x 20 bytes = 400 MB. Whole snapshot about 10 to 12 GB: fits in RAM on one machine, so sharding is optional for memory but useful for rollout and multi-language.",
+    "Logs: 2e9 searches x 100 bytes = 200 GB/day raw query logs into the data lake.",
+    "Bandwidth: 400K QPS x 1 KB response = 400 MB/s at peak, mostly served by CDN."
+   ],
+   "summary": "Roughly 116K QPS average and 400K at peak, about half absorbed by CDN and client caches; the whole precomputed trie is about 10 to 12 GB and fits in memory per node, so serving is a read-only replicated in-memory lookup with tens of nodes, and the heavy lifting is the offline aggregation of about 200 GB of logs per day."
+  },
+  "out_of_scope": [
+   "Search results page and ranking of products.",
+   "Voice input.",
+   "Full-sentence grammar correction.",
+   "Ads inserted into suggestions."
+  ]
+ },
+ "hld": {
+  "overview": "Autocomplete splits into a data collection path, an offline aggregation and build path, a streaming trending path, and a serving path. Serving is read-only: snapshots of a top-k annotated trie are built offline, validated, published to object storage, and loaded by Suggest Nodes. A thin Suggest API blends base, trending and personal suggestions, applies filters and returns JSON that CDNs and clients can cache by prefix.",
+  "diagram": " Client (debounce, cancel, local cache, recent history)\n    |  GET /suggest?q=ipho&lang=en&region=IN\n    v\n [CDN edge cache: short prefixes, TTL 5-15 min]\n    | miss\n    v\n [Suggest API (stateless)] --personal--> [User history store (Redis/Cassandra)]\n    |   blend + filter      --blocklist-> [Policy service, in-memory copy]\n    | route by prefix shard\n    v\n [Suggest Nodes: in-memory trie snapshot vN] + [trending delta map]\n    ^ load snapshot                               ^ push every 1 min\n    |                                             |\n [Object store: snapshots]               [Flink: sliding-window counts]\n    ^                                             ^\n [Trie Builder (Spark, daily)] <-- [Data lake] <-- [Kafka: search + select logs]\n                                                       ^\n                                     Suggest API / Search API (async log)",
+  "components": [
+   {
+    "name": "Client SDK",
+    "responsibility": "Debounce 50-100 ms, cancel stale requests, cache per prefix, show recent searches, send selection events."
+   },
+   {
+    "name": "CDN edge",
+    "responsibility": "Cache non-personalized responses keyed by prefix+lang+region with short TTL; absorbs hot short prefixes."
+   },
+   {
+    "name": "Suggest API",
+    "responsibility": "Normalize prefix, route to shard, merge base + trending + personal, apply blocklist, return top 10."
+   },
+   {
+    "name": "Suggest Nodes",
+    "responsibility": "Hold read-only trie snapshot in memory; prefix lookup returns precomputed top-k; atomically swap snapshot versions."
+   },
+   {
+    "name": "Logging pipeline (Kafka)",
+    "responsibility": "Async collection of submitted queries, impressions and selections."
+   },
+   {
+    "name": "Trie Builder (Spark)",
+    "responsibility": "Daily aggregation with decay, thresholding, filtering, scoring and trie build per shard/language."
+   },
+   {
+    "name": "Trending stream (Flink)",
+    "responsibility": "Count queries per 5 to 15 minute sliding windows, detect spikes vs baseline, emit delta map."
+   },
+   {
+    "name": "Policy / blocklist service",
+    "responsibility": "Maintain blocked terms and patterns, classifier scores; distribute to nodes within minutes."
+   },
+   {
+    "name": "User history store",
+    "responsibility": "Per-user recent queries (last 50) for cross-device personalization, with delete support."
+   },
+   {
+    "name": "Snapshot registry",
+    "responsibility": "Tracks versions, validation status, canary progress, rollback pointer."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Keystroke to suggestions",
+    "steps": [
+     "User types 'ipho'; client waits 60 ms of idle, checks local cache (miss), cancels older request, sends GET /suggest?q=ipho.",
+     "CDN checks cache for key 'ipho|en|IN' (miss for 4+ chars sometimes), forwards to Suggest API in nearest region.",
+     "Suggest API normalizes (lowercase, trim, unicode NFKC), computes shard by prefix range, calls a Suggest Node replica with 10 ms timeout.",
+     "Node walks the trie 4 characters, reads the precomputed top 10 at that node, merges with trending deltas for 'ipho'.",
+     "API merges personal recent queries starting with 'ipho' (if logged in), removes blocked items, dedupes, returns 10 suggestions.",
+     "Client renders and logs impression asynchronously; on tap, logs selection with position."
+    ]
+   },
+   {
+    "name": "Daily rebuild and rollout",
+    "steps": [
+     "Spark reads last 30 days of query logs, filters bots and PII, counts distinct users per query with exponential decay (half-life 7 days).",
+     "Drops queries below 50 distinct users; applies blocklist and classifier.",
+     "Builds per-language tries where each node stores top 10 (query_id, score); serializes to compact arrays; uploads with version and checksum.",
+     "Validation job checks size, top prefixes against golden set, blocked-term absence.",
+     "Registry rolls out to 5% of nodes (canary), compares acceptance and latency for 30 minutes, then all nodes load and atomically swap."
+    ]
+   },
+   {
+    "name": "Trending update",
+    "steps": [
+     "Flink consumes query events, keeps per-query counts in 5-minute tumbling windows aggregated into a 15-minute sliding view.",
+     "Compares to baseline (same hour last week); queries with z-score above threshold and >= 200 distinct users become trending.",
+     "Emits delta map prefix -> [(query, boost)] for affected prefixes, pushed to nodes every minute."
+    ]
+   }
+  ],
+  "data_flow": "Search and suggest events -> Kafka -> (a) data lake -> daily Spark aggregation -> trie snapshot -> object store -> Suggest Nodes; (b) Flink sliding windows -> trending deltas -> Suggest Nodes. Requests: client -> CDN -> Suggest API -> Suggest Node (memory) -> API blend/filter -> client. Blocklist edits -> policy service -> pushed to API and nodes within minutes and also applied in the next build."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/suggest",
+    "request": "q (prefix, max 100 chars), lang, region, limit<=10, session_id",
+    "response": "{q, suggestions:[{text, type: query|history|trending|entity, highlight:[0,4]}], version}",
+    "notes": "Cache-Control: public, max-age=300 when no personalization; private when history blended. ETag = snapshot version."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/suggest/events",
+    "request": "{session_id, q_prefix, shown[], selected, position, ts}",
+    "response": "204",
+    "notes": "Batched by client, sampled at 100% for selections and 10% for impressions."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/users/me/history/{query_hash}",
+    "request": "-",
+    "response": "204",
+    "notes": "Removes from history store; client also clears local cache."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/admin/blocklist",
+    "request": "{pattern, match: exact|prefix|regex, scope: global|region, reason}",
+    "response": "201 {rule_id}",
+    "notes": "Audited; propagates to nodes within 1 to 5 minutes."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/snapshots/{version}/activate",
+    "request": "{percent}",
+    "response": "200",
+    "notes": "Registry-controlled canary and rollback."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Query log event",
+    "store": "Kafka -> data lake (Parquet, partitioned by date/hour)",
+    "fields": [
+     "event_id",
+     "ts",
+     "user_hash",
+     "query_normalized",
+     "lang",
+     "region",
+     "source: typed|suggested",
+     "results_count"
+    ],
+    "keys": "Kafka key = user_hash (for sessionization)",
+    "notes": "Retention 30 days for aggregation; PII scrubbed."
+   },
+   {
+    "entity": "Query stats",
+    "store": "Data lake table (Iceberg)",
+    "fields": [
+     "query_normalized",
+     "lang",
+     "region",
+     "distinct_users_decayed",
+     "count_7d",
+     "ctr",
+     "conversion_rate"
+    ],
+    "keys": "(lang, region, query_normalized)",
+    "notes": "Input to scoring and trie build."
+   },
+   {
+    "entity": "Trie snapshot",
+    "store": "Object store + memory on Suggest Nodes",
+    "fields": [
+     "version",
+     "shard_range",
+     "nodes[] (char edges, child offsets, topk[10] query ids)",
+     "query_strings[]",
+     "checksum"
+    ],
+    "keys": "object key snapshots/{lang}/{version}/{shard}.bin",
+    "notes": "Memory-mapped, about 10 GB per full language set."
+   },
+   {
+    "entity": "Trending delta",
+    "store": "In-memory map on nodes, source Flink -> Redis/stream",
+    "fields": [
+     "prefix",
+     "entries[(query_id/text, boost, expires_at)]"
+    ],
+    "keys": "prefix",
+    "notes": "Small: a few thousand prefixes; entries expire after 2 hours."
+   },
+   {
+    "entity": "User history",
+    "store": "Redis cluster (hot) backed by Cassandra",
+    "fields": [
+     "user_id",
+     "recent_queries[50] (text, ts)"
+    ],
+    "keys": "user_id (hash partitioned)",
+    "notes": "TTL 90 days; delete by query hash."
+   }
+  ],
+  "classes": [
+   {
+    "name": "TrieNode",
+    "responsibility": "Child edges and precomputed top-k for this prefix.",
+    "methods": [
+     "child(char) -> TrieNode",
+     "topk() -> List[(query_id, score)]"
+    ]
+   },
+   {
+    "name": "TrieSnapshot",
+    "responsibility": "Immutable, memory-mapped trie of one version with query string table.",
+    "methods": [
+     "lookup(prefix) -> List[Suggestion]",
+     "fuzzy_lookup(prefix, max_edits=1)",
+     "version()"
+    ]
+   },
+   {
+    "name": "SnapshotManager",
+    "responsibility": "Download, verify checksum, warm up, then atomically swap the active snapshot pointer.",
+    "methods": [
+     "load(version)",
+     "activate(version)",
+     "rollback()"
+    ]
+   },
+   {
+    "name": "Blender",
+    "responsibility": "Merge base, trending and personal lists with weights, dedupe and truncate.",
+    "methods": [
+     "blend(base, trending, personal, weights) -> List[Suggestion]"
+    ]
+   },
+   {
+    "name": "PolicyFilter",
+    "responsibility": "Apply blocklist automaton and classifier thresholds.",
+    "methods": [
+     "allowed(text, region) -> bool",
+     "reload(rules)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Build top-k annotated trie",
+    "explain": "Insert each surviving query with its score, then do a post-order traversal where each node's top-k is the k best among its own terminal query and its children's top-k lists. Query time is then O(prefix length) with no subtree walk. Build cost is O(total chars x k log k).",
+    "pseudocode": "def build(queries, k=10):\n    root = Node()\n    for q, score in queries:\n        n = root\n        for ch in q: n = n.children.setdefault(ch, Node())\n        n.terminal = (q, score)\n    def fill(n):\n        cands = [n.terminal] if n.terminal else []\n        for c in n.children.values():\n            fill(c); cands.extend(c.topk)\n        n.topk = heapq.nlargest(k, cands, key=lambda x: x[1])\n    fill(root)\n    return root"
+   },
+   {
+    "name": "Scoring with time decay and distinct users",
+    "explain": "Score favors queries many distinct users issue recently and that lead to clicks or purchases. Exponential decay with half-life H weights an event of age t by 0.5^(t/H). Distinct users rather than raw counts resist bots.",
+    "pseudocode": "def score(stats, H_days=7):\n    pop = sum(users_on_day[d] * 0.5 ** (age_days(d) / H_days) for d in last_30_days)\n    quality = 1 + 0.5 * stats.ctr + 2.0 * stats.conversion_rate\n    return log1p(pop) * quality"
+   },
+   {
+    "name": "Read-time blend",
+    "explain": "Take base top 10, trending boosts for the same prefix, and up to 3 personal history matches; compute a blended score, dedupe by normalized text, filter by policy, return 10.",
+    "pseudocode": "def suggest(prefix, user):\n    base = snapshot.lookup(prefix)                 # [(text, s)]\n    trend = trending.get(prefix, [])               # [(text, boost)]\n    hist = [h for h in history(user) if h.startswith(prefix)][:3]\n    scores = {}\n    for t, s in base: scores[t] = s\n    for t, b in trend: scores[t] = scores.get(t, 0) + b\n    for t in hist: scores[t] = scores.get(t, 0) + W_HIST\n    out = [t for t in sorted(scores, key=scores.get, reverse=True) if policy.allowed(t)]\n    return out[:10]"
+   }
+  ],
+  "sequence": "Client        CDN          SuggestAPI       SuggestNode      History     Policy\n  | type 'ipho' |              |                 |               |           |\n  | debounce    |              |                 |               |           |\n  |------------>| miss         |                 |               |           |\n  |             |------------->| normalize,route |               |           |\n  |             |              |---------------->| trie walk     |           |\n  |             |              |                 | top10+trend   |           |\n  |             |              |<----------------|               |           |\n  |             |              |-------------------------------->| recent    |\n  |             |              |<--------------------------------| [3]       |\n  |             |              | blend, filter (local rules copy)  |           |\n  |             |<-------------| 200 (private if personalized)    |           |\n  |<------------| render       |                 |               |           |\n  | async log selection --> Kafka                |               |           |"
+ },
+ "edge_cases": [
+  {
+   "case": "Hot prefix during a launch ('iph' at 10x normal)",
+   "handling": "CDN and per-node in-process LRU cache, hot shard replicated more, autoscale API; responses identical so caching is very effective."
+  },
+  {
+   "case": "Out-of-order responses: reply for 'ip' arrives after reply for 'iph'",
+   "handling": "Client tags requests with sequence numbers and drops responses older than the latest shown; cancel stale requests."
+  },
+  {
+   "case": "User types faster than debounce on a slow network",
+   "handling": "Debounce 50-100 ms; client filters cached results for longer prefix locally while waiting."
+  },
+  {
+   "case": "Bot farm pumps a query to manipulate suggestions",
+   "handling": "Count distinct verified users, bot detection, velocity caps per query, manual review for new entries in top positions."
+  },
+  {
+   "case": "Offensive suggestion goes viral",
+   "handling": "Emergency blocklist rule distributed within minutes, applied at read time in API; next build excludes it."
+  },
+  {
+   "case": "PII leakage (someone searches their phone number)",
+   "handling": "Minimum 50 distinct users threshold, regex PII detectors for phone numbers, emails, PAN-like patterns."
+  },
+  {
+   "case": "Empty prefix or just whitespace",
+   "handling": "Return recent history and trending; do not hit the trie root top-k for every focus event unnecessarily."
+  },
+  {
+   "case": "Unicode normalization issues (Hindi combining marks, full-width chars)",
+   "handling": "NFKC normalize and case-fold on both build and query; per-language tokenization."
+  },
+  {
+   "case": "Mixed script / transliteration ('joote', 'mobile kavar')",
+   "handling": "Transliteration variants generated offline mapped to canonical queries; fuzzy match on last token."
+  },
+  {
+   "case": "Snapshot rollout half done; replicas disagree",
+   "handling": "Acceptable briefly; version in response enables debugging; sticky routing by session reduces flicker."
+  },
+  {
+   "case": "Very long prefix (paste of 500 chars)",
+   "handling": "Truncate to 100 chars; if no trie node, return empty quickly."
+  },
+  {
+   "case": "Seasonal query (diwali lights) with stale yearly popularity",
+   "handling": "Decay handles fall-off; trending layer picks up rises; seasonal boost table from last year's calendar."
+  },
+  {
+   "case": "User deletes history but CDN cached personalized response",
+   "handling": "Personalized responses are Cache-Control private, never CDN-cached; client cache cleared on delete."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Custom in-memory trie service (Java/Go/C++)",
+   "layer": "Serving",
+   "overview": "Compact array-based trie with precomputed top-k, memory-mapped snapshots.",
+   "why": "Microsecond lookups, no GC churn if off-heap, full control of blending.",
+   "alternatives": "Elasticsearch completion suggester (FST-based, easy but less control and higher latency); Redis sorted sets per prefix (simple, memory heavy)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Event logging",
+   "overview": "Durable partitioned log.",
+   "why": "High-throughput async collection of billions of events per day; feeds both batch and stream.",
+   "alternatives": "Kinesis / Pub/Sub (managed); direct log files shipped by agents (more lag)."
+  },
+  {
+   "name": "Apache Spark",
+   "layer": "Batch aggregation and trie build",
+   "overview": "Distributed batch processing engine.",
+   "why": "Aggregates 30 days of logs (several TB) and builds snapshots in under an hour.",
+   "alternatives": "BigQuery/Presto SQL for counting plus a builder job; MapReduce (older)."
+  },
+  {
+   "name": "Apache Flink",
+   "layer": "Trending stream",
+   "overview": "Stateful stream processor with event-time windows and exactly-once state.",
+   "why": "Sliding windows with watermarks for late events; produces trending deltas each minute.",
+   "alternatives": "Kafka Streams (simpler deployment); Spark Structured Streaming (micro-batch latency)."
+  },
+  {
+   "name": "CDN (Akamai/CloudFront/Fastly)",
+   "layer": "Edge caching",
+   "overview": "Globally distributed HTTP caches.",
+   "why": "Short prefixes are a small hot set; caching at the edge cuts latency and origin QPS by about half.",
+   "alternatives": "Regional API caches only (higher RTT); no caching (origin must scale 2x)."
+  },
+  {
+   "name": "Redis + Cassandra",
+   "layer": "User history",
+   "overview": "In-memory cache over a wide-column durable store.",
+   "why": "Sub-ms lookups of recent queries; Cassandra scales writes per user.",
+   "alternatives": "DynamoDB (managed); on-device only history (no cross-device)."
+  },
+  {
+   "name": "Object storage (S3/GCS)",
+   "layer": "Snapshot distribution",
+   "overview": "Durable blob store.",
+   "why": "Versioned snapshots, easy rollback, nodes pull in parallel.",
+   "alternatives": "Peer-to-peer distribution (BitTorrent-like) for very large fleets; config service push."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Tries, top-k precomputation and FSTs",
+   "explain": "A trie (prefix tree) stores strings by their characters: each edge is a character and each path from the root spells a prefix. Finding all strings starting with 'iph' is a walk of three edges followed by the subtree under that node. The naive approach then traverses the whole subtree to collect completions and sorts them by score, which is far too slow for a short prefix like 'i' whose subtree has millions of entries. The standard fix is to precompute: store at every node the top k completions for that prefix. Lookup becomes O(length of prefix) with no subtree walk, at the price of extra memory (k entries per node) and an expensive build, which is fine because it runs offline. Memory is reduced by compressing chains of single-child nodes (radix or Patricia tries), storing query ids instead of strings in top-k lists, and laying the trie out in flat arrays rather than pointer-heavy objects. A finite state transducer (FST), used by Lucene's completion suggester, goes further: it shares both prefixes and suffixes and maps inputs to outputs (like weights), giving very compact automata. An alternative is a sorted array of all queries plus binary search for the prefix range, or a hash map from every prefix (up to a length cap) to its top-k list, which is simple and fast but uses more memory. In all cases the important insight is that ranking is precomputed, not done per request.",
+   "in_this_design": "The Trie Builder produces an array-based trie per language where each node holds the top 10 query ids with scores; snapshots of about 10 GB are memory-mapped on Suggest Nodes and lookups take tens of microseconds.",
+   "key_points": [
+    "Walking the prefix is O(L); collecting completions without precomputation is O(subtree).",
+    "Store top-k per node so queries never traverse subtrees.",
+    "Compress with radix tries, ids instead of strings, flat arrays or FSTs.",
+    "Build offline, serve read-only, swap atomically.",
+    "A prefix -> top-k hash map is a valid simpler alternative."
+   ],
+   "qa": [
+    {
+     "q": "Why not query the database with LIKE 'iph%' ORDER BY count LIMIT 10?",
+     "a": "Even with a B-tree prefix range scan, short prefixes match millions of rows that must be sorted per request at 400K QPS. Precomputing top-k per prefix turns that into a constant-time lookup."
+    },
+    {
+     "q": "How much memory does storing top 10 at each node cost?",
+     "a": "With about 150M nodes and 10 four-byte ids, about 6 GB; plus structure, about 10 GB, which fits in RAM. Capping prefix length at 30 or storing top-k only for nodes above a popularity threshold reduces it further."
+    },
+    {
+     "q": "When would you choose a prefix hash map over a trie?",
+     "a": "When the set of queries is modest and you cap prefix length, a key-value store like Redis or an in-memory map of prefix -> top-k is easier to build, shard and update incrementally, at higher memory cost."
+    },
+    {
+     "q": "How do you update a single query's score without a full rebuild?",
+     "a": "Walk the prefix path and update each ancestor's top-k list if the new score qualifies; but with immutable snapshots we instead apply such changes as a delta layer merged at read time."
+    }
+   ]
+  },
+  {
+   "name": "Batch plus stream (Lambda-style) aggregation",
+   "explain": "Many systems need both an accurate, complete view of history and a fast, approximate view of what is happening now. The Lambda architecture splits this into a batch layer that periodically recomputes results from all raw data (correct, slow, easy to fix by rerunning) and a speed layer that processes the stream incrementally for recent data (fast, approximate). A serving layer merges both at read time. The Kappa architecture argues you can use only a stream processor and replay the log when you need to recompute, avoiding two codebases. In stream processing, the key ideas are windows (tumbling: fixed non-overlapping buckets such as every 5 minutes; sliding: overlapping, e.g. 15 minutes advancing every minute), event time versus processing time (events from mobile clients arrive late), and watermarks that tell the processor how long to wait for late events before closing a window. Stateful engines such as Flink checkpoint their state so a crash does not lose counts. Trending detection compares the current window to a baseline such as the same hour last week and flags items whose ratio or z-score is high and whose absolute volume exceeds a floor, which stops tiny queries going from 1 to 5 from being called a trend.",
+   "in_this_design": "A daily Spark job is the batch layer producing the base trie; a Flink job with 15-minute sliding windows and 2-minute watermarks is the speed layer emitting trending deltas every minute; Suggest Nodes merge the two at read time.",
+   "key_points": [
+    "Batch: complete, correct, rebuildable; stream: fresh, approximate.",
+    "Merge at read time in the serving layer.",
+    "Event time plus watermarks handle late mobile events.",
+    "Trending needs both relative lift and an absolute floor.",
+    "Kappa (stream-only with replay) is the alternative to running two pipelines."
+   ],
+   "qa": [
+    {
+     "q": "Why not rebuild the whole trie every five minutes instead of a speed layer?",
+     "a": "A full build scans 30 days of logs and produces a 10 GB snapshot; doing that every five minutes is costly and rollouts would churn memory. A small delta map gives freshness for the few thousand prefixes that change."
+    },
+    {
+     "q": "How do you avoid flagging 'abc' as trending when it goes from 2 to 10 searches?",
+     "a": "Require a minimum absolute count of distinct users (e.g. 200 in the window) in addition to relative lift versus baseline."
+    },
+    {
+     "q": "What happens to late events from offline mobile clients?",
+     "a": "With event-time windows and a watermark, events within the allowed lateness update their window; very late events go to the batch layer, which recounts everything daily anyway."
+    }
+   ]
+  },
+  {
+   "name": "Multi-layer caching (client, CDN, in-process) and cacheability",
+   "explain": "Caching is the cheapest way to scale reads, and autocomplete is unusually cache-friendly because responses for a prefix are identical for most users and the distribution is highly skewed: a few thousand short prefixes account for a large share of requests. Each layer has a role. The client cache stores responses per prefix for the session, so backspacing or retyping costs nothing, and it can filter a cached 'iph' result locally to answer 'ipho' instantly. The CDN caches public responses at the edge near the user, removing a long round trip and origin load; this works only if responses are not personalized and use a deterministic cache key (normalized prefix, language, region). In-process caches on servers handle hot keys without a network hop. The main tension is personalization versus cacheability: once a response depends on the user it must be marked private and cannot live in a shared cache. A common pattern is to split the response, caching the global part at the edge and blending personal items on the client from local history. TTL choice trades freshness for hit ratio; short prefixes change slowly, so 5 to 15 minutes is fine, while trending changes need either short TTLs or versioned keys. Cache stampedes, when a hot key expires and thousands of requests hit origin at once, are prevented with request coalescing and stale-while-revalidate.",
+   "in_this_design": "Client caches per prefix and merges device history; CDN caches public responses keyed by prefix|lang|region with max-age 300 and stale-while-revalidate; Suggest API marks personalized responses private; nodes keep an LRU of the hottest 100K prefixes. Origin load drops roughly by half.",
+   "key_points": [
+    "Skewed prefix distribution makes caching extremely effective.",
+    "Personalized responses cannot use shared caches; split global and personal.",
+    "Normalize cache keys to maximize hit ratio.",
+    "TTL is a freshness versus hit-rate dial.",
+    "Use coalescing and stale-while-revalidate against stampedes."
+   ],
+   "qa": [
+    {
+     "q": "How do you personalize without losing CDN caching?",
+     "a": "Fetch the global suggestions as a cacheable public response and merge personal history on the device, or make two calls: cached global plus a small private history call."
+    },
+    {
+     "q": "A trending query must appear within minutes but CDN TTL is 15 minutes. What do you do?",
+     "a": "Use shorter TTL for prefixes affected by trending deltas, or purge those keys via the CDN API when the delta map changes; long prefixes are mostly served from origin anyway."
+    },
+    {
+     "q": "What is a cache stampede and how do you prevent it here?",
+     "a": "When a hot key expires many requests miss simultaneously and overload origin. Use request coalescing at the CDN and node, stale-while-revalidate, and jittered TTLs."
+    }
+   ]
+  },
+  {
+   "name": "Sharding and replication of read-only data",
+   "explain": "When data is read-only between rebuilds, scaling is mostly about replication: every replica can serve any request with no coordination, no consensus and no consistency protocol beyond 'which version are you on'. Sharding becomes necessary only when the data does not fit on one machine or when rebuilding and loading one huge file is too slow. Sharding by prefix range (a-c, d-f, ...) keeps every lookup on one shard because a prefix maps to exactly one range, but letter frequencies are skewed, so ranges must be chosen from data to balance load (for example splitting 's' into its own shard). Hash sharding on the first two or three characters balances better but still sends one prefix to one shard, which can be hot. Language and region are also natural shard keys. Replication factor is chosen from QPS: total peak QPS divided by per-node throughput, plus headroom for a zone failure. Version consistency matters: during a rollout some replicas serve version N and others N+1; this is acceptable for suggestions, and sticky routing by session reduces visible flicker. Snapshot rollout should be canaried, verified and reversible by flipping an active-version pointer.",
+   "in_this_design": "The 10 GB trie fits in memory, so the default is full replication per language with optional range sharding for very large languages; each region runs about 20 to 25 nodes, replicas spread across zones, and the registry controls which version is active with canary and rollback.",
+   "key_points": [
+    "Read-only snapshots scale by adding replicas, no consensus needed.",
+    "Shard only when memory or load time forces it; range by prefix keeps lookups single-shard.",
+    "Balance ranges using real prefix frequency, not the alphabet.",
+    "Versioned atomic swap; canary; rollback pointer.",
+    "Mixed versions during rollout are acceptable for suggestions."
+   ],
+   "qa": [
+    {
+     "q": "Would you use consistent hashing for prefix shards?",
+     "a": "Not necessary; the shard map changes only at build time and is shipped with the snapshot, so a static range map is simpler. Consistent hashing helps when nodes join and leave with mutable data."
+    },
+    {
+     "q": "How do you load a new 10 GB snapshot without a latency spike?",
+     "a": "Download in the background, memory-map and warm the hot pages, then atomically swap the pointer; take the node out of rotation briefly if memory is tight, and roll out in waves."
+    },
+    {
+     "q": "What sets the replica count?",
+     "a": "Peak origin QPS (about 200K) divided by per-node capacity (about 20K) gives 10 per region set; add 50% headroom and zone spread, so about 15 to 25 per region."
+    }
+   ]
+  },
+  {
+   "name": "Rate control on the client: debouncing, cancellation and request ordering",
+   "explain": "A naive client sends a request on every keystroke. A user typing 'iphone 15' produces nine requests in two seconds, most of which are obsolete before they return. Debouncing waits until the user pauses for a short interval (50 to 150 ms) before sending, which typically cuts requests by half or more without noticeable delay, because people type in bursts. Throttling is different: it guarantees at most one request per interval, useful when you want steady updates while typing continues. Cancellation (AbortController in browsers, cancelling OkHttp calls on Android) stops waiting for obsolete responses and frees connections. Because requests travel over variable mobile networks, responses can arrive out of order; a response for 'ip' landing after 'iph' would overwrite better suggestions with worse ones, so clients tag each request with a sequence number and ignore any response older than the latest rendered. Local prefix filtering is a further trick: if the client has results for 'iph', it can immediately show the subset that starts with 'ipho' while the real request is in flight. Connection reuse (HTTP/2, keep-alive) avoids TLS handshakes per keystroke. These are cheap client changes that cut server load and improve perceived latency more than most server optimizations.",
+   "in_this_design": "The client SDK debounces at 60 ms, cancels in-flight calls, uses sequence numbers to drop stale responses, keeps an LRU of 200 prefixes, filters cached longer-prefix results locally and reuses HTTP/2 connections. Capacity math assumes about 5 requests per search after debouncing.",
+   "key_points": [
+    "Debounce waits for a pause; throttle caps frequency.",
+    "Cancel stale requests and ignore out-of-order responses.",
+    "Filter cached results locally for instant feedback.",
+    "Reuse connections to avoid per-keystroke handshakes.",
+    "Client behaviour is a first-class capacity lever."
+   ],
+   "qa": [
+    {
+     "q": "Users complain suggestions flicker to worse results. Why?",
+     "a": "Out-of-order responses: an older prefix's response arrives after a newer one and overwrites it. Fix with sequence numbers and discard stale responses."
+    },
+    {
+     "q": "Debounce or throttle for autocomplete?",
+     "a": "Debounce for request reduction since suggestions matter most when the user pauses; some apps combine a short debounce with a max-wait throttle so suggestions still update during long continuous typing."
+    },
+    {
+     "q": "How much load does debouncing save?",
+     "a": "Typically 40 to 60 percent of requests; that is the difference between 10 and 5 requests per search in our math, halving server capacity."
+    }
+   ]
+  },
+  {
+   "name": "Privacy and abuse resistance: k-anonymity thresholds and distinct counting",
+   "explain": "Autocomplete publishes what people search for, which creates two risks. Privacy: if one person searches their own phone number or a medical condition with their name, that string could be suggested to others. Abuse: if suggestions reflect raw popularity, anyone with a botnet can push a defamatory or spammy completion. The core defense for privacy is a k-anonymity style threshold: a query becomes a global suggestion only if at least k distinct users issued it in the window (k of 50 or more is common), plus pattern detectors that strip phone numbers, email addresses and ID-like strings. For abuse, count distinct users, not requests, weight by account age and trust, exclude traffic flagged by bot detection, and cap how fast a new query can climb. Counting distinct users at scale is itself a distributed systems problem: exact distinct counts need large sets, so streaming systems use HyperLogLog sketches, which estimate cardinality within about 1 to 2 percent using a few kilobytes per key and can be merged across partitions. Finally, a policy layer applies blocklists and classifier scores at read time so a newly found bad suggestion can be removed in minutes without waiting for a rebuild, with an audit trail for legal requests.",
+   "in_this_design": "The builder keeps only queries with at least 50 distinct users over the decay window, uses HyperLogLog in Flink for distinct users per query in trending windows, strips PII patterns, and the Policy Filter runs an Aho-Corasick blocklist automaton plus classifier scores at read time.",
+   "key_points": [
+    "Minimum distinct-user threshold protects private queries.",
+    "Distinct users, not raw counts, resist manipulation.",
+    "HyperLogLog gives mergeable approximate distinct counts in kilobytes.",
+    "Read-time blocklist for minute-level takedown; build-time filter for permanence.",
+    "Audit every manual rule change."
+   ],
+   "qa": [
+    {
+     "q": "Why distinct users rather than query counts?",
+     "a": "A single bot or a user hammering refresh can inflate counts. Distinct users (from logged-in ids or device ids, weighted by trust) is much harder to fake at scale."
+    },
+    {
+     "q": "How does HyperLogLog work at a high level?",
+     "a": "Hash each user id; track for each of m buckets the maximum number of leading zeros seen; rare long zero runs imply many distinct items. Harmonic mean across buckets gives the estimate with about 1.04/sqrt(m) error, and sketches merge by bucket-wise max."
+    },
+    {
+     "q": "Legal asks to remove a defamatory suggestion now. What happens?",
+     "a": "Add an exact or prefix rule via the admin API; it propagates to API and nodes within minutes and is applied at read time; CDN keys for affected prefixes are purged; the build pipeline then excludes it permanently."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Precompute top-k per prefix vs compute at query time",
+   "options": "Precomputed trie; on-the-fly subtree search; search engine prefix query",
+   "choice": "Precompute",
+   "why": "Constant-time lookups at 400K QPS; build cost is offline."
+  },
+  {
+   "decision": "Freshness strategy",
+   "options": "Frequent full rebuilds; base + trending delta; fully streaming trie",
+   "choice": "Daily base plus streaming delta",
+   "why": "Cheap and robust; only a few thousand prefixes need minute-level freshness."
+  },
+  {
+   "decision": "Personalization location",
+   "options": "Server-side blend; client-side blend",
+   "choice": "Client-side for history, server for logged-in cross-device",
+   "why": "Keeps the global response CDN-cacheable."
+  },
+  {
+   "decision": "Custom trie service vs Elasticsearch completion suggester",
+   "options": "Custom; ES completion suggester; Redis sorted sets",
+   "choice": "Custom in-memory service",
+   "why": "Lower latency, precise blending control and cheaper at this QPS; ES is fine for smaller scale."
+  },
+  {
+   "decision": "Sharding scheme",
+   "options": "Full replication; range by prefix; hash by prefix",
+   "choice": "Full replication per language, range sharding only if needed",
+   "why": "Data fits in memory; replication is simpler and avoids routing."
+  },
+  {
+   "decision": "Ranking signal",
+   "options": "Raw frequency; decayed distinct users; ML model with CTR/conversion",
+   "choice": "Decayed distinct users times quality factor, ML in phase 2",
+   "why": "Robust and explainable; ML layer added after logs establish features."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Suggest Node crash",
+   "behavior": "Load balancer removes it; replicas serve; no state lost because snapshot is in object storage."
+  },
+  {
+   "failure": "Bad snapshot (empty or corrupted)",
+   "behavior": "Validation blocks publish; if it slips through, canary metrics (acceptance rate, empty-response rate) trigger automatic rollback to previous version."
+  },
+  {
+   "failure": "Trending pipeline down",
+   "behavior": "Nodes keep last delta until expiry, then serve base only; freshness degrades, availability unaffected."
+  },
+  {
+   "failure": "Kafka logging backlog",
+   "behavior": "Clients and API log fire-and-forget with bounded buffers; dropping some events is acceptable; aggregation continues on what arrives."
+  },
+  {
+   "failure": "History store slow",
+   "behavior": "API calls it with 5 ms timeout and skips personalization on timeout (bulkhead), returning global suggestions."
+  },
+  {
+   "failure": "Region outage",
+   "behavior": "GeoDNS/anycast sends users to another region; RTT rises but suggestions continue; CDN still serves cached prefixes."
+  },
+  {
+   "failure": "Total suggest outage",
+   "behavior": "Client hides dropdown silently; search box still works, so the core funnel is unaffected."
+  }
+ ],
+ "metrics": [
+  "Acceptance rate (searches started from a suggestion) and position of the selected suggestion (MRR).",
+  "Keystrokes saved per search.",
+  "Client p50/p99 latency, server p99, timeout rate, empty-suggestion rate.",
+  "CDN hit ratio and origin QPS per region.",
+  "Snapshot age and trending delta age; build duration and validation failures.",
+  "Blocked-suggestion impressions and user reports per million impressions.",
+  "Zero-result rate of searches that started from a suggestion (should be near zero)."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you handle typos in the prefix?",
+   "a": "For prefixes of length 4 or more, do a bounded fuzzy walk (edit distance 1) on the trie with a Levenshtein automaton, or precompute common misspelling mappings from logs (queries that users rewrote) and add them as aliases."
+  },
+  {
+   "q": "How do you suggest mid-word matches like 'pro max'?",
+   "a": "Index each query also by its word-suffix starts (token-level suffixes), mapping 'pro max' to 'iphone 15 pro max', with lower weight; or use an n-gram index for second-word matching."
+  },
+  {
+   "q": "How would you add ML ranking?",
+   "a": "Generate candidates from the trie (top 50), then rank with a lightweight model (gradient boosted trees) using features like popularity, CTR, conversion, user history match, freshness and locale; keep inference under 5 ms."
+  },
+  {
+   "q": "How would you support entity suggestions like products or brands?",
+   "a": "A separate entity index with its own top-k per prefix, blended into the dropdown with type labels and reserved slots."
+  },
+  {
+   "q": "How do you test a ranking change?",
+   "a": "A/B test with acceptance rate, keystrokes saved and downstream conversion as metrics, with guardrails for latency and offensive reports."
+  },
+  {
+   "q": "How do merchandising campaigns get in?",
+   "a": "Curated boosts in a separate table merged at read time with caps and expiry, subject to policy review, so organic ranking is not permanently distorted."
+  },
+  {
+   "q": "How do you handle multiple languages on one search box?",
+   "a": "Detect script per keystroke, query the matching language trie and the transliteration alias set, and blend by user's language preference."
+  }
+ ],
+ "key_points": [
+  "Every keystroke is a request: about 116K QPS average, 400K peak; nothing on the hot path touches a DB.",
+  "Precompute top-k per prefix offline; lookup is O(prefix length).",
+  "Snapshot is about 10 GB, fits in memory, so scale by replication not complex sharding.",
+  "Batch base layer daily plus streaming trending layer merged at read time.",
+  "Cache at client, CDN and node; keep global responses public and blend personal on device.",
+  "Client debounce, cancellation and sequence numbers halve load and stop flicker.",
+  "Distinct-user thresholds and HyperLogLog for privacy and anti-manipulation.",
+  "Read-time blocklist for minute-level takedowns.",
+  "Degrade silently: no suggestions is better than a broken search box.",
+  "Measure acceptance rate and keystrokes saved, not just latency."
+ ],
+ "quiz": [
+  {
+   "q": "Why store top-k completions at each trie node?",
+   "options": [
+    "To reduce trie memory",
+    "To enable fuzzy matching",
+    "So a lookup is O(prefix length) with no subtree traversal",
+    "Because tries cannot store scores at leaves"
+   ],
+   "answer": 2,
+   "why": "Precomputed top-k avoids walking millions of descendants for short prefixes. It increases memory, so the first option is the opposite of true."
+  },
+  {
+   "q": "Roughly how many suggest QPS do 2 billion searches per day at 5 requests each produce on average?",
+   "options": [
+    "About 11.6K",
+    "About 116K",
+    "About 1.16 million",
+    "About 23K"
+   ],
+   "answer": 1,
+   "why": "1e10 / 86,400 is about 116K. 23K would be the search QPS alone, a common slip."
+  },
+  {
+   "q": "A trending query must appear within 10 minutes. What is the most practical design?",
+   "options": [
+    "Stream-count recent windows and merge a small delta map at read time",
+    "Rebuild the full trie every 10 minutes",
+    "Disable caching entirely",
+    "Query the logs table on every request"
+   ],
+   "answer": 0,
+   "why": "A delta layer gives freshness cheaply. Full rebuilds are tempting but costly and churn memory."
+  },
+  {
+   "q": "Users see suggestions flicker to worse ones while typing quickly. Most likely cause?",
+   "options": [
+    "CDN serving stale content",
+    "Trie corruption",
+    "Too-short TTL",
+    "Out-of-order responses overwriting newer results"
+   ],
+   "answer": 3,
+   "why": "Older prefix responses arriving late overwrite newer ones; sequence numbers fix it. CDN staleness would not depend on typing speed."
+  },
+  {
+   "q": "Why must personalized responses be marked Cache-Control private?",
+   "options": [
+    "Private responses are faster",
+    "CDNs cannot cache JSON",
+    "Shared caches would serve one user's history to others",
+    "It improves compression"
+   ],
+   "answer": 2,
+   "why": "Leaking personal history through shared caches is a privacy bug. CDNs do cache JSON fine."
+  },
+  {
+   "q": "What is the main reason to count distinct users instead of raw query counts?",
+   "options": [
+    "It is cheaper to compute",
+    "It resists manipulation by bots or single heavy users",
+    "It increases recall",
+    "Raw counts are not available"
+   ],
+   "answer": 1,
+   "why": "Distinct counting is actually more expensive; its value is robustness against inflation."
+  },
+  {
+   "q": "Which data structure gives approximate, mergeable distinct counts in a few KB?",
+   "options": [
+    "HyperLogLog",
+    "Bloom filter",
+    "Count-Min sketch",
+    "Skip list"
+   ],
+   "answer": 0,
+   "why": "HyperLogLog estimates cardinality. Count-Min estimates frequencies of items, the most tempting confusion."
+  },
+  {
+   "q": "The full trie snapshot is about 10 GB. What is the simplest scaling approach?",
+   "options": [
+    "Shard by consistent hashing across 100 nodes",
+    "Store it in a SQL database",
+    "Keep it on disk and read per request",
+    "Fully replicate it on each node and add replicas for QPS"
+   ],
+   "answer": 3,
+   "why": "It fits in RAM, so replication scales reads with no routing. Consistent hashing adds complexity without need."
+  },
+  {
+   "q": "Debouncing at 60 ms primarily achieves what?",
+   "options": [
+    "Guarantees at most one request per second",
+    "Compresses responses",
+    "Sends a request only after the user pauses, cutting obsolete requests",
+    "Encrypts requests"
+   ],
+   "answer": 2,
+   "why": "Debounce waits for a pause. A fixed max rate is throttling, a classic confusion."
+  },
+  {
+   "q": "A short prefix like 'i' gets huge traffic during a launch. Best mitigation?",
+   "options": [
+    "Add more shards for the letter i",
+    "Cache it at CDN and in-process; responses are identical across users",
+    "Lower the top-k to 3",
+    "Disable autocomplete for single letters forever"
+   ],
+   "answer": 1,
+   "why": "Hot identical responses are ideal for caching. More shards do not help a single hot key."
+  },
+  {
+   "q": "Which layer is the batch layer in this design?",
+   "options": [
+    "The daily Spark job building trie snapshots",
+    "Flink sliding windows",
+    "The CDN",
+    "The client cache"
+   ],
+   "answer": 0,
+   "why": "Spark recomputes from all logs; Flink is the speed layer."
+  },
+  {
+   "q": "Why use a minimum threshold of 50 distinct users for a suggestion?",
+   "options": [
+    "To reduce trie depth",
+    "To improve CDN hit ratio",
+    "To speed up builds",
+    "To protect privacy so rare personal queries never become public suggestions"
+   ],
+   "answer": 3,
+   "why": "It is a k-anonymity style privacy guard. Smaller tries are a side effect, not the reason."
+  },
+  {
+   "q": "A legal takedown must apply within minutes. Where is it enforced?",
+   "options": [
+    "Only in the next daily build",
+    "In the client only",
+    "In a read-time policy filter distributed to API and nodes, plus build-time exclusion",
+    "In Kafka"
+   ],
+   "answer": 2,
+   "why": "Read-time filters act immediately; build exclusion makes it permanent. Waiting for the build is too slow."
+  },
+  {
+   "q": "What happens if the user history store is slow?",
+   "options": [
+    "The request waits up to 1 s",
+    "The API times out the call at about 5 ms and returns global suggestions",
+    "Autocomplete is disabled",
+    "The CDN serves personal data"
+   ],
+   "answer": 1,
+   "why": "Bulkhead and short timeout keep the hot path fast. Waiting blows the latency budget."
+  },
+  {
+   "q": "Which is the best evidence that a new ranking is better?",
+   "options": [
+    "Higher acceptance rate and keystrokes saved in an A/B test, without guardrail regressions",
+    "Lower CPU usage",
+    "Smaller snapshot size",
+    "Higher QPS"
+   ],
+   "answer": 0,
+   "why": "User-outcome metrics prove ranking quality; CPU and size are cost metrics."
+  },
+  {
+   "q": "For trending detection, why require an absolute volume floor in addition to lift?",
+   "options": [
+    "To save memory",
+    "Because Flink requires it",
+    "To make windows tumbling",
+    "Because tiny queries show huge relative lifts from noise"
+   ],
+   "answer": 3,
+   "why": "Going from 2 to 10 is 5x lift but meaningless; floors filter noise."
+  },
+  {
+   "q": "What is the main benefit of event-time windows with watermarks?",
+   "options": [
+    "They are cheaper than processing-time windows",
+    "They remove the need for checkpoints",
+    "Late events from mobile clients are counted in the right window",
+    "They guarantee exactly-once delivery from clients"
+   ],
+   "answer": 2,
+   "why": "Event time handles lateness. Checkpoints are still needed for fault tolerance."
+  },
+  {
+   "q": "Rolling out a new snapshot, some replicas serve v41 and others v42. Is this a problem?",
+   "options": [
+    "Yes, it violates linearizability and must be prevented with consensus",
+    "Usually no; brief version mixing is acceptable, and sticky routing reduces flicker",
+    "Yes, CDN will crash",
+    "No, because versions are identical"
+   ],
+   "answer": 1,
+   "why": "Suggestions tolerate eventual consistency; consensus would be overkill."
+  },
+  {
+   "q": "Which mechanism stops a cache stampede when a hot prefix expires?",
+   "options": [
+    "Request coalescing with stale-while-revalidate and jittered TTLs",
+    "Longer debounce",
+    "More shards",
+    "HyperLogLog"
+   ],
+   "answer": 0,
+   "why": "Coalescing and serving stale while refreshing stop the thundering herd; debounce is client-side and unrelated."
+  },
+  {
+   "q": "Where should merchandising boosts be applied?",
+   "options": [
+    "Hard-coded into the trie build permanently",
+    "In the client",
+    "By inflating log counts",
+    "A capped, expiring boost table merged at read time with policy review"
+   ],
+   "answer": 3,
+   "why": "Read-time boosts are reversible and auditable. Inflating counts corrupts organic signals."
+  },
+  {
+   "q": "A Suggest Node lookup takes 50 microseconds of CPU. Roughly how many QPS can one 16-core node serve, ignoring network?",
+   "options": [
+    "About 3K",
+    "About 1K",
+    "About 30K to 300K, so network and serialization dominate",
+    "About 10 million"
+   ],
+   "answer": 2,
+   "why": "16 cores x 20K lookups/s = 320K CPU bound; real limit is networking, which is why 20K per node is used conservatively."
+  }
+ ],
+ "references": [
+  {
+   "title": "Cleo: the open source technology behind LinkedIn's typeahead search",
+   "url": "https://engineering.linkedin.com/open-source/cleo-open-source-technology-behind-linkedins-typeahead-search"
+  },
+  {
+   "title": "Designing typeahead search or autocomplete (tianpan.co)",
+   "url": "https://tianpan.co/notes/179-designing-typeahead-search-or-autocomplete"
+  },
+  {
+   "title": "System Design: Typeahead and Autocomplete - Trie, Ranking, and Real-Time Suggestion Updates",
+   "url": "https://techinterview.org/system-design-typeahead-autocomplete/"
+  },
+  {
+   "title": "System Design Space: Search autocomplete case",
+   "url": "https://system-design.space/en/chapter/search-autocomplete-case"
+  }
+ ]
+}

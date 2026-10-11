@@ -1,0 +1,1017 @@
+{
+ "slug": "unique-id-generator",
+ "title": "Design a Distributed Unique ID Generator (Snowflake)",
+ "prompt": "Design a distributed unique ID generator (Snowflake).",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Medium",
+ "minutes": 75,
+ "summary": "Generating unique IDs is trivial on one database and surprisingly subtle across thousands of machines: you want 64-bit, roughly time-sortable IDs at hundreds of thousands per second with no coordination on the hot path. Snowflake solves it by packing a timestamp, a worker id and a per-millisecond sequence into 64 bits, which moves the hard problems to worker-id assignment and clock behaviour - clock skew, NTP jumps and leap seconds are where the interview is won or lost.",
+ "framework": {
+  "clarify": [
+   "Size: must IDs fit in 64 bits (signed BIGINT, JavaScript-safe?) or is 128-bit (UUID) acceptable? Assume 64-bit signed.",
+   "Ordering: strictly increasing globally, or roughly time-sortable (k-sorted within ~1 second)? Assume roughly sortable.",
+   "Throughput: assume 500k IDs/sec peak across the fleet, 10k/sec per generating service instance.",
+   "Latency: in-process generation in microseconds, or is a network call acceptable? Assume embedded library or local sidecar.",
+   "Lifetime: how many years must the scheme last? Assume at least 50 years from a custom epoch.",
+   "Fleet: how many generating workers concurrently? Assume up to 1,024 per region, multiple regions.",
+   "Exposure: are IDs visible to users (enumeration risk, business-volume leakage)? Assume some are public URLs.",
+   "Gaps: are gaps acceptable? Assume yes; no requirement for dense, consecutive numbering."
+  ],
+  "design": [
+   "Baseline options: DB auto-increment, UUIDv4, ticket server (Flickr), range allocation, then Snowflake - compare on size, order, coordination.",
+   "Choose Snowflake layout: 1 sign bit, 41 bits milliseconds since custom epoch (~69 years), 10 bits worker id (1,024 workers), 12 bits sequence (4,096 per ms per worker).",
+   "Worker id assignment: lease from ZooKeeper/etcd at startup (ephemeral sequential node or lease with TTL), persisted locally for restarts.",
+   "Generation algorithm: per-worker lock-free state of (last_ms, seq); if same ms increment seq, if seq overflows spin to next ms, if clock goes backwards refuse or wait.",
+   "Delivery: library embedded in services (no network hop) or a sidecar/gRPC service for languages without the library; batch API for bulk inserts.",
+   "Critical path: now_ms -> compare with last_ms -> seq -> compose (ts << 22 | worker << 12 | seq) -> return."
+  ],
+  "defend": [
+   "Bottleneck: 4,096 IDs per ms per worker = 4.1M/sec per worker theoretical; real limit is the CPU of the caller, so no central bottleneck.",
+   "Clock going backwards (NTP step, VM migration): detect last_ms > now; wait if small (< 5 ms), else stop issuing and alert; never issue possibly duplicate IDs.",
+   "Worker id collisions: leases with fencing; a worker that loses its lease (GC pause, partition) must stop issuing before the id is reused.",
+   "Multi-region: carve worker bits into 3-5 bits datacenter + 5-7 bits worker so regions never collide without cross-region coordination.",
+   "Exhaustion: 41 bits from a 2026 epoch last until ~2095; track remaining years; sequence exhaustion just waits for the next ms.",
+   "Measure: IDs/sec per worker, sequence-overflow waits, clock-backwards events, NTP offset, lease renew failures, duplicate-key errors in downstream DBs (must be 0)."
+  ],
+  "script": "Before designing I want to pin down three things: do IDs need to fit in 64 bits, do they need to be sortable by time, and how many per second. Assuming 64-bit, roughly time-ordered, and around half a million per second, I will quickly rule out auto-increment, which is a single point of failure, and UUIDv4, which is 128 bits and random so it hurts B-tree index locality. A ticket server works but puts a network hop and a central dependency on every insert. So I will use the Snowflake layout: 41 bits of milliseconds from a custom epoch, 10 bits of worker id, 12 bits of sequence. Each worker generates IDs locally with no coordination; the only coordination is leasing a worker id from ZooKeeper at startup. Then I will defend the hard parts: clocks going backwards, two workers with the same id after a lease expires, sequence overflow in a busy millisecond, multi-region layout, and what we monitor."
+ },
+ "brd": {
+  "problem": "As we shard databases and split services, auto-increment primary keys stop working: each shard would issue overlapping numbers, and a central sequence becomes a bottleneck and single point of failure. Teams are inventing their own schemes, causing collisions and inconsistent ordering. We need one company-wide way to mint unique, compact, time-ordered identifiers.",
+  "goals": [
+   "Globally unique 64-bit IDs across all services, shards and regions.",
+   "Roughly time-ordered so newest-first queries and index locality work.",
+   "Generation without a network round trip on the hot path, under 1 microsecond median.",
+   "No single point of failure: generation continues if the coordination service is down.",
+   "At least 50 years of ID space."
+  ],
+  "non_goals": [
+   "Strictly monotonic global ordering across all workers.",
+   "Gapless, consecutive numbering (invoice numbers need a separate sequence).",
+   "Cryptographic unpredictability (use random tokens for secrets).",
+   "Encoding business meaning beyond timestamp and origin."
+  ],
+  "stakeholders": [
+   {
+    "who": "Service teams",
+    "needs": "A drop-in library or endpoint; IDs that work as primary keys in MySQL/Postgres and in JSON."
+   },
+   {
+    "who": "Data platform",
+    "needs": "Ability to extract creation time and origin from an ID for partitioning and debugging."
+   },
+   {
+    "who": "SRE",
+    "needs": "Clear behaviour on clock problems and coordination outages; alerts before duplicates are possible."
+   },
+   {
+    "who": "Security / product",
+    "needs": "Public IDs that do not leak exact business volume or allow easy enumeration."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Duplicate IDs detected",
+    "target": "0"
+   },
+   {
+    "metric": "Generation latency",
+    "target": "p99 < 10 microseconds in-process; < 2 ms via sidecar"
+   },
+   {
+    "metric": "Availability of generation",
+    "target": "99.999 percent (local, independent of coordinator)"
+   },
+   {
+    "metric": "Adoption",
+    "target": "All new sharded tables use the shared generator within 2 quarters"
+   }
+  ],
+  "constraints": [
+   "Must fit signed 64-bit integers (Java long, MySQL BIGINT).",
+   "Clients include JavaScript, where integers above 2^53 lose precision unless serialised as strings.",
+   "Clocks are NTP-synchronised but can step or slew; VMs can pause.",
+   "Up to 1,024 concurrent workers per region today."
+  ],
+  "risks": [
+   {
+    "risk": "Clock moves backwards and a worker re-issues an ID.",
+    "mitigation": "Monotonic guard on last timestamp, refuse on large regressions, NTP slew-only configuration."
+   },
+   {
+    "risk": "Two processes hold the same worker id.",
+    "mitigation": "Coordinated leases with TTL longer than worst-case pause plus self-fencing."
+   },
+   {
+    "risk": "JavaScript clients corrupt IDs above 2^53.",
+    "mitigation": "Serialize IDs as strings in JSON APIs (as Twitter added id_str)."
+   },
+   {
+    "risk": "Public sequential IDs reveal order volume.",
+    "mitigation": "Expose an opaque or encrypted form externally; keep raw IDs internal."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Backend developer",
+    "needs": "nextId() in one line, batch generation for bulk inserts, parse(id) for debugging."
+   },
+   {
+    "name": "DBA / data engineer",
+    "needs": "IDs that append to the right side of B-tree indexes and encode creation time for time-based partitioning."
+   },
+   {
+    "name": "SRE",
+    "needs": "Dashboards on clock offset, lease health and sequence exhaustion."
+   }
+  ],
+  "user_stories": [
+   "As a developer, I want to generate an ID without a network call so that inserts stay fast.",
+   "As a developer, I want IDs to sort by creation time so that 'latest first' is a primary-key range scan.",
+   "As a data engineer, I want to extract the timestamp from an ID so that I can partition and debug without another column.",
+   "As an SRE, I want the generator to refuse rather than duplicate when the clock jumps backwards so that data integrity is preserved.",
+   "As a service owner, I want generation to keep working when ZooKeeper is down so that my service has no new hard dependency.",
+   "As a mobile developer, I want IDs as strings in JSON so that JavaScript does not round them.",
+   "As a developer, I want a batch call returning 1,000 IDs so that bulk imports are efficient."
+  ],
+  "functional": [
+   "next_id() returns a unique 64-bit ID.",
+   "next_ids(n) returns n IDs (n <= 4,096 per call).",
+   "parse(id) returns {timestamp_ms, datacenter_id, worker_id, sequence}.",
+   "Worker id is leased automatically at startup and renewed; released on shutdown.",
+   "Detects clock regression and either waits (small) or fails closed (large) with a clear error.",
+   "Sidecar/gRPC endpoint for languages without the native library."
+  ],
+  "non_functional": [
+   {
+    "name": "Uniqueness",
+    "target": "No duplicates, ever, including across restarts and clock events"
+   },
+   {
+    "name": "Latency",
+    "target": "In-process p99 < 10 us; sidecar p99 < 2 ms"
+   },
+   {
+    "name": "Throughput",
+    "target": ">= 4,096 IDs per ms per worker; fleet 500k/sec with headroom"
+   },
+   {
+    "name": "Availability",
+    "target": "Generation independent of coordinator once a lease is held"
+   },
+   {
+    "name": "Ordering",
+    "target": "k-sorted: IDs from different workers within clock skew (~10 ms); per-worker strictly increasing"
+   },
+   {
+    "name": "Longevity",
+    "target": "~69 years from custom epoch with 41-bit ms timestamp"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "Peak 500k IDs/sec across the fleet, average 100k/sec.",
+    "Up to 1,024 workers (32 datacenters x 32 workers, or 1 region x 1,024).",
+    "Custom epoch 2026-01-01T00:00:00Z.",
+    "IDs stored as 8-byte BIGINT primary keys in many tables."
+   ],
+   "math": [
+    "Timestamp range: 2^41 ms = 2.2e12 ms = ~69.7 years, so IDs last until ~2095 with a 2026 epoch.",
+    "Per worker per ms: 2^12 = 4,096 IDs, i.e. ~4.1 million per second per worker theoretical.",
+    "Fleet theoretical: 1,024 workers x 4.1M = ~4.2 billion IDs/sec, so 500k/sec uses ~0.01 percent.",
+    "Per worker at peak: 500k / ~200 active workers = ~2,500/sec = ~2.5 per ms, far below 4,096.",
+    "Storage saving vs UUID: 8 bytes vs 16 bytes per key; for 10 billion rows with 3 indexes each holding the key, ~320 GB saved.",
+    "ZooKeeper load: 1,024 workers renewing a lease every 10 s = ~100 writes/sec, trivial."
+   ],
+   "summary": "The ID space is enormous relative to demand: ~70 years of timestamps and over 4 million IDs/sec per worker. Capacity is not the problem; correctness under clock and lease failures is."
+  },
+  "out_of_scope": [
+   "Human-friendly short codes (URL shortener style base62 slugs) - can be derived from IDs.",
+   "Gapless legal sequences such as invoice numbers.",
+   "Secret tokens (session tokens, password reset links).",
+   "Globally strictly ordered event sequencing (use a log like Kafka per partition)."
+  ]
+ },
+ "hld": {
+  "overview": "A client library embedded in every service (plus an optional sidecar for other languages) holds a leased worker id and generates IDs locally from the clock and an in-memory sequence. A small coordination cluster (ZooKeeper or etcd) hands out and tracks worker-id leases. NTP keeps clocks in sync and its offset is monitored. No component sits on the hot path except the local clock.",
+  "diagram": "   +-------------------- Service instance --------------------+\n   |  app code -> IdGenerator.next()                           |\n   |               |  state: worker_id=37, last_ms, seq        |\n   |               |  reads monotonic-guarded wall clock       |\n   |  LeaseKeeper: renew every 10s, TTL 30s ---------------+   |\n   +-------------------------------------------------------|---+\n                                                           v\n                                   +-------------------------------+\n   NTP / chrony (slew only) ---->  | ZooKeeper / etcd (3 or 5 node)|\n   offset exported as metric       | /idgen/dc-02/workers/0..1023  |\n                                   +-------------------------------+\n\n   64-bit ID layout:\n   | 0 | 41 bits ms since 2026-01-01 | 5 bits dc | 5 bits worker | 12 bits seq |\n    63  62                        22  21     17  16          12  11          0\n",
+  "components": [
+   {
+    "name": "IdGenerator library",
+    "responsibility": "Holds (worker_id, last_ms, seq); composes IDs; enforces monotonic time; lock-free CAS or a short mutex."
+   },
+   {
+    "name": "LeaseKeeper",
+    "responsibility": "Acquires a free worker id at startup, renews the lease, and self-fences (stops generating) if renewal fails before TTL expiry."
+   },
+   {
+    "name": "Coordination cluster (ZooKeeper/etcd)",
+    "responsibility": "Source of truth for which worker ids are in use per datacenter; ephemeral nodes or TTL leases."
+   },
+   {
+    "name": "Clock discipline (chrony/NTP)",
+    "responsibility": "Keeps clocks within a few ms; configured to slew rather than step; offset exported for alerting."
+   },
+   {
+    "name": "Sidecar / gRPC ID service",
+    "responsibility": "For languages without the library; batch endpoint; runs the same library inside."
+   },
+   {
+    "name": "ID parser and tooling",
+    "responsibility": "Decode IDs to timestamp, dc, worker, seq for debugging and data pipelines."
+   },
+   {
+    "name": "Monitoring",
+    "responsibility": "Tracks generation rate, overflow waits, clock regressions, lease events, downstream duplicate-key errors."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Startup and worker-id lease",
+    "steps": [
+     "Instance starts, reads datacenter id from config.",
+     "LeaseKeeper lists /idgen/dc-XX/workers, picks the lowest free id (or creates an ephemeral sequential node).",
+     "Creates the ephemeral node with its host and pid; ZooKeeper session timeout 30 s.",
+     "Waits until wall clock exceeds the last timestamp this worker id was known to use (stored in the node data) to avoid reuse within the same ms.",
+     "Generator becomes ready; health check passes."
+    ]
+   },
+   {
+    "name": "Generate an ID (hot path)",
+    "steps": [
+     "now = current_ms() - EPOCH.",
+     "If now < last_ms: clock went back; if gap <= 5 ms spin-wait, else throw ClockMovedBackwards and alert.",
+     "If now == last_ms: seq = (seq + 1) & 4095; if seq == 0, spin until next ms.",
+     "If now > last_ms: seq = 0 (or a small random start to spread low bits).",
+     "last_ms = now; return (now << 22) | (dc << 17) | (worker << 12) | seq."
+    ]
+   },
+   {
+    "name": "Lease loss",
+    "steps": [
+     "Renewal fails (network partition, long GC pause).",
+     "Before TTL elapses (renew at 10 s with TTL 30 s, give up at 25 s), the generator stops issuing IDs and returns errors.",
+     "Instance re-acquires a (possibly different) worker id once connectivity returns.",
+     "Another instance can only claim the id after the session expires, so two holders never overlap if the local self-fence fires first."
+    ]
+   }
+  ],
+  "data_flow": "Coordination data flows only at startup and on renewals (worker id leases). On the hot path, data flows from the local clock and in-memory state into a 64-bit integer returned to the caller; the ID then travels with the record into databases, caches, logs and events, where its embedded timestamp aids partitioning."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "LIB",
+    "path": "IdGenerator.next_id()",
+    "request": "-",
+    "response": "int64",
+    "notes": "Throws ClockMovedBackwards or LeaseLost; never returns a possibly duplicate id."
+   },
+   {
+    "method": "LIB",
+    "path": "IdGenerator.next_ids(n)",
+    "request": "n <= 4096",
+    "response": "[int64]",
+    "notes": "Reserves a contiguous sequence block within one or more ms."
+   },
+   {
+    "method": "LIB",
+    "path": "IdGenerator.parse(id)",
+    "request": "int64",
+    "response": "{ts_ms, dc, worker, seq, created_at_iso}",
+    "notes": "Pure function, usable in data pipelines."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/ids:batch",
+    "request": "{count: int (<= 4096)}",
+    "response": "{ids: [string]}",
+    "notes": "Sidecar endpoint; IDs returned as strings for JavaScript safety."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/ids/{id}",
+    "request": "-",
+    "response": "{ts_ms, dc, worker, seq}",
+    "notes": "Debug decode endpoint."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Worker lease",
+    "store": "ZooKeeper ephemeral znode (or etcd key with lease)",
+    "fields": [
+     "path /idgen/{dc}/workers/{worker_id}",
+     "host",
+     "pid",
+     "acquired_at",
+     "last_ts_hint"
+    ],
+    "keys": "(dc, worker_id)",
+    "notes": "Ephemeral: deleted automatically when the session expires; etcd leases TTL 30 s."
+   },
+   {
+    "entity": "Generator state",
+    "store": "Process memory",
+    "fields": [
+     "worker_id",
+     "dc_id",
+     "last_ms",
+     "seq"
+    ],
+    "keys": "-",
+    "notes": "Packed into one 64-bit atomic for lock-free CAS in some implementations."
+   },
+   {
+    "entity": "ID (as stored by consumers)",
+    "store": "Any DB as BIGINT primary key",
+    "fields": [
+     "41-bit ms",
+     "5-bit dc",
+     "5-bit worker",
+     "12-bit seq"
+    ],
+    "keys": "Primary key; time-ordered so inserts append near the right edge of B-tree",
+    "notes": "For sharding, use hash(id) or embedded shard bits, not the high (time) bits, to avoid hot shards."
+   },
+   {
+    "entity": "Last-used timestamp checkpoint",
+    "store": "Local disk file per worker id",
+    "fields": [
+     "worker_id",
+     "last_ms (written every 1 s)"
+    ],
+    "keys": "worker_id",
+    "notes": "On restart, wait until clock > checkpoint to survive reboots with clock regressions."
+   }
+  ],
+  "classes": [
+   {
+    "name": "SnowflakeGenerator",
+    "responsibility": "Compose IDs safely.",
+    "methods": [
+     "next_id() -> int",
+     "next_ids(n) -> list",
+     "_wait_next_ms(last) -> int"
+    ]
+   },
+   {
+    "name": "LeaseKeeper",
+    "responsibility": "Worker-id lease lifecycle.",
+    "methods": [
+     "acquire(dc) -> worker_id",
+     "renew()",
+     "on_lost(callback)",
+     "release()"
+    ]
+   },
+   {
+    "name": "MonotonicClock",
+    "responsibility": "Wall-clock ms with regression detection.",
+    "methods": [
+     "now_ms() -> int",
+     "regression_ms() -> int"
+    ]
+   },
+   {
+    "name": "IdCodec",
+    "responsibility": "Encode/decode and external obfuscation.",
+    "methods": [
+     "parse(id) -> fields",
+     "to_base62(id) -> str",
+     "encrypt_public(id) -> str"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Snowflake next_id",
+    "explain": "Combine time, worker and sequence. Handle three cases: same millisecond (bump sequence, wait on overflow), new millisecond (reset sequence), clock regression (wait briefly or fail closed).",
+    "pseudocode": "EPOCH = 1767225600000   # 2026-01-01T00:00:00Z\ndef next_id():\n    with lock:\n        if not lease.valid(): raise LeaseLost\n        now = wall_ms() - EPOCH\n        if now < last_ms:\n            if last_ms - now <= 5: now = wait_until(last_ms)\n            else: raise ClockMovedBackwards(last_ms - now)\n        if now == last_ms:\n            seq = (seq + 1) & 0xFFF\n            if seq == 0: now = wait_until(last_ms + 1)\n        else:\n            seq = 0\n        last_ms = now\n        return (now << 22) | (dc << 17) | (worker << 12) | seq\n"
+   },
+   {
+    "name": "Worker-id lease acquisition with self-fencing",
+    "explain": "Lease a worker id with a TTL. Renew at one third of TTL. If the process cannot confirm renewal before a safety margin before expiry, stop issuing IDs; only then can a new holder claim the id after expiry, so the windows never overlap even with a partition.",
+    "pseudocode": "def acquire(dc):\n    for wid in range(32):\n        if zk.create_ephemeral(f'/idgen/{dc}/workers/{wid}', data=host):\n            hint = zk.get_last_ts(dc, wid)\n            wait_until(wall_ms() > hint)\n            return wid\n    raise NoFreeWorkerId\n\ndef watchdog():\n    if now() - last_renew_ok > TTL - SAFETY:   # e.g. 30s - 5s\n        generator.disable()\n"
+   },
+   {
+    "name": "Ticket server (Flickr) alternative",
+    "explain": "Two MySQL servers each with auto_increment_increment=2 and offsets 1 and 2; a REPLACE INTO a one-row table returns LAST_INSERT_ID(). Simple and dense but a network call per ID (or per batch) and ordering between the two servers is not time-aligned.",
+    "pseudocode": "-- server A: auto_increment_increment=2, offset=1 -> 1,3,5...\n-- server B: auto_increment_increment=2, offset=2 -> 2,4,6...\nREPLACE INTO Tickets64 (stub) VALUES ('a');\nSELECT LAST_INSERT_ID();\n"
+   }
+  ],
+  "sequence": "App            IdGenerator         LeaseKeeper          ZooKeeper        Clock\n | (startup)        |                    |                    |              |\n |----------------->| acquire(dc=2)      |                    |              |\n |                  |------------------->| create ephemeral   |              |\n |                  |                    |------------------->|              |\n |                  |                    |<-------------------| ok wid=37    |\n |                  |<-------------------| wid=37, hint ts    |              |\n |                  | wait until now > hint                    |              |\n | next_id()        |                                          |              |\n |----------------->| now_ms()                                                |\n |                  |-------------------------------------------------------->|\n |                  |<--------------------------------------------------------|\n |                  | same ms? seq+1 : seq=0 ; compose                        |\n |<-----------------| id = ts<<22 | dc<<17 | wid<<12 | seq                    |\n |                  |                    | renew every 10s    |              |\n |                  |                    |------------------->|              |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "NTP steps the clock back by 800 ms.",
+   "handling": "Generator sees now < last_ms by more than 5 ms and fails closed with ClockMovedBackwards; callers retry on another instance; configure chrony to slew (makestep only at boot) to prevent this."
+  },
+  {
+   "case": "Leap second smear or insertion.",
+   "handling": "Use smeared time (Google/AWS style) so the clock never repeats a second; the monotonic guard catches any residual regression."
+  },
+  {
+   "case": "Process restarts quickly and the clock is slightly behind the last ID it issued before crash.",
+   "handling": "Persisted last_ms checkpoint (and the hint in ZooKeeper) makes the new process wait until the clock passes it."
+  },
+  {
+   "case": "VM is paused for 40 s (live migration) while holding a lease with 30 s TTL.",
+   "handling": "On resume, the watchdog sees last successful renewal is older than TTL - safety and disables generation before issuing; it re-acquires a lease."
+  },
+  {
+   "case": "More than 4,096 IDs requested in one millisecond on one worker.",
+   "handling": "Spin-wait to the next millisecond; sustained overflow means add workers or use more sequence bits."
+  },
+  {
+   "case": "Two instances configured with the same static worker id (copy-paste config).",
+   "handling": "Do not allow static ids in production; lease from coordinator. Detect via duplicate-key errors downstream and an uniqueness check of (dc, worker) at registration."
+  },
+  {
+   "case": "Coordinator (ZooKeeper) is down at startup.",
+   "handling": "New instances cannot get an id and stay unready; running instances keep their leases until session expiry; ZooKeeper session expiry is paused while the cluster has no leader in recent versions, but treat it as fail-closed."
+  },
+  {
+   "case": "JavaScript clients parse IDs as doubles and lose precision above 2^53.",
+   "handling": "APIs return IDs as strings (Twitter's id_str pattern); internal services use 64-bit integers."
+  },
+  {
+   "case": "Sequence always starts at 0, so low-traffic IDs are all even/zero in low bits, skewing sharding by id mod N.",
+   "handling": "Shard by hash(id), or start each ms's sequence at a random offset (Discord/Instagram style considerations)."
+  },
+  {
+   "case": "Time-ordered IDs make the newest shard or B-tree page hot.",
+   "handling": "Accept for B-tree locality within a shard; across shards distribute by hash or by embedded shard bits (Instagram puts the logical shard id in the ID)."
+  },
+  {
+   "case": "Public IDs reveal how many orders were placed per day.",
+   "handling": "Expose an encrypted/obfuscated form (e.g. format-preserving encryption or Hashids-style encoding) externally."
+  },
+  {
+   "case": "Epoch exhaustion in ~2095.",
+   "handling": "Document the epoch; sign bit remains unused as reserve; plan migration decades ahead."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Snowflake-style library (Java/Go/Python)",
+   "layer": "Generation",
+   "overview": "A small in-process generator composing timestamp, worker and sequence bits.",
+   "why": "Zero network hops, microsecond latency, no central bottleneck.",
+   "alternatives": "Central ID service (gRPC) - easier to upgrade but adds latency and a dependency; Sonyflake - 39-bit 10 ms time units, 16-bit machine id, longer lifespan but lower per-worker rate."
+  },
+  {
+   "name": "ZooKeeper",
+   "layer": "Worker-id coordination",
+   "overview": "Consensus-based coordination service with ephemeral nodes and sessions.",
+   "why": "Ephemeral nodes give automatic release when a holder dies; Twitter used ZooKeeper to assign Snowflake worker numbers.",
+   "alternatives": "etcd leases - similar semantics, simpler ops; Kubernetes StatefulSet ordinal as worker id - no extra service but tied to the platform."
+  },
+  {
+   "name": "chrony / NTP",
+   "layer": "Time",
+   "overview": "Clock synchronisation daemons; chrony converges faster and supports slew-only modes.",
+   "why": "Snowflake correctness depends on clocks not stepping backwards; slew-only plus offset alerts.",
+   "alternatives": "PTP for sub-microsecond accuracy; AWS Time Sync / Google leap-smeared NTP."
+  },
+  {
+   "name": "MySQL ticket server (Flickr)",
+   "layer": "Alternative generator",
+   "overview": "auto_increment tables on two servers with interleaved offsets.",
+   "why": "Dense integers, trivial to build; good for low volumes.",
+   "alternatives": "Snowflake for higher throughput and time ordering."
+  },
+  {
+   "name": "PostgreSQL PL/pgSQL ID function (Instagram)",
+   "layer": "Alternative generator",
+   "overview": "Per-shard function: 41 bits ms, 13 bits logical shard id, 10 bits per-shard sequence mod 1024.",
+   "why": "IDs generated inside the database that owns the row, and the shard is encoded in the ID.",
+   "alternatives": "App-side Snowflake - independent of DB; UUIDv7 - standard, 128-bit."
+  },
+  {
+   "name": "UUIDv7 (RFC 9562)",
+   "layer": "Alternative format",
+   "overview": "128-bit UUID with a 48-bit Unix ms timestamp prefix and random bits.",
+   "why": "No coordination at all and time-ordered; good when 128 bits is acceptable.",
+   "alternatives": "UUIDv4 - fully random, poor index locality; ULID - similar idea with base32 text."
+  },
+  {
+   "name": "Prometheus",
+   "layer": "Monitoring",
+   "overview": "Metrics collection and alerting.",
+   "why": "Alerts on clock offset > 50 ms, regressions, overflow waits, lease failures.",
+   "alternatives": "Datadog, CloudWatch."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Snowflake ID layout and k-sortable IDs",
+   "explain": "A Snowflake ID packs three fields into a signed 64-bit integer. The top bit is left zero so the value stays positive in languages with signed longs. The next 41 bits hold milliseconds since a custom epoch; 2^41 ms is about 69.7 years, so choosing an epoch close to launch maximises lifetime. The next 10 bits identify the worker that generated the ID, allowing 1,024 concurrent generators; they are often split into datacenter and machine. The last 12 bits are a per-worker sequence that counts IDs within one millisecond, allowing 4,096 per ms per worker. Because the timestamp occupies the high bits, sorting IDs numerically sorts them by creation time - but only roughly. IDs from different workers are ordered only as well as their clocks agree, and within one millisecond the order between workers is arbitrary. Twitter called this k-sorted: tweets created within about a second of each other may be out of order, but older ones sort before newer ones beyond that window. This rough ordering is enough for 'newest first' timelines and for keeping B-tree inserts near the right edge. Variants change the split: Sonyflake uses 10 ms units, Instagram embeds a logical shard id, Discord uses its own epoch of 2015.",
+   "in_this_design": "We use 41 bits ms from 2026-01-01, 5 bits datacenter, 5 bits worker, 12 bits sequence. IDs are k-sorted across the fleet within NTP skew (single-digit ms) and strictly increasing per worker.",
+   "key_points": [
+    "1 + 41 + 10 + 12 = 64 bits: sign, ms timestamp, worker, sequence.",
+    "41 bits of ms is ~69 years; pick a recent custom epoch.",
+    "4,096 IDs per ms per worker; overflow waits for the next ms.",
+    "Sortable by time across workers only within clock skew (k-sorted)."
+   ],
+   "qa": [
+    {
+     "q": "Why keep the sign bit zero?",
+     "a": "Java longs and SQL BIGINT are signed; a negative ID breaks sorting and confuses tooling. Leaving it zero costs one bit and also leaves a reserve."
+    },
+    {
+     "q": "Can two IDs from different workers compare in the wrong time order?",
+     "a": "Yes, by up to the clock skew between them. Snowflake promises rough ordering, not a global total order consistent with real time."
+    },
+    {
+     "q": "How would you change the layout for 10,000 workers?",
+     "a": "Take bits from the sequence (e.g. 14 worker bits, 8 sequence bits = 256 per ms per worker) or from the timestamp by using 10 ms units like Sonyflake. The budget is fixed at 63 bits; it is a trade-off."
+    }
+   ]
+  },
+  {
+   "name": "Physical clocks, NTP and clock skew",
+   "explain": "Every machine has a quartz oscillator that drifts, typically tens of parts per million, which is seconds per day if uncorrected. NTP corrects clocks by exchanging timestamps with servers and estimating offset and network delay. It can correct in two ways: slewing, which speeds up or slows down the clock slightly so time keeps moving forward, and stepping, which jumps the clock to the right value, possibly backwards. In a well-run data centre clocks agree within a few milliseconds; over the internet tens of ms. Clocks also misbehave in special ways: virtual machines can pause and resume, leap seconds can repeat a second unless smeared, and misconfigured servers can be minutes off. Operating systems expose two clocks: a wall clock (time of day, can jump) and a monotonic clock (only goes forward, but meaningless across machines or reboots). Any algorithm that embeds wall-clock time in identifiers must defend against the wall clock moving backwards, because reusing a timestamp with the same worker id and sequence would recreate an ID that already exists.",
+   "in_this_design": "chrony is configured to slew only after boot; the generator tracks last_ms and refuses to issue if the clock regresses more than 5 ms; offset > 50 ms raises an alert; leap seconds are smeared.",
+   "key_points": [
+    "Clocks drift; NTP slews or steps; steps can go backwards.",
+    "Wall clock is comparable across machines but can jump; monotonic clock cannot jump but is local.",
+    "Generator must fail closed on regression, never guess.",
+    "Smear leap seconds; alert on offset."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use the monotonic clock?",
+     "a": "It is not comparable across processes or reboots, so IDs would lose their time meaning and could collide after restart. Use wall clock for the value and guard it with last_ms."
+    },
+    {
+     "q": "What should happen if the clock jumps back 2 seconds?",
+     "a": "Stop issuing IDs on that worker and alert; callers fail over to other workers. Waiting 2 seconds is an option for some systems but blocks callers; issuing would risk duplicates."
+    },
+    {
+     "q": "Twitter's Snowflake had a related failure mode - what?",
+     "a": "Its documentation required NTP not to step backwards and the server refuses to generate IDs when it detects the clock moving back; the same rule is the core safety property here."
+    }
+   ]
+  },
+  {
+   "name": "Leases and fencing for worker-id assignment",
+   "explain": "When a resource must be owned by at most one process at a time - a worker id, a lock, a partition - a lease is the standard tool. A lease is a grant with an expiry: the holder can use the resource until the lease expires and must renew it periodically. If the holder crashes, the lease simply expires and someone else can take it, so there is no permanent deadlock. The danger is a holder that does not know it has lost the lease: a long garbage-collection pause, a VM freeze, or a network partition can make the holder continue acting after expiry while a new holder starts. Two defences exist. Self-fencing: the holder tracks time since its last successful renewal on its own monotonic clock and stops using the resource before the lease could have expired from the coordinator's view, with a safety margin for clock rate differences. Fencing tokens: the coordinator issues a monotonically increasing token with each lease, and downstream resources reject requests carrying an older token. For ID generation there is no downstream resource to check tokens, so self-fencing plus choosing a TTL far larger than plausible pauses is the practical approach, combined with waiting past the previous holder's last timestamp.",
+   "in_this_design": "Worker ids are ephemeral ZooKeeper nodes (or etcd leases) with a 30 s TTL, renewed every 10 s. The generator disables itself if 25 s pass without confirmed renewal. A new holder of an id waits until its clock exceeds the previous holder's last recorded timestamp.",
+   "key_points": [
+    "Leases expire, so crashed holders release resources automatically.",
+    "The holder must self-fence before expiry; pauses are the enemy.",
+    "Fencing tokens protect downstream systems that can check them.",
+    "TTL is a trade-off: short = fast recovery, long = safer under pauses."
+   ],
+   "qa": [
+    {
+     "q": "Why not assign worker ids statically in config?",
+     "a": "Autoscaling and container rescheduling make manual assignment error-prone; a copy-pasted config causes silent duplicates. Leases make assignment automatic and exclusive."
+    },
+    {
+     "q": "What if ZooKeeper is down for an hour?",
+     "a": "Running workers keep generating while their session is valid (ZooKeeper does not expire sessions without a quorum leader), but we treat it conservatively; new instances cannot start generating. Generation is unaffected for existing workers in the common short outage."
+    },
+    {
+     "q": "Could you use a Kubernetes StatefulSet ordinal instead?",
+     "a": "Yes, within one cluster the pod ordinal is unique and stable, which is a pragmatic choice; it still needs the datacenter bits for multi-cluster uniqueness and care during pod replacement."
+    }
+   ]
+  },
+  {
+   "name": "UUIDs versus ordered IDs and B-tree index locality",
+   "explain": "Relational databases and many key-value stores index primary keys in B-trees, where keys are kept sorted in fixed-size pages. If new keys are always larger than existing ones, inserts land on the rightmost leaf page; that page and its ancestors stay hot in the buffer pool and pages fill sequentially to nearly 100 percent. If new keys are random, as with UUIDv4, every insert lands on a random page somewhere in the tree. Once the index is larger than memory, most inserts need a disk read, pages split frequently and end up about 70 percent full, and write amplification grows. In clustered-index engines like InnoDB the whole row lives in primary key order, so random keys also scatter the table data. UUIDs are also 16 bytes versus 8, and every secondary index repeats the primary key. On the other hand, random IDs need no coordination and do not concentrate writes on one shard. Time-ordered formats such as Snowflake, ULID and UUIDv7 keep most of the coordination-free benefit while restoring locality. The other side of the trade-off: if you shard by ID range, time-ordered IDs make the newest shard hot, so shard by hash or by embedded shard bits instead.",
+   "in_this_design": "Snowflake IDs are 8-byte, time-ordered keys: they append to B-tree right edges within each shard, halve key size compared with UUIDs, and are routed to shards by hash or by the owning entity's shard, never by raw ID range.",
+   "key_points": [
+    "Random keys scatter inserts across the B-tree; ordered keys append.",
+    "UUIDs are 16 bytes and repeated in every secondary index.",
+    "Time-ordered IDs make range sharding hot; shard by hash.",
+    "UUIDv7 / ULID are the standard 128-bit time-ordered options."
+   ],
+   "qa": [
+    {
+     "q": "Why did teams move away from UUIDv4 primary keys in MySQL?",
+     "a": "InnoDB clusters rows by primary key, so random UUIDs caused random I/O, page splits and bloated secondary indexes; insert throughput dropped sharply once the table exceeded the buffer pool."
+    },
+    {
+     "q": "When would you still choose UUIDs?",
+     "a": "When generators cannot coordinate at all (offline mobile clients, many independent systems), when 128 bits is fine, and ideally UUIDv7 for ordering."
+    },
+    {
+     "q": "Do time-ordered IDs cause hot spots?",
+     "a": "Only if the storage is range-partitioned by ID. Within a single B-tree, the hot right edge is actually good for caching. Across shards, use hash partitioning."
+    }
+   ]
+  },
+  {
+   "name": "Coordination avoidance and the cost of consensus",
+   "explain": "Every time distributed components must agree - on a counter value, a lock owner, an order of events - they pay in latency and availability. A central counter requires a round trip per ID and becomes unavailable if its node or quorum is unreachable. Consensus systems like ZooKeeper or etcd handle a few thousand to tens of thousands of writes per second and add milliseconds per operation; putting them on a hot path that needs hundreds of thousands of operations per second is a design smell. Coordination avoidance means restructuring the problem so that each node can act independently, coordinating only rarely. The classic technique is to partition the namespace: give each node a disjoint slice up front (a worker id, a range of numbers, a prefix), after which no further agreement is needed because slices cannot overlap. Range allocation does this with blocks of numbers fetched from a central store; Snowflake does it with worker-id bits. The coordination cost moves from per-operation to per-node-lifetime. Twitter explicitly rejected ZooKeeper sequential nodes for ID generation because of performance and the availability cost of coordination.",
+   "in_this_design": "ZooKeeper is touched only at startup and for lease renewal (~100 writes/sec fleet-wide); the 500k IDs/sec hot path touches only local memory and the clock, so ID generation is as available as the service using it.",
+   "key_points": [
+    "Coordinate once per node lifetime, not once per operation.",
+    "Partition the namespace so slices cannot overlap.",
+    "Consensus stores are for metadata, not hot-path counters.",
+    "Availability of generation = availability of the caller."
+   ],
+   "qa": [
+    {
+     "q": "Why not use Redis INCR as the generator?",
+     "a": "It works at moderate scale but adds a network hop per ID, a single hot key, and a failover risk where replicas lag and re-issue numbers after promotion unless persistence and failover are carefully handled."
+    },
+    {
+     "q": "How does range allocation compare to Snowflake?",
+     "a": "Each node fetches a block of, say, 10,000 numbers from a DB and hands them out locally; it is dense and coordination is rare, but IDs are not time-ordered across nodes and blocks are lost on crash."
+    },
+    {
+     "q": "Where does coordination still matter in Snowflake?",
+     "a": "Assigning worker ids and keeping clocks synced. Both are low-rate, but getting either wrong breaks uniqueness, which is why they get leases and monitoring."
+    }
+   ]
+  },
+  {
+   "name": "Logical clocks and ordering guarantees",
+   "explain": "It helps to be precise about what kind of ordering an ID scheme provides. Lamport showed that in a distributed system without perfect clocks, we can still define a happened-before relation: event A happened before B if they are on the same process in that order, or A is a send and B the matching receive, or by transitivity. A Lamport clock is a counter that each process increments on events and sets to max(local, received) + 1 on messages, which guarantees that if A happened before B then L(A) < L(B), though not the reverse. Hybrid logical clocks (HLC) combine physical time with a logical counter so timestamps stay close to wall time but still respect causality even when clocks skew - CockroachDB uses them. Snowflake IDs use only physical time plus a per-worker counter, so they are strictly increasing per worker but provide no causal guarantee across workers: a reply generated on a worker with a lagging clock can get a smaller ID than the message it replies to. For most uses this rough ordering is fine; when causal order matters, use an HLC-style scheme or a sequencer such as a Kafka partition.",
+   "in_this_design": "We promise per-worker monotonicity and fleet-wide k-sortedness within NTP skew, not causal ordering. Product features that need strict order (message threads) order by a per-conversation sequence, not by ID alone.",
+   "key_points": [
+    "Per-worker monotonic, fleet-wide roughly time-ordered.",
+    "No causal guarantee across workers under skew.",
+    "HLC = physical time + logical counter, preserves causality.",
+    "For strict order use a sequencer per partition."
+   ],
+   "qa": [
+    {
+     "q": "A reply shows above the message it replies to. Why?",
+     "a": "The reply's ID came from a worker whose clock lagged the original's by more than the gap between the two events. Snowflake IDs are not causally ordered."
+    },
+    {
+     "q": "How would you fix it?",
+     "a": "Order within a conversation by a per-conversation sequence number, or use a hybrid logical clock that bumps past the parent's timestamp when generating the reply ID."
+    },
+    {
+     "q": "What does k-sorted mean?",
+     "a": "Each element is at most k positions (or k time units) from its correct sorted position; Twitter aimed for ordering errors under about a second."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "ID size",
+   "options": "64-bit Snowflake; 128-bit UUIDv4/v7",
+   "choice": "64-bit Snowflake",
+   "why": "Fits BIGINT columns and halves index size; we can coordinate worker ids, which UUIDs avoid needing."
+  },
+  {
+   "decision": "Generation location",
+   "options": "Embedded library; central service; inside DB (Instagram)",
+   "choice": "Embedded library with sidecar fallback",
+   "why": "No network hop, no new dependency on the hot path; sidecar for polyglot services."
+  },
+  {
+   "decision": "Worker id assignment",
+   "options": "Static config; ZooKeeper/etcd lease; StatefulSet ordinal",
+   "choice": "Lease from ZooKeeper/etcd",
+   "why": "Automatic, exclusive, survives autoscaling; static config causes silent duplicates."
+  },
+  {
+   "decision": "Clock regression behaviour",
+   "options": "Wait; fail closed; issue anyway with bumped sequence",
+   "choice": "Wait up to 5 ms, otherwise fail closed",
+   "why": "Uniqueness is the non-negotiable property; brief waits hide jitter without risk."
+  },
+  {
+   "decision": "Bit split",
+   "options": "41/10/12; 39 (10 ms)/16/8 Sonyflake; 41/13/10 Instagram",
+   "choice": "41/5+5/12",
+   "why": "Matches our 1,024 workers and per-worker burst rate; datacenter bits make regions independent."
+  },
+  {
+   "decision": "Public exposure",
+   "options": "Raw IDs; obfuscated IDs",
+   "choice": "Raw internally, obfuscated externally where volume leakage matters",
+   "why": "Sequential-ish IDs reveal growth and enable enumeration."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Clock jumps backwards beyond 5 ms",
+   "behavior": "Worker refuses to issue, returns errors, health check fails, load balancer routes away; alert fires."
+  },
+  {
+   "failure": "ZooKeeper unavailable",
+   "behavior": "Existing workers continue on held sessions; new instances stay unready; no hot-path impact."
+  },
+  {
+   "failure": "Lease lost due to partition or GC pause",
+   "behavior": "Watchdog disables generation before TTL expiry; instance re-acquires a new worker id later."
+  },
+  {
+   "failure": "Sequence overflow under burst",
+   "behavior": "Caller blocks up to 1 ms for the next millisecond; sustained overflow shows up as a metric and triggers scaling."
+  },
+  {
+   "failure": "All worker ids in a datacenter are taken",
+   "behavior": "New instances cannot start generating; alert at 80 percent usage; reclaim stale leases or rebalance bits."
+  },
+  {
+   "failure": "Bug in bit composition deployed",
+   "behavior": "Downstream duplicate-key errors spike; canary deploy with a uniqueness checker comparing IDs from many workers catches it before full rollout."
+  }
+ ],
+ "metrics": [
+  "IDs generated per second per worker and fleet-wide.",
+  "Sequence overflow waits per minute.",
+  "Clock regression events and max regression in ms.",
+  "NTP offset per host (alert > 50 ms).",
+  "Lease renew latency and failures; worker ids in use per datacenter.",
+  "Duplicate-key errors on ID columns in downstream databases (must be 0).",
+  "Sidecar request latency p99."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you generate IDs on offline mobile clients?",
+   "a": "Use UUIDv7 or ULID on the client (no coordination possible), then optionally map to a server Snowflake ID on sync; or give each device a leased worker range."
+  },
+  {
+   "q": "How do you make IDs non-guessable for public URLs?",
+   "a": "Encrypt the 64-bit ID with a keyed block cipher (format-preserving or a 64-bit cipher) and encode it in base62; decrypt server-side. Keep raw IDs internal."
+  },
+  {
+   "q": "What would you change for 100,000 workers?",
+   "a": "Move to 17 worker bits and 5-6 sequence bits, or 10 ms time units, or switch to 128-bit IDs; alternatively embed shard id rather than worker id and generate inside each shard."
+  },
+  {
+   "q": "How did Instagram do it differently?",
+   "a": "A PL/pgSQL function inside each Postgres logical shard: 41 bits ms since their epoch, 13 bits logical shard id, 10 bits from a per-shard sequence mod 1024. The shard is recoverable from the ID itself."
+  },
+  {
+   "q": "How do you test uniqueness?",
+   "a": "Property tests with mocked clocks (regressions, overflow, restart), a soak test generating billions of IDs across many workers into a set, and production canaries checking duplicates in a sample stream."
+  },
+  {
+   "q": "Can you use this for event ordering in a ledger?",
+   "a": "Not as the sole ordering mechanism; ledgers need a strict per-account sequence or a transactional DB order. Snowflake IDs are good identifiers, not consensus on order."
+  }
+ ],
+ "key_points": [
+  "Clarify first: 64-bit? time-sortable? how many per second? public-facing?",
+  "Compare five options quickly: auto-increment, UUID, ticket server, range blocks, Snowflake.",
+  "Snowflake: 1 sign + 41 ms + 10 worker + 12 sequence = 64 bits; ~69 years; 4,096 per ms per worker.",
+  "Coordinate once (worker-id lease), never per ID.",
+  "The real risks are clocks going backwards and duplicate worker ids - fail closed on both.",
+  "Self-fence leases: stop issuing before the TTL could have expired.",
+  "IDs are k-sorted, not causally ordered; do not use them as a sequencer.",
+  "Time-ordered 8-byte keys are B-tree friendly; shard by hash, not by ID range.",
+  "Return IDs as strings to JavaScript clients."
+ ],
+ "quiz": [
+  {
+   "q": "In the classic Snowflake layout, how many bits hold the millisecond timestamp?",
+   "options": [
+    "32",
+    "41",
+    "48",
+    "52"
+   ],
+   "answer": 1,
+   "why": "41 bits of milliseconds gives about 69 years. 48 bits is the timestamp width in UUIDv7, a common mix-up."
+  },
+  {
+   "q": "What is the maximum number of IDs one Snowflake worker can issue in one millisecond with a 12-bit sequence?",
+   "options": [
+    "1,024",
+    "2,048",
+    "4,096",
+    "65,536"
+   ],
+   "answer": 2,
+   "why": "2^12 = 4,096. 1,024 is the number of workers with 10 worker bits."
+  },
+  {
+   "q": "The generator detects the clock is 3 seconds behind its last issued timestamp. Best action?",
+   "options": [
+    "Continue with sequence numbers above the last one",
+    "Reset last_ms to the current clock and continue",
+    "Switch to random IDs temporarily",
+    "Stop issuing IDs on this worker and alert"
+   ],
+   "answer": 3,
+   "why": "Uniqueness is non-negotiable, so fail closed. Resetting last_ms could recreate IDs already issued in those 3 seconds."
+  },
+  {
+   "q": "Why are random UUIDv4 primary keys slow for large InnoDB tables?",
+   "options": [
+    "Inserts land on random B-tree pages, causing random I/O and page splits",
+    "UUIDs cannot be indexed",
+    "InnoDB stores UUIDs as text",
+    "UUIDs require a central generator"
+   ],
+   "answer": 0,
+   "why": "Clustered index order by random keys scatters writes. UUIDs can be stored as BINARY(16) and indexed; the problem is locality, not indexability."
+  },
+  {
+   "q": "Why does Snowflake keep the top bit zero?",
+   "options": [
+    "To mark test IDs",
+    "To keep IDs positive in signed 64-bit types",
+    "To encode the datacenter",
+    "It is used for parity"
+   ],
+   "answer": 1,
+   "why": "Java long and SQL BIGINT are signed, so a set top bit gives negative numbers that sort wrongly."
+  },
+  {
+   "q": "A process holding worker id 37 freezes for 45 seconds; its lease TTL is 30 seconds. What prevents duplicates?",
+   "options": [
+    "ZooKeeper deletes the process",
+    "The sequence number resets",
+    "On resume, a watchdog sees renewal is stale and disables generation before issuing",
+    "NTP corrects the clock"
+   ],
+   "answer": 2,
+   "why": "Self-fencing based on time since last successful renewal stops the old holder. ZooKeeper cannot stop a paused process from acting when it resumes."
+  },
+  {
+   "q": "Which statement about Snowflake ordering is correct?",
+   "options": [
+    "IDs are strictly increasing across all workers",
+    "IDs are strictly increasing per worker and roughly time-ordered across workers",
+    "IDs are causally ordered across workers",
+    "IDs have no time ordering"
+   ],
+   "answer": 1,
+   "why": "Per-worker monotonic, fleet-wide k-sorted within clock skew. Causal ordering would need a logical clock."
+  },
+  {
+   "q": "Roughly how long do 41 bits of milliseconds last?",
+   "options": [
+    "About 25 years",
+    "About 35 years",
+    "About 140 years",
+    "About 69 years"
+   ],
+   "answer": 3,
+   "why": "2^41 ms is about 2.2e12 ms, or about 69.7 years. 140 years would need 42 bits."
+  },
+  {
+   "q": "Why did Twitter reject ZooKeeper sequential nodes for generating IDs directly?",
+   "options": [
+    "Performance and the availability cost of coordinating on every ID",
+    "ZooKeeper cannot store integers",
+    "They were not unique",
+    "They were too large"
+   ],
+   "answer": 0,
+   "why": "Consensus on every ID is slow and couples availability to the coordinator. Twitter used ZooKeeper only to assign worker numbers."
+  },
+  {
+   "q": "A JavaScript client shows IDs ending in 00 that don't match the database. Cause?",
+   "options": [
+    "The IDs overflowed 64 bits",
+    "Clock skew",
+    "JSON numbers above 2^53 lose precision when parsed as doubles",
+    "Sequence overflow"
+   ],
+   "answer": 2,
+   "why": "JavaScript numbers are IEEE doubles with 53 bits of integer precision. Return IDs as strings."
+  },
+  {
+   "q": "Your orders table is range-sharded by order ID (Snowflake). What problem appears?",
+   "options": [
+    "IDs collide across shards",
+    "All new writes hit the shard holding the newest ID range",
+    "Reads become slower on old shards",
+    "Worker ids run out"
+   ],
+   "answer": 1,
+   "why": "Time-ordered IDs put all new inserts in the top range. Shard by hash(id) or embed a shard id."
+  },
+  {
+   "q": "Flickr's ticket servers avoid duplicates between two MySQL servers by:",
+   "options": [
+    "Using Snowflake bits",
+    "Using a two-phase commit",
+    "Checking each other before issuing",
+    "Setting auto_increment_increment=2 with offsets 1 and 2"
+   ],
+   "answer": 3,
+   "why": "Odd numbers from one, even from the other. No cross-server check is needed - that's the point."
+  },
+  {
+   "q": "Which is the best reason to choose UUIDv7 over Snowflake?",
+   "options": [
+    "Clients cannot coordinate worker ids, and 128-bit keys are acceptable",
+    "You need 64-bit IDs",
+    "You need dense consecutive numbers",
+    "You need causal ordering"
+   ],
+   "answer": 0,
+   "why": "UUIDv7 needs no coordination and is time-ordered, at the cost of 16 bytes. It does not give 64 bits or density."
+  },
+  {
+   "q": "At 500k IDs/sec fleet-wide over 200 workers, about how many IDs per ms does each worker issue?",
+   "options": [
+    "About 0.25",
+    "About 2.5",
+    "About 25",
+    "About 250"
+   ],
+   "answer": 1,
+   "why": "500,000 / 200 = 2,500 per second = 2.5 per ms, far below the 4,096 limit. 25 is a factor-of-ten slip."
+  },
+  {
+   "q": "What happens when a worker exhausts its 4,096 sequence values within one millisecond?",
+   "options": [
+    "It returns a duplicate",
+    "It borrows bits from the worker field",
+    "It waits until the next millisecond and resets the sequence",
+    "It throws a fatal error"
+   ],
+   "answer": 2,
+   "why": "Spinning to the next ms is safe and brief. Borrowing bits would collide with other workers."
+  },
+  {
+   "q": "Why configure chrony to slew rather than step after boot?",
+   "options": [
+    "Slewing is more accurate",
+    "Stepping is not supported on Linux",
+    "Slewing saves CPU",
+    "Slewing keeps time moving forward, avoiding backward jumps that halt generators"
+   ],
+   "answer": 3,
+   "why": "Stepping can move the clock backwards; slewing adjusts the rate so time never reverses. Accuracy is similar."
+  },
+  {
+   "q": "Instagram's ID function puts a 13-bit logical shard id in the ID. What does that enable?",
+   "options": [
+    "Finding the shard that owns a row directly from its ID",
+    "More IDs per ms",
+    "Causal ordering",
+    "Removing the timestamp"
+   ],
+   "answer": 0,
+   "why": "The shard is recoverable from the ID itself, so routing needs no lookup. Per-ms capacity actually dropped to 1,024 per shard."
+  },
+  {
+   "q": "Which is NOT a good use of Snowflake IDs?",
+   "options": [
+    "Primary keys for sharded tables",
+    "Sorting a feed newest-first",
+    "Gapless invoice numbering required by tax law",
+    "Extracting creation time for partitioning"
+   ],
+   "answer": 2,
+   "why": "Snowflake IDs have gaps by design. Invoice sequences need a dedicated gapless counter."
+  },
+  {
+   "q": "A new instance acquires worker id 12 just released by a crashed process. Why should it wait until its clock passes the previous holder's last timestamp?",
+   "options": [
+    "To let ZooKeeper replicate",
+    "If its clock is behind the old holder's, it could reissue IDs the old holder already issued",
+    "To warm caches",
+    "To reset NTP"
+   ],
+   "answer": 1,
+   "why": "Same worker id plus same ms plus same sequence equals a duplicate. Waiting past the hint makes timestamps disjoint."
+  },
+  {
+   "q": "Which is the main operational dependency introduced by Snowflake compared with UUIDv4?",
+   "options": [
+    "A database for every ID",
+    "A message queue",
+    "A cache cluster",
+    "Worker-id coordination and clock synchronisation"
+   ],
+   "answer": 3,
+   "why": "UUIDv4 needs neither; Snowflake needs exclusive worker ids and well-behaved clocks. It does not need a DB per ID."
+  },
+  {
+   "q": "Sorting replies by Snowflake ID shows a reply before its parent. Root cause?",
+   "options": [
+    "Sequence overflow",
+    "Clock skew between the generating workers",
+    "Lease expiry",
+    "The sign bit"
+   ],
+   "answer": 1,
+   "why": "IDs are not causally ordered; a lagging clock on the reply's worker produced a smaller ID. Use a per-thread sequence or HLC."
+  }
+ ],
+ "references": [
+  {
+   "title": "Announcing Snowflake (Twitter Engineering, 2010)",
+   "url": "https://blog.x.com/engineering/en_us/a/2010/announcing-snowflake"
+  },
+  {
+   "title": "Sharding & IDs at Instagram",
+   "url": "https://instagram-engineering.com/1cf5a71e5a5c"
+  },
+  {
+   "title": "How Twitter solved distributed ID generation (DEV Community)",
+   "url": "https://dev.to/imnasim31415/how-twitter-solved-distributed-id-generation-559m"
+  }
+ ]
+}

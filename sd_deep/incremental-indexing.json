@@ -1,0 +1,1115 @@
+{
+ "slug": "incremental-indexing",
+ "title": "Design an indexing pipeline that handles frequent updates (near-real-time search indexing)",
+ "prompt": "Design an indexing pipeline that handles frequent updates.",
+ "group": "search",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "A product catalog of 500M documents receives tens of thousands of price, stock and content updates per second, and search must reflect them within seconds without falling over during sale spikes. Inverted indexes are built for immutable, append-only segments, so frequent updates fight the data structure: every update is a delete plus re-insert, creating tombstones and merge pressure. The design hinges on change capture with ordering and idempotency, coalescing redundant updates, separating hot fast-changing fields from the full-text index, and a base-plus-delta (lambda-style) index that can be rebuilt and swapped atomically.",
+ "framework": {
+  "clarify": [
+   "What is being indexed and how big? I will assume an e-commerce catalog: 500M listings, ~4 KB source each, 2 KB indexed.",
+   "Update rate and mix: assume 20k updates/s average and 150k/s at sale peaks, of which ~85% are price/stock/availability changes and ~15% content edits (title, description, attributes).",
+   "Freshness target: stock and price visible in search within 5 s p99 (overselling and wrong prices cost money); content edits within 60 s.",
+   "Consistency: is it acceptable for search to briefly show a stale price if the product page and checkout re-validate? I will assume yes - search is eventually consistent, checkout is authoritative.",
+   "Who are the sources? Multiple upstream services (catalog, pricing, inventory, seller tools) each owning some fields of the document.",
+   "Do we need full reindexes for schema or analyzer changes? Yes - assume a monthly mapping change and a full rebuild must not cause downtime.",
+   "Query load: ~30k search QPS at peak; indexing must not degrade search p99 (target 150 ms)."
+  ],
+  "design": [
+   "Baseline: upstream services call the search cluster directly on every change (dual write). Explain why it fails: lost updates on crashes, out-of-order writes, and indexing spikes that hurt query latency.",
+   "Capture: each source service writes to its DB and changes are captured via CDC or a transactional outbox into Kafka topics partitioned by document id, so all changes to one product are ordered.",
+   "Assemble: a stream processor (Flink) joins partial updates from catalog, price and inventory into a full or partial document keyed by product id, using keyed state, and coalesces bursts (keep the latest version per id within a 500 ms window).",
+   "Index: bulk writers send batched upserts (5-15 MB bulk requests) to Elasticsearch/OpenSearch with external versioning, so stale or duplicated events are rejected; refresh_interval 1 s for the hot index.",
+   "Split hot fields: price and stock live in a small, fast-updating field store (doc values in a separate 'availability' index or an in-memory side-car) joined at query time, so 85% of updates never rewrite the full-text document.",
+   "Rebuilds: nightly or on-demand full build from a Spark job over the lakehouse snapshot into a new index, replay Kafka from the snapshot timestamp, then flip an alias atomically."
+  ],
+  "defend": [
+   "Bottleneck: Lucene segment merges and refreshes. Every update is delete plus add; at 150k/s you produce many small segments and tombstones. Mitigate with coalescing, partial-field side stores, refresh_interval tuning and merge throttling.",
+   "Scale writes: partition Kafka by doc id (e.g. 256 partitions), scale Flink and bulk writers horizontally, shard the index (e.g. 60 primary shards of ~25 GB), and route each bulk to shards evenly.",
+   "Scale reads: replicas (1-2 per shard) serve queries; separate indexing-heavy and query-heavy node roles or use segment replication so replicas do not re-index.",
+   "Failure: Kafka retains 7 days so any stage can replay; external versioning makes replays idempotent; DLQ for poison documents; backpressure from ES 429s slows consumers rather than dropping data.",
+   "Measure: end-to-end freshness lag (source commit time to searchable) p50/p99, Kafka consumer lag, bulk rejection rate, refresh and merge times, deleted-docs ratio, search p99 during indexing spikes.",
+   "Degradation: during sale peaks, shed content-only updates to a lower-priority lane while price/stock lanes keep their 5 s SLO."
+  ],
+  "script": "Let me frame it. I am indexing an e-commerce catalog of about 500 million products, with updates averaging 20 thousand per second and peaking at 150 thousand during sales. Most updates are price and stock, which must be searchable within 5 seconds; content edits can take a minute. Search itself runs at 30 thousand QPS with a 150 millisecond p99 that indexing must not hurt. The naive design, services writing straight to Elasticsearch, loses and reorders updates and spikes query latency. So I capture changes with CDC or an outbox into Kafka partitioned by product id, assemble and coalesce them in Flink with keyed state, and bulk-write with external versioning so replays and duplicates are harmless. The key insight is that inverted indexes hate updates, since each one is a delete plus reinsert, so I split hot fields like price and stock into a small fast store, and only content changes touch the full-text index. Full rebuilds run from a lakehouse snapshot into a new index, replay Kafka, and swap an alias. To defend it, I watch end-to-end freshness lag, bulk rejections, merge pressure and search p99, and under overload I prioritise price and stock lanes over content."
+ },
+ "brd": {
+  "problem": "Search shows stale prices and out-of-stock products, especially during flash sales when updates spike 7-10x. This causes failed checkouts, customer complaints, and lost GMV, while full nightly reindexes take hours and any mapping change risks downtime.",
+  "goals": [
+   "Reflect price and stock changes in search results within 5 seconds p99, including during sale peaks.",
+   "Reflect content edits within 60 seconds p99.",
+   "Never lose an update and never let an older update overwrite a newer one.",
+   "Keep search p99 under 150 ms while indexing at peak rates.",
+   "Enable zero-downtime full reindexes for mapping or analyzer changes, completed within 6 hours."
+  ],
+  "non_goals": [
+   "Ranking and relevance model design.",
+   "Query understanding, spell correction and autocomplete.",
+   "Making search strongly consistent with checkout (checkout re-validates price and stock).",
+   "Indexing user-generated reviews in real time (batch daily is fine)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Shoppers",
+    "needs": "Accurate prices and availability in search results."
+   },
+   {
+    "who": "Sellers",
+    "needs": "Their listing edits and price changes appear quickly, especially for flash deals."
+   },
+   {
+    "who": "Search relevance team",
+    "needs": "Ability to change analyzers and mappings with safe reindexes and A/B indexes."
+   },
+   {
+    "who": "Catalog, pricing and inventory teams",
+    "needs": "A simple contract to publish changes without coupling to the search cluster."
+   },
+   {
+    "who": "SRE",
+    "needs": "Backpressure, replayability and clear freshness SLOs during sales."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Price/stock freshness lag (commit to searchable)",
+    "target": "p50 < 2 s, p99 < 5 s"
+   },
+   {
+    "metric": "Content freshness lag",
+    "target": "p99 < 60 s"
+   },
+   {
+    "metric": "Lost or regressed updates (reconciliation diffs)",
+    "target": "< 1 per 10M updates, auto-repaired within 1 h"
+   },
+   {
+    "metric": "Search p99 during peak indexing",
+    "target": "< 150 ms"
+   },
+   {
+    "metric": "Checkout failures due to stale search data",
+    "target": "-50% versus current"
+   }
+  ],
+  "constraints": [
+   "Search engine is Elasticsearch/OpenSearch (existing expertise, existing clusters).",
+   "Kafka is the company event backbone; Flink is available on the streaming platform.",
+   "Sale peaks are scheduled (Big Billion Days style) so capacity can be pre-provisioned, but flash deals are not.",
+   "Source services own their data; search may not query their databases synchronously."
+  ],
+  "risks": [
+   {
+    "risk": "Merge storms and refresh overhead degrade query latency at peak",
+    "mitigation": "Hot-field side store, coalescing, merge throttling, dedicated indexing capacity, segment replication."
+   },
+   {
+    "risk": "Out-of-order events cause stale overwrites",
+    "mitigation": "Partition by doc id and external versioning (source version or commit LSN)."
+   },
+   {
+    "risk": "Poison documents block a partition",
+    "mitigation": "Bounded retries then DLQ with alerting and replay tooling."
+   },
+   {
+    "risk": "Full reindex takes too long or diverges",
+    "mitigation": "Parallel Spark build from snapshot, replay Kafka from snapshot time, compare doc counts and sampled checksums before alias swap."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Shopper during a flash sale",
+    "needs": "Sees only in-stock items at the current deal price."
+   },
+   {
+    "name": "Seller running a lightning deal",
+    "needs": "Price drop visible in search within seconds of saving."
+   },
+   {
+    "name": "Relevance engineer",
+    "needs": "Spin up a new index with a new analyzer, compare, and switch with no downtime."
+   },
+   {
+    "name": "On-call SRE",
+    "needs": "Dashboards for freshness lag, and a safe way to replay or pause pipelines."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want out-of-stock items to disappear or be marked within seconds so that I do not click on things I cannot buy.",
+   "As a seller, I want my price change searchable within 5 seconds so that my deal starts on time.",
+   "As a seller, I want title and attribute edits searchable within a minute so that shoppers find my listing.",
+   "As a relevance engineer, I want to build a new index version in the background and switch atomically so that users never see a partial index.",
+   "As an SRE, I want to replay the last 24 hours of changes into an index so that I can recover from a bad deploy.",
+   "As a pricing service owner, I want to publish changes to one topic without knowing search internals so that teams stay decoupled.",
+   "As an SRE, I want price/stock updates prioritised over content updates under overload so that the money-critical SLO holds."
+  ],
+  "functional": [
+   "Ingest changes from multiple sources via CDC or outbox into Kafka, keyed by product id.",
+   "Merge partial updates from different owners into one document version.",
+   "Coalesce multiple updates to the same document within a short window, keeping only the latest.",
+   "Apply updates idempotently with monotonic versions; reject stale versions.",
+   "Support deletes (delisting) with tombstones that propagate to every index version.",
+   "Support full rebuilds into a new index with catch-up replay and atomic alias switch.",
+   "Route updates into priority lanes (availability, price, content).",
+   "Provide replay from an offset or timestamp and a dead-letter queue with re-drive."
+  ],
+  "non_functional": [
+   {
+    "name": "Freshness",
+    "target": "Price/stock p99 < 5 s; content p99 < 60 s"
+   },
+   {
+    "name": "Throughput",
+    "target": "Sustain 150k updates/s for 2 hours; burst 250k/s for 5 minutes with lag recovery < 10 min"
+   },
+   {
+    "name": "Durability",
+    "target": "Zero lost updates; Kafka replication factor 3, min.insync.replicas 2"
+   },
+   {
+    "name": "Correctness",
+    "target": "No version regression: index version is always >= any previously applied version"
+   },
+   {
+    "name": "Query isolation",
+    "target": "Search p99 < 150 ms while indexing at peak"
+   },
+   {
+    "name": "Rebuild time",
+    "target": "Full rebuild of 500M docs in < 6 hours with zero downtime"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "500M documents, 2 KB indexed per document (~1 TB primary index before replicas).",
+    "20k updates/s average, 150k/s peak; 85% price/stock, 15% content.",
+    "Coalescing reduces content updates by ~40% at peak because sellers bulk-edit the same item repeatedly.",
+    "Average Kafka event 1 KB (partial), full assembled doc 4 KB.",
+    "Elasticsearch data nodes sustain ~20-30k docs/s indexing each for 2 KB docs with replicas on segment replication."
+   ],
+   "math": [
+    "Kafka ingress: 150k/s x 1 KB = 150 MB/s at peak; with RF 3 that is 450 MB/s of broker disk write - about 10 brokers with headroom.",
+    "Kafka retention: 20k/s x 86,400 s x 1 KB = ~1.7 TB/day; 7 days = ~12 TB x RF 3 = ~36 TB.",
+    "Full-text index writes at peak: 15% x 150k = 22.5k/s content, minus 40% coalescing = ~13.5k docs/s into the main index.",
+    "Hot-field updates: 85% x 150k = ~127k/s into the availability store (tiny docs of ~50 bytes: id, price, stock, version).",
+    "Main index: 1 TB primary / 25 GB per shard = 40 primaries; 1 replica = 2 TB; ~20 data nodes at ~100 GB each with headroom.",
+    "Availability store: 500M x 50 B = 25 GB - fits in memory across a few nodes or as a small dedicated index.",
+    "Rebuild: 500M docs / 6 h = ~23k docs/s; with Spark generating bulk requests across 40 shards that is under 1k docs/s per shard, easily achievable."
+   ],
+   "summary": "Peak 150k updates/s, but only ~13.5k/s need to touch the 1 TB full-text index once hot fields are split out and bursts are coalesced. Kafka needs ~150 MB/s ingress and ~36 TB for 7-day replay; the availability store is only ~25 GB."
+  },
+  "out_of_scope": [
+   "Query serving, ranking and personalisation.",
+   "Image and vector embedding generation (consumed as fields if present).",
+   "Cross-region active-active indexing (single primary region with DR replica).",
+   "Search analytics and click logging."
+  ]
+ },
+ "hld": {
+  "overview": "Changes are captured from each owning service via CDC or a transactional outbox into Kafka topics keyed by product id. A Flink job keeps per-product state, merges partial updates, assigns a monotonic version, coalesces bursts, and routes output into two lanes: an availability lane (price, stock, flags) written at very high rate to a small availability index, and a content lane written to the main full-text index. Bulk indexers apply batched writes with external versioning and respect backpressure. A batch path rebuilds whole index versions from a lakehouse snapshot, catches up from Kafka, validates, and flips aliases.",
+  "diagram": "\n [Catalog svc]  [Pricing svc]  [Inventory svc]  [Seller tools]\n      | outbox/CDC     | CDC           | CDC              | outbox\n      v                v               v                  v\n [Kafka: catalog.changes | price.changes | stock.changes ]  (key = product_id, 256 parts)\n                         |\n                         v\n [Flink: merge + version + coalesce (keyed state, RocksDB, checkpoint 10 s)]\n          |                                      |                    |\n   availability lane                       content lane            poison\n          v                                      v                    v\n [Kafka: idx.avail]                    [Kafka: idx.content]       [DLQ topic]\n          |                                      |\n [Bulk indexer pool A]                 [Bulk indexer pool B]\n          |  version_type=external             |\n          v                                      v\n [ES availability index] <--- query-time join ---> [ES products_v42 (alias: products)]\n                                                        ^\n [Lakehouse snapshot] -> [Spark full build] -> [products_v43] -- validate -- alias swap\n",
+  "components": [
+   {
+    "name": "Source capture (CDC / outbox)",
+    "responsibility": "Turns committed changes in each owning service into ordered events without dual writes; includes source version or LSN."
+   },
+   {
+    "name": "Kafka change topics",
+    "responsibility": "Durable, replayable, ordered-per-key log; 256 partitions keyed by product_id; RF 3, 7-day retention."
+   },
+   {
+    "name": "Flink document assembler",
+    "responsibility": "Keyed state per product merges partial updates, assigns a monotonic version, coalesces within 500 ms windows, routes to lanes, emits tombstones for deletes."
+   },
+   {
+    "name": "Lane topics (idx.avail, idx.content)",
+    "responsibility": "Decouple assembly from indexing; allow independent scaling, priority and replay."
+   },
+   {
+    "name": "Bulk indexer pools",
+    "responsibility": "Batch into 5-15 MB bulk requests, write with external versions, handle 429 backpressure with adaptive concurrency, send failures to DLQ."
+   },
+   {
+    "name": "Main search index (products alias)",
+    "responsibility": "Full-text inverted index, 40 primary shards, refresh 1 s for content, segment replication for replicas."
+   },
+   {
+    "name": "Availability index / store",
+    "responsibility": "Tiny docs of price, stock and flags updated at 100k+/s; joined or filtered at query time (or held in a query-side in-memory map)."
+   },
+   {
+    "name": "Rebuild orchestrator",
+    "responsibility": "Runs Spark build from snapshot into a new index version, replays Kafka from snapshot time, validates counts and samples, swaps alias, keeps the previous version for rollback."
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Continuously samples documents and compares index versions with source versions, re-emitting repairs."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Price drop to searchable (hot path)",
+    "steps": [
+     "Pricing service commits new price for product P with version 1183 (commit LSN).",
+     "Debezium emits the change to price.changes keyed by P.",
+     "Flink updates P's keyed state, sees it is availability-only, emits {P, price, stock, version} to idx.avail after a 200 ms coalescing window.",
+     "Bulk indexer A batches with others and writes to the availability index with version_type=external, version=1183.",
+     "Refresh (1 s) makes it visible; the query layer uses it for filtering (in stock) and display price.",
+     "Typical end-to-end lag ~1.5-3 s; p99 under 5 s."
+    ]
+   },
+   {
+    "name": "Content edit to searchable",
+    "steps": [
+     "Seller edits title; catalog service writes row and outbox entry in one transaction.",
+     "Outbox relay publishes to catalog.changes.",
+     "Flink merges with existing state (attributes, category), builds the full document, coalesces repeated edits within 500 ms, and emits to idx.content.",
+     "Bulk indexer B writes the full document to the products alias (current version index) with external version.",
+     "Lucene marks the old doc deleted and adds the new one in a fresh segment; refresh makes it searchable in ~1 s; merges later reclaim space."
+    ]
+   },
+   {
+    "name": "Zero-downtime full reindex",
+    "steps": [
+     "Orchestrator records time T0 and the Kafka offsets for the lane topics.",
+     "Spark reads the lakehouse snapshot as of T0 and bulk loads products_v43 with replicas 0 and refresh disabled.",
+     "Enable refresh and replicas; start a second consumer group replaying idx.content and idx.avail from T0 offsets into v43 (dual write from the stream, not from services).",
+     "When v43 lag is under 5 s, validate doc counts, sampled checksums and canary query results against v42.",
+     "Atomically swap the alias products from v42 to v43; keep v42 for 48 h for rollback."
+    ]
+   }
+  ],
+  "data_flow": "Source DB commit -> CDC/outbox -> Kafka change topics (keyed by product_id) -> Flink keyed state (merge, version, coalesce) -> lane topics -> bulk indexers -> Elasticsearch indexes behind aliases. In parallel, change topics are archived to the lakehouse (Iceberg) for snapshots; rebuilds read the snapshot and replay lanes from the matching offsets. A reconciler compares source versions with indexed versions and re-emits repair events into the same pipeline."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "EVENT",
+    "path": "kafka: catalog.changes / price.changes / stock.changes",
+    "request": "{product_id, source, fields:{...}, source_version, op: upsert|delete, commit_ts}",
+    "response": "n/a (async)",
+    "notes": "Key = product_id; schema in registry (Avro), backward compatible."
+   },
+   {
+    "method": "POST",
+    "path": "/_bulk (Elasticsearch)",
+    "request": "NDJSON of index/delete actions with _id=product_id, version=<v>, version_type=external",
+    "response": "per-item status; 409 for stale version, 429 for rejected",
+    "notes": "409 counted as success (stale); 429 triggers backoff with jitter."
+   },
+   {
+    "method": "POST",
+    "path": "/admin/v1/reindex",
+    "request": "{target_version: 43, source_snapshot: '2026-10-10T00:00Z', mapping_ref}",
+    "response": "{job_id, status}",
+    "notes": "Idempotent by target_version."
+   },
+   {
+    "method": "POST",
+    "path": "/admin/v1/alias/swap",
+    "request": "{alias: products, from: v42, to: v43, checks: required}",
+    "response": "{swapped: true, previous: v42}",
+    "notes": "Fails unless validation passed; single atomic _aliases call."
+   },
+   {
+    "method": "POST",
+    "path": "/admin/v1/replay",
+    "request": "{lane, from_ts | from_offsets, target_index, rate_limit}",
+    "response": "{job_id}",
+    "notes": "Uses a new consumer group; safe due to external versioning."
+   },
+   {
+    "method": "GET",
+    "path": "/admin/v1/freshness",
+    "request": "lane?, percentile?",
+    "response": "{p50_ms, p99_ms, max_lag_ms, by_partition:[...]}",
+    "notes": "Computed from commit_ts embedded in docs vs refresh time."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "ChangeEvent",
+    "store": "Kafka (RF 3, 7-day retention, compaction off for change topics)",
+    "fields": [
+     "product_id",
+     "source",
+     "op",
+     "fields map",
+     "source_version",
+     "commit_ts"
+    ],
+    "keys": "Partition key product_id (256 partitions)",
+    "notes": "Ordered per product; at-least-once delivery."
+   },
+   {
+    "entity": "ProductState",
+    "store": "Flink keyed state (RocksDB, checkpoint every 10 s to S3)",
+    "fields": [
+     "product_id",
+     "content fields",
+     "price",
+     "stock",
+     "per-source versions",
+     "doc_version",
+     "last_emit_ts"
+    ],
+    "keys": "Keyed by product_id",
+    "notes": "Per-source versions guard against regression from any one source; doc_version = max-combined monotonic counter."
+   },
+   {
+    "entity": "Product document",
+    "store": "Elasticsearch index products_vN (40 primaries, 1 replica)",
+    "fields": [
+     "_id=product_id",
+     "title (text)",
+     "description (text)",
+     "brand (keyword)",
+     "category_path (keyword)",
+     "attributes (nested/flattened)",
+     "doc_version (long)",
+     "commit_ts (date)"
+    ],
+    "keys": "_id = product_id; routing by _id hash",
+    "notes": "External versioning on doc_version."
+   },
+   {
+    "entity": "Availability doc",
+    "store": "Elasticsearch availability index (or in-memory map in query service)",
+    "fields": [
+     "_id=product_id",
+     "price (scaled_float)",
+     "in_stock (bool)",
+     "stock_bucket (byte)",
+     "avail_version (long)"
+    ],
+    "keys": "_id = product_id",
+    "notes": "~50 B per doc, 25 GB total; high update rate isolated from the text index."
+   },
+   {
+    "entity": "IndexVersion registry",
+    "store": "Postgres",
+    "fields": [
+     "version",
+     "mapping_hash",
+     "snapshot_ts",
+     "start_offsets",
+     "status",
+     "validated_at",
+     "alias_active"
+    ],
+    "keys": "PK version",
+    "notes": "Drives rebuild and rollback."
+   }
+  ],
+  "classes": [
+   {
+    "name": "DocumentAssembler (Flink KeyedProcessFunction)",
+    "responsibility": "Merge partial events into state, enforce per-source monotonic versions, coalesce, route to lanes.",
+    "methods": [
+     "processElement(event, ctx)",
+     "onTimer(ts) -> emit coalesced doc",
+     "route(changedFields) -> Lane"
+    ]
+   },
+   {
+    "name": "BulkIndexer",
+    "responsibility": "Batches actions, sends bulk requests, classifies per-item results, adapts concurrency.",
+    "methods": [
+     "add(action)",
+     "flush()",
+     "handleResponse(resp)",
+     "adjustConcurrency(rejectRate)"
+    ]
+   },
+   {
+    "name": "AdaptiveLimiter",
+    "responsibility": "AIMD concurrency control driven by 429s and latency.",
+    "methods": [
+     "acquire()",
+     "onSuccess(latency)",
+     "onReject()"
+    ]
+   },
+   {
+    "name": "RebuildOrchestrator",
+    "responsibility": "Coordinates snapshot build, replay catch-up, validation and alias swap.",
+    "methods": [
+     "start(version)",
+     "catchUp()",
+     "validate() -> Report",
+     "swap()",
+     "rollback()"
+    ]
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Samples ids, compares source version vs indexed version, emits repair events.",
+    "methods": [
+     "sample(n)",
+     "compare(id)",
+     "repair(id)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Merge, version and coalesce per product",
+    "explain": "Each source owns some fields and has its own monotonically increasing version. Keep the highest version seen per source, ignore older events, and debounce emission so a burst of 10 edits in 300 ms becomes one write. Route to the availability lane if only hot fields changed.",
+    "pseudocode": "def process(event, state, timers):\n    sv = state.source_versions.get(event.source, -1)\n    if event.source_version <= sv:\n        return                                   # stale or duplicate\n    state.source_versions[event.source] = event.source_version\n    state.apply(event.fields, event.op)\n    state.doc_version += 1                       # monotonic per product\n    state.dirty |= classify(event.fields)        # {AVAIL, CONTENT}\n    if not state.timer_set:\n        window = 200 if state.dirty == {AVAIL} else 500   # ms\n        timers.register(now() + window); state.timer_set = True\n\ndef on_timer(state):\n    if CONTENT in state.dirty:\n        emit('idx.content', state.full_doc(), version=state.doc_version)\n    if AVAIL in state.dirty:\n        emit('idx.avail', state.avail_doc(), version=state.doc_version)\n    state.dirty, state.timer_set = set(), False"
+   },
+   {
+    "name": "Bulk indexing with AIMD backpressure",
+    "explain": "Send bulk requests sized by bytes, not count. On 429 rejections, halve concurrency and back off with jitter; on success, increase concurrency by one. Treat 409 version conflicts as successful no-ops. Commit Kafka offsets only after the whole batch is acknowledged.",
+    "pseudocode": "def run(consumer, es):\n    limit = AIMD(min=2, max=64, start=8)\n    while True:\n        batch = consumer.poll(max_bytes=10_MB, max_wait_ms=50)\n        limit.acquire()\n        resp = es.bulk(to_actions(batch), timeout='30s')\n        retry = []\n        for item in resp.items:\n            if item.status in (200, 201, 409): continue\n            elif item.status == 429: retry.append(item)\n            elif attempts(item) >= 5: dlq.send(item)\n            else: retry.append(item)\n        if any(i.status == 429 for i in resp.items): limit.on_reject()\n        else: limit.on_success()\n        sleep(backoff_with_jitter(attempt)) if retry else None\n        resend(retry)                 # loop until empty or DLQ\n        consumer.commit(batch.last_offsets)"
+   },
+   {
+    "name": "Alias swap after catch-up",
+    "explain": "Build the new index offline, replay from the offsets captured at snapshot time, and swap only when lag is small and validation passes. Because writes are versioned, events applied by both the snapshot and the replay converge.",
+    "pseudocode": "def rebuild(v_new):\n    t0, offsets = now(), kafka.offsets_for_time(lanes, now())\n    spark_bulk_load(snapshot_at(t0), index=v_new, replicas=0, refresh=-1)\n    es.settings(v_new, replicas=1, refresh='1s')\n    replay = start_consumer(lanes, offsets, target=v_new)\n    wait_until(lambda: replay.lag_seconds() < 5)\n    assert abs(count(v_new) - count(active())) / count(active()) < 0.001\n    assert sample_checksums_match(v_new, source, n=100_000)\n    es.aliases([remove(active(), 'products'), add(v_new, 'products')])  # atomic\n    keep(active_prev, hours=48)"
+   }
+  ],
+  "sequence": "\nPricingDB   Debezium   Kafka(price)   Flink(P)      Kafka(avail)  BulkIdx-A     ES(avail)\n   | commit v1183 |          |              |               |             |             |\n   |------------->|          |              |               |             |             |\n   |              |--event-->|              |               |             |             |\n   |              |          |---consume--->|               |             |             |\n   |              |          |              |-check v>last  |             |             |\n   |              |          |              |-timer 200ms   |             |             |\n   |              |          |              |--emit avail-->|             |             |\n   |              |          |              |               |--poll------>|             |\n   |              |          |              |               |             |--_bulk----->|\n   |              |          |              |               |             |<--200/409---|\n   |              |          |              |               |<--commit----|             |\n   |              |          |              |               |             |  refresh 1s |\n   |  ~1.5-3 s from commit to searchable                                                  |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Two price updates for the same product arrive out of order at the indexer after a consumer rebalance.",
+   "handling": "External versioning: Elasticsearch rejects the older version with 409, which the indexer treats as success."
+  },
+  {
+   "case": "Duplicate events from CDC after a connector restart.",
+   "handling": "Per-source version checks in Flink drop duplicates; external versioning in ES makes re-applies harmless."
+  },
+  {
+   "case": "Delete followed by a late upsert (delisted product resurrects).",
+   "handling": "Deletes carry a version and leave a versioned tombstone in Flink state for 7 days (longer than Kafka retention); ES delete with external version; late upserts with lower version are rejected."
+  },
+  {
+   "case": "A seller bulk-edits 2 million listings in one minute.",
+   "handling": "Per-seller rate limiting at the source, coalescing in Flink, and a separate low-priority bulk lane so it does not starve price/stock updates."
+  },
+  {
+   "case": "Hot product receives 1,000 stock updates per second during a flash sale.",
+   "handling": "Coalescing window collapses them into ~5 writes/s; display uses stock buckets (in stock / few left / out) so the index only changes when the bucket changes."
+  },
+  {
+   "case": "Poison document with a malformed field fails mapping on every retry.",
+   "handling": "Bounded retries, then DLQ with the error; partition continues; alert and fix-and-redrive tooling."
+  },
+  {
+   "case": "Mapping explosion: sellers add arbitrary attribute keys.",
+   "handling": "Use flattened or key-value nested fields with an allowlist; reject unknown dynamic fields (dynamic: strict) to protect cluster state."
+  },
+  {
+   "case": "Events arriving during an alias swap.",
+   "handling": "Live indexers write to a concrete index name, not the read alias. During rebuild the replay consumer writes to v_new directly while the live consumer writes to v_old; after swap the live consumer switches targets; versioning reconciles overlap."
+  },
+  {
+   "case": "Clock skew between source services makes timestamp-based ordering wrong.",
+   "handling": "Never order by wall clock; use source DB LSN or per-entity monotonic versions; commit_ts is only for lag metrics."
+  },
+  {
+   "case": "Flink job restarts from a checkpoint 10 s old and re-emits events.",
+   "handling": "Output is idempotent because of versions; Kafka sink can use transactions for exactly-once into lane topics, but correctness does not depend on it."
+  },
+  {
+   "case": "Search shows in stock but checkout finds 0 units.",
+   "handling": "Accepted eventual consistency; checkout re-validates with inventory and the UI suggests alternatives; metric tracks the rate to tune freshness."
+  },
+  {
+   "case": "Deleted-docs ratio climbs to 40% on hot shards, slowing queries.",
+   "handling": "Hot-field split reduces rewrites; tune merge policy (deletes_pct_allowed), schedule force-merge of cold indices off-peak only."
+  },
+  {
+   "case": "Kafka retention exceeded during a long outage of the indexer.",
+   "handling": "Changes are archived to the lakehouse; recover by rebuild from snapshot plus replay from archived changes."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Kafka",
+   "layer": "Change log",
+   "overview": "Distributed, partitioned, replicated commit log with consumer groups and offset-based replay.",
+   "why": "Per-key ordering via partitioning by product_id, 7-day replay for recovery and rebuilds, decouples sources from search.",
+   "alternatives": "Pulsar (tiered storage built in, more moving parts); Kinesis (managed, lower partition limits and shorter retention by default)."
+  },
+  {
+   "name": "Debezium / transactional outbox",
+   "layer": "Capture",
+   "overview": "Debezium tails database logs (binlog, WAL) and publishes row changes; the outbox pattern writes an event row in the same transaction as the business change.",
+   "why": "Eliminates dual-write inconsistency; events exist if and only if the transaction committed.",
+   "alternatives": "Application dual writes (lossy); periodic polling by updated_at (misses deletes and high-frequency changes)."
+  },
+  {
+   "name": "Apache Flink",
+   "layer": "Stream processing",
+   "overview": "Stateful stream processor with keyed state, event-time timers, and checkpointing to durable storage.",
+   "why": "Per-product keyed state for merging partial updates, coalescing timers, and exactly-once state with checkpoints.",
+   "alternatives": "Kafka Streams (lighter, embedded in the app, fine at smaller scale); Spark Structured Streaming (micro-batch, higher latency)."
+  },
+  {
+   "name": "Elasticsearch / OpenSearch",
+   "layer": "Search index",
+   "overview": "Distributed search engine built on Lucene immutable segments, with near-real-time refresh, bulk API and external versioning.",
+   "why": "Mature full-text search, aliases for zero-downtime swaps, external versioning for idempotent writes, segment replication in OpenSearch.",
+   "alternatives": "Solr (similar Lucene base); Vespa (strong at partial in-place updates of attributes, great fit for high-rate price/stock updates); Typesense/Meilisearch for smaller scales."
+  },
+  {
+   "name": "Apache Spark + Iceberg lakehouse",
+   "layer": "Batch rebuild",
+   "overview": "Distributed batch compute reading table snapshots with time travel.",
+   "why": "Builds a full index version from a consistent snapshot in hours with massive parallelism.",
+   "alternatives": "Re-reading source DBs (heavy load on OLTP); Hadoop MapReduce offline index builds like LinkedIn Galene's weekly base index."
+  },
+  {
+   "name": "Schema Registry (Avro/Protobuf)",
+   "layer": "Contracts",
+   "overview": "Central registry enforcing compatible schema evolution for event payloads.",
+   "why": "Many producers and consumers; prevents breaking changes from crashing the pipeline.",
+   "alternatives": "JSON with conventions (fragile), Protobuf without registry (no central compatibility checks)."
+  },
+  {
+   "name": "Prometheus + Grafana",
+   "layer": "Observability",
+   "overview": "Metrics collection and dashboards.",
+   "why": "Freshness lag, consumer lag, bulk rejections, merge times, and SLO burn alerts.",
+   "alternatives": "Datadog, CloudWatch."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Inverted index with immutable segments and near-real-time refresh",
+   "explain": "An inverted index maps each term to a postings list of the documents containing it, which is what makes keyword search fast. Lucene, the engine under Elasticsearch, OpenSearch and Solr, stores the index as a set of immutable segments. New documents are first buffered in memory; a refresh writes the buffer out as a new small segment (initially to the filesystem cache) and opens it for search. In Elasticsearch the default refresh happens every second on indices that have seen a search recently, which is why it is called near-real-time rather than real-time. Because segments are immutable, an update is never done in place: the old version is marked deleted in a per-segment bitmap (a tombstone) and the new version is added to a new segment. Queries skip deleted documents but still pay some cost to visit them. A background merge policy periodically combines small segments into larger ones, physically dropping deleted documents; merges consume disk I/O and CPU and can compete with queries. A separate durability mechanism, the transaction log (translog), records operations so they survive a crash before a heavier flush/commit writes segments to disk durably. The consequences for a frequent-update workload are clear: high update rates generate many tiny segments, many tombstones and heavy merging, and a short refresh interval multiplies that cost. Tuning refresh interval, batching updates, and avoiding unnecessary rewrites are the levers.",
+   "in_this_design": "Content updates go to the main index with refresh 1 s and merge throttling; 85% of updates (price, stock) are kept out of the main index by the hot-field split, and coalescing cuts redundant rewrites. During full rebuilds, refresh is disabled and replicas set to 0 for maximum throughput, then re-enabled before catch-up.",
+   "key_points": [
+    "Segments are immutable: every update is delete plus add.",
+    "Refresh makes data searchable; flush/translog makes it durable - they are different.",
+    "Merges reclaim deleted docs but cost I/O; frequent updates cause merge pressure.",
+    "Shorter refresh means fresher results but more segments and lower indexing throughput.",
+    "Bulk load with refresh disabled and zero replicas, then enable them."
+   ],
+   "qa": [
+    {
+     "q": "Why not set refresh_interval to 100 ms to get fresher results?",
+     "a": "Each refresh creates a segment; at 100 ms you create 10x more tiny segments, more merges, more file handles and lower indexing throughput, and query latency suffers. 1 s is a sensible floor; the hot-field store is the better way to get price/stock freshness."
+    },
+    {
+     "q": "What is the difference between refresh and flush?",
+     "a": "Refresh opens a new segment for search, making changes visible, without fsync. Flush performs a Lucene commit, fsyncing segments to disk and truncating the translog. Durability before flush comes from the translog, which is fsynced per request by default."
+    },
+    {
+     "q": "Your deleted-docs ratio is 35%. What does that tell you?",
+     "a": "Many documents have been updated or deleted and merges are not keeping up, so queries scan wasted entries and the index is bloated. Reduce update churn (coalescing, hot-field split), check merge throttling, and consider deletes_pct_allowed tuning; avoid force-merging indices that still receive writes."
+    }
+   ]
+  },
+  {
+   "name": "Change data capture and the transactional outbox",
+   "explain": "Whenever a system must update its own database and also notify another system, the obvious approach - write to the DB, then publish an event - is a dual write, and dual writes are unsafe. If the process crashes after the commit but before publishing, the event is lost forever; if it publishes first and the transaction rolls back, consumers act on something that never happened; and two concurrent writers can commit in one order but publish in another. Two patterns fix this by making the database transaction the single source of truth. Change data capture reads the database's replication log (MySQL binlog, Postgres WAL) and turns every committed row change into an event, in commit order, with a log position that serves as a natural monotonic version. The transactional outbox has the service insert an event row into an outbox table inside the same transaction as the business change; a relay then reads the outbox (often itself via CDC) and publishes to Kafka, deleting or marking rows afterwards. Both deliver at least once, so duplicates are possible and consumers must be idempotent. CDC requires no application change but exposes table structure as an implicit contract; outbox lets the team publish a clean, intentional event schema. Either way, partitioning the resulting topic by entity id preserves per-entity ordering.",
+   "in_this_design": "Pricing and inventory, which have simple row shapes and enormous rates, use Debezium CDC with the LSN as the source version. Catalog and seller tools use an outbox so they publish a curated product-change schema. All topics are keyed by product_id.",
+   "key_points": [
+    "Dual writes lose or reorder events on partial failure.",
+    "CDC: events derived from the commit log, in commit order, with a free monotonic position.",
+    "Outbox: event row written in the same transaction; relay publishes it.",
+    "Both are at-least-once; consumers must be idempotent.",
+    "Partition by entity id to keep per-entity order."
+   ],
+   "qa": [
+    {
+     "q": "When would you choose outbox over raw CDC?",
+     "a": "When the table schema is not a good public contract - for example a normalised catalog spread across 12 tables - or when you want domain events with intent (ProductDelisted) rather than row diffs. CDC is better when you cannot change the producer or the rows are already the right shape."
+    },
+    {
+     "q": "How does CDC give you a version for free?",
+     "a": "The binlog position or WAL LSN increases monotonically with commits, so for a given row a later change always has a higher position. Using it as the external version guarantees later commits win, regardless of delivery order."
+    },
+    {
+     "q": "What happens to the outbox table at 100k writes per second?",
+     "a": "It becomes a hot insert-and-delete table. Mitigate by partitioning it by time, dropping old partitions instead of deleting rows, and having CDC read it so the relay does not poll."
+    }
+   ]
+  },
+  {
+   "name": "Ordering, idempotency and external versioning (at-least-once made safe)",
+   "explain": "Distributed messaging systems in practice give at-least-once delivery: after failures, consumers may see the same message again, and after rebalances or retries, two messages for the same entity can be processed by different workers in either order. Exactly-once end to end across independent systems is very hard; the practical approach is effectively-once, achieved by combining at-least-once delivery with idempotent, order-tolerant application. Idempotency means applying the same operation twice has the same effect as once - setting price to 499 is idempotent, decrementing stock by 1 is not. Order tolerance comes from versioning: every change carries a monotonically increasing version for its entity, and the target only accepts a write whose version is higher than what it holds, otherwise it rejects it as stale. This is a form of last-writer-wins where the 'last' is decided by version, not by wall-clock time, which avoids clock-skew bugs. Elasticsearch supports this directly with external versioning: you index with version_type=external and the engine rejects writes whose version is not greater than the stored one with a 409 conflict. Kafka helps with ordering by guaranteeing order within a partition, so keying by entity id keeps one entity's changes on one partition, though retries in producers need idempotent producer settings (enable.idempotence=true) to avoid reordering.",
+   "in_this_design": "Each source contributes a monotonic source version (LSN or row version); Flink keeps the max per source and emits a monotonically increasing doc_version per product; indexers write with version_type=external and treat 409 as success. Kafka topics are keyed by product_id with idempotent producers.",
+   "key_points": [
+    "Aim for effectively-once: at-least-once delivery plus idempotent, versioned apply.",
+    "Use versions, never wall clocks, to decide which write wins.",
+    "Make operations absolute (set price = X) rather than relative (price -= 10).",
+    "Key by entity id to get per-entity order in Kafka.",
+    "A 409 on stale version is success, not failure."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use Kafka exactly-once semantics?",
+     "a": "Kafka transactions give exactly-once between Kafka topics and Kafka-aware processors like Flink. The final write into Elasticsearch is outside that transaction, so you still need idempotent, versioned writes at the sink. Versioning is simpler and covers replays and rebuilds too."
+    },
+    {
+     "q": "Two sources update different fields of the same product. How do you version the combined document?",
+     "a": "Track a version per source in Flink state and reject regressions per source; then emit a single doc_version that increments each time the merged document changes. Because Flink processes one product's events serially, doc_version is monotonic for that product."
+    },
+    {
+     "q": "What breaks if you use updated_at timestamps as versions?",
+     "a": "Clock skew between hosts can make a later update carry an earlier timestamp, so it is rejected and the older value persists. Two updates in the same millisecond also tie. Log positions or per-entity counters avoid both."
+    }
+   ]
+  },
+  {
+   "name": "Backpressure and flow control in streaming pipelines",
+   "explain": "Backpressure is how a pipeline copes when a downstream stage cannot keep up with the upstream rate. Without it, the fast stage keeps pushing, buffers grow without bound, memory is exhausted, and something crashes or starts dropping data. There are three broad responses to overload: buffer (absorb the burst in a durable queue), throttle (slow the producer), or shed (drop or defer lower-value work). A durable log like Kafka is a natural buffer: consumers pull at their own pace, so a slow consumer simply accumulates lag rather than losing data, as long as lag stays within retention. Inside a consumer, flow control means limiting in-flight work; the AIMD algorithm used by TCP congestion control is a good fit: increase concurrency additively while requests succeed, and cut it multiplicatively when the downstream signals overload. Elasticsearch signals overload with HTTP 429 when its write thread pool queue is full, and well-behaved clients back off with exponential delays plus random jitter. Flink propagates backpressure through its network buffers automatically: when a sink is slow, upstream operators block, and the Kafka source reads more slowly. Priority lanes add a shedding dimension: by separating critical updates from bulk ones, you can starve the bulk lane first. The goal is graceful degradation where freshness of low-priority data slips but nothing is lost and critical paths keep their SLO.",
+   "in_this_design": "Kafka absorbs sale bursts; bulk indexers use AIMD concurrency on 429s with jittered backoff; Flink's built-in backpressure slows reading; separate availability, content and bulk-seller lanes with separate indexer pools let content lag rather than price/stock.",
+   "key_points": [
+    "Overload options: buffer, throttle, shed - pick deliberately.",
+    "A durable log turns overload into lag instead of loss.",
+    "AIMD concurrency on 429s; exponential backoff with jitter.",
+    "Priority lanes protect the money-critical SLO.",
+    "Alert on lag growth rate, not just absolute lag."
+   ],
+   "qa": [
+    {
+     "q": "Indexers see 30% 429s at peak. What do you do?",
+     "a": "Let AIMD cut concurrency so we stop hammering the cluster, confirm the content lane is absorbing lag while the availability lane stays healthy, and if lag projection crosses the SLO, add indexing capacity (pre-scaled data nodes) or temporarily raise refresh_interval on the content index to 5 s."
+    },
+    {
+     "q": "Why not just increase the Elasticsearch write queue size?",
+     "a": "A bigger queue hides overload, increases memory pressure and latency, and turns into timeouts and retries; the client should slow down instead. Queues should be bounded and backpressure should be explicit."
+    },
+    {
+     "q": "How do you know whether lag will recover?",
+     "a": "Compare consume rate to produce rate: if lag growth rate is negative, compute time to drain; if positive, the pipeline is under-provisioned for the current load and needs action before the SLO breaks."
+    }
+   ]
+  },
+  {
+   "name": "Lambda / kappa architecture: base index plus deltas, rebuild and alias swap",
+   "explain": "Large search systems often combine a batch-built base with a stream of incremental deltas. The batch path periodically rebuilds the whole index from a complete, consistent snapshot of source data; it is simple to reason about, can use new analyzers or mappings, and fixes any drift accumulated by the streaming path. The streaming path applies changes that happened since the snapshot so the index stays fresh. This is the lambda architecture idea applied to indexing. LinkedIn's Galene, for example, built a base index offline on Hadoop roughly weekly, kept a live in-memory update buffer, and periodically flushed it into snapshot segments merged with previous snapshots, querying across all of them. The kappa variant keeps only one path: everything is a stream, and a rebuild is just replaying the log from the beginning (or from a snapshot plus offsets) into a new index. The key mechanics are capturing a consistent cut - the snapshot time and the exact log offsets corresponding to it - so the delta replay neither misses nor double-counts (and versioning makes double-counting harmless anyway), and switching readers atomically. Search engines provide aliases for this: queries target an alias name, and a single atomic API call moves the alias from the old physical index to the new one, with the old index retained for instant rollback.",
+   "in_this_design": "Daily or on-demand Spark builds from an Iceberg snapshot produce products_vN; replay from offsets captured at the snapshot time catches up; validation checks counts, checksums and canary queries; an atomic alias swap cuts over, keeping the old version 48 h for rollback.",
+   "key_points": [
+    "Batch rebuild fixes drift and enables mapping changes; streaming keeps it fresh.",
+    "Capture a consistent cut: snapshot time plus matching log offsets.",
+    "Versioned writes make overlap between snapshot and replay harmless.",
+    "Aliases give atomic cutover and instant rollback.",
+    "Validate before swap: counts, sampled checksums, canary queries."
+   ],
+   "qa": [
+    {
+     "q": "Why not just reindex in place with update_by_query when the mapping changes?",
+     "a": "Most mapping changes (analyzers, field types) cannot be applied to existing segments; you need a new index. Building alongside and swapping is safer, avoids partial states, and gives rollback."
+    },
+    {
+     "q": "How do you ensure no updates are missed between the snapshot and the start of replay?",
+     "a": "Record Kafka offsets for time T0 (offsetsForTimes) slightly before the snapshot's as-of time, so replay starts earlier than the snapshot; anything applied twice is rejected or idempotent due to versions."
+    },
+    {
+     "q": "Kappa or lambda here?",
+     "a": "Mostly kappa with a snapshot shortcut: the same versioned event format feeds both the live and rebuild paths, but rebuilds start from a lakehouse snapshot rather than replaying months of events, because Kafka retains only 7 days."
+    }
+   ]
+  },
+  {
+   "name": "Hot/cold field separation (partial updates without reindexing documents)",
+   "explain": "Not all fields change at the same rate. In a product catalog, title and description change rarely while price, stock and promotion flags may change many times a day per product, and thousands of times per second across the catalog. Because inverted indexes rewrite the whole document on any update, mixing the two means every stock tick pays the full cost of re-analyzing text and rewriting postings for every field. The fix is to separate fast-changing attributes into a structure optimised for point updates. Options include a separate small index holding only those fields (cheap documents to rewrite), column-store-like structures that support in-place updates of numeric attributes (Vespa's attribute fields, or Solr's in-place updates of non-indexed docValues), or an in-memory key-value map in the query service consulted after retrieval for filtering and display. The trade-off is that queries now combine two sources: filtering on stock or sorting by price must either happen after retrieval from the main index (risking fewer than k results after filtering, which requires over-fetching) or via a join in the engine. Another trick is bucketing: rather than indexing exact stock counts, index buckets such as in stock, low stock and out of stock, so most stock ticks do not change the indexed value at all and can be suppressed.",
+   "in_this_design": "Price, stock bucket and promo flags live in a 25 GB availability store updated at ~127k/s; the main index stores only a coarse 'sellable' flag that changes rarely. The query service over-fetches 2x from the main index and filters/re-prices using the availability store.",
+   "key_points": [
+    "Separate fields by change rate; do not rewrite text for a stock tick.",
+    "Bucket volatile values so most updates are no-ops.",
+    "Joining at query time needs over-fetch to still return k results.",
+    "Engines like Vespa support true in-place attribute updates."
+   ],
+   "qa": [
+    {
+     "q": "Filtering out-of-stock items after retrieval leaves only 12 of 20 results. Fix?",
+     "a": "Over-fetch (for example 2-3x k) and keep a coarse sellable flag in the main index, which changes only when an item goes fully out of stock, so most out-of-stock items are filtered inside the engine. Adaptive over-fetch based on the measured filter ratio per category helps."
+    },
+    {
+     "q": "Why not use Elasticsearch partial update API for price?",
+     "a": "The partial update API still reindexes the whole document internally (get, merge, reindex), so it saves bandwidth but not indexing cost or merge pressure."
+    },
+    {
+     "q": "When would you pick Vespa instead?",
+     "a": "When high-rate updates to numeric attributes used in ranking and filtering are central, since Vespa updates attribute fields in memory in place without rewriting the document - a natural fit for price and stock."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "How sources publish changes",
+   "options": "Direct dual write to search vs CDC vs outbox",
+   "choice": "CDC for pricing/inventory, outbox for catalog",
+   "why": "Both eliminate dual-write loss; outbox gives a clean contract where table shapes are messy."
+  },
+  {
+   "decision": "Refresh interval",
+   "options": "100 ms vs 1 s vs 30 s",
+   "choice": "1 s for content and availability; disabled during bulk rebuild",
+   "why": "Balances freshness with segment count and indexing throughput; hot-field split handles the tight SLO."
+  },
+  {
+   "decision": "Hot fields placement",
+   "options": "In main document vs separate availability index vs in-memory map in query service",
+   "choice": "Separate availability index (with optional in-memory cache)",
+   "why": "Removes 85% of rewrites from the text index; the in-memory map is faster but needs its own replication."
+  },
+  {
+   "decision": "Ordering guarantee",
+   "options": "Global ordering vs per-key ordering plus versioning",
+   "choice": "Per-key ordering plus external versioning",
+   "why": "Global order does not scale; per-key order plus versioning is sufficient and replay-safe."
+  },
+  {
+   "decision": "Delivery semantics",
+   "options": "Exactly-once end to end vs at-least-once plus idempotency",
+   "choice": "At-least-once plus idempotent versioned writes",
+   "why": "The sink is outside Kafka transactions; idempotency is simpler and also covers replays."
+  },
+  {
+   "decision": "Rebuild strategy",
+   "options": "Replay full log (kappa) vs snapshot plus delta replay vs in-place update_by_query",
+   "choice": "Snapshot plus delta replay into a new index with alias swap",
+   "why": "Fast, consistent, supports mapping changes and gives instant rollback."
+  },
+  {
+   "decision": "Replica strategy",
+   "options": "Document replication (replicas re-index) vs segment replication",
+   "choice": "Segment replication where available",
+   "why": "Halves indexing CPU at high update rates; costs slightly more replica visibility lag."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Elasticsearch cluster rejects writes (429) during peak",
+   "behavior": "AIMD reduces concurrency, Kafka lag grows in the content lane first; availability lane keeps SLO; alert if projected drain time exceeds SLO."
+  },
+  {
+   "failure": "Flink job crashes",
+   "behavior": "Restarts from the last checkpoint (10 s); re-emitted events are idempotent; lag spike of under a minute."
+  },
+  {
+   "failure": "CDC connector stalls on schema change",
+   "behavior": "Freshness alert per source; schema registry compatibility checks prevent most cases; connector restart resumes from stored log position."
+  },
+  {
+   "failure": "Bad mapping deployed in new index version",
+   "behavior": "Validation (canary queries, counts) blocks the alias swap; if discovered later, swap alias back to the retained previous version within seconds."
+  },
+  {
+   "failure": "A data node dies",
+   "behavior": "Replicas promote; shard recovery copies segments; bulk requests targeting affected shards retry with backoff."
+  },
+  {
+   "failure": "Poison message",
+   "behavior": "After 5 retries it goes to the DLQ, partition continues, alert fires; fixed events are re-driven."
+  },
+  {
+   "failure": "Kafka broker loss",
+   "behavior": "RF 3 with min.insync.replicas 2 keeps producing; leaders re-elect in seconds; producers retry idempotently."
+  }
+ ],
+ "metrics": [
+  "End-to-end freshness lag (source commit_ts to searchable) p50/p99 per lane.",
+  "Kafka consumer lag (records and seconds) per consumer group and partition, plus lag growth rate.",
+  "Bulk request rate, size, latency and per-item status counts (429, 409, 4xx).",
+  "Refresh time, merge time, segment count and deleted-docs ratio per shard.",
+  "Search p99 latency correlated with indexing rate.",
+  "DLQ inflow rate and age of oldest DLQ message.",
+  "Reconciler mismatch rate and repair counts.",
+  "Coalescing ratio (input events / emitted docs)."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you guarantee an older price never overwrites a newer one?",
+   "a": "Per-key Kafka ordering plus monotonic versions from the source log, enforced in Flink state and again at Elasticsearch via external versioning, so any stale write is rejected at two layers."
+  },
+  {
+   "q": "Freshness p99 jumps from 3 s to 40 s during a sale. How do you debug?",
+   "a": "Break lag into stages using timestamps: commit to Kafka, Kafka to Flink emit, emit to bulk ack, ack to refresh. Usually the bulk stage shows 429s or merges; check lane isolation and whether a bulk seller job leaked into the availability lane."
+  },
+  {
+   "q": "Can you make price updates truly real time, under 100 ms?",
+   "a": "Not through a Lucene refresh. Move price to an in-memory map in the query service fed directly from the availability stream, and apply it after retrieval. Search then uses the latest price with sub-second lag."
+  },
+  {
+   "q": "How do you handle a schema change in the source event?",
+   "a": "Schema registry with backward compatibility; Flink deserializes with the reader schema; new fields are ignored until the mapping and assembler are updated; breaking changes require a new topic version and dual publishing during migration."
+  },
+  {
+   "q": "How would you do this across two regions?",
+   "a": "Run the indexing pipeline in each region from replicated Kafka topics (MirrorMaker 2 or cluster linking); each region builds its own indexes; versions make both converge. Alternatively use cross-cluster replication of the index, which saves CPU but couples regions."
+  },
+  {
+   "q": "What happens to deleted products during a rebuild?",
+   "a": "The snapshot excludes them, and delete events since T0 are replayed with versions; Flink keeps tombstones for longer than Kafka retention so late upserts cannot resurrect them."
+  },
+  {
+   "q": "How big should bulk requests be?",
+   "a": "Size by bytes, typically 5-15 MB per request, and tune empirically by increasing until throughput stops improving; too large causes memory pressure and long retries."
+  }
+ ],
+ "key_points": [
+  "Inverted indexes are immutable segments: every update is delete plus add, so frequent updates mean merge pressure.",
+  "Never dual write: use CDC or a transactional outbox into Kafka keyed by document id.",
+  "Effectively-once = at-least-once delivery plus idempotent writes with external versioning; never order by wall clock.",
+  "Coalesce bursts per document in Flink keyed state; most rapid-fire updates collapse.",
+  "Split hot fields (price, stock) from the full-text index; bucket volatile values.",
+  "Backpressure: Kafka buffers, AIMD on 429s, priority lanes protect the money-critical SLO.",
+  "Rebuild into a new index from a snapshot plus replay, validate, swap alias atomically, keep the old one for rollback.",
+  "Measure end-to-end freshness per stage, not just consumer lag.",
+  "Capacity anchor: 150k updates/s peak shrinks to ~13.5k/s of full-text writes after split and coalescing."
+ ],
+ "quiz": [
+  {
+   "q": "In Lucene-based engines, what physically happens when you update a document?",
+   "options": [
+    "The postings are edited in place",
+    "The old doc is marked deleted and a new doc is written to a new segment",
+    "Only the changed field is rewritten in the existing segment",
+    "The whole shard is rewritten"
+   ],
+   "answer": 1,
+   "why": "Segments are immutable, so updates are delete plus add. In-place field rewrite is tempting but only true for special structures like Vespa attributes or Solr in-place docValues."
+  },
+  {
+   "q": "What does an Elasticsearch refresh do?",
+   "options": [
+    "Fsyncs all segments to disk",
+    "Truncates the translog",
+    "Opens a new segment so recent writes become searchable",
+    "Merges small segments"
+   ],
+   "answer": 2,
+   "why": "Refresh is about visibility. Fsync and translog truncation happen on flush - the most commonly confused operation."
+  },
+  {
+   "q": "Why is writing to the DB and then publishing to Kafka in application code risky?",
+   "options": [
+    "Kafka is slower than the DB",
+    "Kafka cannot guarantee ordering",
+    "It doubles storage cost",
+    "A crash between the two loses or misorders the event"
+   ],
+   "answer": 3,
+   "why": "Dual writes are not atomic. Kafka does order within a partition, so that is not the issue."
+  },
+  {
+   "q": "An indexer receives price version 50 after version 52 is already indexed with external versioning. What happens?",
+   "options": [
+    "ES returns 409 and the indexer should treat it as success",
+    "ES overwrites with version 50",
+    "ES merges the two versions",
+    "The indexer must crash"
+   ],
+   "answer": 0,
+   "why": "External versioning rejects non-increasing versions with a conflict; that is the desired outcome. Treating 409 as an error and retrying forever is the tempting mistake."
+  },
+  {
+   "q": "Which is the best version source for ordering updates from a MySQL-backed pricing service?",
+   "options": [
+    "Indexer's local clock",
+    "Kafka message timestamp",
+    "Binlog position or a per-row version column",
+    "updated_at wall-clock timestamp"
+   ],
+   "answer": 2,
+   "why": "Log positions are monotonic per commit order. updated_at is tempting but vulnerable to clock skew and same-millisecond ties."
+  },
+  {
+   "q": "Roughly how many full-text writes per second remain at 150k updates/s if 85% are price/stock (split out) and coalescing removes 40% of the rest?",
+   "options": [
+    "~13,500/s",
+    "~22,500/s",
+    "~90,000/s",
+    "~127,000/s"
+   ],
+   "answer": 0,
+   "why": "15% x 150k = 22.5k, minus 40% = 13.5k. 22.5k forgets coalescing; 127k is the availability lane."
+  },
+  {
+   "q": "Search p99 degrades whenever indexing peaks. Which change best isolates queries?",
+   "options": [
+    "Increase refresh_interval to 100 ms",
+    "Split hot fields out and use segment replication so replicas do not re-index",
+    "Add more Kafka partitions",
+    "Disable the translog"
+   ],
+   "answer": 1,
+   "why": "Reducing rewrite volume and replica indexing CPU directly reduces contention. A shorter refresh makes it worse; disabling translog risks data loss."
+  },
+  {
+   "q": "What does AIMD do when Elasticsearch returns many 429s?",
+   "options": [
+    "Doubles concurrency to finish faster",
+    "Drops the rejected documents",
+    "Halves concurrency and backs off, then grows slowly on success",
+    "Switches to a different index"
+   ],
+   "answer": 2,
+   "why": "Multiplicative decrease relieves overload; additive increase probes capacity. Dropping documents would lose updates."
+  },
+  {
+   "q": "Why keep delete tombstones in Flink state longer than Kafka retention?",
+   "options": [
+    "To save memory",
+    "So late or replayed upserts with older versions cannot resurrect deleted products",
+    "Because Elasticsearch requires it",
+    "To speed up merges"
+   ],
+   "answer": 1,
+   "why": "Without the tombstone version, an old upsert would look new. ES does keep its own deleted versions briefly (index.gc_deletes, default 60 s), which is why relying on ES alone is the tempting but insufficient answer."
+  },
+  {
+   "q": "Best approach for a mapping change that alters an analyzer?",
+   "options": [
+    "Build a new index from snapshot, replay deltas, validate, swap alias",
+    "update_by_query on the live index",
+    "Close the index, change the mapping, reopen",
+    "Delete and recreate the live index during low traffic"
+   ],
+   "answer": 0,
+   "why": "Analyzer changes need re-analysis into a new index; alias swap gives zero downtime and rollback. update_by_query is tempting but cannot change the analyzer on existing fields."
+  },
+  {
+   "q": "Kafka topic for product changes should be partitioned by:",
+   "options": [
+    "Source service",
+    "Event timestamp",
+    "Random round-robin for balance",
+    "Product id"
+   ],
+   "answer": 3,
+   "why": "Per-product ordering requires all of a product's events in one partition. Round-robin balances load but destroys ordering."
+  },
+  {
+   "q": "Which statement about Kafka exactly-once semantics is correct here?",
+   "options": [
+    "It guarantees exactly-once writes into Elasticsearch",
+    "It covers Kafka-to-Kafka processing; the ES sink still needs idempotent writes",
+    "It removes the need for partitioning by key",
+    "It makes CDC unnecessary"
+   ],
+   "answer": 1,
+   "why": "Transactions stop at the Kafka boundary. Believing it extends into external sinks is the classic misconception."
+  },
+  {
+   "q": "A bulk seller job pushes 2M content edits and price freshness starts slipping. Root cause most likely?",
+   "options": [
+    "Flink checkpoint interval too long",
+    "Too many replicas",
+    "Price and bulk content share the same lane and indexer pool",
+    "Refresh interval too long"
+   ],
+   "answer": 2,
+   "why": "Without lane isolation, low-priority volume starves critical updates. Checkpoint interval affects recovery time, not steady-state lag."
+  },
+  {
+   "q": "Why bucket stock (in stock / low / out) instead of indexing exact counts?",
+   "options": [
+    "Exact counts cannot be stored",
+    "Most stock ticks then do not change the indexed value and can be suppressed",
+    "Buckets improve text relevance",
+    "It is required for external versioning"
+   ],
+   "answer": 1,
+   "why": "Bucketing turns most updates into no-ops. Exact counts are storable; the cost is the update rate."
+  },
+  {
+   "q": "During a rebuild, why disable refresh and set replicas to 0 on the new index?",
+   "options": [
+    "To maximise bulk indexing throughput, then enable before catch-up and swap",
+    "To prevent searches on the old index",
+    "Because aliases require it",
+    "To avoid needing a snapshot"
+   ],
+   "answer": 0,
+   "why": "Fewer segments and no replica indexing speed up bulk load. It must be reversed before the index serves traffic, which is the step people forget."
+  },
+  {
+   "q": "How do you ensure the replay after a snapshot misses nothing?",
+   "options": [
+    "Start replay from the latest offset",
+    "Start replay from offsets slightly before the snapshot time; versions make overlap harmless",
+    "Pause all source services during snapshot",
+    "Replay only deletes"
+   ],
+   "answer": 1,
+   "why": "Starting earlier guarantees coverage and versioning absorbs duplicates. Pausing sources is tempting but means downtime."
+  },
+  {
+   "q": "Deleted-docs ratio is 40% on hot shards. Which is the best long-term fix?",
+   "options": [
+    "Force-merge the live index every hour",
+    "Increase shard count",
+    "Raise refresh interval to 60 s",
+    "Reduce update churn via hot-field split and coalescing"
+   ],
+   "answer": 3,
+   "why": "Remove the cause. Hourly force-merge on a write-heavy index creates huge segments that later need costly merges - tempting but harmful."
+  },
+  {
+   "q": "Freshness p99 is breached but consumer lag looks small. Where to look first?",
+   "options": [
+    "Kafka broker disk",
+    "Stage-by-stage timestamps: e.g. coalescing windows or slow refresh/merges after bulk ack",
+    "Schema registry",
+    "Producer acks setting"
+   ],
+   "answer": 1,
+   "why": "Small lag means events move through Kafka quickly; delay hides in processing windows or engine visibility. Consumer lag alone is an incomplete freshness signal."
+  },
+  {
+   "q": "What is the main benefit of Elasticsearch partial update API for high-rate price changes?",
+   "options": [
+    "It updates the field in place without reindexing",
+    "It avoids merges",
+    "Only saves network bandwidth; internally the doc is still reindexed",
+    "It bypasses versioning"
+   ],
+   "answer": 2,
+   "why": "Partial update is get-merge-reindex. In-place update is the tempting misconception."
+  },
+  {
+   "q": "Roughly how much Kafka storage do you need for 7-day retention at 20k events/s of 1 KB with RF 3?",
+   "options": [
+    "~3.6 TB",
+    "~360 TB",
+    "~360 GB",
+    "~36 TB"
+   ],
+   "answer": 3,
+   "why": "20k x 86,400 x 1 KB = ~1.7 TB/day, x7 = ~12 TB, x3 = ~36 TB. 3.6 TB forgets replication and days."
+  },
+  {
+   "q": "Which engine natively supports in-place updates of numeric attributes without rewriting documents?",
+   "options": [
+    "Vespa",
+    "Elasticsearch",
+    "Solr only for text fields",
+    "Lucene core segments"
+   ],
+   "answer": 0,
+   "why": "Vespa attribute fields are in-memory and updatable in place. Solr supports in-place updates only for non-indexed, non-stored docValues fields, not text."
+  }
+ ],
+ "references": [
+  {
+   "title": "Elasticsearch reference: near real-time search",
+   "url": "https://www.elastic.co/guide/en/elasticsearch/reference/7.17/near-real-time.html"
+  },
+  {
+   "title": "Did you mean Galene? (LinkedIn Engineering)",
+   "url": "https://engineering.linkedin.com/search/did-you-mean-galene"
+  },
+  {
+   "title": "How we sped up data ingestion in Elasticsearch 8.6, 8.7, and 8.8",
+   "url": "https://www.elastic.co/blog/data-ingestion-elasticsearch"
+  },
+  {
+   "title": "Elasticsearch refresh_interval tuning: search visibility vs indexing throughput",
+   "url": "https://www.netdata.cloud/guides/elasticsearch/elasticsearch-refresh-interval-tuning/"
+  }
+ ]
+}

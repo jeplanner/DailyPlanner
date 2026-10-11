@@ -1,0 +1,1164 @@
+{
+ "slug": "websocket-scaling",
+ "title": "Design WebSocket scaling (live updates)",
+ "prompt": "Design websocket scaling for live updates.",
+ "group": "realtime",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "Push live updates - order and delivery tracking, flash-sale stock and price changes, live scores, chat and notifications - to millions of concurrently connected clients over long-lived WebSockets. Unlike stateless HTTP, every connection pins state to one server, so the hard problems are routing a message to whichever gateway holds a user's socket, fanning one event out to a million subscribers, surviving deploys and node failures without a reconnect storm, and protecting the system from slow consumers. The core tension is delivery guarantees and freshness versus memory, fan-out cost and operational safety.",
+ "framework": {
+  "clarify": [
+   "What updates and what direction? I will assume mostly server-to-client push (order status, delivery rider location, stock counters during a sale, notifications) with light client-to-server traffic (subscribe, ack, typing).",
+   "Scale: assume 50M DAU, 10M peak concurrent connections during a big sale, about 3M normally.",
+   "Fan-out shape: per-user topics (my order) versus broadcast topics (a flash-sale product with 1M watchers). Both exist, and broadcast is the harder case.",
+   "Delivery semantics: is it OK to drop an intermediate update (stock 41 -> 40 -> 39, client only sees 39) or must every event arrive (chat)? I will assume latest-value for counters and at-least-once with ordering per topic for user notifications.",
+   "Latency target: p99 publish-to-client under 500ms within region, 1s globally.",
+   "Clients: mobile apps on flaky Indian mobile networks, web browsers; need fallback (SSE or long polling) for corporate proxies that break WebSockets?",
+   "Is the source of truth elsewhere (order service, inventory)? I will assume yes: the realtime layer is a delivery fabric, not a database, and clients can always re-sync via REST.",
+   "Multi-region? I will assume two Indian regions active-active with clients pinned to the nearest."
+  ],
+  "design": [
+   "Baseline: a stateless REST tier for commands and an edge tier of WebSocket gateways that only hold connections; producers publish events to a pub/sub backbone; gateways subscribe to the topics their connected clients care about and push frames.",
+   "Connection path: client -> DNS/anycast -> L4 load balancer (NLB) -> gateway node; auth with a short-lived JWT at upgrade; gateway registers user_id -> gateway_id in a presence/routing store with TTL.",
+   "Routing: for per-user messages, publishers look up which gateway holds the user (or publish to a user-shard topic that gateways subscribe to); for broadcast topics, gateways subscribe to the topic once per node, not per connection, and fan out locally.",
+   "Backbone: Kafka for durable per-user event streams with offsets for resume; a low-latency pub/sub layer (Redis pub/sub sharded, or NATS) for ephemeral broadcast like stock counters.",
+   "APIs: wss://rt.example.com/v1/connect?token=..., frames {op: sub, topic}, {op: ack, seq}, server frames {topic, seq, payload}; POST /v1/publish (internal); GET /v1/sync?topic&since=seq for catch-up.",
+   "Critical path: inventory changes -> event to backbone -> topic owner/fan-out tier -> gateways with subscribers -> per-connection send buffer -> client; client acks seq for at-least-once topics."
+  ],
+  "defend": [
+   "Bottleneck 1 is connection count and memory per gateway: tune to about 100k-200k connections per node (epoll, small buffers, about 20-40 KB per connection), so 10M peak needs about 80-100 nodes plus 30% headroom.",
+   "Bottleneck 2 is broadcast fan-out: a hot topic with 1M watchers means 1M sends per update; coalesce updates (latest-value every 250ms), use a fan-out tree (backbone -> gateway once -> local fan-out), and pre-serialize frames once per message.",
+   "Scaling writes (publish rate): shard topics with consistent hashing across backbone partitions; per-user streams partitioned by user id.",
+   "Failure behaviour: gateway crash drops its connections; clients reconnect with exponential backoff plus full jitter, resume from last seq; drain gateways gracefully on deploy (stop accepting, send reconnect hint, close over minutes); admission control at the LB to cap reconnect rate.",
+   "Slow consumers: bounded per-connection queues; for latest-value topics drop and conflate, for reliable topics disconnect and let the client resync from the durable log; never let one slow phone grow gateway memory without limit.",
+   "Measure: concurrent connections per node, connect/disconnect rate, publish-to-deliver latency p50/p99, send-queue depth and drops, reconnect storm indicators, resync rate, CPU and memory per node."
+  ],
+  "script": "I will clarify first: what kind of updates, how many concurrent users, and what delivery guarantee each update needs. I will assume 10 million concurrent connections at a sale peak, a mix of per-user updates like order tracking and broadcast updates like stock counters with a million watchers, and a 500 millisecond target. The key point is that WebSocket connections are stateful, so I separate a thin gateway tier that only holds sockets from the business services, and connect them with a pub/sub backbone. A routing registry maps users to gateways; broadcast topics are subscribed once per gateway and fanned out locally, so fan-out cost is per node, not per connection. Durable per-user streams carry sequence numbers so a client that reconnects resumes where it left off. Then I will defend it: sizing about a hundred thousand connections per node, coalescing hot topics, bounded queues for slow consumers, jittered reconnects and graceful draining so deploys do not cause a thundering herd, and the metrics I would watch."
+ },
+ "brd": {
+  "problem": "Customers expect live experiences: watching a delivery rider approach, seeing stock count down in a flash sale, getting price-drop alerts and seller chat instantly. Today these are implemented with polling every 5-30 seconds, which wastes battery and bandwidth, overloads backend APIs (millions of no-change requests per minute during sales) and still feels stale. The business needs a shared realtime delivery platform that any team can publish to, which scales to sale-day peaks and degrades safely.",
+  "goals": [
+   "Deliver updates to connected clients with p99 under 500ms in region.",
+   "Support 10M concurrent connections at sale peak with 30% headroom.",
+   "Reduce polling traffic to backend APIs by over 80%.",
+   "Provide at-least-once, ordered delivery for per-user topics and latest-value delivery for broadcast topics.",
+   "Allow zero-downtime deploys of the gateway tier without reconnect storms.",
+   "Offer a simple publish API and client SDK for product teams."
+  ],
+  "non_goals": [
+   "Being a system of record - clients re-sync state from owning services.",
+   "Peer-to-peer media (voice/video) - WebRTC is a separate system.",
+   "Guaranteed delivery to offline clients - that is push notifications (FCM/APNs).",
+   "Complex server-side query subscriptions (GraphQL live queries) in the first version."
+  ],
+  "stakeholders": [
+   {
+    "who": "Buyers",
+    "needs": "Instant, accurate updates without draining battery."
+   },
+   {
+    "who": "Product teams (orders, logistics, sale, chat)",
+    "needs": "A reliable publish API, topic model and SDK."
+   },
+   {
+    "who": "SRE / platform",
+    "needs": "Predictable capacity, safe deploys, observability, protection from storms."
+   },
+   {
+    "who": "Backend service owners",
+    "needs": "Less polling load and no coupling to connection management."
+   },
+   {
+    "who": "Security",
+    "needs": "Authenticated connections, authorized subscriptions, abuse limits."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Publish-to-client latency p99 (in region)",
+    "target": "< 500ms"
+   },
+   {
+    "metric": "Peak concurrent connections supported",
+    "target": "10M with < 70% node utilisation"
+   },
+   {
+    "metric": "Message loss on reliable topics",
+    "target": "0 after resync (verified by seq gaps)"
+   },
+   {
+    "metric": "Reconnect success within 10s after a gateway failure",
+    "target": "> 99%"
+   },
+   {
+    "metric": "Backend polling QPS reduction",
+    "target": "> 80%"
+   }
+  ],
+  "constraints": [
+   "Mobile networks drop connections often; NAT and carrier middleboxes kill idle TCP after 30-120 seconds.",
+   "Cloud L7 load balancers have idle timeouts (often 60s default) and connection limits.",
+   "Gateway deploys happen daily; cannot drop millions of connections at once.",
+   "Battery: heartbeat frequency must be moderate (about 25-30s).",
+   "Sale traffic spikes 3-5x within minutes of a sale starting."
+  ],
+  "risks": [
+   {
+    "risk": "Reconnect storm after a region blip overwhelms auth and gateways.",
+    "mitigation": "Full-jitter exponential backoff, server-sent retry-after hints, token reuse on reconnect, admission control."
+   },
+   {
+    "risk": "Hot topic fan-out saturates gateway CPU.",
+    "mitigation": "Coalesce to latest value every 250ms, serialize once, spread watchers across many gateways."
+   },
+   {
+    "risk": "Slow clients cause memory blowups.",
+    "mitigation": "Bounded per-connection queues with drop or disconnect policy."
+   },
+   {
+    "risk": "Teams publish too much, too large.",
+    "mitigation": "Per-publisher quotas, max payload 4 KB, schema registry."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Buyer tracking an order",
+    "needs": "See status and rider location live, reliably, without reopening the app."
+   },
+   {
+    "name": "Sale shopper",
+    "needs": "See stock and price change instantly on a hot product page."
+   },
+   {
+    "name": "Seller in chat",
+    "needs": "Messages and read receipts in real time."
+   },
+   {
+    "name": "Publishing service engineer",
+    "needs": "Call one API to push to a user or topic."
+   },
+   {
+    "name": "SRE",
+    "needs": "Deploy and scale the fleet without user impact."
+   }
+  ],
+  "user_stories": [
+   "As a buyer, I want my order status to update live so that I do not need to refresh.",
+   "As a buyer, I want to see the delivery rider moving on the map every few seconds so that I know when to be home.",
+   "As a sale shopper, I want the stock counter to update in under a second so that I know whether to hurry.",
+   "As a buyer on a train, I want missed updates to arrive when my connection returns so that I do not see stale state.",
+   "As a seller, I want chat messages delivered in order so that conversations make sense.",
+   "As a service engineer, I want to publish to user:{id} or product:{id} with one call so that I do not manage connections.",
+   "As an SRE, I want to roll out a new gateway version without users noticing.",
+   "As a security engineer, I want clients to only subscribe to topics they are authorized for."
+  ],
+  "functional": [
+   "Authenticated WebSocket connection with token at upgrade and periodic token refresh in band.",
+   "Subscribe and unsubscribe to topics with authorization per topic pattern.",
+   "Publish API for services: to a user, to a topic, with delivery class reliable or latest-value.",
+   "Per-topic sequence numbers and resume from last acked seq after reconnect.",
+   "Catch-up via REST when the gap exceeds the retained window.",
+   "Heartbeats (ping/pong) and idle detection.",
+   "Presence: is user online, which gateway holds them.",
+   "Fallback transport (SSE or long polling) for networks that block WebSockets.",
+   "Graceful draining and reconnect hints for deploys and rebalancing."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "p50 < 100ms, p99 < 500ms publish-to-client in region"
+   },
+   {
+    "name": "Concurrency",
+    "target": "10M connections peak; 150k per gateway node target"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95% connection availability; any single node or AZ loss recovered within 30s"
+   },
+   {
+    "name": "Delivery",
+    "target": "Reliable topics: at-least-once, in-order per topic; latest-value topics: conflated"
+   },
+   {
+    "name": "Throughput",
+    "target": "50k publishes/s, 5M frames/s delivered at peak"
+   },
+   {
+    "name": "Resource bound",
+    "target": "Per-connection memory < 40 KB; per-connection send queue <= 256 messages"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "10M peak concurrent connections; 3M typical.",
+    "Per-user events: 30M active orders/day x 10 status or location events = 300M events/day; rider location every 5s for 2M active deliveries at peak.",
+    "Broadcast: 50k hot product topics during a sale, top topic 1M watchers, updates conflated to 4/s.",
+    "Average frame 300 bytes; heartbeat every 25s."
+   ],
+   "math": [
+    "Gateways: 10M / 150k per node = 67 nodes; with 30% headroom and N+1 per AZ, about 100 nodes across 3 AZs.",
+    "Memory: 10M x 40 KB = 400 GB total, about 4 GB per node - fine on 16-32 GB nodes; kernel TCP buffers dominate, so tune tcp_rmem/wmem down.",
+    "Heartbeats: 10M / 25s = 400k pings/s fleet-wide, 4k/s per node - cheap but non-trivial; use WebSocket ping frames, not app messages.",
+    "Rider location: 2M deliveries / 5s = 400k publishes/s to per-user topics; each has 1-2 watchers, so about 600k frames/s.",
+    "Hot topic: 1M watchers x 4 updates/s = 4M frames/s for one topic; spread over 100 gateways = 40k frames/s per node - why conflation and serialize-once matter.",
+    "Bandwidth: 5M frames/s x 300 B = 1.5 GB/s, about 12 Gbps egress fleet-wide, about 120 Mbps per node.",
+    "Reconnect storm: if one 150k-connection node dies and clients retry with 0-30s jitter, about 5k connects/s - each needs TLS handshake (about 1-2ms CPU) and token check; without jitter it would be 150k in 1 second."
+   ],
+   "summary": "About 100 gateway nodes for connections; the real risks are broadcast fan-out (millions of frames per second from a few hot topics), reconnect storms, and slow consumers, not raw connection count."
+  },
+  "out_of_scope": [
+   "Offline push notifications via FCM/APNs (integrated, but separate system).",
+   "End-to-end encryption of chat payloads.",
+   "Arbitrary client-to-client messaging without a server-side owner.",
+   "Cross-continent global presence beyond two Indian regions."
+  ]
+ },
+ "hld": {
+  "overview": "Three planes. The connection plane is a fleet of WebSocket gateways behind L4 load balancers that only terminate connections, authenticate, track subscriptions and push frames. The routing plane maps users and topics to gateways: a presence registry (user -> gateway) and per-gateway topic subscriptions on a pub/sub backbone. The message plane has a durable log (Kafka) for reliable per-user streams with sequence numbers and a low-latency ephemeral pub/sub (sharded Redis or NATS) for latest-value broadcast. Business services publish via a Publish API and never talk to gateways directly.",
+  "diagram": "\n Mobile / Web clients\n     |  wss:// (TLS)\n [Anycast DNS / GeoDNS] -> nearest region\n     |\n [L4 Load Balancer (NLB), least-conn]\n     |\n +---------------- Gateway fleet (about 100 nodes, 150k conns each) ----------------+\n |  [GW-1]  [GW-2]  ...  [GW-n]   - auth at upgrade, heartbeats, per-conn queues    |\n |     local index: topic -> [conn], user -> [conn]                                 |\n +----^-----------------^--------------------------^--------------------------------+\n      | subscribe        | register user->gw        | consume user-shard partitions\n      |                  v                          |\n [Ephemeral pub/sub]  [Presence registry]      [Kafka: user-events, 256 partitions]\n  (NATS / sharded      (Redis, TTL 60s)              ^\n   Redis, by topic)                                   |\n      ^                                               |\n      |  latest-value broadcast                       | reliable per-user events\n [Fan-out / Publish API] <----------------------------+\n      ^         ^             ^\n [Inventory] [Order svc] [Logistics / rider location]   ...  [Sync REST API for catch-up]\n",
+  "components": [
+   {
+    "name": "L4 load balancer",
+    "responsibility": "Distribute new TCP connections using least-connections; long idle timeouts (about 350s); health checks remove draining nodes from rotation."
+   },
+   {
+    "name": "WebSocket gateway",
+    "responsibility": "Terminate TLS and WebSocket, authenticate token, keep subscriptions, heartbeats, per-connection bounded send queue, local fan-out."
+   },
+   {
+    "name": "Presence and routing registry",
+    "responsibility": "user_id -> {gateway_id, conn_ids, last_seen} with TTL refreshed by heartbeats; used for targeted delivery and online status."
+   },
+   {
+    "name": "Publish API / fan-out service",
+    "responsibility": "Validate publisher quota and schema, assign per-topic sequence numbers, route to Kafka (reliable) or ephemeral pub/sub (latest-value), conflate hot topics."
+   },
+   {
+    "name": "Kafka (durable event log)",
+    "responsibility": "Per-user reliable streams partitioned by user id; retention 24h for resume; gateways consume the partitions that map to their connected users or use routing lookup."
+   },
+   {
+    "name": "Ephemeral pub/sub (NATS or sharded Redis)",
+    "responsibility": "Sub-10ms topic broadcast to the set of gateways that subscribed; no persistence."
+   },
+   {
+    "name": "Sync API",
+    "responsibility": "REST endpoint returning current state or missed events since seq, used after reconnect gaps."
+   },
+   {
+    "name": "Auth service",
+    "responsibility": "Issue short-lived connection tokens; gateways verify locally with public keys."
+   },
+   {
+    "name": "Control plane",
+    "responsibility": "Fleet membership, draining orchestration, per-node limits, feature flags such as conflation interval."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Connect and subscribe",
+    "steps": [
+     "App obtains a 15-minute connection JWT from the auth service over HTTPS.",
+     "App opens wss://rt.example.com/v1/connect; L4 LB picks the least-loaded gateway.",
+     "Gateway verifies the JWT signature locally, accepts the upgrade, and writes user_id -> gw-17 to the presence registry with TTL 60s.",
+     "App sends {op: sub, topic: 'order:9123', last_seq: 41}; gateway checks the user owns order 9123.",
+     "Gateway adds the connection to its local topic index; if this is the first local subscriber to a broadcast topic, it subscribes the node to that topic on the ephemeral pub/sub.",
+     "If last_seq is behind, gateway replays missed events from the Kafka-backed recent store, or tells the client to call the Sync API."
+    ]
+   },
+   {
+    "name": "Reliable per-user update (order status)",
+    "steps": [
+     "Order service publishes {user: u1, topic: order:9123, payload} to the Publish API.",
+     "Publish API assigns seq = 42 for topic order:9123 (atomic INCR in Redis keyed by topic) and writes to Kafka partition hash(u1) % 256.",
+     "Gateways consume the partitions; the gateway holding u1 (local user index) enqueues the frame on u1's connection queue; others discard (or routing service targets the exact gateway).",
+     "Client receives seq 42, applies it, sends ack; on gap (receives 44 after 42) it requests 43 via resume.",
+     "If the user is offline, the event stays in Kafka for 24h and a push notification is triggered for important states."
+    ]
+   },
+   {
+    "name": "Broadcast to a hot topic (flash-sale stock)",
+    "steps": [
+     "Inventory emits a stock change for product p1 every few milliseconds during the sale.",
+     "Fan-out service conflates: keeps only the latest value for p1 and flushes every 250ms.",
+     "It publishes one message to topic product:p1 on the ephemeral pub/sub; about 100 gateways that have watchers receive it once each.",
+     "Each gateway serializes the frame once and writes it to its 10k local watchers' queues; full queues drop older values for this topic (latest-value semantics).",
+     "Clients render the newest stock count; no acks for latest-value topics."
+    ]
+   },
+   {
+    "name": "Graceful drain during deploy",
+    "steps": [
+     "Control plane marks gw-17 draining; LB health check fails so no new connections arrive.",
+     "Gateway sends a {op: reconnect, after_ms: random(0, 120000)} frame to each connection, spreading reconnects over 2 minutes.",
+     "Clients reconnect to other gateways and resume with last_seq; presence updates as they register.",
+     "After 5 minutes or when connections reach zero, gateway exits."
+    ]
+   }
+  ],
+  "data_flow": "Business events flow from owning services into the Publish API, which sequences them and routes reliable events to Kafka and ephemeral broadcast events to the pub/sub layer. Gateways subscribe at node granularity, then fan out to local connection queues. Clients ack reliable events; acks update a per-connection cursor in memory, and periodically a last_seq hint is stored with presence. On reconnect, clients send last_seq and get replays from the retained log or a snapshot via the Sync API. Presence and metrics flow from gateways to the registry and monitoring."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET (Upgrade)",
+    "path": "wss://rt.example.com/v1/connect?token=JWT&client=android-8.2",
+    "request": "HTTP Upgrade: websocket, Sec-WebSocket-Protocol: rt.v1",
+    "response": "101 Switching Protocols; first frame {op: hello, conn_id, heartbeat_s: 25, resume_window_s: 86400}",
+    "notes": "Token also accepted in first frame to keep it out of access logs."
+   },
+   {
+    "method": "FRAME client->server",
+    "path": "{op: 'sub'|'unsub'|'ack'|'refresh_token'}",
+    "request": "{op: 'sub', topic: 'order:9123', last_seq: 41}",
+    "response": "{op: 'subbed', topic, current_seq: 43} then replay frames",
+    "notes": "Authorization per topic pattern; max 200 subscriptions per connection."
+   },
+   {
+    "method": "FRAME server->client",
+    "path": "{op: 'msg'|'reconnect'|'error'}",
+    "request": "n/a",
+    "response": "{op: 'msg', topic: 'product:p1', seq: 9812, ts, data: {stock: 37}}",
+    "notes": "Latest-value topics may skip seq numbers by design."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/v1/publish",
+    "request": "{target: {user: 'u1'} | {topic: 'product:p1'}, class: 'reliable'|'latest', payload (<= 4 KB), dedupe_key}",
+    "response": "{seq, accepted: true}",
+    "notes": "Per-publisher quotas; dedupe_key prevents double publish on retries."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/sync?topic=order:9123&since=41",
+    "request": "Bearer token",
+    "response": "{events: [...]} or {snapshot: {...}, seq}",
+    "notes": "Used when gap exceeds replay window or after long offline periods."
+   },
+   {
+    "method": "GET",
+    "path": "/internal/v1/presence/{user_id}",
+    "request": "n/a",
+    "response": "{online: true, gateways: ['gw-17'], last_seen}",
+    "notes": "Read by chat and notification services to decide push vs socket."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Presence",
+    "store": "Redis Cluster",
+    "fields": [
+     "user_id",
+     "gateway_id",
+     "conn_id",
+     "connected_at",
+     "last_seen"
+    ],
+    "keys": "pres:{user_id} hash of conn_id -> gateway; TTL 60s refreshed on heartbeat",
+    "notes": "Multiple devices per user; stale entries expire automatically after gateway crash."
+   },
+   {
+    "entity": "TopicSeq",
+    "store": "Redis Cluster",
+    "fields": [
+     "topic",
+     "seq"
+    ],
+    "keys": "seq:{topic}",
+    "notes": "INCR per reliable publish; sharded by topic hash."
+   },
+   {
+    "entity": "UserEvent",
+    "store": "Kafka topic user-events (256 partitions, RF=3, 24h retention)",
+    "fields": [
+     "user_id",
+     "topic",
+     "seq",
+     "ts",
+     "payload"
+    ],
+    "keys": "message key = user_id -> partition",
+    "notes": "Gives per-user ordering and replay."
+   },
+   {
+    "entity": "RecentEvents (replay cache)",
+    "store": "Redis streams or in-memory ring buffers on fan-out tier",
+    "fields": [
+     "topic",
+     "seq",
+     "payload"
+    ],
+    "keys": "stream per topic, capped at last 100 events or 1h",
+    "notes": "Fast replay for short gaps without scanning Kafka."
+   },
+   {
+    "entity": "Connection (in gateway memory)",
+    "store": "Gateway process memory",
+    "fields": [
+     "conn_id",
+     "user_id",
+     "subscriptions{topic: last_sent_seq}",
+     "send_queue (bounded)",
+     "last_pong"
+    ],
+    "keys": "conn_id; indexes topic -> set(conn), user -> set(conn)",
+    "notes": "Lost on crash by design; client resumes."
+   }
+  ],
+  "classes": [
+   {
+    "name": "ConnectionManager",
+    "responsibility": "Accept upgrades, authenticate, track connections, heartbeats, close idle.",
+    "methods": [
+     "onUpgrade(req)",
+     "onPong(conn)",
+     "reapIdle()",
+     "drain(after_ms_max)"
+    ]
+   },
+   {
+    "name": "SubscriptionIndex",
+    "responsibility": "Local topic and user indexes; node-level subscribe and unsubscribe on backbone.",
+    "methods": [
+     "subscribe(conn, topic)",
+     "unsubscribe(conn, topic)",
+     "connsFor(topic)"
+    ]
+   },
+   {
+    "name": "OutboundQueue",
+    "responsibility": "Bounded per-connection queue with policy by delivery class.",
+    "methods": [
+     "offer(frame) -> ok|dropped|overflow",
+     "drain(socket)"
+    ]
+   },
+   {
+    "name": "FanoutService",
+    "responsibility": "Sequencing, conflation, routing to Kafka or pub/sub.",
+    "methods": [
+     "publish(msg)",
+     "conflate(topic, msg)",
+     "flushTick()"
+    ]
+   },
+   {
+    "name": "ResumeHandler",
+    "responsibility": "Replay from recent cache or instruct client to sync.",
+    "methods": [
+     "resume(conn, topic, last_seq)",
+     "gapTooLarge(topic, last_seq) -> bool"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Client reconnect with exponential backoff and full jitter",
+    "explain": "After a disconnect, clients wait a random time between 0 and min(cap, base x 2^attempt). Full jitter spreads a crowd of clients uniformly, avoiding synchronized retry waves. Server reconnect hints override the timer.",
+    "pseudocode": "def reconnect_loop():\n    attempt = 0\n    while not connected:\n        if server_hint: sleep(server_hint.after_ms); server_hint = None\n        else: sleep(random.uniform(0, min(30_000, 500 * 2 ** attempt)))\n        try:\n            connect(); resubscribe(last_seq_by_topic); attempt = 0\n        except (Timeout, HTTP429, HTTP503) as e:\n            attempt += 1\n            if isinstance(e, HTTP429): server_hint = e.retry_after"
+   },
+   {
+    "name": "Bounded send queue with class-aware overflow",
+    "explain": "Each connection's queue is bounded. Latest-value topics keep only the newest message per topic (conflation map); reliable topics fill the queue and on overflow the connection is closed with a resync code, because silently dropping would break ordering guarantees.",
+    "pseudocode": "class OutboundQueue:\n    def offer(self, frame):\n        if frame.cls == LATEST:\n            self.latest[frame.topic] = frame       # overwrite older value\n            self.ready.add(frame.topic); return OK\n        if len(self.reliable) >= 256:\n            close(self.conn, code=4008, reason='slow_consumer_resync')\n            return OVERFLOW\n        self.reliable.append(frame); return OK\n\n    def drain(self, sock):\n        while sock.writable():\n            f = self.reliable.popleft() if self.reliable else self.pop_latest()\n            if f is None: break\n            sock.write(f.bytes)                  # pre-serialized once per message"
+   },
+   {
+    "name": "Node-level subscription with reference counting",
+    "explain": "A gateway subscribes to a backbone topic only once, regardless of how many local connections want it, and unsubscribes when the last local subscriber leaves. This turns per-connection fan-out on the backbone into per-node fan-out.",
+    "pseudocode": "def subscribe(conn, topic):\n    s = index.setdefault(topic, set())\n    if not s: backbone.subscribe(topic, on_message)\n    s.add(conn)\n\ndef unsubscribe(conn, topic):\n    s = index.get(topic, set()); s.discard(conn)\n    if not s:\n        schedule(backbone.unsubscribe, topic, delay=30)   # hysteresis\n\ndef on_message(topic, msg):\n    frame = serialize(msg)                               # once per node\n    for c in index.get(topic, ()): c.queue.offer(frame)"
+   }
+  ],
+  "sequence": "\nInventory   PublishAPI/Fanout   Redis(seq)  Kafka   PubSub   Gateway gw-17      Client\n   |--stock p1-->|                  |         |        |           |               |\n   |             | conflate 250ms   |         |        |           |               |\n   |             |--PUB product:p1------------------->|           |               |\n   |             |                  |         |        |--msg----->|               |\n   |             |                  |         |        |  serialize once, queue    |\n   |             |                  |         |        |           |--frame------->|\nOrderSvc         |                  |         |        |           |               |\n   |--order u1-->|                  |         |        |           |               |\n   |             |--INCR seq------->|         |        |           |               |\n   |             |<--42-------------|         |        |           |               |\n   |             |--append(key=u1)----------->|        |           |               |\n   |             |                  |         |--consume partition>|               |\n   |             |                  |         |        |           |--seq 42------>|\n   |             |                  |         |        |           |<--ack 42------|\n   |             |                  |         |        |  (on gap: resume 43 or /v1/sync)\n"
+ },
+ "edge_cases": [
+  {
+   "case": "A gateway with 150k connections crashes.",
+   "handling": "LB health check removes it; clients detect loss via failed write or missed pong within about 30s; they reconnect with full jitter to other nodes and resume from last_seq; presence entries expire after TTL 60s."
+  },
+  {
+   "case": "Thundering herd: a region-level network blip disconnects 3M clients at once.",
+   "handling": "Full-jitter backoff with a 30s cap, LB-level connection rate limiting returning 503 with Retry-After, connection tokens remain valid so the auth service is not hit, and gateway autoscaling is pre-provisioned for sale peaks."
+  },
+  {
+   "case": "Flash-sale product with 2M watchers gets 500 stock updates per second.",
+   "handling": "Conflate to latest value every 250ms (4 msgs/s), serialize once per node, and per-connection latest-value slots mean slow clients just get fewer updates."
+  },
+  {
+   "case": "Client on 2G network cannot read fast enough; its queue grows.",
+   "handling": "Latest-value topics conflate; reliable topics have a 256-message cap after which the server closes with code 4008 and the client resyncs via the Sync API."
+  },
+  {
+   "case": "Client receives seq 45 after 42 (gap) due to a missed Kafka consume during rebalance.",
+   "handling": "Client requests resume from 43; gateway replays from the recent cache; if unavailable, client calls GET /v1/sync for a snapshot."
+  },
+  {
+   "case": "Duplicate delivery after reconnect (server resent 42 that client already applied).",
+   "handling": "Client keeps last applied seq per topic and ignores seq <= last; handlers are idempotent."
+  },
+  {
+   "case": "Same user on phone and laptop.",
+   "handling": "Presence stores multiple conn_ids per user; per-user events are delivered to all connections; acks are per connection."
+  },
+  {
+   "case": "Corporate proxy or old network strips Upgrade headers.",
+   "handling": "SDK falls back to Server-Sent Events or long polling against the same gateways with identical topic and seq semantics."
+  },
+  {
+   "case": "NAT middlebox silently drops an idle connection after 60s.",
+   "handling": "Server pings every 25s; client treats no traffic for 60s as dead and reconnects; TCP keepalive also enabled."
+  },
+  {
+   "case": "Token expires during a long-lived connection (15-minute JWT).",
+   "handling": "Client sends refresh_token frame with a new token before expiry; gateway closes with code 4001 if not refreshed within grace; authorization changes (order transferred) are re-checked on refresh."
+  },
+  {
+   "case": "Malicious client subscribes to 10,000 topics or to another user's order.",
+   "handling": "Per-connection subscription cap (200), topic authorization by pattern (user can sub to order:{id} only if owner), rate limits on sub ops, disconnect and flag abuse."
+  },
+  {
+   "case": "Deploy rolls 100 gateways too fast, pushing all clients into a few remaining nodes.",
+   "handling": "Control plane limits concurrent draining to 5% of fleet, waits for connection count to rebalance, and new nodes come up before old drain (surge capacity)."
+  },
+  {
+   "case": "Hot key on TopicSeq for a very busy reliable topic.",
+   "handling": "Reliable topics are per-user so load is naturally spread; for busy shared reliable topics (group chat), sequence in the Kafka partition offset instead of a Redis counter."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Gateway runtime (Go with netpoll, or Erlang/Elixir, or Netty)",
+   "layer": "Connection tier",
+   "overview": "Event-driven servers that multiplex hundreds of thousands of sockets on a few threads using epoll.",
+   "why": "Low per-connection memory and predictable latency; Go and the BEAM VM are proven for 100k-1M connections per node (WhatsApp ran about 2M per Erlang server).",
+   "alternatives": "Node.js with uWebSockets (efficient, single-threaded per process); managed services like AWS API Gateway WebSockets (less control, per-message cost)."
+  },
+  {
+   "name": "L4 load balancer (AWS NLB, Envoy in TCP mode, HAProxy)",
+   "layer": "Ingress",
+   "overview": "Balances TCP connections without parsing HTTP after upgrade.",
+   "why": "Long-lived connections, high connection counts, configurable idle timeouts and least-connections balancing.",
+   "alternatives": "L7 ALB (WebSocket-aware routing and auth, but idle timeouts and connection limits need tuning)."
+  },
+  {
+   "name": "Apache Kafka",
+   "layer": "Durable message plane",
+   "overview": "Partitioned replicated log with retention and consumer offsets.",
+   "why": "Per-user ordering by key, 24h replay for resume, absorbs producer bursts.",
+   "alternatives": "Pulsar (per-topic scaling, tiered storage); Redis Streams (simpler, memory-bound)."
+  },
+  {
+   "name": "NATS (or sharded Redis pub/sub)",
+   "layer": "Ephemeral broadcast",
+   "overview": "Lightweight subject-based pub/sub with sub-millisecond latency and no persistence by default.",
+   "why": "Ideal for latest-value broadcast to the set of interested gateways with interest-based routing.",
+   "alternatives": "Redis pub/sub (simple but each message goes to every node of the cluster in classic mode; sharded pub/sub in Redis 7 fixes this); Kafka (adds latency and storage for data we do not need to keep)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Presence, sequences, replay cache",
+   "overview": "In-memory store with TTLs, atomic counters and streams.",
+   "why": "Presence with TTL refresh, atomic seq allocation and short replay buffers.",
+   "alternatives": "Cassandra or DynamoDB for presence (durable but slower, unnecessary for ephemeral state)."
+  },
+  {
+   "name": "JWT with asymmetric keys",
+   "layer": "Auth",
+   "overview": "Signed self-contained tokens verified with public keys.",
+   "why": "Gateways authenticate millions of connects without calling the auth service, crucial during reconnect storms.",
+   "alternatives": "Opaque session tokens checked against a session store (revocable but adds a dependency on every connect)."
+  },
+  {
+   "name": "Server-Sent Events / long polling",
+   "layer": "Fallback transport",
+   "overview": "HTTP-based one-way streaming or repeated requests.",
+   "why": "Works through proxies that break WebSockets; same topic model.",
+   "alternatives": "No fallback (simpler, but loses some enterprise and legacy network users)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Stateful connections and the gateway pattern",
+   "explain": "HTTP request-response services are easy to scale because any server can handle any request; state lives in databases. A WebSocket is a long-lived, bidirectional TCP connection created by upgrading an HTTP request. Once established, it is pinned to one server process for its lifetime, which may be hours. That makes the server stateful: it holds the socket, the user identity, subscriptions and buffers. Stateful tiers are harder to scale, deploy and recover - you cannot just kill a node without disconnecting everyone on it, and a message for user X must reach the specific node holding X's socket. The gateway pattern isolates this state in a thin tier whose only job is connection management (TLS, framing, heartbeats, queues, auth) and keeps business logic in stateless services behind a pub/sub or routing layer. Gateways then become simple, homogeneous and horizontally scalable, and business services publish to logical addresses (user, topic) instead of to sockets. Slack's gateway servers, Discord's gateway and WhatsApp's chat servers all follow variants of this pattern.",
+   "in_this_design": "About 100 gateways hold only connections and local indexes; they never call order or inventory services. Business services publish to user or topic addresses via the Publish API, and the routing plane delivers to the right gateways. Losing a gateway loses only reconnectable state.",
+   "key_points": [
+    "WebSockets pin state to one server for the connection's lifetime.",
+    "Isolate connection state in a thin gateway tier.",
+    "Business services publish to logical addresses, never to sockets.",
+    "Treat gateway state as disposable - clients can always reconnect and resume.",
+    "Homogeneous gateways make capacity planning a connection-count exercise."
+   ],
+   "qa": [
+    {
+     "q": "Why not let the order service hold WebSockets directly?",
+     "a": "Then every service must solve connection scaling, deploy draining and fan-out, and a client would need many sockets. One gateway tier and one socket per client, multiplexing topics, is far cheaper and simpler."
+    },
+    {
+     "q": "How many connections can one node hold?",
+     "a": "Memory is the limit, not CPU, for idle connections: at about 20-40 KB each including kernel buffers, a 16-32 GB node holds 150k-500k. Production systems often target 100k-200k to leave CPU for fan-out bursts and to limit blast radius."
+    },
+    {
+     "q": "What state is lost when a gateway dies and why is that OK?",
+     "a": "Sockets, subscriptions and in-flight queues. Clients reconnect, resubscribe and resume from their last seq, and the durable log has the events, so nothing authoritative is lost."
+    }
+   ]
+  },
+  {
+   "name": "Publish/subscribe fan-out and interest-based routing",
+   "explain": "Publish/subscribe decouples producers from consumers: publishers send to a topic, subscribers receive everything on topics they registered for. Fan-out is the number of deliveries per publish. Naively, if each connection subscribed on the backbone separately, a topic with a million watchers would make the broker send a million copies across the network. Interest-based routing pushes fan-out as close to consumers as possible: the broker delivers one copy per interested node, and each node delivers to its local subscribers - a two-level fan-out tree. The broker only needs to know which nodes care about which topics, a much smaller set. Fan-out can also be done on write (push copies to each recipient's inbox, as in Twitter's home timeline) or on read (recipients pull from the source); realtime delivery is inherently fan-out-on-write, so the question becomes where to do the copying. Serialization cost matters too: encoding a message once per node and writing the same bytes to many sockets is much cheaper than encoding per connection.",
+   "in_this_design": "Gateways subscribe to backbone topics once per node with reference counting. A hot product with 1M watchers spread over 100 gateways costs the broker 100 sends, and each gateway does about 10k local writes of a pre-serialized frame. Per-user reliable events go through Kafka partitioned by user id.",
+   "key_points": [
+    "Fan-out cost should scale with interested nodes, not connections, on the backbone.",
+    "Two-level fan-out: broker to nodes, node to local sockets.",
+    "Serialize once per message per node.",
+    "Reference-count node subscriptions; unsubscribe with hysteresis.",
+    "Separate durable streams from ephemeral broadcast."
+   ],
+   "qa": [
+    {
+     "q": "Why not put all users watching a product on the same gateway?",
+     "a": "It would concentrate a hot topic's load on one node (hot spot) and users have many topics, so you cannot co-locate them all. Spreading watchers and doing node-level fan-out balances load."
+    },
+    {
+     "q": "Classic Redis pub/sub in cluster mode broadcasts every message to all nodes. Why does that matter?",
+     "a": "With many shards, every publish crosses the whole cluster, so throughput does not scale with shards. Redis 7 sharded pub/sub or NATS interest-based routing sends messages only where subscribers are."
+    },
+    {
+     "q": "When would you use Kafka for broadcast instead of NATS?",
+     "a": "When subscribers must be able to replay (audit, reliable feeds) or when the broadcast rate is moderate and you want one backbone. For high-rate latest-value counters, Kafka's durability is wasted cost and latency."
+    }
+   ]
+  },
+  {
+   "name": "Backpressure and slow consumers",
+   "explain": "Backpressure is how a system copes when a consumer cannot keep up with a producer. Without it, buffers grow until memory runs out or latency becomes unbounded. With TCP, a slow reader's receive window fills, the sender's kernel send buffer fills, and writes stop succeeding; an event-driven server then has to buffer in user space or stop sending. The options are: block the producer (impossible when one producer serves a million consumers - one slow phone would stall everyone), buffer with a bound, drop messages, conflate (replace older values with newer ones for the same key), or disconnect the slow consumer and let it recover through a different path. The right choice depends on message semantics: state snapshots like a stock count can be conflated safely because only the latest matters, while ordered events like chat messages cannot be dropped silently. A good design isolates slow consumers so that their problems never propagate upstream, and measures queue depth and drops as first-class signals.",
+   "in_this_design": "Each connection has a bounded outbound queue: latest-value topics keep one slot per topic (conflation), reliable topics a 256-message cap; overflow on reliable topics closes the connection with a resync code. The fan-out service also conflates hot topics to 4 updates per second before they reach gateways.",
+   "key_points": [
+    "Never let one slow consumer block or bloat the shared path.",
+    "Bound every buffer.",
+    "Conflate state updates; never silently drop ordered events.",
+    "Disconnect-and-resync is a valid backpressure strategy.",
+    "Queue depth and drop counts are key metrics."
+   ],
+   "qa": [
+    {
+     "q": "Why not just give each connection a bigger buffer?",
+     "a": "10M connections x even 1 MB is 10 TB of potential memory; bursts would OOM nodes. Bounded small buffers plus conflation or resync keep memory predictable."
+    },
+    {
+     "q": "How do you know a consumer is slow?",
+     "a": "Socket write returns would-block repeatedly, the outbound queue depth stays high, or ack lag (seq sent minus seq acked) grows beyond a threshold."
+    },
+    {
+     "q": "What does the client experience when disconnected for being slow?",
+     "a": "A close code meaning resync; the SDK reconnects (maybe on better network), fetches a snapshot via /v1/sync and continues. For the user it looks like a brief refresh."
+    }
+   ]
+  },
+  {
+   "name": "Delivery semantics, sequence numbers and resume",
+   "explain": "Messaging systems offer at-most-once (fire and forget, may lose), at-least-once (retry until acked, may duplicate) or effectively-once (at-least-once plus deduplication or idempotent processing). Ordering is a separate guarantee and is usually only per key or partition. Sequence numbers make both visible: if the producer or sequencer stamps each message on a topic with a monotonically increasing number, a consumer can detect gaps (missing 43 between 42 and 44), discard duplicates (seq not greater than last applied) and resume after a disconnect by asking for everything after its last seq. That requires the sender side to retain recent messages - a replay buffer or a durable log like Kafka with offsets. When the gap exceeds the retained window, the consumer falls back to a snapshot of current state from the source of truth, then continues with live updates. This 'snapshot plus deltas' pattern is how realtime systems stay correct over unreliable networks without promising exactly-once delivery.",
+   "in_this_design": "Reliable topics get per-topic seq numbers at publish, are stored in Kafka (24h) and a short replay cache, and clients ack and track last_seq. On reconnect the client sends last_seq per topic; the gateway replays or tells it to call /v1/sync. Latest-value topics carry seq only for ordering - clients discard any update older than what they have.",
+   "key_points": [
+    "At-least-once plus idempotent client handling gives effectively-once.",
+    "Per-topic seq numbers expose gaps and duplicates.",
+    "Resume = replay from last_seq if retained, else snapshot then deltas.",
+    "Ordering is per topic, not global.",
+    "The realtime layer is not the source of truth."
+   ],
+   "qa": [
+    {
+     "q": "Why not guarantee exactly-once delivery to the device?",
+     "a": "Over unreliable networks you cannot know if a message was received before the connection died without an ack, and the ack itself can be lost. At-least-once plus client dedup by seq is the practical equivalent."
+    },
+    {
+     "q": "Who assigns the sequence number and why there?",
+     "a": "The Publish API or the Kafka partition offset, at a single point per topic, so numbering is gap-free and ordered. Assigning at gateways would create different numbering per node."
+    },
+    {
+     "q": "A user was offline for 3 days. What happens on reconnect?",
+     "a": "Their last_seq is beyond the 24h retention, so the gateway responds gap_too_large and the client fetches a fresh snapshot via the Sync API, then subscribes live."
+    }
+   ]
+  },
+  {
+   "name": "Exponential backoff with jitter and reconnect storms",
+   "explain": "When many clients lose connections at the same moment - a node crash, a load balancer reset, a region network blip, a deploy - they all try to reconnect. If they retry immediately or on the same schedule, the synchronized wave (thundering herd) overwhelms load balancers, TLS termination, auth and the remaining servers, which then fail and cause another wave: a metastable failure that can persist after the original trigger is gone. Exponential backoff increases the wait after each failure (base x 2^attempt, capped), reducing load from persistent retries. Jitter adds randomness so clients desynchronize. AWS's analysis showed 'full jitter' - sleep a uniform random time between 0 and the backoff ceiling - gives the best spread and lowest total work. Servers can help by returning Retry-After hints, by spreading planned disconnects (drain with random reconnect delays), by admitting connections at a controlled rate, and by making reconnect cheap (session resumption for TLS, locally verifiable tokens so auth is not hit).",
+   "in_this_design": "SDK uses full-jitter backoff (base 500ms, cap 30s) and honours server reconnect hints; draining gateways tell clients to reconnect after random(0, 120s); the LB rate-limits new connections per node; JWTs verified locally mean a storm does not hit the auth service; TLS session resumption cuts handshake cost.",
+   "key_points": [
+    "Synchronized retries turn small failures into outages.",
+    "Full jitter spreads load best.",
+    "Planned disconnects should be spread out by the server.",
+    "Make reconnects cheap: local token verification, TLS resumption.",
+    "Admission control protects the fleet during storms."
+   ],
+   "qa": [
+    {
+     "q": "A node with 150k connections dies. Without jitter, what happens?",
+     "a": "All 150k reconnect within about a second, hitting the LB and other gateways with 150k TLS handshakes - several seconds of CPU at 1-2ms each, concentrated - causing timeouts, more retries and possibly cascading failure."
+    },
+    {
+     "q": "Why is exponential backoff alone not enough?",
+     "a": "Clients that failed at the same time still retry at the same times (1s, 2s, 4s), producing synchronized waves. Jitter breaks the synchronization."
+    },
+    {
+     "q": "How do you test storm resilience?",
+     "a": "Load test by killing nodes and simulating mass disconnects with realistic client SDK behaviour, verifying p99 reconnect time and that no secondary failures occur; game days before big sales."
+    }
+   ]
+  },
+  {
+   "name": "Load balancing long-lived connections and graceful draining",
+   "explain": "Load balancers balance new connections, not load. For short HTTP requests, round robin evens out quickly; for connections lasting hours, the distribution reflects history. A newly added node receives connections only as clients reconnect, so scaling out does not relieve hot nodes immediately, and a node that restarts comes back nearly empty while others stay full. Least-connections balancing helps for new connections, and some systems actively rebalance by asking a fraction of clients on overloaded nodes to reconnect. L4 balancers pass TCP through cheaply and suit WebSockets; L7 balancers understand the upgrade and can route by path or header but add idle-timeout and connection-limit concerns. Graceful draining is the deploy counterpart: mark the node unhealthy for new connections, ask existing clients to move over a spread-out period, and only then terminate. Combined with surge capacity (bring up new nodes before draining old), it allows daily deploys of a stateful tier with no visible impact.",
+   "in_this_design": "NLB with least-connections and a 350s idle timeout (above our 25s heartbeat). Deploys roll at most 5% of gateways at a time; each draining gateway sends reconnect hints spread over 2 minutes. The control plane can shed connections from hot nodes by sending reconnect hints to a fraction of their clients.",
+   "key_points": [
+    "LBs balance connection arrivals, not ongoing load.",
+    "Use least-connections and active rebalancing for long-lived sockets.",
+    "Idle timeouts at every hop must exceed the heartbeat interval.",
+    "Drain gradually with randomized reconnect hints.",
+    "Surge capacity before draining keeps headroom."
+   ],
+   "qa": [
+    {
+     "q": "You add 20 gateways during a sale but old nodes stay hot. Why and what do you do?",
+     "a": "Existing connections do not move; only new connections land on new nodes. Send reconnect hints to a fraction of clients on hot nodes so they rebalance to the new nodes via least-connections."
+    },
+    {
+     "q": "Why do clients disconnect exactly every 60 seconds behind an ALB?",
+     "a": "The default idle timeout (60s) is shorter than the time between frames; raise the timeout or send heartbeats more frequently than the shortest idle timeout on the path."
+    },
+    {
+     "q": "Should you use sticky sessions?",
+     "a": "Not needed for the socket itself - a TCP connection inherently stays on one backend. Stickiness only matters for fallbacks like long polling, where consecutive requests should hit the node holding the session buffer."
+    }
+   ]
+  },
+  {
+   "name": "Consistent hashing and partitioning of topics and users",
+   "explain": "Partitioning splits data or work across nodes by key. Simple modulo hashing (hash(key) % N) remaps almost every key when N changes, which for stateful systems means massive movement. Consistent hashing places nodes and keys on a ring (or uses rendezvous hashing) so that adding or removing a node moves only about 1/N of keys; virtual nodes smooth out uneven distribution. Kafka uses a fixed number of partitions with key hashing, decoupling the number of consumers from the number of partitions: you over-provision partitions (for example 256) and reassign them among consumers as the group changes. Partitioning also defines ordering scope - messages with the same key go to the same partition and keep order. Hot keys remain a problem with any hashing: one celebrity topic still lands on one partition, so hot keys need special handling such as splitting, replication of the topic to many nodes, or conflation.",
+   "in_this_design": "Per-user events use Kafka partitioning by user id over 256 partitions for per-user ordering. Ephemeral topics are sharded over pub/sub nodes by consistent hashing on topic name (Slack uses consistent hashing to map channels to channel servers in a similar way). Hot broadcast topics are protected by conflation and node-level fan-out rather than by the hash.",
+   "key_points": [
+    "Modulo hashing remaps nearly all keys on resize; consistent hashing moves about 1/N.",
+    "Fixed, over-provisioned partition counts decouple scaling from keys.",
+    "Partition key defines the ordering scope.",
+    "Hashing does not fix hot keys - conflate, split or replicate them."
+   ],
+   "qa": [
+    {
+     "q": "Why 256 Kafka partitions instead of matching the number of gateways?",
+     "a": "Partitions cannot easily be added without changing key mapping; over-provisioning lets you grow consumers up to 256 without repartitioning, and keeps per-user order stable."
+    },
+    {
+     "q": "How does a gateway know which partitions to consume for its users?",
+     "a": "Either gateways consume all partitions and filter by local user index (simple, wastes bandwidth at scale), or a routing service maps user to gateway via presence and forwards directly. At large scale, targeted routing via presence is preferred."
+    },
+    {
+     "q": "A celebrity seller's live auction topic is hot. Does consistent hashing help?",
+     "a": "No - all its messages hash to one owner. Use node-level fan-out, conflation, or replicate the topic across several pub/sub nodes with gateways subscribing to a random replica."
+    }
+   ]
+  },
+  {
+   "name": "Failure detection with heartbeats and timeouts",
+   "explain": "In a network you cannot distinguish a dead peer from a slow or partitioned one; you can only observe silence. Heartbeats make silence meaningful: each side expects some traffic within an interval, and declares the peer dead after a timeout, typically 2-3 missed heartbeats. TCP alone is not sufficient: a half-open connection (the phone lost signal, or a NAT dropped the mapping) can look open to the server for hours because no packets flow to trigger an error. TCP keepalive defaults are too slow (2 hours on Linux). Application-level ping/pong (WebSocket control frames) at about 25-30 seconds detects dead peers quickly and also keeps NAT and load balancer mappings alive. The interval is a trade-off: shorter detects failure faster and keeps middleboxes happy but costs battery, radio wake-ups and server CPU. Timeouts also clean server state: a presence entry with a TTL refreshed by heartbeats expires automatically if the gateway crashes and cannot clean up.",
+   "in_this_design": "Gateway sends WebSocket pings every 25s; a connection with no pong for 60s is closed and its resources freed. Clients consider the connection dead if nothing is received for 60s and reconnect. Presence entries have a 60s TTL refreshed on heartbeats, so a crashed gateway's users show offline within a minute.",
+   "key_points": [
+    "You cannot tell dead from slow - only silence past a timeout.",
+    "Half-open TCP connections can linger for hours without app heartbeats.",
+    "Heartbeat interval must be below the shortest NAT/LB idle timeout.",
+    "TTL-based state cleans itself up after crashes.",
+    "Tune interval for battery versus detection speed."
+   ],
+   "qa": [
+    {
+     "q": "Why not rely on TCP keepalive?",
+     "a": "Default keepalive starts after 2 hours of idleness on Linux; even tuned, it is invisible to the application and some middleboxes ignore it. App-level pings give control and observability."
+    },
+    {
+     "q": "What heartbeat interval would you pick for mobile clients and why?",
+     "a": "About 25-30 seconds: below common NAT timeouts (often 30-60s on carrier networks) and LB idle timeouts, while not waking the radio too often."
+    },
+    {
+     "q": "How do heartbeats interact with 10M connections?",
+     "a": "10M / 25s is 400k pings per second fleet-wide, about 4k per node - cheap with control frames, but schedule them with timer wheels rather than one timer per connection."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "WebSockets vs SSE vs long polling",
+   "options": "Bidirectional WebSocket; one-way SSE over HTTP; long polling",
+   "choice": "WebSockets primary, SSE/long polling fallback",
+   "why": "WebSockets give low overhead and bidirectional acks and subscriptions; SSE is simpler and HTTP-friendly but one-way; long polling works everywhere but has higher overhead and latency."
+  },
+  {
+   "decision": "Broadcast backbone: Kafka vs NATS/Redis pub/sub",
+   "options": "Durable log; ephemeral pub/sub",
+   "choice": "Both: Kafka for reliable per-user streams, NATS for latest-value broadcast",
+   "why": "Reliable events need replay; high-rate counters need low latency and no storage. One system for both would compromise one of them."
+  },
+  {
+   "decision": "Targeted routing via presence vs every gateway consuming all user partitions",
+   "options": "Lookup user->gateway and forward; broadcast and filter",
+   "choice": "Start with partition consumption and filtering, move to presence routing as scale grows",
+   "why": "Filtering is simple and robust to presence staleness but wastes bandwidth proportional to gateways; targeted routing scales better but depends on accurate presence."
+  },
+  {
+   "decision": "Connections per node",
+   "options": "500k+ per node; 100-200k per node",
+   "choice": "150k per node",
+   "why": "Fewer, denser nodes save cost but a crash disconnects more users and causes bigger reconnect storms; 150k balances cost and blast radius."
+  },
+  {
+   "decision": "Slow consumer policy for reliable topics",
+   "options": "Unbounded buffering; drop; disconnect and resync",
+   "choice": "Disconnect and resync after 256 queued messages",
+   "why": "Unbounded buffering risks OOM; dropping breaks ordering; resync via snapshot is correct and bounded."
+  },
+  {
+   "decision": "Hot topic update rate",
+   "options": "Every change; conflated latest every 250ms",
+   "choice": "Conflate at 250ms",
+   "why": "Humans cannot perceive more than a few updates per second on a counter; conflation cuts fan-out cost by 100x at a sale peak."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Single gateway crash",
+   "behavior": "150k clients reconnect with jitter to other nodes within about 30s; resume from last_seq; presence entries expire in 60s."
+  },
+  {
+   "failure": "AZ loss",
+   "behavior": "One third of gateways lost; remaining nodes have 30% headroom plus autoscaling; LB stops routing to the AZ; admission control limits connect rate to avoid overload."
+  },
+  {
+   "failure": "Kafka partition leader failover",
+   "behavior": "Publish retries with idempotent producer; consumers pause briefly; clients may see a short delay and gaps filled by resume."
+  },
+  {
+   "failure": "Pub/sub (NATS) node failure",
+   "behavior": "Cluster reroutes subscriptions; latest-value messages during the gap are lost, but the next conflated update (within 250ms) restores state."
+  },
+  {
+   "failure": "Presence Redis shard failure",
+   "behavior": "Replica promoted; during failover targeted routing falls back to partition filtering; online status may be briefly wrong."
+  },
+  {
+   "failure": "Auth key rotation mismatch rejects all new connections",
+   "behavior": "Gateways hold both old and new public keys (kid) during rotation; alert on 401 rate spike and roll back."
+  },
+  {
+   "failure": "Bad gateway release leaks memory",
+   "behavior": "Canary on 2% of nodes with memory-per-connection SLO; automated rollback; drain affected nodes gradually."
+  }
+ ],
+ "metrics": [
+  "Concurrent connections per node and fleet; connection arrival and close rates.",
+  "Publish-to-deliver latency p50/p99 per delivery class (measured with timestamped synthetic messages).",
+  "Outbound queue depth distribution, conflation drops, slow-consumer disconnects.",
+  "Reconnect rate and time-to-reconnect p99; close codes distribution.",
+  "Resume outcomes: replay served vs gap_too_large vs sync calls.",
+  "Seq gap rate detected by clients (client telemetry).",
+  "Memory per connection, CPU per node, GC pauses.",
+  "Backbone lag: Kafka consumer lag per partition, NATS slow consumer events.",
+  "Auth failures and subscription authorization denials.",
+  "Backend polling QPS reduction for migrated features."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you go global with users in India and the Middle East?",
+   "a": "Regional gateway fleets with GeoDNS; per-user streams homed in the user's region and replicated cross-region; broadcast topics published in each region (or bridged by NATS superclusters/leaf nodes). Slack routes clients to edge gateways and relays to central channel servers in a similar way."
+  },
+  {
+   "q": "How do you guarantee a chat message is delivered if the recipient is offline?",
+   "a": "The realtime layer only delivers to online users; the message is persisted by the chat service, the recipient gets a push notification via FCM/APNs, and on next connect the client syncs via seq. Delivery to the device is the job of the combination, not the socket alone."
+  },
+  {
+   "q": "How would you handle 10x traffic in the first minute of a sale?",
+   "a": "Pre-scale gateways and pub/sub ahead of the sale, pre-warm TLS session caches, enable aggressive conflation, raise per-node admission caps gradually, and use client-side jitter on the sale start trigger to avoid everyone connecting at the same second."
+  },
+  {
+   "q": "Why not use a managed service like AWS API Gateway WebSockets?",
+   "a": "It removes connection management but charges per message and per connection-minute, has message size and rate limits and less control over fan-out; at 5M frames/s the cost would be very high. It is a good fit for smaller workloads."
+  },
+  {
+   "q": "How do you secure subscriptions?",
+   "a": "Authenticate at upgrade with a short-lived JWT, authorize each subscribe against topic patterns (order:{id} must belong to user), cap subscriptions per connection, and re-check on token refresh."
+  },
+  {
+   "q": "What would you change for collaborative editing over the same sockets?",
+   "a": "Add bidirectional ordered streams per document, server-side sequencing of ops, and OT or CRDT merging; the transport stays the same but the sequencing and conflict resolution move to a document service."
+  },
+  {
+   "q": "How do you test latency end to end?",
+   "a": "Synthetic clients in each region subscribe to a probe topic; a publisher emits timestamped messages every second; measure publish-to-receive distribution continuously and alert on p99."
+  }
+ ],
+ "key_points": [
+  "WebSockets make the edge stateful - isolate that in a thin gateway tier and keep business services stateless.",
+  "Route by logical address (user, topic) through a pub/sub backbone, never to sockets directly.",
+  "Fan out in two levels: broker to interested gateways once, gateway to local sockets with pre-serialized frames.",
+  "Separate delivery classes: reliable (seq, ack, replay from Kafka) versus latest-value (conflated, ephemeral).",
+  "Snapshot plus deltas: clients resume from last_seq or resync from the source of truth.",
+  "Bound every queue; conflate state, disconnect-and-resync for ordered streams.",
+  "Reconnect storms are the main outage risk: full-jitter backoff, server reconnect hints, cheap local auth, admission control.",
+  "Load balancers balance arrivals not load: least-connections, active rebalancing, gradual draining with surge capacity.",
+  "Heartbeats at about 25s below every idle timeout; TTL presence cleans up crashes.",
+  "Size by memory: about 150k connections per node, about 100 nodes for 10M with headroom."
+ ],
+ "quiz": [
+  {
+   "q": "Why separate a WebSocket gateway tier from business services?",
+   "options": [
+    "Connection state is pinned and long-lived; isolating it keeps business services stateless and easy to scale",
+    "Gateways are faster at running business logic",
+    "WebSockets require a separate database",
+    "It removes the need for authentication"
+   ],
+   "answer": 0,
+   "why": "The gateway pattern contains stateful connection handling in one homogeneous tier. Gateways deliberately do not run business logic."
+  },
+  {
+   "q": "A product page topic has 1M watchers spread across 100 gateways. With node-level subscriptions, how many copies does the broker send per update?",
+   "options": [
+    "1",
+    "10,000",
+    "1,000,000",
+    "100"
+   ],
+   "answer": 3,
+   "why": "One copy per interested gateway; each gateway fans out to its local watchers. 1,000,000 is what per-connection backbone subscriptions would cost."
+  },
+  {
+   "q": "After a gateway crash, CPU on remaining nodes spikes and more nodes fail. The most likely missing control:",
+   "options": [
+    "Larger Kafka retention",
+    "Jittered exponential backoff on client reconnects",
+    "More topic partitions",
+    "Longer JWT lifetime"
+   ],
+   "answer": 1,
+   "why": "Synchronized reconnects create a thundering herd that cascades. Longer JWTs help a bit (less auth load) but do not desynchronize the wave."
+  },
+  {
+   "q": "For a flash-sale stock counter, what should happen when a client's queue is full?",
+   "options": [
+    "Close the connection immediately",
+    "Grow the buffer without limit",
+    "Keep only the latest value for that topic (conflate)",
+    "Block the publisher"
+   ],
+   "answer": 2,
+   "why": "Only the latest stock count matters, so overwriting older values is correct and bounded. Closing the connection is right for ordered reliable topics, not counters."
+  },
+  {
+   "q": "For a chat topic where ordering matters, a client's 256-message queue overflows. Best action?",
+   "options": [
+    "Silently drop the oldest messages",
+    "Conflate to the latest message",
+    "Disconnect with a resync code so the client snapshots and resumes",
+    "Block all other clients on this gateway"
+   ],
+   "answer": 2,
+   "why": "Dropping or conflating breaks ordered delivery; resync restores correctness with bounded memory. Blocking others lets one slow consumer harm everyone."
+  },
+  {
+   "q": "Roughly how many gateway nodes for 10M concurrent connections at 150k per node with 30% headroom?",
+   "options": [
+    "About 90-100",
+    "About 10",
+    "About 30",
+    "About 1,000"
+   ],
+   "answer": 0,
+   "why": "10M / 150k is about 67; with headroom about 90-100. 30 would need over 300k per node with no headroom."
+  },
+  {
+   "q": "Clients behind an ALB disconnect every 60 seconds exactly. The most likely cause:",
+   "options": [
+    "Kafka rebalancing",
+    "JWT expiry",
+    "TCP slow start",
+    "LB idle timeout shorter than the interval between frames"
+   ],
+   "answer": 3,
+   "why": "A fixed periodic disconnect points to an idle timeout; heartbeat more often or raise the timeout. JWT expiry would be at the token lifetime, typically minutes."
+  },
+  {
+   "q": "A client receives seq 45 right after 42 on a reliable topic. What should it do?",
+   "options": [
+    "Ignore it - ordering is best-effort",
+    "Request replay from 43 (or snapshot via sync if too old)",
+    "Disconnect forever",
+    "Apply 45 and assume 43-44 were duplicates"
+   ],
+   "answer": 1,
+   "why": "Seq gaps signal missed messages; resume fills them. Treating gaps as duplicates loses data."
+  },
+  {
+   "q": "Why does adding 20 new gateways during a sale not immediately relieve hot nodes?",
+   "options": [
+    "Existing long-lived connections stay where they are; LBs only place new connections",
+    "New nodes need a warm cache",
+    "Kafka must be repartitioned first",
+    "DNS TTLs are too long"
+   ],
+   "answer": 0,
+   "why": "Load balancing affects arrivals; existing sockets do not move until they reconnect. Active rebalancing via reconnect hints fixes it. DNS TTL is less relevant behind a single LB endpoint."
+  },
+  {
+   "q": "Why use full jitter (random 0 to backoff ceiling) rather than plain exponential backoff?",
+   "options": [
+    "It is faster for every client",
+    "It reduces the maximum wait",
+    "It guarantees in-order reconnects",
+    "It desynchronizes clients that failed together, spreading load"
+   ],
+   "answer": 3,
+   "why": "Plain exponential backoff keeps clients that failed at the same moment synchronized. Full jitter gives the best spread, at the cost of some clients waiting longer than strictly necessary."
+  },
+  {
+   "q": "Which is NOT a good reason to keep JWT verification local on gateways?",
+   "options": [
+    "Reconnect storms would otherwise overload the auth service",
+    "Local verification allows instant revocation of any token",
+    "Lower connect latency",
+    "Gateways stay available if auth service is degraded"
+   ],
+   "answer": 1,
+   "why": "Local verification makes instant revocation harder, not easier - you need short lifetimes or refresh checks. The other options are real benefits."
+  },
+  {
+   "q": "What heartbeat interval is most appropriate for mobile clients behind carrier NAT?",
+   "options": [
+    "Every 1 second",
+    "Every 10 minutes",
+    "About every 25-30 seconds",
+    "Rely on TCP keepalive defaults"
+   ],
+   "answer": 2,
+   "why": "25-30s stays under typical NAT and LB idle timeouts while sparing the battery. TCP keepalive defaults (2 hours) are far too slow."
+  },
+  {
+   "q": "Classic Redis pub/sub in cluster mode limits broadcast scaling because:",
+   "options": [
+    "It persists every message to disk",
+    "It cannot handle more than 100 topics",
+    "Each published message is propagated to all cluster nodes regardless of subscribers",
+    "It requires one connection per topic"
+   ],
+   "answer": 2,
+   "why": "Classic cluster pub/sub broadcasts across the cluster bus; sharded pub/sub (Redis 7) or NATS routes only to interested nodes. It does not persist messages, which is the tempting misconception."
+  },
+  {
+   "q": "Which delivery guarantee does the design provide for order status updates?",
+   "options": [
+    "At-least-once with client dedup by seq (effectively-once)",
+    "Exactly-once to the device",
+    "At-most-once",
+    "No guarantee"
+   ],
+   "answer": 0,
+   "why": "Retries plus resume give at-least-once; seq dedup makes processing idempotent. True exactly-once over unreliable networks is not achievable without dedup."
+  },
+  {
+   "q": "Rider location updates arrive every 5s for 2M active deliveries. Approximate publish rate?",
+   "options": [
+    "4,000/s",
+    "40,000/s",
+    "4,000,000/s",
+    "400,000/s"
+   ],
+   "answer": 3,
+   "why": "2M / 5s = 400k/s. 40k is off by 10x, a common slip."
+  },
+  {
+   "q": "During a deploy, how should a draining gateway shed its 150k connections?",
+   "options": [
+    "Close all at once and exit",
+    "Stop new connections and send reconnect hints with random delays over minutes",
+    "Wait for clients to disconnect naturally, however long",
+    "Migrate TCP sockets to another node"
+   ],
+   "answer": 1,
+   "why": "Spreading reconnects avoids a herd and keeps deploys quick. Waiting indefinitely blocks deploys; live socket migration is impractical."
+  },
+  {
+   "q": "Why over-provision Kafka partitions (for example 256) for user events?",
+   "options": [
+    "Consumers can grow up to the partition count without changing key-to-partition mapping and per-user order",
+    "More partitions reduce latency for each message",
+    "Kafka requires powers of two",
+    "Each user needs a dedicated partition"
+   ],
+   "answer": 0,
+   "why": "Changing partition count remaps keys and breaks ordering; over-provisioning avoids that. Kafka does not require powers of two."
+  },
+  {
+   "q": "A latest-value message is lost when a NATS node fails. Impact?",
+   "options": [
+    "Permanent stale state for all clients",
+    "Clients must re-authenticate",
+    "Kafka will replay it",
+    "Minimal - the next conflated update within about 250ms restores the current value"
+   ],
+   "answer": 3,
+   "why": "Latest-value topics are self-healing because each message carries full current state. Kafka does not hold ephemeral topics in this design."
+  },
+  {
+   "q": "A half-open TCP connection (phone lost signal) is detected fastest by:",
+   "options": [
+    "TCP keepalive with default settings",
+    "Application ping/pong with a missed-pong timeout",
+    "Waiting for the next server publish",
+    "The load balancer's health check"
+   ],
+   "answer": 1,
+   "why": "App heartbeats detect within about 60s. LB health checks probe backend nodes, not individual client connections."
+  },
+  {
+   "q": "Which metric is the best early warning of a slow-consumer problem spreading?",
+   "options": [
+    "Number of topics",
+    "JWT issuance rate",
+    "Outbound queue depth and slow-consumer disconnect rate per node",
+    "Kafka retention size"
+   ],
+   "answer": 2,
+   "why": "Rising queue depth and disconnects show consumers not keeping up before memory or latency fail. Topic count says nothing about consumption."
+  },
+  {
+   "q": "Why might you start with every gateway consuming all user-event partitions and filtering locally?",
+   "options": [
+    "It is the most bandwidth-efficient design",
+    "Kafka cannot target consumers",
+    "It is simple and does not depend on presence accuracy, acceptable until gateway count makes the wasted bandwidth costly",
+    "Presence lookups are impossible"
+   ],
+   "answer": 2,
+   "why": "Filter-all is a pragmatic baseline; its cost grows with the number of gateways, which is when targeted routing via presence pays off. It is not bandwidth-efficient."
+  }
+ ],
+ "references": [
+  {
+   "title": "Slack Engineering - Real-time Messaging",
+   "url": "https://slack.engineering/real-time-messaging/"
+  },
+  {
+   "title": "Ably - The challenge of scaling WebSockets",
+   "url": "https://ably.com/topic/the-challenge-of-scaling-websockets"
+  },
+  {
+   "title": "InfoQ - Real-time messaging at Slack",
+   "url": "https://www.infoq.com/news/2023/04/real-time-messaging-slack/"
+  },
+  {
+   "title": "ByteByteGo - How Slack supports billions of daily messages",
+   "url": "https://blog.bytebytego.com/p/how-slack-supports-billions-of-daily/comments"
+  }
+ ]
+}

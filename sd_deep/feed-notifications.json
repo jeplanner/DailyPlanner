@@ -1,0 +1,1135 @@
+{
+ "slug": "feed-notifications",
+ "title": "Design notifications for a feed action (like, comment, follow, mention)",
+ "prompt": "Design notifications for a feed action.",
+ "group": "feeds",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "When someone likes, comments on, mentions or follows, the affected user should hear about it quickly, once, on the right channel, and without being spammed. The core tension is fan-out and freshness against noise and cost: a celebrity post can generate 100,000 likes a minute, and sending 100,000 pushes is both a capacity problem and a user-experience failure, so the design is really an event pipeline plus an aggregation, preference and rate-limit layer in front of unreliable third-party push providers.",
+ "framework": {
+  "clarify": [
+   "Which actions trigger notifications: like, comment, reply, mention, follow, share? Are they all equal priority? (Assume mention and reply are high priority, likes are low.)",
+   "Which channels: in-app notification inbox, mobile push (APNs/FCM), email digest, SMS? (Assume in-app plus push, email only as a daily digest.)",
+   "Scale: assume 300M DAU, about 5B feed actions per day, of which about 2B produce a notification candidate.",
+   "Latency expectation: is near real time (p95 under 5 seconds from action to push) required, or is minutes acceptable for low-priority types?",
+   "Aggregation: should 'Asha and 41 others liked your post' be one notification that updates in place rather than 42 separate ones? (Assume yes.)",
+   "Delivery semantics: is a duplicate push worse than a missed like-push? (Assume at-least-once internally, dedupe so the user sees effectively-once.)",
+   "User controls: per-type mute, quiet hours, per-post mute, blocked users; and do undo actions (unlike, deleted comment) need to retract notifications?",
+   "Read state and badges: do we need an unread count synced across devices?"
+  ],
+  "design": [
+   "Baseline: the feed service writes the action, then synchronously calls a notification service that inserts a row and calls FCM. Explain why that fails at scale (coupling, celebrity bursts, slow providers) and move to async.",
+   "Feed services publish action events to Kafka topic feed-actions keyed by recipient_id via a transactional outbox, so the write and the event can never diverge.",
+   "Notification Processor consumes events, resolves recipients (post owner, mentioned users, thread participants), filters by block lists and preferences, dedupes on event_id, and applies aggregation keyed by (recipient, post, type).",
+   "Notification Store (Cassandra, partition by recipient_id, clustering by bucket time desc) holds the in-app inbox; Redis holds unread counters and aggregation windows.",
+   "Delivery Router decides channel per notification (priority, user online state, quiet hours, rate limit), and enqueues push jobs into per-provider queues consumed by APNs and FCM senders with token management.",
+   "APIs: GET /v1/notifications?cursor=, POST /v1/notifications/read, GET /v1/notifications/unread_count, PUT /v1/notification-preferences, plus device token registration.",
+   "Critical path: like -> outbox -> Kafka -> processor (dedupe, prefs, aggregate) -> store upsert + counter increment -> router -> push sender -> APNs/FCM -> device; in-app inbox reads go straight to Cassandra via a cache."
+  ],
+  "defend": [
+   "Bottleneck: hot recipients (a celebrity post gets 2,000 likes per second). Aggregation windows collapse these into one row updated in place and at most one push per window, so cost is per window, not per like.",
+   "Scale reads: inbox reads are cursor-paginated range scans of a single Cassandra partition; first page cached in Redis for 60 seconds; unread count is a Redis counter, never a COUNT query.",
+   "Scale writes: Kafka partitions by recipient_id (512 partitions), processors scale horizontally; Cassandra absorbs about 25K writes/sec average, 100K peak, with replication factor 3 and LOCAL_QUORUM.",
+   "Failure behaviour: push providers are slow or down -> per-provider bulkhead queues, timeouts of 2 seconds, retries with exponential backoff plus jitter up to 3 attempts, then drop low-priority pushes (in-app still exists). Redis down -> degrade aggregation to store-level upsert and stop badges, never block the pipeline.",
+   "Backpressure and degradation: if consumer lag exceeds 60 seconds, shed low-priority types (likes) from push and keep in-app; mentions and replies keep their own topic and consumer group so they are never stuck behind likes.",
+   "Measure: action-to-push latency p50/p95/p99 per type, consumer lag, push success rate per provider, invalid token rate, duplicate push rate, opt-out and app-uninstall rate after notifications (the spam signal), open rate."
+  ],
+  "script": "Let me clarify first. I will assume notifications for likes, comments, replies, mentions and follows, delivered in an in-app inbox and as mobile push, at roughly 300 million daily users and two billion notification candidates a day. Mentions and replies are high priority and should land within a few seconds; likes can be batched. I will also assume we aggregate, so forty likes become one 'Asha and 39 others' notification. For the design, the naive version is the feed service calling a notification service synchronously; that couples feed latency to Apple and Google and falls over on a celebrity post. So instead feed writes go through an outbox into Kafka keyed by recipient. A processor dedupes, applies block lists and preferences, and aggregates by recipient, post and type in a short window. It upserts the inbox in Cassandra, bumps an unread counter in Redis, and hands push jobs to a router that checks quiet hours and rate limits before per-provider senders call APNs and FCM. To defend it: the hot spot is a viral post, which aggregation turns into one row update and at most one push per window; push providers are isolated behind bulkheads with jittered retries; and if lag builds we shed like-pushes first while mentions run on their own lane. I would measure action-to-push latency, lag, provider error rates, and the opt-out rate, because spam is the real failure mode."
+ },
+ "brd": {
+  "problem": "Creators and users only return to the product if they learn that people engaged with their content. Today there is no reliable, timely signal: users miss replies and mentions, and when we did send naive per-like pushes we saw opt-outs and uninstalls spike. The business needs an engagement-driving notification system that is timely for high-value events, quiet for low-value ones, and cheap to run at billions of events per day.",
+  "goals": [
+   "Increase day-7 retention by surfacing engagement on a user's content within seconds for high-priority events.",
+   "Keep push opt-out rate below 0.5 percent per month by aggregating and rate-limiting low-value notifications.",
+   "Give users trustworthy controls (mute types, mute posts, quiet hours) so notifications feel respectful.",
+   "Provide a consistent unread badge and inbox across devices.",
+   "Run at under 0.01 USD per thousand notifications all-in by batching and dropping waste."
+  ],
+  "non_goals": [
+   "Marketing or promotional campaign notifications (separate campaign system with its own consent rules).",
+   "Real-time chat message delivery (owned by the messaging stack).",
+   "ML ranking of which notifications to send; we provide hooks but v1 uses rules.",
+   "SMS delivery for engagement events."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users and creators",
+    "needs": "Timely, relevant, non-spammy alerts; working controls; accurate badge."
+   },
+   {
+    "who": "Growth and product team",
+    "needs": "Retention and re-engagement lift, experiment hooks per notification type."
+   },
+   {
+    "who": "Trust and safety",
+    "needs": "No notifications from blocked users, abuse rate limits, quick kill switch for a harassment wave."
+   },
+   {
+    "who": "SRE / platform",
+    "needs": "Isolation from APNs/FCM outages, observable lag, predictable cost."
+   },
+   {
+    "who": "Legal / privacy",
+    "needs": "Respect consent, regional rules, and deletion of notification data on account deletion."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Action-to-push latency for mentions and replies",
+    "target": "p95 under 5 s, p99 under 15 s"
+   },
+   {
+    "metric": "Push opt-out rate",
+    "target": "under 0.5 percent of users per month"
+   },
+   {
+    "metric": "Notification open rate (push)",
+    "target": "above 8 percent for high-priority types"
+   },
+   {
+    "metric": "Duplicate push rate",
+    "target": "under 0.01 percent"
+   },
+   {
+    "metric": "Inbox read availability",
+    "target": "99.95 percent"
+   },
+   {
+    "metric": "Badge accuracy vs inbox",
+    "target": "drift under 1 percent of users at any time, self-heals within 1 minute of opening inbox"
+   }
+  ],
+  "constraints": [
+   "Third-party push providers (APNs, FCM) have their own throughput limits, error semantics and outages we do not control.",
+   "Mobile devices may be offline for days; push payloads are size limited (about 4 KB).",
+   "Must respect regional privacy law (for India, the DPDP Act) and user consent per channel.",
+   "Feed write path latency must not increase by more than 5 ms."
+  ],
+  "risks": [
+   {
+    "risk": "Notification spam drives uninstalls",
+    "mitigation": "Aggregation windows, per-user per-type rate limits, daily caps, quiet hours, opt-out monitoring with automatic throttling."
+   },
+   {
+    "risk": "Harassment via mentions from many new accounts",
+    "mitigation": "Block list and 'only people I follow' filters, abuse rate limits per actor, trust-score gating."
+   },
+   {
+    "risk": "Provider outage causes a retry storm and a later flood of stale pushes",
+    "mitigation": "Bulkheaded per-provider queues, TTL on push jobs (drop like-pushes older than 1 hour), jittered backoff."
+   },
+   {
+    "risk": "Duplicate pushes after consumer rebalance",
+    "mitigation": "Idempotency key per (event_id, channel) stored with TTL; aggregation upserts are idempotent."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Casual user",
+    "needs": "Wants to know when friends reply or mention them, does not want a buzz for every like."
+   },
+   {
+    "name": "Creator with 2M followers",
+    "needs": "Wants an aggregated summary of likes and a reliable signal for comments from people they follow, without the phone melting."
+   },
+   {
+    "name": "User being harassed",
+    "needs": "Wants to silence notifications from strangers or a specific post immediately."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want a push within seconds when someone replies to my comment so that I can continue the conversation.",
+   "As a user, I want likes on my post grouped into one notification so that my phone is not flooded.",
+   "As a creator, I want to mute notifications for one viral post so that I can still get other alerts.",
+   "As a user, I want quiet hours from 11pm to 7am so that I am not woken up, and to see everything in the inbox later.",
+   "As a user, I want the unread badge to be the same on my phone and laptop so that I trust it.",
+   "As a user, I want a notification to disappear if the person unlikes or deletes their comment so that I do not tap into nothing.",
+   "As a user, I want no notifications from accounts I blocked so that harassment stops.",
+   "As a product manager, I want to change aggregation window and caps per type via config so that I can experiment without a deploy."
+  ],
+  "functional": [
+   "Generate notification candidates from feed action events: like, comment, reply, mention, follow, share.",
+   "Resolve recipients, excluding the actor themselves, blocked or muted users, and users who opted out of that type.",
+   "Aggregate same-type actions on the same object for the same recipient within a configurable window into one notification that updates (count and latest actors).",
+   "Persist an in-app inbox per user, newest first, with cursor pagination and read/unread state.",
+   "Maintain an unread count per user and sync read state across devices.",
+   "Deliver mobile push via APNs and FCM respecting per-type priority, quiet hours, per-user rate limits and daily caps.",
+   "Support retraction when the source action is undone within the aggregation window, and soft-hide afterwards.",
+   "Register, refresh and expire device tokens; remove tokens the provider reports as invalid.",
+   "Provide a daily email digest for users who were inactive for 3+ days."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency (high priority)",
+    "target": "p95 under 5 s action-to-push, p99 under 15 s"
+   },
+   {
+    "name": "Latency (inbox read)",
+    "target": "p99 under 150 ms for first page"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95 percent inbox reads, 99.9 percent push pipeline"
+   },
+   {
+    "name": "Durability",
+    "target": "No accepted action event lost (Kafka RF 3, acks=all, min.insync.replicas=2)"
+   },
+   {
+    "name": "Consistency",
+    "target": "Eventual; badge converges with inbox within 60 s; no notification shown from a blocked user after block is acknowledged"
+   },
+   {
+    "name": "Delivery semantics",
+    "target": "At-least-once internally, effectively-once to the user via idempotency keys"
+   },
+   {
+    "name": "Cost",
+    "target": "Under 0.01 USD per 1,000 notifications"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "300M DAU, 5B feed actions per day.",
+    "40 percent of actions produce a notification candidate: 2B per day.",
+    "Aggregation collapses likes by about 4x on average, more for viral posts: about 700M stored notifications per day.",
+    "About 30 percent of stored notifications produce a push: about 200M pushes per day.",
+    "Notification row about 300 bytes; keep 90 days in the inbox.",
+    "Peak is 4x average (evening India prime time plus viral events)."
+   ],
+   "math": [
+    "Candidates: 2B / 86,400 s = about 23K events/s average, about 93K/s peak.",
+    "Stored writes: 700M / 86,400 = about 8K writes/s average (plus aggregation updates, total about 25K/s), about 100K/s peak.",
+    "Pushes: 200M / 86,400 = about 2.3K/s average, about 10K/s peak; each provider call is about 50-200 ms so we need roughly 2,000 concurrent HTTP/2 streams at peak.",
+    "Storage: 700M x 300 B = 210 GB/day; x 90 days = about 19 TB; x RF 3 = about 57 TB in Cassandra.",
+    "Inbox reads: if 30 percent of DAU open the inbox 5 times a day: 450M reads / 86,400 = about 5K/s average, 20K/s peak; badge checks are 10x that, about 200K/s peak, which is why the count lives in Redis.",
+    "Kafka ingress: 93K msgs/s x 500 B = about 47 MB/s peak; 512 partitions give ample consumer parallelism."
+   ],
+   "summary": "About 25K notification writes per second average and 100K peak, 10K pushes per second at peak, 57 TB of replicated inbox data, and 200K badge reads per second: a write-heavy, partitionable-by-recipient workload where the expensive and fragile part is external push delivery."
+  },
+  "out_of_scope": [
+   "Promotional and marketing campaigns.",
+   "ML-based notification ranking and send-time optimisation (hook only).",
+   "SMS and WhatsApp channels.",
+   "Web push for desktop browsers (same router, different sender, not detailed)."
+  ]
+ },
+ "hld": {
+  "overview": "An event-driven pipeline. Feed services own the source of truth for actions and emit events through a transactional outbox into Kafka. A stateless Notification Processor fleet turns events into notifications: recipient resolution, filtering, idempotency and aggregation. Results land in a recipient-partitioned Cassandra inbox, with Redis holding unread counters, aggregation windows and idempotency keys. A Delivery Router decides channel and timing, and per-provider push senders talk to APNs and FCM behind bulkheads. Read APIs serve the inbox and badge directly.",
+  "diagram": "+-----------+  write+outbox  +---------+  CDC  +--------------------------------+\n| Feed svc  |--------------->| Feed DB |------>| Kafka: feed-actions (by recip) |\n| like/cmt  |                +---------+       | Kafka: notif-high (mentions)   |\n+-----------+                                  +---------------+----------------+\n                                                                |\n                                                                v\n  +-----------------+   prefs/blocks   +----------------------------------------+\n  | Preference svc  |<-----------------| Notification Processor (stateless)     |\n  | + Social graph  |                  | dedupe -> filter -> aggregate -> emit  |\n  +-----------------+                  +---+-------------------+-----------+----+\n                                           |                   |           |\n                                 upsert    v          incr     v   jobs    v\n                              +-------------------+  +--------------+  +------------------+\n                              | Cassandra inbox   |  | Redis: unread|  | Delivery Router  |\n                              | (recipient, ts)   |  | aggr windows |  | quiet hrs, caps  |\n                              +---------+---------+  | idem keys    |  +--------+---------+\n                                        ^            +------+-------+           |\n                                        |                   ^         +---------+--------+\n  +--------+   GET inbox/badge  +-------+--------+          |         v                  v\n  | Mobile |------------------->| Notification   |----------+   +-----------+    +-----------+\n  | client |<----- push --------| Read API       |              | APNs      |    | FCM       |\n  +--------+    (via APNs/FCM)  +----------------+              | sender    |    | sender    |\n                                                                +-----------+    +-----------+",
+  "components": [
+   {
+    "name": "Transactional outbox + CDC",
+    "responsibility": "Feed service writes the action and an outbox row in the same DB transaction; Debezium-style CDC publishes the outbox to Kafka so an action is never committed without its event."
+   },
+   {
+    "name": "Kafka topics",
+    "responsibility": "feed-actions (low/normal priority, 512 partitions keyed by recipient_id) and notif-high (mentions, replies) with separate consumer groups so urgent types never queue behind likes."
+   },
+   {
+    "name": "Notification Processor",
+    "responsibility": "Resolves recipients, drops self-actions, checks block lists and preferences, dedupes on event_id, aggregates into (recipient, object, type) groups, writes inbox and counters, emits delivery jobs."
+   },
+   {
+    "name": "Preference and Block service",
+    "responsibility": "Per-user settings: muted types, muted posts, quiet hours and time zone, channel consent, blocked users. Cached locally in processors for 30 s with invalidation events."
+   },
+   {
+    "name": "Notification Store (Cassandra)",
+    "responsibility": "Durable in-app inbox, partitioned by recipient_id with time-bucketed clustering, TTL 90 days."
+   },
+   {
+    "name": "Redis cluster",
+    "responsibility": "Unread counters, aggregation window state, idempotency keys with TTL, per-user rate-limit buckets, first-page inbox cache."
+   },
+   {
+    "name": "Delivery Router",
+    "responsibility": "Chooses channels, applies quiet hours, per-type caps, token-bucket rate limit, collapse keys; schedules deferred delivery."
+   },
+   {
+    "name": "Push senders (APNs, FCM)",
+    "responsibility": "Maintain HTTP/2 connection pools to providers, send with collapse-id, handle 410/Unregistered by deleting tokens, retry 429/5xx with jittered backoff."
+   },
+   {
+    "name": "Device token registry",
+    "responsibility": "Maps user to devices and tokens, app version, locale, last seen; prunes stale tokens after 60 days."
+   },
+   {
+    "name": "Notification Read API",
+    "responsibility": "Inbox pagination, mark read, unread count, preferences endpoints."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Like on a viral post becomes one aggregated push",
+    "steps": [
+     "User B likes post P owned by A; feed service commits like row and outbox row in one transaction.",
+     "CDC publishes event {event_id, type=like, actor=B, object=P, recipient=A} to feed-actions partition hash(A).",
+     "Processor checks idempotency key event_id in Redis (SET NX, TTL 24h); duplicate means skip.",
+     "Processor checks A's preferences and blocks (B not blocked, likes not muted, P not muted).",
+     "Aggregation: key agg:A:P:like. If an open window exists, increment count and push B into the latest-actors list; else create window with 60 s duration.",
+     "Upsert inbox row (A, group_id) with count, last 3 actors, updated_at; increment A's unread counter only when the group is new or was already read.",
+     "When the window closes (or the first event for a new group arrives with no recent push), the router decides: likes are low priority, A is in quiet hours? defer; under cap? send one push with collapse-id agg:A:P:like.",
+     "APNs sender delivers; the phone replaces any earlier push with the same collapse-id."
+    ]
+   },
+   {
+    "name": "Mention gets a near real-time push",
+    "steps": [
+     "Comment with @A is written; event goes to notif-high topic.",
+     "High-priority processor pool (separate consumer group, smaller lag SLO) dedupes and filters.",
+     "No aggregation window for mentions; inbox row is written and counter incremented.",
+     "Router bypasses batching but still checks quiet hours and a high per-user cap (for example 30 per hour).",
+     "Push goes out within about 1-3 s; failures retried up to 3 times with backoff 1 s, 4 s, 16 s plus jitter."
+    ]
+   },
+   {
+    "name": "Undo (unlike or comment deleted)",
+    "steps": [
+     "Feed emits unlike event with reference to the original like event.",
+     "If the aggregation window is still open, decrement count and remove the actor; if count reaches 0, delete the group and decrement unread.",
+     "If already delivered, mark actor removed and render the group without them; we do not send a retraction push, but the inbox reflects truth."
+    ]
+   },
+   {
+    "name": "Open inbox and clear badge",
+    "steps": [
+     "Client calls GET /v1/notifications?limit=20; Read API serves page from Redis cache or Cassandra range scan.",
+     "Client calls POST /v1/notifications/read with up_to timestamp; server sets last_read_at and resets counter to 0.",
+     "Other devices get a silent push or pick up the new count on next foreground."
+    ]
+   }
+  ],
+  "data_flow": "Actions flow one way: feed DB -> outbox -> Kafka (by recipient) -> processors -> Cassandra inbox and Redis counters -> router -> provider senders -> devices. Reads flow from client -> Read API -> Redis (badge, first page) -> Cassandra. Preference changes flow from the preference service into processor caches by invalidation events. Every stage is idempotent so Kafka redelivery is safe."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/notifications?cursor=<opaque>&limit=20",
+    "request": "Auth header; optional cursor from previous page.",
+    "response": "{items:[{id, type, object_ref, actors:[{id,name,avatar}], actor_count, text, created_at, updated_at, read}], next_cursor}",
+    "notes": "Cursor encodes (bucket, updated_at, group_id); never offset. First page cached 60 s."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/notifications/unread_count",
+    "request": "Auth header.",
+    "response": "{count: 17, capped: false}",
+    "notes": "Served from Redis; display caps at 99+. Cheap enough to call on every foreground."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/notifications/read",
+    "request": "{up_to: '2026-10-11T10:00:00Z'} or {ids:[...]}",
+    "response": "{count: 0}",
+    "notes": "Idempotent; sets last_read_at = max(existing, up_to)."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/notification-preferences",
+    "request": "{muted_types:['like'], quiet_hours:{start:'23:00',end:'07:00',tz:'Asia/Kolkata'}, push_enabled:true, from:'following_only'}",
+    "response": "{version: 12}",
+    "notes": "Versioned; publishes prefs-changed event to invalidate processor caches."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/devices",
+    "request": "{platform:'ios', token:'...', app_version:'8.4.1', locale:'ta-IN'}",
+    "response": "{device_id}",
+    "notes": "Upsert by token; one user can have several devices."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/posts/{post_id}/mute-notifications",
+    "request": "{}",
+    "response": "{muted: true}",
+    "notes": "Adds post to muted set; processors check before aggregating."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "notification_group",
+    "store": "Cassandra",
+    "fields": [
+     "recipient_id bigint",
+     "bucket int (yyyymm)",
+     "updated_at timestamp",
+     "group_id text (type:object_id)",
+     "type text",
+     "object_id bigint",
+     "actor_count int",
+     "latest_actors list<bigint> (max 3)",
+     "first_created_at timestamp",
+     "hidden boolean"
+    ],
+    "keys": "PRIMARY KEY ((recipient_id, bucket), updated_at, group_id) WITH CLUSTERING ORDER BY (updated_at DESC); TTL 90 days.",
+    "notes": "Updating a group means delete old clustering row and insert new (updated_at changes); done in a logged batch on the same partition so it is atomic per partition. A lookup table group_index((recipient_id, group_id)) -> updated_at finds the old row."
+   },
+   {
+    "entity": "notification_state",
+    "store": "Redis",
+    "fields": [
+     "unread:{user} -> int",
+     "lastread:{user} -> ts",
+     "agg:{user}:{object}:{type} -> hash{count, actors, opened_at, pushed}",
+     "idem:{event_id} -> 1 (TTL 24h)",
+     "rl:{user}:{type} -> token bucket"
+    ],
+    "keys": "Redis Cluster slots by key; hash tags {user} keep one user's keys on one shard.",
+    "notes": "Counters are a cache of truth and can be rebuilt by counting unread rows since lastread."
+   },
+   {
+    "entity": "preferences",
+    "store": "MySQL (sharded by user_id) + local cache",
+    "fields": [
+     "user_id",
+     "muted_types set",
+     "muted_objects set",
+     "quiet_start",
+     "quiet_end",
+     "tz",
+     "push_enabled",
+     "email_digest",
+     "from_filter",
+     "version"
+    ],
+    "keys": "PK user_id; shard = user_id mod 64.",
+    "notes": "Small, read-heavy; processors cache with 30 s TTL plus invalidation."
+   },
+   {
+    "entity": "device_token",
+    "store": "MySQL",
+    "fields": [
+     "device_id",
+     "user_id",
+     "platform",
+     "token",
+     "app_version",
+     "locale",
+     "last_seen_at",
+     "invalid_at"
+    ],
+    "keys": "PK device_id; unique(token); index(user_id).",
+    "notes": "Invalid tokens marked on APNs 410 or FCM UNREGISTERED and pruned."
+   }
+  ],
+  "classes": [
+   {
+    "name": "NotificationProcessor",
+    "responsibility": "Consume events and orchestrate the pipeline for each event.",
+    "methods": [
+     "handle(event)",
+     "resolveRecipients(event) -> list<userId>",
+     "shouldNotify(recipient, event) -> bool",
+     "commitOffset(partition, offset)"
+    ]
+   },
+   {
+    "name": "Aggregator",
+    "responsibility": "Maintain aggregation windows and upsert groups.",
+    "methods": [
+     "add(recipient, objectId, type, actorId, ts) -> GroupUpdate",
+     "remove(recipient, objectId, type, actorId)",
+     "closeExpiredWindows(now) -> list<GroupUpdate>"
+    ]
+   },
+   {
+    "name": "DeliveryRouter",
+    "responsibility": "Pick channel and timing and enforce rate limits.",
+    "methods": [
+     "route(groupUpdate) -> list<DeliveryJob>",
+     "inQuietHours(prefs, now) -> bool",
+     "allow(userId, type) -> bool"
+    ]
+   },
+   {
+    "name": "PushSender",
+    "responsibility": "Provider-specific delivery with retries and token hygiene.",
+    "methods": [
+     "send(job) -> Result",
+     "handleResponse(job, resp)",
+     "backoff(attempt) -> duration"
+    ]
+   },
+   {
+    "name": "InboxRepository",
+    "responsibility": "Cassandra reads and writes for groups.",
+    "methods": [
+     "upsertGroup(group)",
+     "page(userId, cursor, limit)",
+     "markRead(userId, upTo)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Idempotent aggregation with windowed push",
+    "explain": "Each event is processed exactly-once in effect: an idempotency key gates re-processing, the group upsert is keyed deterministically, and the push is gated by a per-group 'pushed in this window' flag. Push decision uses a window so a burst of 10,000 likes yields one push, and a later window yields at most one more update push.",
+    "pseudocode": "def handle(ev):\n  if not redis.set(f'idem:{ev.id}', 1, nx=True, ex=86400):\n      return                                  # duplicate delivery\n  for r in resolve_recipients(ev):\n      if r == ev.actor or blocked(r, ev.actor) or muted(r, ev):\n          continue\n      key = f'agg:{r}:{ev.object}:{ev.type}'\n      g = redis.hincrby_and_push_actor(key, ev.actor, max_actors=3)  # Lua, atomic\n      inbox.upsert_group(r, ev.type, ev.object, g.count, g.actors, now())\n      if g.count == 1 or g.was_read:\n          redis.incr(f'unread:{r}')\n      if priority(ev.type) == HIGH:\n          router.route_now(r, g)\n      elif redis.set(f'{key}:pushwin', 1, nx=True, ex=WINDOW[ev.type]):\n          scheduler.at(now() + WINDOW[ev.type], router.route, r, key)  # one push/window\n"
+   },
+   {
+    "name": "Per-user token bucket rate limit with daily cap",
+    "explain": "Router allows a push only if the user's bucket for that priority class has a token (for example capacity 5, refill 1 per 10 minutes for low priority) and the daily cap is not exceeded. Implemented as one Lua script in Redis to be atomic. If denied, the notification still exists in-app; only the push is suppressed.",
+    "pseudocode": "-- KEYS[1]=rl:{user}:{class}  ARGV: now_ms, rate_per_ms, capacity\nlocal b = redis.call('HMGET', KEYS[1], 'tokens', 'ts')\nlocal tokens = tonumber(b[1]) or capacity\nlocal ts = tonumber(b[2]) or now_ms\ntokens = math.min(capacity, tokens + (now_ms - ts) * rate_per_ms)\nif tokens < 1 then return 0 end\nredis.call('HSET', KEYS[1], 'tokens', tokens - 1, 'ts', now_ms)\nredis.call('PEXPIRE', KEYS[1], 86400000)\nreturn 1\n"
+   },
+   {
+    "name": "Push retry with exponential backoff and full jitter",
+    "explain": "Retry only retriable errors (429, 5xx, timeouts). Delay = random(0, min(cap, base * 2^attempt)). Jobs carry an expiry so a like-push is dropped if older than 1 hour; delivering stale pushes after an outage is worse than not delivering.",
+    "pseudocode": "def send_with_retry(job):\n  for attempt in range(MAX_ATTEMPTS):          # 3\n    if now() > job.expires_at: return DROPPED\n    r = provider.send(job, timeout=2.0)\n    if r.ok: return SENT\n    if r.code in (400, 403): return FAILED      # payload/auth bug, alert\n    if r.code == 410 or r.reason == 'UNREGISTERED':\n        tokens.invalidate(job.token); return FAILED\n    sleep(random.uniform(0, min(30, 1 * 2 ** attempt)))\n  dlq.put(job); return FAILED\n"
+   }
+  ],
+  "sequence": "Client B   FeedSvc    FeedDB     Kafka     Processor     Redis    Cassandra   Router   APNs   A\n   |  like   |          |          |           |           |          |          |       |    |\n   |-------->| tx: like+outbox     |           |           |          |          |       |    |\n   |         |--------->|          |           |           |          |          |       |    |\n   |  200 OK |          |  CDC     |           |           |          |          |       |    |\n   |<--------|          |--------->|  poll     |           |          |          |       |    |\n   |         |          |          |---------->| SETNX idem|          |          |       |    |\n   |         |          |          |           |---------->|          |          |       |    |\n   |         |          |          |           | agg incr  |          |          |       |    |\n   |         |          |          |           |---------->|          |          |       |    |\n   |         |          |          |           | upsert group         |          |       |    |\n   |         |          |          |           |--------------------->|          |       |    |\n   |         |          |          |           | INCR unread          |          |       |    |\n   |         |          |          |           |---------->|          |          |       |    |\n   |         |          |          |  commit   | job (window close)   |          |       |    |\n   |         |          |          |<----------|-------------------------------->|       |    |\n   |         |          |          |           |           |  rate ok?|<---------|       |    |\n   |         |          |          |           |           |--------->|  push    |       |    |\n   |         |          |          |           |           |          |          |------>|--->|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Celebrity post receives 2,000 likes per second",
+   "handling": "All events for that recipient land on one Kafka partition; aggregation turns them into in-place counter updates in Redis, and Cassandra group rows are written at most every few seconds (coalesced). One push per window with collapse-id. If one partition is overloaded, the processor batches events per key within a poll."
+  },
+  {
+   "case": "Duplicate event delivered after consumer rebalance",
+   "handling": "Idempotency key on event_id with SET NX and 24 h TTL; the group upsert and counter increments sit behind it so replays are no-ops."
+  },
+  {
+   "case": "Like then unlike within 2 seconds",
+   "handling": "If the window is open, the unlike decrements and removes the actor; if count becomes 0, the group is deleted and the push is never sent because the push decision happens at window close."
+  },
+  {
+   "case": "Unlike event arrives before the like event (reordering)",
+   "handling": "Both are keyed by recipient so they are on the same partition and ordered; across topics, the processor keeps a short tombstone (removed actor set, TTL 10 min) so a late like for a tombstoned pair is ignored."
+  },
+  {
+   "case": "User blocks the actor while a notification is in flight",
+   "handling": "Block events invalidate the processor cache immediately; the router re-checks the block list at send time (the last gate), and inbox reads filter blocked actors at render time."
+  },
+  {
+   "case": "Quiet hours across time zones and DST",
+   "handling": "Store the IANA time zone, compute local time at send, defer pushes to quiet_end with a random 0-15 minute spread to avoid a 7am thundering herd."
+  },
+  {
+   "case": "APNs outage for 40 minutes",
+   "handling": "APNs queue grows; FCM unaffected thanks to bulkheads. Jobs have expires_at; on recovery, stale like-pushes are dropped and only high-priority pushes younger than their TTL are sent, so users do not get 40 minutes of buzzes at once."
+  },
+  {
+   "case": "Device token rotated or app uninstalled",
+   "handling": "Provider returns 410 or UNREGISTERED; token marked invalid and pruned. Tokens unseen for 60 days are deleted proactively."
+  },
+  {
+   "case": "Self-action (I like my own post) or mention of myself",
+   "handling": "Filtered at recipient resolution; never generates a notification."
+  },
+  {
+   "case": "Comment mentions 50 users, a spam pattern",
+   "handling": "Cap mentions per comment that trigger notifications (for example 10), apply per-actor rate limit on mention notifications, and route new or low-trust accounts' mentions to the inbox only."
+  },
+  {
+   "case": "Badge drift after Redis failover loses recent increments",
+   "handling": "Counter is a cache; on inbox open we recompute unread as rows with updated_at > last_read_at in the first few buckets and reset the counter."
+  },
+  {
+   "case": "User on a flaky 2G network opens the inbox repeatedly",
+   "handling": "Opaque stable cursors, small payloads (actor avatars as CDN URLs), first page cached, and mark-read is idempotent with up_to timestamp so retries do not reset newer items."
+  },
+  {
+   "case": "Object deleted (post removed by moderation) after notifications sent",
+   "handling": "Delete event marks groups hidden=true; inbox renders skip hidden rows; tapping a stale push deep link shows a graceful 'content unavailable'."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Kafka",
+   "layer": "Event bus",
+   "overview": "A distributed, partitioned, replicated append-only log with consumer groups and offset-based replay.",
+   "why": "Decouples the feed write path from notification work, gives per-recipient ordering via partition keys, absorbs viral bursts, and allows replay after a processor bug.",
+   "alternatives": "Amazon SQS/SNS (simpler, no ordering per key without FIFO limits); Pulsar (tiered storage, per-key ordering too, smaller ecosystem); RabbitMQ (good routing, weaker replay and throughput at this scale)."
+  },
+  {
+   "name": "Debezium CDC with transactional outbox",
+   "layer": "Event publication",
+   "overview": "Reads the database change log and publishes outbox rows as Kafka events.",
+   "why": "Avoids dual-write bugs where the like commits but the event is lost (or vice versa).",
+   "alternatives": "Application dual-write (simple but inconsistent); polling publisher on the outbox table (simpler infra, more DB load and latency)."
+  },
+  {
+   "name": "Apache Cassandra",
+   "layer": "Inbox store",
+   "overview": "A wide-column, leaderless, partitioned database with tunable consistency and fast sequential writes via LSM trees.",
+   "why": "Write-heavy, append-mostly, per-user range scans newest-first and TTL expiry match its model exactly; scales linearly by adding nodes.",
+   "alternatives": "DynamoDB (managed, same model, cost at 100K WCU); HBase (strong consistency, heavier ops); sharded MySQL (fine at smaller scale, painful resharding)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Counters, windows, rate limits",
+   "overview": "In-memory key-value store with atomic operations and Lua scripting, sharded into 16,384 hash slots.",
+   "why": "Sub-millisecond INCR for badges, atomic Lua for token buckets and aggregation, TTL for idempotency keys.",
+   "alternatives": "Memcached (no atomic structures beyond incr, no Lua); storing counters in Cassandra counters (slower, non-idempotent increments)."
+  },
+  {
+   "name": "APNs and FCM",
+   "layer": "Push delivery",
+   "overview": "Apple and Google push gateways; APNs is HTTP/2 with token-based auth, FCM HTTP v1 API with OAuth.",
+   "why": "The only routes to wake iOS and Android devices; support collapse ids and priority.",
+   "alternatives": "Vendors like OneSignal or Braze (faster to build, cost and lock-in); self-hosted MQTT for Android only in some markets (battery and maintenance cost)."
+  },
+  {
+   "name": "Kubernetes with HPA on consumer lag",
+   "layer": "Compute",
+   "overview": "Container orchestration that autoscales processor pods on custom metrics.",
+   "why": "Processors are stateless; scaling on Kafka lag tracks real backlog better than CPU.",
+   "alternatives": "Serverless consumers (Lambda) - easy but cold starts and per-invocation cost at 25K events/s; fixed VM fleet - cheaper at steady load, slower to react."
+  },
+  {
+   "name": "Prometheus and Grafana, OpenTelemetry",
+   "layer": "Observability",
+   "overview": "Metrics collection and dashboards with distributed tracing propagated through Kafka headers.",
+   "why": "Action-to-push latency needs an end-to-end trace from the feed write to the provider response.",
+   "alternatives": "Datadog (managed, costly at high cardinality); ELK only (logs not great for latency SLOs)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Fan-out and the transactional outbox (event-driven decoupling)",
+   "explain": "Fan-out is turning one event into work for many consumers or recipients. In a notification system, one comment can fan out to the post owner, to every mentioned user and to every earlier participant in the thread. If the producer did this work synchronously, its latency and availability would become the sum of every downstream system. The standard fix is to publish an event to a durable log and let independent consumers do the fan-out at their own pace. The difficulty is publishing reliably. A service that writes to its database and then publishes to Kafka has a dual-write problem: if it crashes between the two, the database says the like happened but no event exists, or, if it publishes first, an event exists for a like that rolled back. The transactional outbox pattern solves this by writing the business row and an outbox row in the same local transaction. A separate relay, usually change data capture reading the database log, publishes outbox rows to the broker. Because the relay may crash after publishing but before recording progress, it can publish twice, so the pattern gives at-least-once delivery and consumers must be idempotent. Ordering is preserved per key if the relay keys messages consistently and the broker partitions by that key.",
+   "in_this_design": "The feed service writes like plus outbox row atomically; CDC publishes to feed-actions keyed by recipient_id. Feed write latency rises by one extra row insert (under 1 ms) instead of an RPC to the notification system, and a notification outage never fails a like.",
+   "key_points": [
+    "Never dual-write to a DB and a broker; write the outbox in the same transaction.",
+    "Outbox plus CDC gives at-least-once, so consumers must be idempotent.",
+    "Partition key equals the ordering scope you need; here, the recipient.",
+    "Fan-out happens downstream, so producers stay fast and isolated from consumer failures."
+   ],
+   "qa": [
+    {
+     "q": "Why not just call the notification service over gRPC after the like commits?",
+     "a": "It couples feed availability and latency to notification health and to APNs/FCM indirectly, and a crash after commit loses the notification. Async with outbox makes the like path independent and the event durable."
+    },
+    {
+     "q": "What ordering guarantee do you have?",
+     "a": "Per recipient within a topic, because the key is recipient_id. Across topics (high vs normal) there is no ordering, which is fine because they are different notification types; for like/unlike pairs we keep them on the same topic."
+    },
+    {
+     "q": "How do you handle outbox table growth?",
+     "a": "CDC reads the binlog so the outbox can be deleted shortly after insert or partitioned by day and dropped; the log, not the table, is the source for the relay."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and effectively-once delivery",
+   "explain": "Distributed systems can easily give at-most-once (fire and forget, may lose) or at-least-once (retry until acknowledged, may duplicate). True exactly-once delivery across networks is impossible in general because an acknowledgement can be lost after the work was done. What we build instead is exactly-once effect: at-least-once delivery combined with idempotent processing. An operation is idempotent if doing it twice has the same result as once. Some operations are naturally idempotent, like setting last_read_at to max(current, t) or upserting a row by a deterministic key. Others, like incrementing a counter or sending a push, are not, so we guard them with an idempotency key: a unique id for the logical operation stored in a fast store with a time-to-live. Before doing the side effect, the worker atomically claims the key (SET NX). If the claim fails, the work was already done or is in progress. The TTL must be longer than the maximum redelivery horizon. There is a subtle gap: if the worker claims the key and crashes before doing the side effect, the operation is lost; systems that cannot tolerate that store a state (claimed, done) and let claims expire quickly, or make the side effect itself idempotent at the receiver, for example with APNs collapse ids.",
+   "in_this_design": "event_id is the idempotency key for processing; (group_id, window_id, channel) is the key for a push; inbox writes are deterministic upserts; mark-read uses max(). APNs apns-collapse-id and FCM collapse_key make a repeated push replace the earlier one on the device instead of stacking.",
+   "key_points": [
+    "Exactly-once delivery is a myth; exactly-once effect is achievable.",
+    "Make writes upserts by deterministic keys wherever possible.",
+    "Guard non-idempotent side effects with an idempotency key and TTL longer than the replay window.",
+    "Use provider collapse keys as a last line of defence on the device."
+   ],
+   "qa": [
+    {
+     "q": "Kafka has exactly-once semantics; why do you still need idempotency keys?",
+     "a": "Kafka EOS covers read-process-write within Kafka. Our side effects are Redis, Cassandra and APNs, which are outside that transaction, so a replay after a crash would repeat them."
+    },
+    {
+     "q": "What TTL for the idempotency key?",
+     "a": "Longer than the worst redelivery: consumer rebalance or replay windows of hours. 24 hours costs about 2B keys x 50 bytes = 100 GB at peak, so we may store a compact hash or use a Bloom-filter front plus exact check."
+    },
+    {
+     "q": "What if the worker crashes after SETNX but before writing?",
+     "a": "Store a state with a short claim TTL (for example 60 s) and set done on completion; a redelivery after expiry reprocesses. Since the inbox upsert is idempotent anyway, reprocessing is safe."
+    }
+   ]
+  },
+  {
+   "name": "Aggregation windows and coalescing (write amplification control)",
+   "explain": "Many events are only valuable in aggregate. Coalescing means merging several updates to the same key into one write or one message. A time window defines how long we wait to merge: a tumbling window is a fixed, non-overlapping interval (every 60 s), a sliding window moves with time, and a session window closes after a gap of inactivity. Coalescing trades latency for efficiency: the longer the window, the fewer writes and messages, but the later the first signal. A common hybrid is leading-edge plus trailing-edge: send immediately for the first event so the user gets prompt feedback, then suppress and accumulate, and emit at most one summary at the end of the window. Coalescing also protects downstream systems from hot keys, because a burst of 100,000 updates to one key becomes a handful of writes. The state of open windows lives somewhere fast and shared (Redis, or the stream processor's state store like Flink's RocksDB backend) and must survive restarts, or at least degrade gracefully by emitting slightly more messages than ideal.",
+   "in_this_design": "Likes use a leading-edge push then a 60 s to 30 min trailing window that grows with recent push volume for that user; the inbox group row is updated in place with count and the latest three actors. Mentions and replies skip aggregation for latency.",
+   "key_points": [
+    "Aggregate by (recipient, object, type).",
+    "Leading edge for responsiveness, trailing edge for the summary.",
+    "Window length is a product knob per type, tuned by opt-out and open rates.",
+    "Coalescing is the main defence against celebrity hot keys."
+   ],
+   "qa": [
+    {
+     "q": "Why not aggregate at read time instead?",
+     "a": "Read-time grouping keeps storage simple but does not reduce pushes, which are the expensive and annoying part; and it makes every inbox read do grouping work over many rows."
+    },
+    {
+     "q": "What happens to window state if Redis loses it?",
+     "a": "We lose suppression for open windows and may send one extra push per group; the inbox remains correct because the Cassandra group upsert is the durable record."
+    },
+    {
+     "q": "How would you pick the window?",
+     "a": "Start with 60 s for active users, longer for heavy recipients, and run experiments measuring opens, return visits and opt-outs per type."
+    }
+   ]
+  },
+  {
+   "name": "Partitioning by key and hot partitions",
+   "explain": "Partitioning (sharding) splits data or work across machines by a key so each machine handles a fraction. Hash partitioning computes hash(key) mod N or uses consistent hashing so keys spread uniformly; range partitioning keeps adjacent keys together, good for scans but prone to hotspots. The key choice decides three things: which operations are single-partition (fast, ordered, atomic), which become scatter-gather, and where hot spots appear. Uniform hashing spreads keys, not load: if one key receives a large share of traffic, its partition becomes the bottleneck regardless of N. Mitigations for hot keys include splitting the key into sub-keys (salting) and merging on read, caching, coalescing writes before they hit the partition, and giving heavy keys dedicated capacity. In Kafka, the partition is also the unit of ordering and of consumer parallelism; a consumer group can have at most one active consumer per partition, so partition count caps parallelism and should be set with headroom because increasing it remaps keys.",
+   "in_this_design": "Kafka and Cassandra are both partitioned by recipient_id, so a user's notifications are ordered and the inbox page is a single-partition range scan. Cassandra partitions are bucketed by month to bound size. Celebrities are the hot keys; coalescing in the processor and Redis absorbs them.",
+   "key_points": [
+    "Partition key = unit of ordering, locality and hotness.",
+    "Hashing spreads keys, not traffic; plan for heavy hitters.",
+    "Bound partition size with time buckets (Cassandra partitions ideally under about 100 MB).",
+    "Over-provision Kafka partitions (512) because adding later reshuffles keys."
+   ],
+   "qa": [
+    {
+     "q": "Why not partition the inbox by notification id?",
+     "a": "Reads are 'my latest notifications', so id partitioning turns every read into scatter-gather across all nodes."
+    },
+    {
+     "q": "How do you stop one creator from lagging their Kafka partition?",
+     "a": "Batch per key within each poll so 1,000 likes become one Redis call and one write; if still hot, route that recipient's like events to a dedicated topic with its own consumers."
+    },
+    {
+     "q": "Why bucket by month?",
+     "a": "Active users accumulate notifications indefinitely; buckets cap partition size and make TTL compaction cheaper, while page 1 still touches only the latest bucket."
+    }
+   ]
+  },
+  {
+   "name": "Rate limiting with token buckets",
+   "explain": "Rate limiting caps how often an action can happen. The token bucket algorithm holds up to C tokens and refills at rate r per second; each action consumes one token and is allowed only if a token is available. It permits short bursts up to C while enforcing an average rate r. The leaky bucket instead smooths output at a constant rate. Fixed window counters (count per minute) are simple but allow double bursts at window boundaries; sliding window logs are exact but memory-heavy; sliding window counters approximate with two buckets. In a distributed system the bucket state must live in a shared store and be updated atomically, typically with a Redis Lua script that computes refill and consumption in one step, avoiding read-modify-write races. Rate limits can protect systems (requests per second to a dependency) or protect people (how many alerts a user receives); the second kind is a product decision with a technical implementation.",
+   "in_this_design": "Per-user per-priority token buckets in Redis: low priority capacity 5, refill 1 per 10 minutes; high priority capacity 30 per hour; plus a daily cap. A denied push is not lost, the notification is still in-app. A separate per-provider limiter keeps us under APNs/FCM throughput guidance.",
+   "key_points": [
+    "Token bucket = bursts up to C, average rate r.",
+    "Make the check atomic (Lua) to avoid races between processors.",
+    "Rate-limit the push, never the inbox record.",
+    "Two layers: protect users (per user) and protect providers (per channel)."
+   ],
+   "qa": [
+    {
+     "q": "Why token bucket and not fixed window?",
+     "a": "Fixed windows allow 2x bursts at the boundary and produce synchronized resets; token bucket gives smooth average behaviour with an explicit burst size."
+    },
+    {
+     "q": "What if Redis is unavailable?",
+     "a": "Fail closed for low priority (skip push, still in-app) and fail open with a local in-process limiter for high priority, so we never spam and never miss a mention push."
+    },
+    {
+     "q": "How do you choose limits?",
+     "a": "From experiments: plot opt-out and uninstall rates against pushes per day per segment, then set caps where marginal opens stop exceeding marginal opt-outs."
+    }
+   ]
+  },
+  {
+   "name": "Retries, exponential backoff with jitter, and bulkheads",
+   "explain": "Retries recover from transient failures but can amplify outages: if every client retries immediately, a struggling dependency gets more load exactly when it can least handle it. Exponential backoff spaces retries out (1 s, 2 s, 4 s...) and jitter randomises them so clients do not retry in lockstep; 'full jitter' picks a random delay between zero and the exponential cap and spreads load best. Retry budgets cap retries as a fraction of total traffic (for example 10 percent). Only retriable errors should be retried: timeouts, 429, 503, not 400 or auth errors. Bulkheads, named after ship compartments, isolate resources (thread pools, connection pools, queues) per dependency so one slow dependency cannot exhaust shared resources and sink everything. Circuit breakers stop calling a dependency that is clearly failing and probe periodically to recover. Together these turn a dependency outage into a contained degradation rather than a cascading failure. A related idea is deadlines: work that is no longer useful after a time should be dropped, which bounds queue growth.",
+   "in_this_design": "APNs and FCM each have their own queue, worker pool and connection pool. Calls time out at 2 s, retry up to 3 times with full jitter on 429/5xx, then go to a DLQ. Every push job has expires_at by type (like 1 h, mention 24 h) so recovery never floods users with stale pushes. Circuit breaker opens at 50 percent errors over 30 s.",
+   "key_points": [
+    "Backoff plus jitter prevents synchronized retry storms.",
+    "Retry only retriable errors, and within a budget.",
+    "Bulkhead per provider so an APNs outage does not slow Android.",
+    "Give work a deadline; stale notifications are worse than none."
+   ],
+   "qa": [
+    {
+     "q": "APNs returns 429 at peak. What do you do?",
+     "a": "Slow down globally for that provider using the limiter, back off with jitter, and let low-priority jobs expire; do not open more connections, which makes it worse."
+    },
+    {
+     "q": "Why a deadline on push jobs?",
+     "a": "After a 40 minute outage, sending 40 minutes of like pushes at once is a spam event. Expiring them keeps the experience sane; the inbox still has the data."
+    },
+    {
+     "q": "Where do failed jobs go?",
+     "a": "A DLQ with reason codes; we alert on DLQ rate and replay only high-priority ones after a fix."
+    }
+   ]
+  },
+  {
+   "name": "Eventual consistency of counters and read-your-writes",
+   "explain": "A derived counter, such as an unread badge, is a cache of a fact that lives elsewhere (the set of unread notifications). Keeping it in a fast store gives cheap reads but introduces drift: increments can be lost on failover, applied twice on retry, or race with mark-read. Eventual consistency accepts temporary divergence as long as the system converges. Convergence needs a reconciliation path, for example recomputing from the source of truth on certain triggers or periodically. Read-your-writes is a session guarantee that a user sees their own updates; for badges, after tapping 'mark all read' the user must see zero immediately on that device, even if other devices lag. Techniques include returning the new value in the write response, routing the user to the same replica, or having the client apply the write optimistically. Using monotonic operations like max(last_read_at, t) makes concurrent updates from several devices converge without coordination.",
+   "in_this_design": "Unread count is a Redis counter (fast path) reconciled from Cassandra on inbox open; last_read_at uses max() so multiple devices converge; POST /read returns count 0 so the acting device is immediately consistent.",
+   "key_points": [
+    "Counters are caches; keep a rebuild path from the source of truth.",
+    "Monotonic updates (max) converge without locks.",
+    "Give the acting client read-your-writes; let other devices converge.",
+    "Badge accuracy is a product metric, measure drift."
+   ],
+   "qa": [
+    {
+     "q": "Why not compute unread count with a query each time?",
+     "a": "Badge reads are about 200K/s at peak; counting rows per request would multiply Cassandra load by orders of magnitude."
+    },
+    {
+     "q": "How can the badge go negative or wrong?",
+     "a": "Mark-read racing with an increment, or a lost increment after failover. We clamp at 0, and reconcile on inbox open."
+    },
+    {
+     "q": "Is strong consistency ever needed here?",
+     "a": "Only for safety rules like blocks; we re-check those at send time against the source rather than relying on cached state."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Fan-out on write vs compute notifications at read",
+   "options": "Write rows per recipient at event time; or derive from activity logs when the inbox is opened",
+   "choice": "Fan-out on write",
+   "why": "Push requires decision at event time anyway, and recipient counts per event are small (owner plus a few mentions), unlike feed fan-out to millions of followers."
+  },
+  {
+   "decision": "Aggregation in processor vs at read time",
+   "options": "Stateful windows in Redis; or store raw rows and group on read",
+   "choice": "Processor aggregation with grouped rows",
+   "why": "Reduces pushes and writes for viral posts by orders of magnitude; read-time grouping cannot reduce pushes."
+  },
+  {
+   "decision": "Cassandra vs sharded MySQL for the inbox",
+   "options": "Leaderless LSM wide-column; or relational shards",
+   "choice": "Cassandra",
+   "why": "25K-100K writes/s, TTL expiry, newest-first range scans per user; no cross-row transactions needed."
+  },
+  {
+   "decision": "One topic vs priority lanes",
+   "options": "Single topic for all types; or separate topics and consumer groups for high priority",
+   "choice": "Priority lanes",
+   "why": "A like storm must not delay mentions; separate lanes give independent lag SLOs and scaling."
+  },
+  {
+   "decision": "Build vs buy push delivery",
+   "options": "Own APNs/FCM senders; or vendor (OneSignal, Braze)",
+   "choice": "Build senders, keep vendor as option",
+   "why": "At 200M pushes/day vendor cost is significant and we need custom rate limiting and token hygiene; senders are a small component."
+  },
+  {
+   "decision": "Drop vs delay stale pushes after an outage",
+   "options": "Send everything eventually; or expire by type",
+   "choice": "Expire by type",
+   "why": "Late low-value pushes create spam bursts; the inbox preserves the information."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Kafka consumer lag grows (processor bug or slow Redis)",
+   "behavior": "Autoscale on lag; above 60 s, shed like-pushes (in-app only); high-priority lane unaffected; alert on lag per lane."
+  },
+  {
+   "failure": "Redis shard down",
+   "behavior": "Replica promoted in seconds; during failover, idempotency falls back to Cassandra lightweight check for high priority and accepts rare duplicate low-priority; badge reconciles later."
+  },
+  {
+   "failure": "Cassandra node down",
+   "behavior": "RF 3 with LOCAL_QUORUM writes and reads still succeed with 2 replicas; hinted handoff and repair restore the third."
+  },
+  {
+   "failure": "APNs or FCM outage",
+   "behavior": "Circuit breaker opens for that provider, queue buffers with TTL, other provider unaffected, inbox unaffected; on recovery stale jobs expire."
+  },
+  {
+   "failure": "Bad config pushes window to 0 (spam storm)",
+   "behavior": "Config changes are validated and canaried to 1 percent of users; a global kill switch per type stops pushes within seconds; opt-out-rate alarm."
+  },
+  {
+   "failure": "Region loss",
+   "behavior": "Inbox replicated cross-region asynchronously; users re-routed to the surviving region; in-flight events in the lost region's Kafka may be delayed until recovery (MirrorMaker replica), accepted for notifications."
+  }
+ ],
+ "metrics": [
+  "Action-to-push latency p50/p95/p99 by type and platform.",
+  "Kafka consumer lag per lane and partition (max and sum).",
+  "Push send success rate, 429 and 5xx rate per provider; circuit breaker state.",
+  "Invalid token rate and token prune rate.",
+  "Duplicate push rate (same group and window delivered twice).",
+  "Pushes per user per day distribution; share of users hitting caps.",
+  "Open rate, opt-out rate, uninstall within 24 h of a push.",
+  "Inbox read p99 latency and error rate; badge drift on reconciliation.",
+  "DLQ size and age."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you add ML ranking to decide which notifications to push?",
+   "a": "Insert a scoring step in the router: features like relationship strength, past opens by type, time since last push. Score above a threshold pushes, else inbox only. Keep rules as guardrails (blocks, quiet hours, caps) after the model, and A/B test with opt-out as a guardrail metric."
+  },
+  {
+   "q": "A post goes viral with 5M likes in an hour. Walk me through the load.",
+   "a": "About 1,400 likes/s on one recipient key. Processor batches per poll, Redis hash increments are coalesced, Cassandra group row written once every few seconds, and pushes limited to one per growing window (for example at 100, 1K, 10K, 100K milestones). Kafka partition throughput of a few MB/s is fine."
+  },
+  {
+   "q": "How do you make sure no notification ever shows from a blocked user?",
+   "a": "Three gates: filter in processor, re-check at send time against the authoritative block store, and filter at inbox render time. Block writes are strongly consistent in their own store."
+  },
+  {
+   "q": "Why not use WebSockets for in-app real-time instead of push?",
+   "a": "We can, for foregrounded clients: the router checks presence and sends over an existing socket instead of a push. But backgrounded mobile apps can only be woken by APNs/FCM, so push remains necessary."
+  },
+  {
+   "q": "How do you support email digests?",
+   "a": "A daily batch job reads unread groups for users inactive 3+ days, ranks the top 5, renders templates, and sends via an email provider with its own rate limits and unsubscribe handling."
+  },
+  {
+   "q": "How do you test this without spamming real users?",
+   "a": "Shadow mode: run the new pipeline writing to a shadow table and logging would-send decisions; compare counts and distributions; then canary by user cohort with a kill switch."
+  },
+  {
+   "q": "How do you handle multi-language text?",
+   "a": "Store structured notifications (type, actors, object, count) and render text at read or send time using the user's locale; push payloads use localization keys where the OS supports them."
+  }
+ ],
+ "key_points": [
+  "Notifications are an event pipeline: outbox, Kafka by recipient, idempotent processors.",
+  "The real enemy is spam, not throughput: aggregate by (recipient, object, type), rate-limit pushes, respect quiet hours.",
+  "Separate lanes so likes never delay mentions and replies.",
+  "Inbox in Cassandra partitioned by recipient with month buckets; badge as a Redis counter reconciled from truth.",
+  "At-least-once plus idempotency keys plus collapse ids gives effectively-once to the user.",
+  "Bulkhead each push provider, retry with full jitter, and expire stale pushes.",
+  "Blocks are checked at send time against the authoritative store.",
+  "Measure action-to-push latency, lag, provider errors, and opt-out rate."
+ ],
+ "quiz": [
+  {
+   "q": "A celebrity post receives 3,000 likes per second. Which single change most reduces push volume without hurting the experience?",
+   "options": [
+    "Add more Kafka partitions for the topic",
+    "Increase Cassandra replication factor",
+    "Aggregate likes by (recipient, post, type) with a leading-edge push and a trailing window",
+    "Send pushes via email instead"
+   ],
+   "answer": 2,
+   "why": "Aggregation collapses thousands of events into one updating notification and at most one push per window. More partitions do not help because all events share one recipient key and still produce one push each."
+  },
+  {
+   "q": "Why does the feed service use a transactional outbox instead of publishing to Kafka directly after commit?",
+   "options": [
+    "It makes the like and its event commit or fail together, avoiding lost or phantom events",
+    "Kafka cannot accept writes from web services",
+    "It guarantees exactly-once delivery to the device",
+    "It reduces Kafka storage costs"
+   ],
+   "answer": 0,
+   "why": "The outbox removes the dual-write gap. It does not provide exactly-once to the device; the relay can publish twice, so consumers still need idempotency."
+  },
+  {
+   "q": "Which partition key best fits the notification Kafka topic?",
+   "options": [
+    "actor_id",
+    "event_id",
+    "post_id",
+    "recipient_id"
+   ],
+   "answer": 3,
+   "why": "Recipient ordering and per-recipient aggregation need all of one recipient's events on one partition. post_id is tempting but a mention or follow has different objects for the same recipient, and the inbox is per recipient."
+  },
+  {
+   "q": "After a consumer rebalance, the same like event is processed twice. What prevents a double badge increment?",
+   "options": [
+    "Kafka acks=all",
+    "An idempotency key on event_id claimed with SET NX before side effects",
+    "Cassandra LOCAL_QUORUM",
+    "APNs collapse id"
+   ],
+   "answer": 1,
+   "why": "The idempotency gate stops repeated side effects. Collapse id only dedupes on the device for pushes; it does nothing for the Redis counter."
+  },
+  {
+   "q": "APNs is down for 40 minutes. What is the best behaviour on recovery?",
+   "options": [
+    "Send every queued push immediately to catch up",
+    "Drop the whole queue including mentions",
+    "Send queued high-priority pushes still within their TTL and expire stale like-pushes",
+    "Switch iOS users to FCM"
+   ],
+   "answer": 2,
+   "why": "Deadlines per type keep valuable pushes and drop stale low-value ones. Sending everything creates a spam burst; FCM cannot deliver to iOS devices in general."
+  },
+  {
+   "q": "Roughly how many notification candidates per second at average load if there are 2B per day?",
+   "options": [
+    "About 23,000",
+    "About 2,300",
+    "About 230,000",
+    "About 2.3M"
+   ],
+   "answer": 0,
+   "why": "2 x 10^9 / 86,400 is about 23,000. 2,300 is the push rate (200M/day), a common slip."
+  },
+  {
+   "q": "Which limiter best allows a small burst of pushes but caps the average per user?",
+   "options": [
+    "A global semaphore",
+    "Fixed window counter",
+    "Leaky bucket with zero capacity",
+    "Token bucket"
+   ],
+   "answer": 3,
+   "why": "Token bucket explicitly models burst capacity and average refill rate. Fixed windows allow up to 2x bursts at boundaries and synchronised resets."
+  },
+  {
+   "q": "Mentions are delayed by several minutes during a like storm. What is the root fix?",
+   "options": [
+    "Increase the like aggregation window",
+    "Separate high-priority types into their own topic and consumer group",
+    "Add Redis replicas",
+    "Increase APNs timeout"
+   ],
+   "answer": 1,
+   "why": "Head-of-line blocking is the issue; a separate lane isolates mentions. A longer like window reduces pushes but likes still occupy the same partitions and consumers."
+  },
+  {
+   "q": "Why store the unread count in Redis rather than computing it from Cassandra?",
+   "options": [
+    "Cassandra cannot count",
+    "Redis is more durable",
+    "Badge reads are about 10x inbox reads and must be sub-millisecond; counting rows per read is too expensive",
+    "To get strong consistency"
+   ],
+   "answer": 2,
+   "why": "It is a read-volume and latency decision. Redis is less durable, which is why we reconcile from Cassandra."
+  },
+  {
+   "q": "A user taps 'mark all read' on the phone while the laptop sends an older mark-read. How do you keep state correct?",
+   "options": [
+    "Set last_read_at = max(existing, up_to)",
+    "Use a distributed lock per user",
+    "Last write wins by arrival time",
+    "Reject the second request"
+   ],
+   "answer": 0,
+   "why": "max() is monotonic and converges regardless of order. Last write wins by arrival would let the older request move the marker backwards."
+  },
+  {
+   "q": "Which Cassandra primary key fits 'newest notifications for user, paginated'?",
+   "options": [
+    "PRIMARY KEY (group_id)",
+    "PRIMARY KEY ((type), recipient_id)",
+    "PRIMARY KEY ((updated_at), recipient_id)",
+    "PRIMARY KEY ((recipient_id, bucket), updated_at, group_id) DESC on updated_at"
+   ],
+   "answer": 3,
+   "why": "Partition by recipient and month bucket, cluster newest first. Partitioning by time creates a single hot partition per instant and needs scatter-gather per user."
+  },
+  {
+   "q": "The like and unlike for the same pair arrive within the same aggregation window. What should happen?",
+   "options": [
+    "Send a push for the like and a retraction push",
+    "Decrement the group; if count is 0, delete it and send no push",
+    "Ignore the unlike",
+    "Send the push and keep the count"
+   ],
+   "answer": 1,
+   "why": "Because pushing happens at window close, undoing within the window cancels cleanly. Retraction pushes are not supported reliably and would be noise."
+  },
+  {
+   "q": "Which error should NOT be retried by the push sender?",
+   "options": [
+    "HTTP 503 from FCM",
+    "Timeout after 2 s",
+    "APNs 410 Unregistered",
+    "HTTP 429 Too Many Requests"
+   ],
+   "answer": 2,
+   "why": "410 means the token is dead; retrying is wasted and we should delete the token. 429 is tempting to treat as fatal but is retriable with backoff."
+  },
+  {
+   "q": "Why add jitter to exponential backoff?",
+   "options": [
+    "To avoid many clients retrying in lockstep and creating load spikes",
+    "To make retries faster on average",
+    "To guarantee ordering",
+    "Because APNs requires it"
+   ],
+   "answer": 0,
+   "why": "Jitter de-synchronises retries. Without it, clients that failed together retry together and re-create the spike."
+  },
+  {
+   "q": "Inbox storage is 210 GB/day with 90-day retention and RF 3. About how much disk?",
+   "options": [
+    "About 6 TB",
+    "About 19 TB",
+    "About 570 TB",
+    "About 57 TB"
+   ],
+   "answer": 3,
+   "why": "210 GB x 90 = about 19 TB logical; x 3 replicas = about 57 TB. 19 TB forgets replication."
+  },
+  {
+   "q": "A user blocks someone, but 2 seconds later still gets a push from them. Which gate is missing?",
+   "options": [
+    "Kafka ordering",
+    "A re-check of the authoritative block list at send time",
+    "A longer idempotency TTL",
+    "A larger aggregation window"
+   ],
+   "answer": 1,
+   "why": "Cached preferences in processors can be stale; the final send-time check closes the gap. A larger window only delays, it does not filter."
+  },
+  {
+   "q": "Why does each provider get its own queue and worker pool?",
+   "options": [
+    "Providers require separate auth",
+    "To improve ordering",
+    "Bulkheading: a slow APNs must not consume threads needed for FCM",
+    "To reduce Kafka partitions"
+   ],
+   "answer": 2,
+   "why": "Shared pools let one slow dependency exhaust capacity. Separate auth is true but would not need separate pools."
+  },
+  {
+   "q": "What is the main downside of a very long like aggregation window (for example 6 hours)?",
+   "options": [
+    "Users lose the timely feedback loop that drives return visits",
+    "Higher Cassandra storage",
+    "More duplicate pushes",
+    "Kafka ordering breaks"
+   ],
+   "answer": 0,
+   "why": "Long windows trade engagement freshness for fewer pushes; storage barely changes because the group row is updated in place."
+  },
+  {
+   "q": "Badge drift is detected after a Redis failover. What is the right reconciliation?",
+   "options": [
+    "Flush all counters to zero",
+    "Ignore it",
+    "Replay all of Kafka",
+    "Recompute unread for the user from rows newer than last_read_at when they open the inbox"
+   ],
+   "answer": 3,
+   "why": "Lazy per-user reconciliation from the source of truth is cheap and targeted. Zeroing everyone hides real unread items; full replay is very expensive."
+  },
+  {
+   "q": "The processor fleet autoscaler uses CPU. Lag still grows while CPU is low. Most likely cause?",
+   "options": [
+    "Kafka is out of disk",
+    "Processors are blocked on I/O to Redis or Cassandra, so lag is the right scaling signal",
+    "APNs is down",
+    "Too many partitions"
+   ],
+   "answer": 1,
+   "why": "I/O-bound consumers show low CPU while falling behind; scale on consumer lag. APNs being down affects the push lane, not processor CPU or lag on its own."
+  },
+  {
+   "q": "For a foregrounded mobile app, what is the most efficient way to show a new notification instantly?",
+   "options": [
+    "Always send an APNs push",
+    "Poll every second",
+    "Deliver over the app's existing WebSocket connection when presence shows it online",
+    "Send an email"
+   ],
+   "answer": 2,
+   "why": "Using the live connection avoids provider cost and latency. Polling every second wastes battery and server capacity."
+  }
+ ],
+ "references": [
+  {
+   "title": "Pinterest Engineering: User-state based notification volume optimization",
+   "url": "https://medium.com/pinterest-engineering/user-state-based-notification-volume-optimization-7764118f73ff"
+  },
+  {
+   "title": "Knock: Building a batched notification engine",
+   "url": "https://knock.app/blog/building-a-batched-notification-engine"
+  },
+  {
+   "title": "Notification System: Design that scales (DevGenius)",
+   "url": "https://blog.devgenius.io/notification-system-design-that-scales-361e03b1d9e0"
+  },
+  {
+   "title": "Designing a notification system that fans out to push, email and SMS (DEV)",
+   "url": "https://dev.to/roni_das_b1b76c5ee6583027/designing-a-notification-system-that-fans-out-to-push-email-and-sms-3lc4"
+  }
+ ]
+}

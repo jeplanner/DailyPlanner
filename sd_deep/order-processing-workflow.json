@@ -1,0 +1,1286 @@
+{
+ "slug": "order-processing-workflow",
+ "title": "Design an event-driven order processing workflow (e-commerce)",
+ "prompt": "Design an event-driven order processing workflow.",
+ "group": "messaging",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 110,
+ "summary": "An order touches inventory, payments, fulfilment and notifications owned by different services and databases, so there is no single ACID transaction to lean on. The core tension is consistency without distributed locks: never oversell, never charge without an order, never lose an order, while surviving duplicate events, PSP webhooks that arrive late or twice, and 20x sale-day spikes. The answer is a saga with explicit compensations, transactional outboxes, idempotent consumers and reconciliation as the final safety net.",
+ "framework": {
+  "clarify": [
+   "Scale: I will assume a large marketplace with ~10M orders/day normally and a sale peak of ~25k orders/s for the first minutes, with heavy skew on a few hero SKUs.",
+   "Payment model: prepaid (UPI, cards, wallets, net banking) plus cash-on-delivery? COD skips the payment step but needs fraud and serviceability checks. Prepaid uses authorise then capture, or direct capture for UPI.",
+   "When is stock committed: at add-to-cart, at checkout, or at payment? I will reserve at checkout with a 15-minute TTL and commit on payment success, which is the standard trade-off between overselling and blocking stock.",
+   "What consistency is required where: inventory and payment must be strongly correct (no oversell, no double charge); order status views and notifications can be eventually consistent within seconds.",
+   "Multi-seller and multi-warehouse: an order may split into shipments from different warehouses and sellers. I will model order -> order items -> shipments.",
+   "What does the customer see synchronously? I will return an order id and payment session within ~300 ms; everything after payment is async.",
+   "Cancellation and returns: in scope up to shipment (cancel releases stock and refunds); post-delivery returns as a separate workflow.",
+   "Failure tolerance: what if the PSP debits money but our callback is lost? We need reconciliation with the PSP and an auto-refund policy (e.g. refund within T+1 if no order confirmed)."
+  ],
+  "design": [
+   "Baseline: a monolith with one database doing reserve stock, charge payment and create order in one transaction. It works at small scale; it breaks because the PSP call cannot be inside a DB transaction, inventory becomes a global lock hot spot during sales, and teams cannot deploy independently.",
+   "Services own their data: Order, Inventory, Payment, Fulfilment, Notification. They communicate through Kafka events keyed by order_id, and every state change plus its event is written atomically using the transactional outbox pattern (row + outbox row in one local transaction, relayed to Kafka by CDC).",
+   "Checkout critical path: Order service synchronously calls Inventory to reserve (atomic conditional decrement per sku x warehouse with a TTL), writes the order as PENDING_PAYMENT plus OrderCreated in the outbox, and returns a payment session. Synchronous reservation gives the user an immediate 'out of stock' answer.",
+   "Saga orchestrator (a state machine per order, persisted in the orders DB or a workflow engine like Temporal) drives the rest: wait for PaymentCaptured or timeout, then ConfirmReservation, then CreateShipment; on failure, run compensations in reverse (refund, release stock, cancel order).",
+   "Payment service wraps PSPs with idempotency keys (order_id + attempt), consumes webhooks idempotently, and emits PaymentAuthorized/Captured/Failed via its own outbox. A reconciliation job compares PSP settlement files with our ledger every few minutes and daily.",
+   "Consumers are idempotent: each keeps a processed_events table (event_id unique) updated in the same transaction as its state change (the inbox pattern), so redelivery is harmless.",
+   "Read side (CQRS): order history and seller dashboards are projections built from events into a read-optimised store; notifications consume the same events."
+  ],
+  "defend": [
+   "Bottleneck: inventory for hot SKUs during sales. Split stock into N sub-buckets per sku x warehouse (stock sharding), serve reservations from Redis with Lua atomic decrement backed by a durable reservation log, and put a virtual queue/token gate in front of hero SKUs so only as many users as there are units reach checkout.",
+   "Scaling writes: orders DB sharded by order_id (or customer_id for history locality); Kafka partitions keyed by order_id give per-order ordering and parallelism; outbox relay per shard.",
+   "Scaling reads: order status from CQRS read models and cache; clients poll or subscribe for status instead of hitting the transactional DB.",
+   "Failure behaviour: every external call has a timeout (PSP 10 s), retries are idempotent with jittered backoff, unknown payment outcomes go to PAYMENT_PENDING and are resolved by PSP status polling and webhooks, never by guessing; circuit breakers per PSP with routing to a healthy PSP; bulkheads separate checkout from post-order processing.",
+   "Correctness nets: saga timeouts (reservation TTL 15 min, payment pending max 30 min), DLQ with alerting, and reconciliation jobs (PSP vs orders, reservations vs orders, warehouse stock vs inventory service) that auto-heal: auto-refund orphan payments, release orphan reservations.",
+   "Measure: checkout success rate, oversell count (target 0), orphan payments (target 0 after T+1), saga stuck count by state and age, event lag per consumer, PSP success rate by method, refund TAT."
+  ],
+  "script": "An order is a business transaction that spans inventory, payments and fulfilment, each owned by a different service with its own database, so I cannot use one ACID transaction. My goal is three invariants: never oversell, never take money without an order or a refund, and never lose an order. First I will confirm scale, payment methods, when stock is reserved, and what the user must see synchronously. I will assume ten million orders a day and a sale burst of around 25 thousand orders a second on a few hot SKUs. The design: checkout synchronously reserves stock with a 15-minute TTL and writes the order plus an OrderCreated event in one local transaction using the outbox pattern. From there an orchestrated saga drives the order through a state machine: wait for payment captured, confirm the reservation, create shipments, notify. If any step fails, it runs compensations in reverse: refund, release stock, cancel. Every consumer is idempotent through an inbox table, and all events are keyed by order id. To defend it I will cover hot SKU contention with sharded stock counters and a queue gate, unknown PSP outcomes, duplicate and out-of-order webhooks, saga timeouts, and the reconciliation jobs that are the final safety net."
+ },
+ "brd": {
+  "problem": "Order volume swings from about 100 orders/s on a normal afternoon to over 20k orders/s in the first minutes of a festive sale. The current checkout couples stock, payment and order creation tightly, causing overselling on hot deals, customers being debited without a confirmed order (generating support tickets and regulatory exposure), and cascading outages when one PSP or the inventory database slows down. Each of these directly hurts GMV, customer trust and seller relationships.",
+  "goals": [
+   "Zero overselling: confirmed orders never exceed sellable stock per sku x warehouse.",
+   "No orphan payments: every successful debit maps to a confirmed order or is auto-refunded within T+1.",
+   "Checkout available and fast during sales (p99 < 500 ms for the synchronous step at 25k orders/s).",
+   "Decouple teams so Order, Inventory, Payment and Fulfilment can scale and deploy independently.",
+   "Full auditability: every order's state history reconstructable from events.",
+   "Graceful degradation when a PSP or downstream system fails (route around, queue, or degrade, never corrupt)."
+  ],
+  "non_goals": [
+   "Building the PSP or bank integrations themselves (we integrate via adapters).",
+   "Warehouse internal operations (pick paths, packing) beyond the shipment API.",
+   "Post-delivery returns and exchanges workflow (separate saga).",
+   "Pricing, promotions and cart computation (inputs to checkout)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Customers",
+    "needs": "Fast checkout, accurate stock, immediate clear status, prompt refunds if anything fails."
+   },
+   {
+    "who": "Sellers",
+    "needs": "Accurate orders against their stock, no oversell penalties, timely fulfilment notifications."
+   },
+   {
+    "who": "Payments and finance",
+    "needs": "Ledger matches PSP settlements; refunds tracked; RBI-compliant handling of failed transactions and refund timelines."
+   },
+   {
+    "who": "Supply chain / warehouses",
+    "needs": "Shipments created only for paid orders, with correct warehouse allocation."
+   },
+   {
+    "who": "Customer support",
+    "needs": "One place to see an order's full timeline and the reason for any failure."
+   },
+   {
+    "who": "Engineering teams",
+    "needs": "Clear service ownership, contracts (event schemas) and independent scaling."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Oversold units",
+    "target": "0 per sale event"
+   },
+   {
+    "metric": "Orphan payments not refunded or reconciled by T+1",
+    "target": "0"
+   },
+   {
+    "metric": "Checkout success rate (excluding user payment failures)",
+    "target": ">= 99.9%"
+   },
+   {
+    "metric": "Synchronous checkout p99",
+    "target": "< 500 ms at peak"
+   },
+   {
+    "metric": "Payment-to-confirmed-order latency",
+    "target": "p99 < 5 s"
+   },
+   {
+    "metric": "Stuck sagas older than SLA (by state)",
+    "target": "< 0.01% of orders, all auto-escalated"
+   },
+   {
+    "metric": "Support tickets about 'money debited, no order'",
+    "target": "-90% vs last year"
+   }
+  ],
+  "constraints": [
+   "PSPs (UPI, cards) have their own latencies (UPI collect flows take tens of seconds) and webhook unreliability; some outcomes are 'pending' for minutes.",
+   "Regulatory: RBI turnaround-time rules for failed transactions mean auto-reversal/refund timelines must be met; card data handling stays with the PSP (tokenisation, no raw PAN storage).",
+   "Inventory truth lives in warehouse systems that sync with some delay; the inventory service must handle corrections.",
+   "Existing Kafka platform and MySQL/Postgres shards; adoption of a workflow engine must fit existing ops skills."
+  ],
+  "risks": [
+   {
+    "risk": "Hot SKU contention causes timeouts and lost sales during deal launches.",
+    "mitigation": "Stock sharding, Redis-based reservation with durable log, virtual queue for hero deals, load tests at 2x expected peak."
+   },
+   {
+    "risk": "Lost or duplicate events corrupt order state.",
+    "mitigation": "Transactional outbox, at-least-once delivery, idempotent inbox consumers, per-order ordering by key, version checks on state transitions."
+   },
+   {
+    "risk": "Unknown payment outcome leads to double charge or orphan debit.",
+    "mitigation": "Idempotent PSP requests, PAYMENT_PENDING state with status polling, reconciliation with PSP reports and auto-refund."
+   },
+   {
+    "risk": "Saga complexity makes failures hard to debug.",
+    "mitigation": "Single orchestrator with explicit state machine, correlation ids, per-order timeline view, stuck-saga dashboards."
+   },
+   {
+    "risk": "Reservation TTL too short or too long hurts conversion or blocks stock.",
+    "mitigation": "Tune per payment method (UPI 10 min, cards 15 min, EMI 20 min); measure abandonment and release rates."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Shopper on mobile",
+    "needs": "Tap 'Place order', pay with UPI, and see confirmation within seconds; clear message if out of stock or payment fails."
+   },
+   {
+    "name": "Seller / brand",
+    "needs": "Accurate order feed and stock deduction; no orders for stock they do not have."
+   },
+   {
+    "name": "Support agent",
+    "needs": "Order timeline with each state transition, event and failure reason; ability to trigger refund or cancellation safely."
+   },
+   {
+    "name": "Finance ops",
+    "needs": "Daily reconciliation report of payments, refunds and orders with exceptions surfaced."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want stock reserved when I click 'Place order' so that the item is not sold to someone else while I pay.",
+   "As a shopper, I want an immediate out-of-stock message instead of a later cancellation so that I can choose an alternative.",
+   "As a shopper, I want a refund automatically if my money is debited but the order fails so that I do not have to call support.",
+   "As a shopper, I want to cancel before shipment and get stock released and money refunded so that cancellation is painless.",
+   "As a seller, I want orders split by my warehouses so that I can fulfil from the right location.",
+   "As a support agent, I want an order's full event timeline so that I can explain any status.",
+   "As finance, I want every PSP settlement line matched to an order or refund so that the books close daily.",
+   "As an SRE, I want stuck orders by state and age so that I can fix workflow issues before customers notice.",
+   "As a warehouse, I want shipments only for paid (or COD-verified) orders so that we do not pack unpaid goods."
+  ],
+  "functional": [
+   "Create order idempotently from a cart snapshot (Idempotency-Key header), computing order items, prices and warehouse allocation.",
+   "Reserve inventory per item per warehouse atomically with a TTL; fail fast with per-item out-of-stock details.",
+   "Initiate payment via PSP adapters (UPI intent/collect, cards, wallets, net banking, EMI) with idempotency keys; support COD.",
+   "Process PSP webhooks and status polls idempotently; handle authorised, captured, failed and pending outcomes.",
+   "Drive each order through a saga state machine with timers and compensations: confirm reservation, create shipments, notify; or refund, release, cancel.",
+   "Publish domain events (OrderCreated, InventoryReserved, PaymentCaptured, OrderConfirmed, ShipmentCreated, OrderCancelled, RefundInitiated) via transactional outbox.",
+   "Support customer and seller cancellation before shipment with correct compensations.",
+   "Maintain read models for order history, order tracking and seller order feeds.",
+   "Run reconciliation: PSP vs payments ledger, payments vs orders, reservations vs orders, inventory vs warehouse stock; auto-heal known patterns.",
+   "Provide an operator console to view saga state, retry a step, or force a compensation with audit."
+  ],
+  "non_functional": [
+   {
+    "name": "Checkout latency",
+    "target": "p99 < 500 ms for create order + reserve (excluding PSP UI)"
+   },
+   {
+    "name": "Throughput",
+    "target": "25k orders/s peak for 5 minutes; 10M orders/day steady"
+   },
+   {
+    "name": "Consistency",
+    "target": "Inventory and payment state strongly consistent per key; read models eventually consistent within 2 s p99"
+   },
+   {
+    "name": "Durability",
+    "target": "Zero lost orders after 201 Created; events RF 3, min ISR 2; DB semi-sync replication"
+   },
+   {
+    "name": "Availability",
+    "target": "Checkout 99.99% monthly; post-payment workflow 99.95% (backlog allowed, no loss)"
+   },
+   {
+    "name": "Idempotency",
+    "target": "Every API and consumer safe to retry; duplicate charge rate 0"
+   },
+   {
+    "name": "Recovery",
+    "target": "Saga resumes after any service crash; stuck saga detection within 5 min"
+   },
+   {
+    "name": "Auditability",
+    "target": "Complete event history per order retained 8 years for finance/tax"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "10M orders/day average, 2.5 items per order, 1.3 shipments per order.",
+    "Sale peak 25k orders/s for 5 minutes; 1M SKUs active, but top 100 hero SKUs take 30% of peak orders.",
+    "About 12 events per order lifecycle across services, ~1 KB each.",
+    "Order row ~2 KB, item rows ~0.5 KB each; retention 8 years in cold storage, 2 years hot."
+   ],
+   "math": [
+    "Average order rate: 10M / 86,400 = ~116 orders/s; peak 25k/s is ~215x average, so the design is sized for bursts, not averages.",
+    "Inventory reservations at peak: 25k orders x 2.5 items = 62.5k reservation ops/s; hero SKUs: 30% of 62.5k = ~19k ops/s spread over 100 SKUs = ~190 ops/s per SKU on average, but a single blockbuster deal can see 5k+ attempts/s on one SKU, beyond a single DB row lock (~1-2k updates/s), hence stock sharding and Redis.",
+    "Events: 10M x 12 = 120M events/day = ~1.4k/s average; peak 25k x ~5 events in the first seconds = ~125k events/s; at 1 KB that is 125 MB/s, x3 replication = 375 MB/s broker writes.",
+    "Kafka partitions: 125k events/s / ~5k events/s per consumer partition = 25 minimum per topic; use 64-128 for headroom.",
+    "Order storage: 10M x (2 KB + 2.5 x 0.5 KB) = ~33 GB/day; 2 years hot = ~24 TB plus indexes, so shard across ~16-32 MySQL/Postgres shards by order_id.",
+    "Payment webhooks: ~1-2 per paid order plus retries, ~20M/day; peak ~40k/s during sale start, handled by stateless webhook receivers writing to an inbox table/Kafka."
+   ],
+   "summary": "The steady load is modest (~116 orders/s) but the sale peak is 200x higher and extremely skewed, so the hard problems are hot-SKU reservation (thousands of ops/s on one SKU), ~125k events/s through Kafka, and keeping every step idempotent and recoverable; storage (~33 GB/day) is easy by comparison."
+  },
+  "out_of_scope": [
+   "Cart, pricing, coupons and promotion engines.",
+   "Returns, exchanges and replacement workflows.",
+   "Last-mile logistics and delivery tracking internals.",
+   "Fraud model design (consumed as a risk score)."
+  ]
+ },
+ "hld": {
+  "overview": "Each bounded context owns its data: Order (orders, items, saga state), Inventory (stock and reservations per sku x warehouse), Payment (payment intents, attempts, ledger), Fulfilment (shipments) and Notification. Checkout is the only synchronous chain: the Order service calls Inventory to reserve stock, then commits the order in PENDING_PAYMENT together with an OrderCreated outbox row in one local transaction and returns a payment session. After that, an orchestrated saga drives the order through its lifecycle using commands and events over Kafka, keyed by order_id. Every service writes state changes and outgoing events atomically via a transactional outbox relayed by Debezium CDC, and consumes incoming events idempotently through an inbox (processed_events) table. The orchestrator persists the saga state machine and timers (reservation TTL, payment pending timeout), and on failure runs compensating actions in reverse. Read models for order tracking and seller feeds are built from the event stream (CQRS). Reconciliation jobs compare PSP reports, payments, orders, reservations and warehouse stock and auto-heal drift. Hot SKUs during sales are protected by sharded stock counters in Redis backed by a durable reservation log, plus a virtual queue for flash deals.",
+  "diagram": "\n Client (app/web)\n    | POST /checkout  (Idempotency-Key)\n    v\n +------------------+     sync, < 300 ms      +---------------------+\n | Checkout / Order |------------------------>| Inventory Service   |\n | Service          |  reserve (TTL 15 min)   | sku x warehouse     |\n | orders DB +      |<------------------------| atomic decrement    |\n | outbox (1 txn)   |                         | reservations + outbox|\n +--------+---------+                         +----------+----------+\n          | CDC / outbox relay                           | outbox relay\n          v                                              v\n +--------------------------------------------------------------------+\n | Kafka: order.events | inventory.events | payment.events | cmd.*     |\n | key = order_id (per-order ordering), RF3, minISR2                  |\n +-----+-------------------+-------------------+----------------+-----+\n       |                   |                   |                |\n       v                   v                   v                v\n +-----------+    +----------------+   +---------------+  +--------------+\n | Order     |    | Payment Service|   | Fulfilment /  |  | Notification |\n | Saga      |<-->| PSP adapter,   |   | WMS: pick,    |  | email/SMS/   |\n | Orchestr. |    | idempotent,    |   | pack, ship    |  | push         |\n | (state    |    | webhooks       |   | (by warehouse)|  +--------------+\n |  machine, |    +-------+--------+   +---------------+\n |  timers)  |            |\n +-----+-----+            v\n       |          External PSP / UPI / cards / wallets\n       v\n +-----------------+   +-------------------+   +-------------------+\n | Saga state store|   | Reconciliation    |   | Read models (CQRS)|\n | (orders DB)     |   | jobs (PSP vs DB,  |   | order history,    |\n +-----------------+   | inventory audit)  |   | seller views      |\n                       +-------------------+   +-------------------+\n",
+  "components": [
+   {
+    "name": "API Gateway / BFF",
+    "responsibility": "Auth, rate limits, Idempotency-Key enforcement, virtual waiting room for flash-deal SKUs."
+   },
+   {
+    "name": "Order Service",
+    "responsibility": "Creates orders from cart snapshot, owns order and item state, writes outbox events, exposes order APIs."
+   },
+   {
+    "name": "Saga Orchestrator",
+    "responsibility": "Per-order state machine (PENDING_PAYMENT -> PAID -> CONFIRMED -> FULFILLING -> SHIPPED, or CANCELLED/REFUNDED); issues commands, handles timeouts and compensations; implemented with Temporal or a DB-backed state machine."
+   },
+   {
+    "name": "Inventory Service",
+    "responsibility": "Available, reserved and committed stock per sku x warehouse; atomic reserve/confirm/release with TTL; stock sharding and Redis hot path for hero SKUs; syncs with WMS."
+   },
+   {
+    "name": "Payment Service",
+    "responsibility": "Payment intents and attempts, PSP routing and adapters, idempotent PSP calls, webhook ingestion, status polling, refunds, ledger entries."
+   },
+   {
+    "name": "Fulfilment Service",
+    "responsibility": "Creates shipments per warehouse/seller, integrates with WMS, emits ShipmentCreated/Packed/Shipped."
+   },
+   {
+    "name": "Notification Service",
+    "responsibility": "Sends email/SMS/push on order events with dedup per (order, template)."
+   },
+   {
+    "name": "Outbox relay (Debezium CDC)",
+    "responsibility": "Tails each service's outbox table and publishes to Kafka with the row's event_id; guarantees at-least-once, in commit order per shard."
+   },
+   {
+    "name": "Kafka",
+    "responsibility": "Event and command topics keyed by order_id; RF 3, min ISR 2; DLQs per consumer."
+   },
+   {
+    "name": "Read model / Order tracking",
+    "responsibility": "Denormalised order views (customer history, seller feed) in Elasticsearch/Cassandra built from events."
+   },
+   {
+    "name": "Reconciliation and auto-heal",
+    "responsibility": "Periodic and daily jobs matching PSP settlement files, payments, orders and reservations; auto-refund orphans, release orphan reservations, raise exceptions."
+   },
+   {
+    "name": "Ops console",
+    "responsibility": "Order timeline, saga state, safe manual actions (retry step, force cancel/refund) with audit trail."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Happy path: prepaid order",
+    "steps": [
+     "Client POST /checkout with Idempotency-Key; Order service validates cart snapshot and allocates warehouses.",
+     "Order service calls Inventory reserve(order_id, items, ttl=15m); Inventory conditionally decrements available and records reservations plus InventoryReserved in its outbox.",
+     "Order service inserts order (PENDING_PAYMENT), items and outbox OrderCreated in one transaction; returns 201 with order_id and payment session (PSP order id).",
+     "Saga orchestrator consumes OrderCreated, starts a payment timer (15 min).",
+     "Customer pays (UPI intent); PSP sends webhook; Payment service verifies signature, records attempt CAPTURED idempotently, emits PaymentCaptured via outbox.",
+     "Orchestrator transitions to PAID and sends ConfirmReservation; Inventory moves reserved to committed.",
+     "Orchestrator sends CreateShipments; Fulfilment creates one shipment per warehouse and emits ShipmentCreated; orchestrator sets CONFIRMED; Notification sends confirmation."
+    ]
+   },
+   {
+    "name": "Payment timeout / failure (compensation)",
+    "steps": [
+     "No PaymentCaptured within 15 min, or PaymentFailed received.",
+     "Orchestrator first queries Payment for the latest status (to avoid cancelling a payment whose webhook is merely late).",
+     "If still not captured, it sends ReleaseReservation; Inventory returns reserved units to available (idempotent by order_id).",
+     "Order moves to CANCELLED with reason PAYMENT_TIMEOUT; notification sent.",
+     "If a capture arrives later for a cancelled order, Payment service emits PaymentCaptured, orchestrator sees terminal state and issues RefundPayment (auto-refund), recording the orphan for reconciliation."
+    ]
+   },
+   {
+    "name": "Post-payment failure: fulfilment cannot allocate",
+    "steps": [
+     "Fulfilment rejects (warehouse stock mismatch discovered at pick).",
+     "Orchestrator tries reallocation to another warehouse via Inventory (reserve elsewhere); if success, continue.",
+     "If not, compensations in reverse: RefundPayment (partial for the affected items), ReleaseReservation/adjust committed stock, mark item CANCELLED_BY_SELLER, notify customer.",
+     "Inventory emits a stock correction event; seller oversell metric incremented."
+    ]
+   },
+   {
+    "name": "Flash-deal hot SKU",
+    "steps": [
+     "Gateway puts users for the deal SKU into a virtual queue and admits at the rate of remaining stock times a conversion factor.",
+     "Reservation hits Redis: Lua script decrements one of 16 stock shards for the SKU (random shard, fallback to others); success writes a reservation record to a durable log.",
+     "When all shards reach zero, the deal is marked sold out at the gateway; queued users get an instant sold-out message.",
+     "Background job reconciles Redis counters with the inventory DB every few seconds and releases expired reservations."
+    ]
+   }
+  ],
+  "data_flow": "Writes go into each service's own database plus an outbox row in the same transaction; Debezium tails the outbox and publishes to Kafka topics keyed by order_id. The orchestrator consumes events, updates saga state (with its own outbox for commands) and emits commands to service command topics. Services consume commands through an inbox for idempotency, apply them locally and emit result events. Read models, notifications and analytics consume the same events. External PSP data enters through webhooks and status polling into the Payment service. Reconciliation reads PSP settlement files and all service databases and emits corrective commands."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/checkout",
+    "request": "Headers: Idempotency-Key. Body: {cart_id, cart_version, address_id, payment_method, client_total}",
+    "response": "201 {order_id, status: PENDING_PAYMENT, payment_session{psp, psp_order_id, expires_at}} | 409 {out_of_stock:[sku]} | 409 {price_changed}",
+    "notes": "Same Idempotency-Key returns the same response for 24 h; total re-verified server side."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/orders/{order_id}",
+    "request": "-",
+    "response": "{order_id, status, items[], shipments[], payment{status}, timeline[]}",
+    "notes": "Served from read model; includes freshness timestamp; falls back to primary for orders < 10 s old."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/orders/{order_id}/cancel",
+    "request": "{reason, item_ids?}",
+    "response": "202 {status: CANCELLATION_REQUESTED}",
+    "notes": "Orchestrator decides: allowed until SHIPPED; triggers refund and release."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/inventory/reservations",
+    "request": "{order_id, items:[{sku, warehouse_id, qty}], ttl_s}",
+    "response": "200 {reservation_id, expires_at} | 409 {unavailable:[sku]}",
+    "notes": "Idempotent on order_id; all-or-nothing per order."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/inventory/reservations/{order_id}:confirm",
+    "request": "{}",
+    "response": "200 | 410 expired",
+    "notes": "If expired, orchestrator attempts re-reserve; else compensates."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/inventory/reservations/{order_id}:release",
+    "request": "{reason}",
+    "response": "200",
+    "notes": "Idempotent; no-op if already released or confirmed+cancelled handled separately."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/payments/intents",
+    "request": "{order_id, amount, currency, method, idempotency_key}",
+    "response": "{payment_id, psp_order_id, redirect/intent_url}",
+    "notes": "Idempotency key = order_id + attempt_no; PSP order id reused on retry."
+   },
+   {
+    "method": "POST",
+    "path": "/webhooks/psp/{psp}",
+    "request": "PSP signed payload {psp_payment_id, psp_order_id, status, amount}",
+    "response": "200 quickly (after durable inbox write)",
+    "notes": "Verify signature; dedup on psp_event_id; process async."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/payments/{payment_id}/refunds",
+    "request": "{amount, reason, idempotency_key}",
+    "response": "202 {refund_id}",
+    "notes": "Partial refunds supported; refund status tracked to completion."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "orders / order_items / saga_state",
+    "store": "MySQL/Postgres sharded by order_id (Order service)",
+    "fields": [
+     "order_id (snowflake)",
+     "customer_id",
+     "status",
+     "version",
+     "total",
+     "payment_method",
+     "created_at",
+     "items: order_item_id, sku, warehouse_id, qty, price, item_status",
+     "saga: step, deadline_at, attempts, last_error"
+    ],
+    "keys": "PK order_id; secondary index (customer_id, created_at) via read model; saga deadline index for timer scanning",
+    "notes": "Optimistic concurrency: UPDATE ... WHERE order_id=? AND version=?; state transitions validated against allowed table."
+   },
+   {
+    "entity": "outbox",
+    "store": "Same DB and transaction as owning service",
+    "fields": [
+     "event_id (UUID)",
+     "aggregate_id (order_id)",
+     "event_type",
+     "payload",
+     "created_at"
+    ],
+    "keys": "PK event_id; CDC reads in commit order",
+    "notes": "Kafka message key = aggregate_id; rows purged after 7 days."
+   },
+   {
+    "entity": "inbox / processed_events",
+    "store": "Each consumer's DB",
+    "fields": [
+     "event_id",
+     "consumer",
+     "processed_at"
+    ],
+    "keys": "PK (consumer, event_id)",
+    "notes": "Inserted in same transaction as the state change; duplicate insert = already processed."
+   },
+   {
+    "entity": "stock and reservations",
+    "store": "Inventory DB (sharded by sku) + Redis for hot SKUs",
+    "fields": [
+     "sku, warehouse_id, available, reserved, committed, version",
+     "reservation: order_id, sku, warehouse_id, qty, status (HELD/CONFIRMED/RELEASED), expires_at"
+    ],
+    "keys": "stock PK (sku, warehouse_id[, shard_no]); reservation PK (order_id, sku, warehouse_id); index on (status, expires_at)",
+    "notes": "Reserve: UPDATE stock SET available=available-q, reserved=reserved+q WHERE available>=q; hot SKUs split into shard_no 0..15."
+   },
+   {
+    "entity": "payments / attempts / ledger",
+    "store": "Payment DB (Postgres, strongly consistent)",
+    "fields": [
+     "payment_id, order_id, amount, status",
+     "attempt: attempt_no, psp, psp_order_id, psp_payment_id, status, raw_response",
+     "ledger: entry_id, payment_id, type (DEBIT/REFUND), amount, posted_at"
+    ],
+    "keys": "PK payment_id; UNIQUE (order_id, attempt_no); UNIQUE psp_payment_id",
+    "notes": "Double-entry ledger; refunds reference original payment; never update amounts in place."
+   },
+   {
+    "entity": "order_view (read model)",
+    "store": "Elasticsearch or Cassandra",
+    "fields": [
+     "order_id",
+     "customer_id",
+     "status",
+     "items",
+     "shipments",
+     "timeline",
+     "last_event_version"
+    ],
+    "keys": "Partition by customer_id, cluster by created_at desc",
+    "notes": "Projection ignores events with version <= last_event_version (handles reordering/duplicates)."
+   }
+  ],
+  "classes": [
+   {
+    "name": "OrderSaga (state machine)",
+    "responsibility": "Holds current state and transitions; decides next command or compensation.",
+    "methods": [
+     "on(event) -> list[Command]",
+     "on_timeout(step) -> list[Command]",
+     "compensate(from_step) -> list[Command]",
+     "is_terminal() -> bool"
+    ]
+   },
+   {
+    "name": "OutboxWriter",
+    "responsibility": "Writes domain events in the caller's DB transaction.",
+    "methods": [
+     "append(tx, aggregate_id, event_type, payload)"
+    ]
+   },
+   {
+    "name": "IdempotentConsumer",
+    "responsibility": "Wraps handlers with inbox dedup in one transaction.",
+    "methods": [
+     "handle(message)",
+     "already_processed(tx, event_id) -> bool",
+     "mark_processed(tx, event_id)"
+    ]
+   },
+   {
+    "name": "ReservationManager",
+    "responsibility": "Atomic reserve, confirm, release; TTL expiry sweeper; hot-SKU shard selection.",
+    "methods": [
+     "reserve(order_id, items, ttl)",
+     "confirm(order_id)",
+     "release(order_id, reason)",
+     "expire_due(now)"
+    ]
+   },
+   {
+    "name": "PaymentGatewayRouter",
+    "responsibility": "Chooses PSP by method, health and success rate; wraps calls with idempotency, timeouts and circuit breakers.",
+    "methods": [
+     "create_intent(order, method)",
+     "get_status(attempt)",
+     "refund(payment, amount)",
+     "health(psp) -> score"
+    ]
+   },
+   {
+    "name": "WebhookProcessor",
+    "responsibility": "Verifies, deduplicates and maps PSP webhooks to payment state transitions.",
+    "methods": [
+     "receive(raw) -> 200",
+     "process(psp_event)",
+     "apply_transition(payment, new_status)"
+    ]
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Matches PSP settlement data, payments, orders and reservations; emits fixes.",
+    "methods": [
+     "match_psp_vs_ledger(date)",
+     "find_orphan_payments()",
+     "find_orphan_reservations()",
+     "auto_heal(exception)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Order saga state machine with timeouts and compensation",
+    "explain": "The orchestrator is a deterministic function from (state, event) to (new state, commands). Each transition is persisted with optimistic concurrency together with outbox commands. Timers are rows with deadline_at scanned every second (or Temporal timers). Compensations run in reverse order of completed steps and are idempotent. Unknown outcomes are resolved by querying the owner, never assumed.",
+    "pseudocode": "TRANSITIONS = {\n  ('PENDING_PAYMENT','PaymentCaptured'): ('PAID',      [ConfirmReservation]),\n  ('PENDING_PAYMENT','PaymentFailed'):   ('CANCELLING',[ReleaseReservation]),\n  ('PENDING_PAYMENT','Timeout'):         ('CHECK_PAY', [QueryPaymentStatus]),\n  ('CHECK_PAY','PaymentCaptured'):       ('PAID',      [ConfirmReservation]),\n  ('CHECK_PAY','PaymentNotCaptured'):    ('CANCELLING',[ReleaseReservation]),\n  ('PAID','ReservationConfirmed'):       ('CONFIRMED', [CreateShipments, Notify]),\n  ('PAID','ReservationExpired'):         ('REALLOCATE',[ReserveElsewhere]),\n  ('REALLOCATE','InventoryUnavailable'): ('REFUNDING', [RefundPayment]),\n  ('REFUNDING','RefundInitiated'):       ('CANCELLED', [Notify]),\n  ('CANCELLING','ReservationReleased'):  ('CANCELLED', [Notify]),\n  ('CANCELLED','PaymentCaptured'):       ('CANCELLED', [RefundPayment]),  # late capture\n}\ndef handle(evt):\n    with db.tx() as tx:\n        if inbox.seen(tx, evt.id): return\n        s = saga.load_for_update(tx, evt.order_id)\n        new_state, cmds = TRANSITIONS.get((s.state, evt.type), (s.state, []))\n        saga.save(tx, s.order_id, new_state, expected_version=s.version)\n        for c in cmds: outbox.append(tx, s.order_id, c)\n        timers.set(tx, s.order_id, deadline_for(new_state))\n        inbox.mark(tx, evt.id)"
+   },
+   {
+    "name": "Hot-SKU reservation with sharded counters (Redis Lua)",
+    "explain": "A single row or key for a blockbuster SKU serialises all reservations. Split its stock into N shards (e.g. 16 keys each holding total/N units). A reservation picks a random shard and atomically decrements if enough units; on failure it tries other shards; when all are empty the SKU is sold out. Each success is appended to a durable reservation stream (Redis Stream or Kafka) and persisted asynchronously to the inventory DB; reconciliation rebalances shards and restores units from expired reservations.",
+    "pseudocode": "-- Lua, atomic per shard key\nlocal avail = tonumber(redis.call('GET', KEYS[1]) or '0')\nlocal qty = tonumber(ARGV[1])\nif avail >= qty then\n  redis.call('DECRBY', KEYS[1], qty)\n  redis.call('XADD', KEYS[2], '*', 'order', ARGV[2], 'sku', ARGV[3], 'qty', qty)\n  return 1\nend\nreturn 0\n\ndef reserve_hot(sku, qty, order_id):\n    shards = shuffle(range(16))\n    for s in shards:\n        if lua(f'stock:{sku}:{s}', f'resv:{sku}', qty, order_id, sku) == 1:\n            return Reserved(shard=s)\n    mark_sold_out(sku)          # gateway stops admitting\n    return OutOfStock"
+   },
+   {
+    "name": "Idempotent webhook processing with monotonic state",
+    "explain": "PSPs retry webhooks and can deliver them out of order (FAILED after CAPTURED for a different attempt, or AUTHORIZED after CAPTURED). Store the raw event with a unique psp_event_id, then apply transitions only if they move forward in an allowed order; ignore regressions; always verify the amount and signature.",
+    "pseudocode": "RANK = {'CREATED':0,'PENDING':1,'AUTHORIZED':2,'CAPTURED':3,'REFUNDED':4,'FAILED':1}\ndef process(evt):\n    if not verify_signature(evt): reject\n    with tx:\n        if not inbox.insert_unique(evt.psp_event_id): return  # duplicate\n        att = attempts.lock(evt.psp_payment_id or evt.psp_order_id)\n        if evt.amount != att.amount: flag_mismatch(att, evt); return\n        if RANK[evt.status] <= RANK[att.status] and evt.status != 'REFUNDED':\n            return                                            # stale / regression\n        att.status = evt.status\n        outbox.append(tx, att.order_id, 'Payment' + evt.status.title())"
+   }
+  ],
+  "sequence": "\nClient   Order Svc     Inventory     Kafka      Saga Orch.    Payment Svc    PSP      Fulfilment\n  | checkout  |            |           |             |              |           |          |\n  |---------->| reserve    |           |             |              |           |          |\n  |           |----------->| decr avail|             |              |           |          |\n  |           |<--- ok ----| +outbox   |             |              |           |          |\n  |           | INSERT order(PENDING_PAYMENT) + outbox OrderCreated (1 txn)      |          |\n  |<-201 + pay_session ----|           |             |              |           |          |\n  |           |-- relay -->|---------->| OrderCreated|              |           |          |\n  |           |            |           |------------>| start timer 15m            |          |\n  |  pays via PSP page / UPI intent ------------------------------------------>|          |\n  |           |            |           |             |              |<- webhook-|          |\n  |           |            |           |<-- PaymentCaptured (outbox) |           |          |\n  |           |            |           |------------>| state=PAID   |           |          |\n  |           |<-- ConfirmReservation cmd ------------|              |           |          |\n  |           |            |<- commit -|             |              |           |          |\n  |           |            |           |<-- FulfilOrder cmd ---------|           |          |\n  |           |            |           |------------------------------------------------->|\n  |           |            |           |             | state=CONFIRMED, notify  |          |\n  |  (timeout path: no payment in 15m -> ReleaseReservation, state=CANCELLED)   |          |\n  |  (failure path: fulfil fails -> RefundPayment + ReleaseReservation compensations)       |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Customer double-taps 'Place order' or the app retries on timeout.",
+   "handling": "Idempotency-Key per checkout attempt stored with the response for 24 h; the second request returns the same order_id and payment session; inventory reserve is idempotent on order_id."
+  },
+  {
+   "case": "Money debited but the PSP webhook never arrives.",
+   "handling": "Saga timeout triggers QueryPaymentStatus against the PSP before cancelling; reconciliation polls pending attempts every few minutes; if captured after cancellation, auto-refund and notify."
+  },
+  {
+   "case": "Late capture after the order was cancelled for timeout (UPI approval after 16 minutes).",
+   "handling": "Terminal CANCELLED + PaymentCaptured transition issues RefundPayment automatically; optionally re-attempt reservation and revive the order if stock is still available, per product policy."
+  },
+  {
+   "case": "Webhooks arrive out of order or duplicated.",
+   "handling": "Dedup on psp_event_id; monotonic state rank so regressions are ignored; amounts verified; per-order Kafka key preserves order of our own events downstream."
+  },
+  {
+   "case": "Reservation expires while the customer is still on the payment page.",
+   "handling": "Payment session expires_at equals reservation TTL so the PSP page closes; if capture still happens, saga tries ConfirmReservation, gets 410, attempts re-reserve; if unavailable, refunds."
+  },
+  {
+   "case": "Outbox relay publishes the same event twice after a CDC restart.",
+   "handling": "At-least-once is expected; consumers dedup via inbox on event_id; projections also use per-aggregate version to ignore old updates."
+  },
+  {
+   "case": "Two events for the same order processed concurrently by different consumer instances (rebalance).",
+   "handling": "Kafka key=order_id keeps them in one partition; plus optimistic concurrency (version) on saga row so a stale writer fails and retries."
+  },
+  {
+   "case": "Hot SKU: 200k users hit a 5,000-unit flash deal at 12:00:00.",
+   "handling": "Virtual waiting room admits ~1.5x remaining stock worth of users per window; Redis sharded counters handle reservations; sold-out flag propagates to gateway and PDP cache within a second."
+  },
+  {
+   "case": "Warehouse reports physical stock lower than system stock after orders are confirmed.",
+   "handling": "Fulfilment fails item allocation; saga tries another warehouse; else partial cancellation with refund for that item; seller oversell penalty and inventory correction event."
+  },
+  {
+   "case": "Partial shipment: one of two warehouses ships and the other cancels.",
+   "handling": "Item-level state; saga handles per-shipment sub-flows; partial refund only for cancelled items; order status shows PARTIALLY_SHIPPED."
+  },
+  {
+   "case": "PSP outage (one provider's UPI success rate drops to 40%).",
+   "handling": "Circuit breaker on PSP health score; router shifts new intents to a backup PSP; existing pending attempts are polled; checkout UI suggests alternate methods."
+  },
+  {
+   "case": "Price changed between cart and checkout, or coupon expired.",
+   "handling": "Checkout re-prices server side from the cart snapshot version; if total differs from client_total, return 409 price_changed before reserving stock."
+  },
+  {
+   "case": "Saga orchestrator crashes mid-transition.",
+   "handling": "State and outbox commands committed atomically, so either both happen or neither; on restart, consumers re-deliver uncommitted events; timers are durable rows re-scanned."
+  },
+  {
+   "case": "Poison event (schema mismatch) blocks an order partition.",
+   "handling": "Bounded retries with backoff, then DLQ with alert; since partitions carry many orders, park only that order (mark saga NEEDS_ATTENTION) and continue the rest."
+  },
+  {
+   "case": "COD order abuse (repeated refusals at doorstep).",
+   "handling": "Risk score at checkout disables COD for high-risk customers or pincodes; COD orders skip payment step but go through a verification step (OTP/IVR confirm) in the saga."
+  },
+  {
+   "case": "Clock skew between services makes TTL decisions inconsistent.",
+   "handling": "Expiry decisions are made only by the owner (Inventory uses its own DB time); saga timers are advisory and always query the owner before compensating."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Kafka",
+   "layer": "Event backbone",
+   "overview": "Replicated, partitioned log for domain events and commands.",
+   "why": "Per-key ordering by order_id, durable at-least-once delivery, replay for rebuilding read models, high throughput for sale peaks.",
+   "alternatives": "RabbitMQ (rich routing, per-message acks, weaker replay); AWS SNS+SQS (managed, FIFO queues limited throughput per group); Pulsar (similar to Kafka with built-in tiered storage and delayed messages)."
+  },
+  {
+   "name": "Debezium (CDC outbox relay)",
+   "layer": "Outbox publishing",
+   "overview": "Reads database transaction logs and publishes changes to Kafka; has an outbox event router.",
+   "why": "Publishes outbox rows in commit order with no polling load on the DB and no dual-write risk.",
+   "alternatives": "Polling publisher (simple, adds DB load and latency); application publishing after commit (dual-write risk); database-native CDC streams (Spanner change streams, DynamoDB Streams)."
+  },
+  {
+   "name": "Temporal (or Cadence)",
+   "layer": "Saga orchestration",
+   "overview": "Durable workflow engine: workflows as code with persisted state, timers, retries and activity heartbeats; originated from Uber's Cadence.",
+   "why": "Makes long-running sagas with timers (15 min payment wait), retries and compensations explicit, testable and visible; survives crashes by replaying history.",
+   "alternatives": "DB-backed state machine with outbox (fewer moving parts, more custom code); AWS Step Functions (managed, cost per transition at high volume); choreography only (no central coordinator, harder to reason about at many steps)."
+  },
+  {
+   "name": "MySQL/Postgres (sharded, e.g. Vitess)",
+   "layer": "Transactional stores",
+   "overview": "Relational databases with ACID transactions per shard.",
+   "why": "Local transactions make outbox, inbox and state transitions atomic; mature ops; Vitess adds transparent sharding by order_id.",
+   "alternatives": "CockroachDB/Spanner/TiDB (distributed SQL, global transactions at higher latency); DynamoDB (transactions up to 100 items, outbox via streams)."
+  },
+  {
+   "name": "Redis (cluster)",
+   "layer": "Hot-SKU reservations, idempotency cache",
+   "overview": "In-memory store with atomic Lua scripts and streams.",
+   "why": "Tens of thousands of atomic decrements per second for hero SKUs; idempotency key cache with TTL; sold-out flags.",
+   "alternatives": "DB row sharding only (durable, lower peak throughput); Aerospike (durable, fast counters); in-process token allocation per pod (fast, complex rebalancing)."
+  },
+  {
+   "name": "Elasticsearch / Cassandra",
+   "layer": "Read models (CQRS)",
+   "overview": "Search and wide-column stores for denormalised views.",
+   "why": "Customer order history and seller feeds with filters, decoupled from transactional shards.",
+   "alternatives": "Read replicas of the orders DB (simpler, cross-shard queries are hard); DynamoDB with GSIs."
+  },
+  {
+   "name": "PSP integrations (Razorpay, PayU, Juspay-style routers, card networks, NPCI UPI)",
+   "layer": "Payments",
+   "overview": "External payment processors and orchestration layers offering intents, webhooks, status APIs and settlement reports.",
+   "why": "Multiple PSPs give redundancy and success-rate based routing; idempotency and status APIs enable safe retries.",
+   "alternatives": "Single PSP (simpler, single point of failure); in-house switch (only at very large scale)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Saga pattern (orchestration vs choreography, compensations)",
+   "explain": "A saga is a way to run a business transaction that spans multiple services, each with its own database, without a distributed lock or two-phase commit. It splits the transaction into a sequence of local transactions, each of which commits on its own and publishes an event or reply that triggers the next step. If a later step fails, the saga runs compensating transactions for the steps that already completed, in reverse order, to semantically undo them: release reserved stock, refund a payment, cancel an order. Compensation is not rollback; the intermediate states were visible, and the undo is a new business action (a refund is not the same as never charging). There are two coordination styles. In choreography, each service listens for events and decides what to do next, with no central coordinator; it is loosely coupled and simple for two or three steps, but the overall flow is implicit, spread across services, and hard to change or debug. In orchestration, a central orchestrator holds the saga's state machine and sends commands to services, reacting to their replies; the flow is explicit, timeouts and compensations live in one place, and visibility is excellent, at the cost of a coordinator that must be highly available. Sagas provide ACD but not isolation, so designs add countermeasures such as semantic locks (a PENDING status), commutative updates and re-reading values before acting.",
+   "in_this_design": "An orchestrated saga per order (Temporal workflow or DB-backed state machine) runs reserve -> pay -> confirm reservation -> create shipments, with compensations release reservation, refund payment and cancel order. Choreography is used only for side effects that do not affect the order's correctness, like notifications, analytics and read models. The PENDING_PAYMENT status and HELD reservation status act as semantic locks.",
+   "key_points": [
+    "A saga is a sequence of local transactions with compensations, not a distributed transaction.",
+    "Compensation is a new business action, not a rollback.",
+    "Orchestration makes the flow explicit and debuggable; choreography reduces coupling for simple flows.",
+    "Sagas lack isolation; use semantic locks and pending states.",
+    "Every step and compensation must be idempotent and retryable."
+   ],
+   "qa": [
+    {
+     "q": "Why not two-phase commit across Inventory, Payment and Order?",
+     "a": "2PC needs every participant to support a prepare phase and hold locks until the coordinator decides; a PSP will never take part, and holding stock locks across a user's 2-minute payment flow would kill throughput. A coordinator failure also blocks participants. Sagas trade isolation for availability and work with external systems."
+    },
+    {
+     "q": "Why orchestration rather than choreography for orders?",
+     "a": "The order flow has 5+ steps, timers, branches (COD vs prepaid, partial shipments) and compensations. With choreography that logic is scattered across services and hard to change or trace. An orchestrator gives one state machine, one place for timeouts and a per-order timeline for support."
+    },
+    {
+     "q": "What if a compensation itself fails, say the refund API is down?",
+     "a": "Compensations are retried with backoff until they succeed (they must be idempotent and eventually succeed); the saga stays in REFUNDING and is visible on the stuck-saga dashboard. Beyond an SLA it escalates to ops, and reconciliation ensures nothing is forgotten."
+    }
+   ]
+  },
+  {
+   "name": "Transactional outbox and CDC (avoiding dual writes)",
+   "explain": "A service that updates its database and then publishes an event performs a dual write to two systems that cannot share a transaction. If it commits the DB and crashes before publishing, downstream never hears about the change; if it publishes first and the DB commit fails, downstream acts on something that never happened. Retrying in application code does not fix this because the crash can happen at any point. The transactional outbox pattern removes the dual write: the service writes its state change and an event row into an outbox table in the same local ACID transaction. A separate relay process then reads the outbox and publishes to the broker, marking or deleting rows after publishing. Because the event is in the database if and only if the state change committed, nothing is lost and nothing phantom is published. The relay can poll the table (simple, adds load and latency) or tail the database's transaction log via change data capture, as Debezium does, which publishes in commit order with low latency and no query load. The relay may publish an event more than once after a crash, so delivery is at-least-once, and consumers must be idempotent. The mirror image on the consumer side is the inbox pattern: record processed message ids in the same transaction as the state change.",
+   "in_this_design": "Order, Inventory, Payment, Fulfilment and the orchestrator each have an outbox table written in the same transaction as their state change; Debezium publishes to Kafka with key=order_id and event_id as a header. Consumers use an inbox table keyed (consumer, event_id) in the same transaction as their update, so CDC replays are harmless.",
+   "key_points": [
+    "Dual writes to DB and broker cannot be made atomic in application code.",
+    "Outbox: write state and event in one local transaction; relay publishes later.",
+    "CDC relays publish in commit order without polling load.",
+    "Delivery becomes at-least-once; consumers must dedup.",
+    "Inbox pattern is the consumer-side counterpart."
+   ],
+   "qa": [
+    {
+     "q": "Why not publish to Kafka inside the DB transaction before commit?",
+     "a": "Kafka is not part of the DB transaction: if the commit then fails, the event is already out describing a change that never happened. Publishing after commit risks losing the event on crash. Only the outbox makes them atomic."
+    },
+    {
+     "q": "Polling relay or CDC?",
+     "a": "CDC (Debezium) for high volume: low latency, ordered by commit, no extra queries on the hot DB. A polling relay is fine for low volume or where CDC is not available, using SELECT ... FOR UPDATE SKIP LOCKED batches."
+    },
+    {
+     "q": "How do you keep the outbox table from growing forever?",
+     "a": "With CDC, rows can be deleted right after insert in the same transaction (Debezium still sees the insert in the log) or purged by a job after a few days; with polling, delete after publish confirmation."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and idempotent consumers (inbox, idempotency keys)",
+   "explain": "An operation is idempotent if performing it several times has the same effect as performing it once. In distributed systems, almost every interaction can be retried: clients retry on timeout, brokers redeliver after consumer crashes, outbox relays republish after restarts, PSPs resend webhooks. Since the sender often cannot know whether the first attempt succeeded, the only safe design is to make receivers idempotent. There are several techniques. Natural idempotency: setting a value (status = PAID) is idempotent while incrementing is not, so prefer absolute state changes with version checks. Idempotency keys: the client sends a unique key with a request; the server stores key -> result and returns the stored result for repeats, ideally in the same transaction as the side effect. Deduplication tables (inbox): consumers record processed message ids in the same transaction as their state change and skip any id already present. Conditional writes and optimistic concurrency: update only if the current version or state matches what the event expects, which also rejects stale or out-of-order events. For external side effects such as charging a card, pass an idempotency key to the provider so the provider dedups too. Idempotency is what turns at-least-once delivery into effectively-once outcomes.",
+   "in_this_design": "Checkout uses an Idempotency-Key header (stored 24 h with the response). Inventory reserve/confirm/release are idempotent on order_id. Payment intents use idempotency key order_id + attempt_no with the PSP, and webhooks are deduped on psp_event_id. All Kafka consumers use an inbox table and versioned state transitions.",
+   "key_points": [
+    "Assume every message and request can be repeated.",
+    "Store the idempotency key and result atomically with the side effect.",
+    "Prefer set-state with version checks over increments.",
+    "Pass idempotency keys to external providers like PSPs.",
+    "At-least-once + idempotency = effectively-once."
+   ],
+   "qa": [
+    {
+     "q": "The client times out on POST /checkout and retries. What prevents two orders and two reservations?",
+     "a": "The Idempotency-Key: the first request stored its key with a 'processing' marker and then the final response; the retry finds it and returns the same order_id (or waits/409 while processing). Inventory reserve is keyed by order_id, so even internal retries cannot double-reserve."
+    },
+    {
+     "q": "Why must the inbox insert be in the same transaction as the state change?",
+     "a": "If they are separate, a crash between them either marks the message processed without applying it (lost) or applies it without marking (duplicate on redelivery). Atomicity makes the pair all-or-nothing."
+    },
+    {
+     "q": "Is 'decrement available by qty' idempotent?",
+     "a": "No. Retrying would decrement twice. Make it idempotent by keying a reservation row on (order_id, sku) and only decrementing when inserting that row for the first time, in the same transaction."
+    }
+   ]
+  },
+  {
+   "name": "Inventory reservation, contention and overselling",
+   "explain": "Inventory is the classic contended resource in e-commerce. The invariant is simple: units sold must never exceed units available. The naive read-check-write sequence (read available, check it is enough, write the new value) has a race: two checkouts both read 1 unit and both succeed. Correct approaches make the check and the update atomic: a conditional update such as UPDATE stock SET available = available - q WHERE sku = ? AND available >= q, which succeeds or affects zero rows; a SELECT ... FOR UPDATE row lock; or an atomic script in Redis. When stock is reserved matters as much as how. Reserving at add-to-cart blocks stock for browsers who never buy. Reserving at payment lets many users start paying for the last unit and then fail, causing refunds. Reserving at checkout with a TTL is the common middle ground: stock is held while the user pays, and expires back to the pool if payment does not complete. Under extreme demand for a single SKU, even atomic row updates serialise on one row lock, capping throughput at roughly a thousand or two updates per second. Solutions include splitting stock into several sub-counters (stock sharding) so updates spread across rows or keys, moving the hot path to an in-memory store with a durable log, and admission control such as a virtual queue so that only roughly as many users as units even reach checkout.",
+   "in_this_design": "Inventory holds available/reserved/committed per sku x warehouse. Checkout reserves with a conditional update and a 15-minute TTL (tuned per payment method); payment success confirms (reserved -> committed); failure or timeout releases. Hero SKUs are split into 16 Redis shards with Lua decrements and a durable reservation stream, fronted by a virtual waiting room.",
+   "key_points": [
+    "Check and decrement must be one atomic operation.",
+    "Reserve at checkout with a TTL; confirm on payment; release on failure.",
+    "One hot row caps throughput; shard the counter.",
+    "Admission control (virtual queue) beats scaling a lock.",
+    "Reconcile reservations with orders and warehouses continuously."
+   ],
+   "qa": [
+    {
+     "q": "Why not reserve at add-to-cart?",
+     "a": "Most carts never convert; holding stock there starves real buyers and requires long TTLs. Reserving at checkout holds stock only for users actively paying, typically a few minutes."
+    },
+    {
+     "q": "How do sharded counters avoid overselling?",
+     "a": "Each shard holds a disjoint portion of the stock and is decremented atomically, so the sum of successful decrements can never exceed the total. The cost is false sold-outs when one shard is empty but others are not, fixed by trying other shards and periodic rebalancing."
+    },
+    {
+     "q": "Redis is not durable enough for inventory. How do you defend it?",
+     "a": "Redis is the admission hot path for a few hero SKUs, not the system of record. Each successful reservation is appended to a durable stream and persisted to the inventory DB; Redis uses AOF with replicas; on Redis failover we freeze the deal, rebuild counters from DB plus reservation log, then resume. Worst case we undersell briefly, never oversell, because counters are restored conservatively."
+    }
+   ]
+  },
+  {
+   "name": "Event ordering and partitioning by aggregate key",
+   "explain": "Event-driven systems rarely need a global order of all events, but they usually need order within one entity: an order's PaymentCaptured must be processed after its OrderCreated, and OrderCancelled after both. Logs like Kafka provide ordering only within a partition, and a producer that uses the same key for all events of an entity ensures they land in the same partition and are consumed in sequence by a single consumer instance at a time. Choosing the aggregate id (order_id) as the key gives per-aggregate ordering with parallelism across aggregates. Ordering can still break in several ways: events about the same entity published by different services travel through different topics with no relative order; producer retries without idempotence can reorder batches; consumer rebalances can briefly let two instances process overlapping ranges; and an event may be retried later than its successors after a transient error. Robust consumers therefore do not rely on arrival order alone. They carry a per-aggregate version or sequence number and apply events only if the version is the next expected (or greater, for last-writer-wins projections), and state machines reject transitions that are not valid from the current state. The orchestrator pattern helps because a single component serialises all decisions per order.",
+   "in_this_design": "All topics key by order_id. The orchestrator processes one order's events serially (Kafka partition plus optimistic version on the saga row). Cross-topic disorder (a payment event arriving before the order event) is handled by the state machine: an unexpected event for an unknown saga is retried with backoff, and projections ignore events with version <= last applied.",
+   "key_points": [
+    "Order is guaranteed only within a partition; key by aggregate id.",
+    "Different topics have no relative order.",
+    "Carry versions and validate state transitions in consumers.",
+    "Enable idempotent producers to prevent reordering on retry.",
+    "Global ordering is rarely needed and very expensive."
+   ],
+   "qa": [
+    {
+     "q": "PaymentCaptured arrives at the orchestrator before OrderCreated. What happens?",
+     "a": "The saga for that order does not exist yet or is in an earlier state. The orchestrator can create the saga from the payment event if it carries enough data, or retry/park the event briefly; once OrderCreated arrives, the state machine processes both. The transition table handles it rather than assuming order."
+    },
+    {
+     "q": "Why not a single partition for strict global order?",
+     "a": "A single partition caps throughput to one consumer and one broker leader, nowhere near 125k events/s at peak, and we only need per-order ordering."
+    },
+    {
+     "q": "How do projections handle duplicates and reordering?",
+     "a": "Each event carries the aggregate version; the projection stores last_event_version per order and ignores anything not newer. Duplicates and stale events become no-ops."
+    }
+   ]
+  },
+  {
+   "name": "CQRS and read models",
+   "explain": "Command Query Responsibility Segregation separates the model used to change state (commands) from the model used to read it (queries). In a transactional system, the write model is normalised and optimised for invariants and concurrency: orders sharded by order_id, strict transactions, minimal indexes. Read patterns are very different: a customer wants all their orders sorted by date with item images and shipment status; a seller wants all orders for their products filtered by status; support wants free-text search. Serving those from the write model means cross-shard queries, heavy joins and contention with checkout traffic. With CQRS, the write side publishes events, and one or more read models (projections) consume them and maintain denormalised views tailored to each query, in whatever store suits it: Elasticsearch for search, Cassandra for per-customer timelines, Redis for hot status. The cost is eventual consistency: a read model lags the write side by milliseconds to seconds, so a user may not immediately see a change they just made. Typical mitigations include reading from the write model for very recent entities, returning the new state in the command response, or using version tokens so the client can wait until the read model catches up. CQRS often pairs with event sourcing, but does not require it.",
+   "in_this_design": "Order history, order tracking and seller feeds are projections built from Kafka events into Cassandra and Elasticsearch, partitioned by customer_id and seller_id. GET /orders/{id} falls back to the primary for orders less than 10 seconds old to give read-your-writes right after checkout; the checkout response already carries the new order state.",
+   "key_points": [
+    "Separate the write model (invariants) from read models (query shape).",
+    "Read models are projections of events, rebuildable by replay.",
+    "Cost: eventual consistency; mitigate for read-your-writes.",
+    "Protects transactional shards from heavy query traffic.",
+    "CQRS does not require event sourcing."
+   ],
+   "qa": [
+    {
+     "q": "A customer pays and immediately opens 'My Orders' but does not see the order. Fix?",
+     "a": "Return order state in the checkout response and show it from the client cache; for GET by id, read the primary if the order is younger than a few seconds; optionally pass a version token so the API waits briefly for the projection to reach it."
+    },
+    {
+     "q": "How do you rebuild a corrupted read model?",
+     "a": "Create a new projection index, replay events from Kafka (or from an archived event store for old orders) and switch traffic when caught up. Projections must be deterministic and idempotent."
+    },
+    {
+     "q": "Why not just use read replicas?",
+     "a": "Replicas have the same schema and sharding as the write side, so 'all orders for a seller' is still a cross-shard scatter-gather. Projections can be partitioned by the query's key."
+    }
+   ]
+  },
+  {
+   "name": "Handling unknown outcomes with external systems (timeouts, reconciliation)",
+   "explain": "When a call to an external system times out, there are three possibilities: the request never arrived, it arrived and failed, or it arrived and succeeded but the response was lost. The caller cannot tell which, so the outcome is unknown. Treating a timeout as failure is dangerous for payments: the customer may have been charged, and if we cancel the order and they retry, they may be charged twice. Treating it as success is worse. The safe pattern has four parts. First, make the call idempotent with a key so that retrying cannot cause a second effect. Second, represent the unknown explicitly in the state machine, for example PAYMENT_PENDING, rather than collapsing it into success or failure. Third, resolve the unknown by asking the authority: query the provider's status API with backoff, and accept asynchronous notifications such as webhooks. Fourth, reconcile: periodically compare your records with the provider's authoritative reports (settlement files) and fix any mismatch automatically, such as refunding a captured payment with no confirmed order. Reconciliation is not an afterthought; at scale it is the guarantee of last resort that catches every bug, lost message and edge case the online path missed, and it is required by finance anyway.",
+   "in_this_design": "PSP calls time out after 10 s; payment attempts move to PENDING; the saga timer queries PSP status before deciding; webhooks and polling both feed the same idempotent state machine; reconciliation runs every 15 minutes on pending attempts and daily against settlement files, auto-refunding orphan captures and alerting on amount mismatches.",
+   "key_points": [
+    "A timeout means unknown, not failed.",
+    "Model the unknown state explicitly.",
+    "Resolve by querying the authority, with idempotent retries.",
+    "Reconciliation is the last line of defence and must auto-heal.",
+    "Prefer refunds over manual intervention for orphan payments."
+   ],
+   "qa": [
+    {
+     "q": "The PSP call to create a payment times out. Do you retry?",
+     "a": "Yes, with the same idempotency key so the PSP returns the existing intent instead of creating another. If it keeps timing out, mark PENDING, show the user a 'checking payment status' screen, and resolve via status API and webhook."
+    },
+    {
+     "q": "How often should reconciliation run?",
+     "a": "Near-real-time for pending attempts (every few minutes) so customers get quick refunds or confirmations, and daily against settlement files for full financial matching. RBI timelines for failed-transaction reversal set an upper bound."
+    },
+    {
+     "q": "What does reconciliation auto-heal, and what does it escalate?",
+     "a": "Auto-heal: captured payment with cancelled order -> refund; expired reservations not released -> release; confirmed order with missing shipment -> re-issue command. Escalate: amount mismatches, settlement lines with no payment record, repeated refund failures."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Orchestration vs choreography for the order saga",
+   "options": [
+    "Choreography via events only",
+    "Central orchestrator (Temporal or DB state machine)"
+   ],
+   "choice": "Orchestration for the core flow, choreography for side effects",
+   "why": "Explicit state, timers and compensations in one place; easy per-order timeline. Cost: an orchestrator that must be highly available and a bit more coupling to command contracts."
+  },
+  {
+   "decision": "When to reserve stock",
+   "options": [
+    "Add to cart",
+    "Checkout with TTL",
+    "After payment success"
+   ],
+   "choice": "Checkout with TTL, confirm on payment",
+   "why": "Balances overselling against stock blocking; after-payment reservation forces refunds for losers of the race, add-to-cart blocks too much stock."
+  },
+  {
+   "decision": "Synchronous vs asynchronous reservation at checkout",
+   "options": [
+    "Async reservation via events",
+    "Sync call with fast timeout"
+   ],
+   "choice": "Synchronous reservation",
+   "why": "Users need an immediate out-of-stock answer and should not pay for items we cannot reserve. Cost: Inventory is on the checkout critical path, so it must be highly available and fast (p99 < 50 ms)."
+  },
+  {
+   "decision": "Hot-SKU inventory store",
+   "options": [
+    "DB row with conditional update",
+    "Sharded DB rows",
+    "Redis sharded counters + durable log"
+   ],
+   "choice": "DB rows normally, Redis sharded counters for flagged hero SKUs",
+   "why": "DB is simplest and durable for the long tail; hero SKUs need tens of thousands of ops/s which only an in-memory atomic path plus admission control sustains."
+  },
+  {
+   "decision": "Outbox relay via polling vs CDC",
+   "options": [
+    "Polling publisher",
+    "Debezium CDC"
+   ],
+   "choice": "CDC",
+   "why": "Lower latency, commit ordering, no query load on hot shards. Cost: operating Debezium/Kafka Connect and handling schema changes."
+  },
+  {
+   "decision": "Authorise-then-capture vs direct capture",
+   "options": [
+    "Auth at checkout, capture at shipment",
+    "Capture immediately"
+   ],
+   "choice": "Capture immediately for UPI/wallets; auth-capture for cards where supported",
+   "why": "UPI has no auth-hold model; immediate capture simplifies flows but makes refunds the compensation. Auth-capture on cards lets cancellations void instead of refund, cheaper and faster for the customer."
+  },
+  {
+   "decision": "Strong vs eventual consistency for order status reads",
+   "options": [
+    "Always read primary",
+    "Read models with fallback for new orders"
+   ],
+   "choice": "Read models with recent-order fallback",
+   "why": "Protects transactional shards at sale peaks while preserving read-your-writes where users notice it."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Inventory service slow or down during checkout.",
+   "behavior": "Checkout fails fast (timeout 200 ms, one retry) with 'please retry'; circuit breaker opens to protect it; no order is created without a reservation; no payment is initiated."
+  },
+  {
+   "failure": "PSP outage or degradation.",
+   "behavior": "Health-based router moves new intents to a backup PSP; pending attempts polled; reservations held until TTL; customers offered alternative methods; reconciliation catches late captures."
+  },
+  {
+   "failure": "Kafka unavailable briefly.",
+   "behavior": "Services keep committing to their DBs with outbox rows; CDC relay buffers and catches up when Kafka returns; saga progress pauses but nothing is lost; checkout still works since its critical path is synchronous DB + inventory."
+  },
+  {
+   "failure": "Orchestrator crash or deploy.",
+   "behavior": "State and commands are durable (DB + outbox or Temporal history); another instance resumes; timers are durable and fire late rather than never."
+  },
+  {
+   "failure": "Consumer bug causes a stuck state (e.g. confirmations not processed).",
+   "behavior": "Stuck-saga detector flags orders older than SLA in a state; DLQ alerts; fix and replay from DLQ or re-issue commands from the ops console; idempotency makes replay safe."
+  },
+  {
+   "failure": "Order DB shard failover.",
+   "behavior": "Semi-sync replica promoted; in-flight transactions either committed with outbox or not at all; clients retry with the same Idempotency-Key and get the correct result."
+  },
+  {
+   "failure": "Redis hot-SKU cluster failure mid-deal.",
+   "behavior": "Deal paused at the gateway (sold-out-temporarily message); counters rebuilt from DB committed + durable reservation log; resume; conservative rebuild prevents oversell."
+  }
+ ],
+ "metrics": [
+  "Checkout success rate and p50/p99 latency, split by failure reason (OOS, price change, inventory timeout).",
+  "Reservation outcomes: confirmed, released (timeout), released (payment failed), expired-but-captured.",
+  "Oversell count per SKU (fulfilment allocation failures) - target zero.",
+  "Payment success rate by PSP and method; pending attempts by age; webhook latency.",
+  "Orphan payments (captured with no confirmed order) and time to auto-refund.",
+  "Saga count by state and age; stuck sagas beyond SLA; compensation rates.",
+  "Event consumer lag per service; DLQ depth; outbox relay lag (commit to publish).",
+  "Read model lag (event time to projection update).",
+  "Reconciliation exceptions by type per day."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not use event sourcing for orders?",
+   "a": "Event sourcing would make the event log the source of truth and derive state from it, which gives perfect audit and replay. But it adds complexity (snapshots, schema evolution of old events, querying current state). The outbox already gives a reliable event stream and an audit timeline, so I would use event sourcing only if the business required temporal queries beyond the order timeline."
+  },
+  {
+   "q": "How do you handle a split order with three sellers where one seller cancels?",
+   "a": "The saga tracks items and shipments individually; the cancellation triggers a sub-compensation for those items: partial refund, inventory adjustment, notification. The order moves to PARTIALLY_CANCELLED, and the rest continue. Refund amounts are computed from item-level prices including proportional coupon splits."
+  },
+  {
+   "q": "What breaks first on Big Billion Day-scale traffic?",
+   "a": "Hot-SKU inventory and PSP capacity. Inventory is handled by virtual queues and sharded counters; PSP capacity by multi-PSP routing, pre-negotiated TPS with providers, and pacing checkout admissions to what PSPs can accept. After that, event lag in post-order processing, which is acceptable as long as checkout and payment confirmation stay fast."
+  },
+  {
+   "q": "How do you test that compensations work?",
+   "a": "Unit-test the state machine exhaustively for every (state, event) pair; contract tests per command; chaos tests that inject PSP timeouts, duplicate webhooks, Kafka redelivery and service crashes in staging; and production canaries with synthetic orders on test SKUs that run full happy and failure paths every few minutes."
+  },
+  {
+   "q": "How would you migrate from the current monolith?",
+   "a": "Strangler pattern: first add an outbox to the monolith so events flow; build read models and notifications off events; extract Inventory with a dual-run comparison; then Payment; finally move orchestration out. Each step is behind a feature flag with reconciliation comparing old and new paths."
+  },
+  {
+   "q": "Temporal vs your own DB-backed state machine?",
+   "a": "Temporal gives durable timers, retries, versioning and visibility out of the box, which saves a lot of custom code and bugs for long-running flows. A DB state machine is fewer moving parts and easier for teams fluent in SQL. At very high volume I would benchmark Temporal's persistence (Cassandra/MySQL) capacity; for the core order flow, either works if the state machine is explicit and tested."
+  },
+  {
+   "q": "How do you guarantee no orphan reservations block stock?",
+   "a": "Reservations have expires_at owned by Inventory; a sweeper releases due rows every few seconds using an index on (status, expires_at); reconciliation compares HELD reservations against order states; and confirm after expiry returns 410 so the saga handles it explicitly."
+  },
+  {
+   "q": "How does COD change the saga?",
+   "a": "No payment step: after reservation, a risk/verification step (OTP or IVR confirmation for risky orders) replaces payment, then confirm reservation and ship. Payment is collected at delivery and reconciled with logistics partner remittances; refusal at doorstep triggers RTO, which returns stock via an inventory inbound event."
+  }
+ ],
+ "key_points": [
+  "Three invariants: never oversell, never keep money without an order, never lose an acknowledged order.",
+  "No 2PC: an orchestrated saga of local transactions with explicit, idempotent compensations.",
+  "Transactional outbox plus CDC for publishing; inbox table for consuming; key everything by order_id.",
+  "Reserve stock synchronously at checkout with a TTL; confirm on payment; release on failure or timeout.",
+  "Hot SKUs: sharded counters, in-memory atomic path with a durable log, and a virtual queue in front.",
+  "A payment timeout is unknown, not failed: PENDING state, query the PSP, idempotency keys, webhooks.",
+  "Reconciliation with auto-heal (refund orphans, release reservations) is the final safety net.",
+  "CQRS read models for order history and seller feeds, with read-your-writes fallback.",
+  "Measure oversell, orphan payments, stuck sagas by state and age, and consumer lag.",
+  "Bulkhead checkout from post-order processing so backlogs never block new orders."
+ ],
+ "quiz": [
+  {
+   "q": "A service updates its DB and then publishes to Kafka. It crashes between the two. What is the result and the standard fix?",
+   "options": [
+    "Event is duplicated; fix with exactly-once Kafka",
+    "State change is rolled back automatically; no fix needed",
+    "State changed but no event was published; fix with a transactional outbox",
+    "Kafka retries the publish; fix with acks=all"
+   ],
+   "answer": 2,
+   "why": "This is the dual-write problem. The outbox makes the state change and the event atomic in one local transaction. Kafka exactly-once covers Kafka-to-Kafka flows, not DB plus Kafka."
+  },
+  {
+   "q": "Two users race for the last unit. Which update prevents overselling?",
+   "options": [
+    "UPDATE stock SET available = available - 1 WHERE sku = ? AND available >= 1",
+    "SELECT available, then UPDATE if > 0 in application code",
+    "UPDATE stock SET available = available - 1 WHERE sku = ?",
+    "Cache available in Redis and decrement after the DB write"
+   ],
+   "answer": 0,
+   "why": "The conditional update makes check and decrement atomic; zero rows affected means out of stock. Read-then-write in application code has a race between the read and the write."
+  },
+  {
+   "q": "The PSP call to capture a payment times out. What should the saga do?",
+   "options": [
+    "Mark payment failed and cancel the order",
+    "Mark payment successful and confirm the order",
+    "Retry with a new idempotency key",
+    "Mark PENDING, retry or query status using the same idempotency key, and resolve via webhook or reconciliation"
+   ],
+   "answer": 3,
+   "why": "A timeout is an unknown outcome. Cancelling risks keeping money without an order; a new idempotency key risks a double charge."
+  },
+  {
+   "q": "Which best describes a compensating transaction?",
+   "options": [
+    "A database rollback of the previous step",
+    "A new business action that semantically undoes a completed step, like a refund",
+    "A retry of the failed step",
+    "A two-phase commit abort"
+   ],
+   "answer": 1,
+   "why": "Saga steps have already committed and may be visible, so they cannot be rolled back; compensation is a forward action. Retrying is different: it tries to complete the step, not undo it."
+  },
+  {
+   "q": "Why is orchestration usually preferred over choreography for a multi-step order flow?",
+   "options": [
+    "It eliminates the need for idempotency",
+    "It is always faster",
+    "It makes the flow, timeouts and compensations explicit and traceable in one place",
+    "It avoids using a message broker"
+   ],
+   "answer": 2,
+   "why": "Central state machines are easier to reason about and debug as steps grow. Idempotency is still required, and orchestrators usually still use a broker."
+  },
+  {
+   "q": "A blockbuster SKU sees 5,000 reservation attempts per second on one DB row. What is the best first-order fix?",
+   "options": [
+    "Add read replicas",
+    "Increase the DB connection pool",
+    "Lower the reservation TTL",
+    "Shard the SKU's stock into multiple counters and put a virtual queue in front"
+   ],
+   "answer": 3,
+   "why": "Contention is on a single row lock; sharding spreads it and admission control stops excess demand early. More connections just add more waiters on the same lock; replicas do not help writes."
+  },
+  {
+   "q": "Why must the consumer's inbox (processed event id) insert be in the same transaction as its state change?",
+   "options": [
+    "So that crash recovery cannot leave the message marked processed but not applied, or applied but not marked",
+    "To improve throughput",
+    "Because Kafka requires it",
+    "To preserve ordering"
+   ],
+   "answer": 0,
+   "why": "Atomicity prevents both lost and duplicate effects. It does not by itself provide ordering; that comes from partitioning and versions."
+  },
+  {
+   "q": "A capture arrives 2 minutes after the order was cancelled for payment timeout. Correct saga behaviour?",
+   "options": [
+    "Ignore it; the order is terminal",
+    "Re-open the order without checking stock",
+    "Issue an automatic refund (optionally revive the order if stock can be re-reserved)",
+    "Send it to the DLQ for manual handling"
+   ],
+   "answer": 2,
+   "why": "Ignoring it creates an orphan payment; the customer's money must be returned or the order revived with a fresh reservation. Manual handling does not scale at sale volumes."
+  },
+  {
+   "q": "What does keying all order events by order_id in Kafka guarantee?",
+   "options": [
+    "Global ordering of all events",
+    "Ordering of events for the same order within a topic, with parallelism across orders",
+    "Exactly-once processing",
+    "Ordering across different topics"
+   ],
+   "answer": 1,
+   "why": "Same key -> same partition -> ordered. Different topics have no relative order, and keys say nothing about exactly-once."
+  },
+  {
+   "q": "At 10M orders/day, what is the average order rate?",
+   "options": [
+    "About 1,160 per second",
+    "About 11.6 per second",
+    "About 116 per second",
+    "About 11,600 per second"
+   ],
+   "answer": 2,
+   "why": "10,000,000 / 86,400 = ~116/s. The key insight is that sale peaks (~25k/s) are 200x this, so design for bursts."
+  },
+  {
+   "q": "Why reserve stock at checkout rather than after payment succeeds?",
+   "options": [
+    "Payment APIs require it",
+    "It avoids many users paying for the last unit and then needing refunds",
+    "It removes the need for TTLs",
+    "It makes checkout faster"
+   ],
+   "answer": 1,
+   "why": "Reserving after payment lets several users pay for one unit, forcing refunds and bad experiences. Checkout reservation needs a TTL, and adds a little latency, not less."
+  },
+  {
+   "q": "Debezium CDC is preferred over a polling outbox relay mainly because:",
+   "options": [
+    "It publishes in commit order with low latency and no polling load on the database",
+    "It provides exactly-once delivery to consumers",
+    "It removes the need for an outbox table",
+    "It works without Kafka"
+   ],
+   "answer": 0,
+   "why": "CDC tails the log. Delivery is still at-least-once, so consumers must dedup; the outbox table is still the source of events."
+  },
+  {
+   "q": "PSP webhooks deliver CAPTURED, then a delayed AUTHORIZED for the same payment. The processor should:",
+   "options": [
+    "Move the payment back to AUTHORIZED",
+    "Reject both webhooks",
+    "Refund the payment",
+    "Ignore the stale event because state only moves forward"
+   ],
+   "answer": 3,
+   "why": "Monotonic state ranks handle out-of-order webhooks. Regressing to AUTHORIZED could trigger a duplicate capture."
+  },
+  {
+   "q": "A customer pays and immediately opens order history, which is a CQRS read model. The order is missing. Best fix?",
+   "options": [
+    "Make every read go to the primary DB",
+    "Fall back to the primary for very recent orders and return state in the checkout response",
+    "Remove the read model",
+    "Increase Kafka partitions"
+   ],
+   "answer": 1,
+   "why": "Targeted read-your-writes keeps the benefit of read models. Sending every read to the primary would overload shards at peak."
+  },
+  {
+   "q": "Which statement about sagas is true?",
+   "options": [
+    "They provide full isolation like serializable transactions",
+    "They require all participants to support prepare/commit",
+    "They provide atomicity via compensation but not isolation; intermediate states are visible",
+    "They are only possible with choreography"
+   ],
+   "answer": 2,
+   "why": "Sagas lack isolation, so designs use semantic locks like PENDING states. Prepare/commit is 2PC, which sagas avoid."
+  },
+  {
+   "q": "The outbox relay re-publishes 10,000 events after a restart. What prevents double refunds?",
+   "options": [
+    "Kafka log compaction",
+    "Idempotent consumers (inbox on event_id) and refund idempotency keys",
+    "Increasing min.insync.replicas",
+    "Consumer auto-commit"
+   ],
+   "answer": 1,
+   "why": "Dedup at the consumer and idempotency keys at the PSP make repeated commands harmless. Compaction keeps the latest value per key but does not stop consumers reprocessing."
+  },
+  {
+   "q": "Why does the saga query payment status before cancelling on timeout?",
+   "options": [
+    "To reduce Kafka load",
+    "Because the webhook may simply be late, and cancelling would create an orphan payment",
+    "Because PSPs require it",
+    "To reset the reservation TTL"
+   ],
+   "answer": 1,
+   "why": "Asking the authority resolves the unknown. Cancelling blindly when the customer has actually paid creates exactly the 'money debited, no order' tickets we want to eliminate."
+  },
+  {
+   "q": "Which is the weakest reason to use Temporal for the order saga?",
+   "options": [
+    "Durable timers for payment waits",
+    "Automatic retries and visibility of workflow state",
+    "It removes the need for idempotent activities",
+    "Workflow versioning for long-running flows"
+   ],
+   "answer": 2,
+   "why": "Activities can still execute more than once, so they must be idempotent. The other options are genuine benefits."
+  },
+  {
+   "q": "Hot-SKU stock is split into 16 Redis counters. One shard hits zero while others have units. What happens to a user hitting that shard?",
+   "options": [
+    "They are told sold out immediately",
+    "The reservation tries other shards before declaring sold out",
+    "The order oversells",
+    "Redis rebalances all shards synchronously"
+   ],
+   "answer": 1,
+   "why": "Trying other shards avoids false sold-outs; overselling is impossible because each shard decrements atomically within its own budget."
+  },
+  {
+   "q": "Inventory is on the synchronous checkout path. Which protection is most important?",
+   "options": [
+    "Unlimited retries until it responds",
+    "Long timeouts to avoid failing checkouts",
+    "Tight timeouts, a single retry, a circuit breaker, and no order without a reservation",
+    "Skipping reservation when inventory is slow"
+   ],
+   "answer": 2,
+   "why": "Fail fast and keep the invariant. Skipping reservation risks overselling; long timeouts and unlimited retries pile up threads and cascade the failure."
+  },
+  {
+   "q": "What is the role of daily reconciliation against PSP settlement files?",
+   "options": [
+    "Optional reporting only",
+    "Replaces webhooks",
+    "Final safety net that catches orphan payments, mismatched amounts and lost events, and triggers auto-heal",
+    "Improves checkout latency"
+   ],
+   "answer": 2,
+   "why": "Online paths will miss rare cases; reconciliation guarantees eventual correctness and satisfies finance. It complements webhooks, it does not replace them."
+  },
+  {
+   "q": "Peak 25k orders/s with 2.5 items each means roughly how many reservation operations per second?",
+   "options": [
+    "62,500",
+    "10,000",
+    "25,000",
+    "250,000"
+   ],
+   "answer": 0,
+   "why": "25,000 x 2.5 = 62,500 item reservations per second, which is why the inventory path is the first bottleneck."
+  }
+ ],
+ "references": [
+  {
+   "title": "Pattern: Transactional outbox (microservices.io)",
+   "url": "https://microservices.io/patterns/data/transactional-outbox"
+  },
+  {
+   "title": "What is the Saga pattern for managing distributed transactions (DesignGurus)",
+   "url": "https://www.designgurus.io/answers/detail/what-is-the-saga-pattern-for-managing-distributed-transactions-and-when-should-you-use-it"
+  },
+  {
+   "title": "Ensuring data consistency across microservices with Saga and Outbox (DEV Community)",
+   "url": "https://dev.to/haydencordeiro/ensuring-data-consistency-across-microservices-herding-cats-with-saga-outbox-3mhe"
+  },
+  {
+   "title": "How to Handle Distributed Transactions in Microservices (OneUptime)",
+   "url": "https://oneuptime.com/blog/post/2026-01-24-distributed-transactions-microservices/view"
+  }
+ ]
+}

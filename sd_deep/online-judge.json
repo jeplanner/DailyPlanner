@@ -1,0 +1,1085 @@
+{
+ "slug": "online-judge",
+ "title": "Design an online coding judge (LeetCode)",
+ "prompt": "Design an online coding judge (LeetCode).",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "An online judge runs untrusted code from millions of strangers against hidden test cases and must return a fair, reproducible verdict in seconds. The interesting tensions are security (arbitrary code must not escape the sandbox, mine crypto or reach the network), bursty compute (a weekly contest sends 20-30k users submitting in the same minutes) and fairness (identical code must get identical time measurements regardless of which worker ran it). The web tier is ordinary; the execution plane is where the design lives.",
+ "framework": {
+  "clarify": [
+   "Features: problem catalog, code editor with 'Run' (custom input) and 'Submit' (all hidden tests), verdicts, submission history, contests with live leaderboard. Discussions and premium billing are out.",
+   "Languages: assume ~15 (C++, Java, Python, Go, JS, Rust ...), each with its own compiler/runtime version pinned per contest.",
+   "Scale: ~5M MAU, ~500k submissions/day normally; weekly contest with 30k participants peaking at ~1,500-3,000 submissions/minute in the first and last 15 minutes.",
+   "Limits per problem: time limit 1-3 s (language multipliers), memory 256 MB, output 64 MB, 50-200 hidden test cases.",
+   "Verdict latency target: p95 under 5 s for normal load, under 15 s during contest peaks; Run (single test) under 3 s.",
+   "Security model: code is hostile. No network, no persistent filesystem, no syscalls beyond an allowlist, no visibility of other submissions or test outputs.",
+   "Fairness: verdicts must be deterministic and timing comparable across machines; rejudge must be possible if a test case is fixed.",
+   "Plagiarism detection during contests and rate limiting per user are in scope as lightweight features."
+  ],
+  "design": [
+   "Baseline: API service stores submission (PENDING), enqueues a job, returns submission_id; judge workers pull jobs, compile and run in a sandbox, write verdict; client polls or receives a WebSocket push.",
+   "Execution plane: pools of stateless judge workers, each running one submission per reserved CPU core inside a hardened sandbox (container + seccomp + cgroups, or gVisor/Firecracker microVM).",
+   "Queues per language and per priority (contest > premium > free, Run > Submit for interactivity) so a Python spike does not starve C++.",
+   "Test data stored in object storage, versioned and checksummed, cached on worker local SSD; expected outputs never leave the judge plane.",
+   "Checker: exact match after whitespace normalisation by default; special checkers for floating point tolerance or multiple valid answers; interactive problems use a referee process.",
+   "Contest service: registration, start/end gates, scoring with penalties, leaderboard in Redis sorted sets, freeze before end.",
+   "Critical path: submit -> persist -> enqueue -> worker: fetch tests, compile (cached), run each test in sandbox with limits, compare, stop at first failure -> write verdict -> push to client."
+  ],
+  "defend": [
+   "Bottleneck: CPU-seconds in the execution plane during contest peaks. 3,000 submissions/min x ~100 tests x ~50 ms avg = ~250 core-seconds/s of run time plus compile, so ~400-600 dedicated cores with headroom; pre-scale before contests.",
+   "Scale reads: problem pages and editorials are static and CDN cached; leaderboard reads come from Redis with 5-10 s client refresh.",
+   "Scale writes: submission rows partitioned by user_id/time; verdict writes are small. Queue depth drives autoscaling; contest capacity is reserved, not reactive.",
+   "Failure: worker crash -> job visibility timeout returns it to the queue; idempotent verdict write by submission_id + attempt; poisoned submissions (kernel panics in sandbox) quarantined after 3 attempts.",
+   "Degradation: during overload, disable 'Run' for non-contest users, lower priority of practice submissions, show queue position; never degrade fairness of contest timing.",
+   "Measure: queue wait p95 per language, verdict latency, sandbox escape attempts/blocked syscalls, timing variance on calibration programs, rejudge counts, worker utilisation."
+  ],
+  "script": "An online judge is a normal web app wrapped around a very abnormal compute plane, so I will spend most of my time on execution. Clarifying: about fifteen languages, hidden test suites of up to two hundred cases, one to three second time limits, half a million submissions a day, and weekly contests where thirty thousand people submit in bursts. Code is hostile, verdicts must be fair and reproducible. The design: the API stores a pending submission and pushes a job onto a per-language priority queue. Stateless judge workers, one job per pinned core, compile with a cache, then run each test inside a sandbox built from namespaces, seccomp and cgroups, or a microVM, with no network. They compare outputs with a checker, stop at the first failure, and write the verdict, which we push to the browser. To defend it I will size the CPU for a contest peak, explain why we pre-scale rather than autoscale, how the sandbox layers stop escapes and fork bombs, and how we keep timing fair across machines."
+ },
+ "brd": {
+  "problem": "Developers practise algorithms and companies and communities run contests, but evaluating code requires executing untrusted programs safely, quickly and fairly at scale. A judge that is slow, unfair or exploitable loses user trust immediately, especially in rated contests where rankings affect reputation and hiring.",
+  "goals": [
+   "Return verdicts in under 5 s p95 for practice and under 15 s p95 at contest peak.",
+   "Zero sandbox escapes; untrusted code cannot reach network, host filesystem or other submissions.",
+   "Deterministic, fair verdicts: same code, same verdict; timing variance under 5% across workers.",
+   "Support contests of 30k-50k concurrent participants with live leaderboards.",
+   "Keep compute cost per submission low through caching, early termination and spot capacity for practice traffic."
+  ],
+  "non_goals": [
+   "A general-purpose cloud IDE or long-running program hosting.",
+   "Running programs that need network access, GPUs or multi-minute runtimes.",
+   "Building a discussion forum or social features in this design."
+  ],
+  "stakeholders": [
+   {
+    "who": "Practising developer",
+    "needs": "Fast feedback, clear verdicts (WA on test 37, TLE, MLE, RE with stderr), history."
+   },
+   {
+    "who": "Contest participant",
+    "needs": "Fair timing, no queue unfairness at peak, accurate real-time ranking."
+   },
+   {
+    "who": "Problem setters",
+    "needs": "Upload tests, set limits, write checkers, validate reference solutions, trigger rejudge."
+   },
+   {
+    "who": "Security / infra team",
+    "needs": "Strong isolation, abuse detection, predictable capacity and cost."
+   },
+   {
+    "who": "Business (premium, hiring partners)",
+    "needs": "Reliable contests and assessments, plagiarism detection, SLAs."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Verdict latency p95 (practice)",
+    "target": "< 5 s"
+   },
+   {
+    "metric": "Verdict latency p95 (contest peak)",
+    "target": "< 15 s"
+   },
+   {
+    "metric": "Sandbox escapes",
+    "target": "0"
+   },
+   {
+    "metric": "Timing variance on calibration programs",
+    "target": "< 5% across workers"
+   },
+   {
+    "metric": "Contest availability",
+    "target": "99.95% during contest windows"
+   },
+   {
+    "metric": "Cost per 1,000 submissions",
+    "target": "Tracked and reduced 15% YoY"
+   }
+  ],
+  "constraints": [
+   "Must support many language runtimes with pinned versions for reproducibility.",
+   "Test data is confidential IP; leaks ruin problems for contests.",
+   "Contest start times are fixed and announced; load is predictable in time but extreme in intensity.",
+   "CPU timing must be measured on dedicated, non-oversubscribed cores."
+  ],
+  "risks": [
+   {
+    "risk": "Sandbox escape via kernel exploit",
+    "mitigation": "Defense in depth: seccomp allowlist, user namespaces, no network, read-only rootfs, gVisor or microVM for untrusted runtimes, patched kernels, workers in an isolated VPC with no credentials."
+   },
+   {
+    "risk": "Contest overload causes long queues and unfair rankings",
+    "mitigation": "Reserve and pre-warm capacity before start; contest queue priority; ranking uses submission time, not verdict time."
+   },
+   {
+    "risk": "Test data leakage via stderr or timing side channels",
+    "mitigation": "Never return expected output for hidden tests; truncate stderr; return only first failing test index for hidden tests."
+   },
+   {
+    "risk": "Cheating and plagiarism in contests",
+    "mitigation": "Token-based similarity (MOSS-style winnowing) after contest, rate limits, account age checks, manual review."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Student preparing for placements",
+    "needs": "Practise problems with instant feedback on a slow mobile connection."
+   },
+   {
+    "name": "Competitive programmer",
+    "needs": "Weekly contest, sub-second judgement on C++, precise TLE/MLE reporting."
+   },
+   {
+    "name": "Problem setter",
+    "needs": "Upload tests, compare reference vs brute-force solutions, rejudge after a fix."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want to run my code against custom input so that I can debug before submitting.",
+   "As a user, I want to submit and see a verdict with runtime and memory so that I know if I passed.",
+   "As a user, I want to see which test failed and my output vs expected for sample tests so that I can fix bugs.",
+   "As a contestant, I want my rank updated within seconds of an accepted submission so that the contest feels live.",
+   "As a setter, I want to rejudge all submissions after fixing a test so that verdicts are correct.",
+   "As a user, I want to see my submission history and compare runtimes with others so that I can optimise.",
+   "As an admin, I want to flag near-identical submissions in a contest so that I can disqualify cheaters."
+  ],
+  "functional": [
+   "Problem catalog with statements, constraints, sample tests, tags and difficulty.",
+   "Run: execute against user-provided input with the same limits; returns stdout/stderr.",
+   "Submit: compile once, run against all hidden tests in order of cost, stop at first failure; verdicts AC, WA, TLE, MLE, RE, CE, OLE.",
+   "Custom checkers (float tolerance, any valid permutation) and interactive problems via referee.",
+   "Contests: registration, timed start/end, scoring (ICPC penalty or points), leaderboard with freeze, virtual participation.",
+   "Rejudge by problem or submission; plagiarism detection post-contest.",
+   "Per-user rate limiting (e.g. 1 submission per 5 s, 1 Run per 2 s)."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "Run p95 < 3 s; Submit p95 < 5 s normal, < 15 s at contest peak."
+   },
+   {
+    "name": "Security",
+    "target": "No network, allowlisted syscalls, no host fs, per-run fresh sandbox; zero escapes."
+   },
+   {
+    "name": "Fairness/determinism",
+    "target": "Dedicated cores, CPU time (not wall) for TLE, < 5% variance; pinned toolchains."
+   },
+   {
+    "name": "Availability",
+    "target": "99.9% overall, 99.95% during contests; queued submissions never lost."
+   },
+   {
+    "name": "Scalability",
+    "target": "10x burst within contest windows via pre-provisioning; horizontal workers."
+   },
+   {
+    "name": "Durability",
+    "target": "Submissions and verdicts persisted before ack; test data versioned and replicated."
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "5M MAU, 500k submissions/day practice + Run calls 1.5M/day.",
+    "Contest: 30k participants, ~4 problems, ~3 submissions each = ~120k submissions in 90 minutes; peak ~3,000/min.",
+    "Average hidden tests 100; average per-test run 40 ms (many fail early); compile 1-2 s for C++/Java/Rust, ~0 for Python.",
+    "One run per dedicated core at a time; sandbox setup ~50 ms with pooled warm containers (~200-500 ms cold)."
+   ],
+   "math": [
+    "Practice: 500k/day = ~6/s average, ~20/s peak. Run: ~17/s average.",
+    "Per Submit CPU: compile ~1 s (cache hit rate ~30% on resubmits) + 100 tests x 40 ms = ~5 s core time on average.",
+    "Practice peak: 20/s x 5 s = 100 busy cores; with 50% headroom ~150 cores.",
+    "Contest peak: 3,000/min = 50/s x 5 s = 250 busy cores; target utilisation 60% -> ~420 cores; plus practice -> ~600 cores reserved during contest.",
+    "Storage: submission row ~2 KB code + metadata -> 500k x 2 KB = 1 GB/day; test data ~3,000 problems x ~50 MB = 150 GB, cached per worker.",
+    "Leaderboard: 30k users polling every 10 s = 3k reads/s, trivial for Redis."
+   ],
+   "summary": "Request volume is modest (tens per second) but each request costs seconds of dedicated CPU, so the design is about provisioning ~600 isolated cores for a predictable contest spike and keeping each run cheap, safe and fair."
+  },
+  "out_of_scope": [
+   "Discussion forums, editorials authoring workflow and payments.",
+   "GPU or network-dependent problems (e.g. SQL on remote DBs is handled via local embedded DB if needed).",
+   "Full IDE features such as debugging and language servers.",
+   "Hiring assessment proctoring (webcam, screen recording)."
+  ]
+ },
+ "hld": {
+  "overview": "Clients talk to an API gateway backed by a Submission service (writes submission rows and enqueues jobs), a Problem service (statements, limits, test metadata), a Contest service (timing, scoring, leaderboard) and a Result service (WebSocket/SSE push and polling). Jobs go into a broker with separate queues per language and priority class. A fleet of judge workers, grouped into language pools, pull jobs, fetch test data from a local cache backed by object storage, compile through a compile cache, and execute each test inside a fresh sandbox with cgroup limits, seccomp filtering and no network. Verdicts flow back through a results topic to the Submission store and to the Contest service, which updates the leaderboard in Redis.",
+  "diagram": " Browser ---- HTTPS/WSS ----> API gateway (auth, rate limit)\n                                   |\n        +-------------+------------+------------+---------------+\n        v             v                         v               v\n  Problem svc   Submission svc ----------> Contest svc      Result svc (WS/SSE)\n  (CDN cached)     | 1. insert PENDING        |  leaderboard      ^\n        |          | 2. enqueue job           v  Redis ZSET       |\n        |          v                     +---------+              |\n        |   +-----------------------+    | Redis   |              |\n        |   | Job broker            |    +---------+              |\n        |   | q.contest.cpp q.py .. |                             |\n        |   | q.practice.* q.run.*  |                             |\n        |   +-----------+-----------+                             |\n        |               v  pull (lease, visibility timeout)       |\n        |   +-------------------------------------------+         |\n        |   | Judge workers (isolated VPC, no creds)   |         |\n        |   |  compile cache | sandbox per test        |         |\n        |   |  ns+seccomp+cgroups or gVisor/microVM    |         |\n        |   +--------+------------------------+---------+         |\n        v            | fetch tests (cached)    | verdicts         |\n  Object storage <---+                         v                  |\n  (tests, versioned)              Results topic -> Submission DB -+\n                                                -> Contest svc\n",
+  "components": [
+   {
+    "name": "API gateway",
+    "responsibility": "Auth, per-user rate limits (1 submit / 5 s), request size limits (code <= 64 KB), routing."
+   },
+   {
+    "name": "Problem service",
+    "responsibility": "Statements, limits, sample tests, test set versions; statements cached at CDN."
+   },
+   {
+    "name": "Submission service",
+    "responsibility": "Validate, persist submission as PENDING, enqueue job with priority, expose status, handle rejudge."
+   },
+   {
+    "name": "Job broker",
+    "responsibility": "Per-language, per-priority queues with leases (visibility timeout ~ 2x max expected run), dead-letter queue."
+   },
+   {
+    "name": "Judge worker",
+    "responsibility": "Pull job, prepare sandbox, compile via cache, run tests with limits, run checker, emit verdict; stateless."
+   },
+   {
+    "name": "Sandbox runtime",
+    "responsibility": "Namespaces (pid, net, mount, user, ipc), seccomp allowlist, cgroups v2 (cpu, memory, pids), read-only rootfs, tmpfs scratch; optional gVisor/Firecracker."
+   },
+   {
+    "name": "Test data store and cache",
+    "responsibility": "Versioned, checksummed test bundles in object storage; workers cache on local SSD keyed by (problem, version)."
+   },
+   {
+    "name": "Result service",
+    "responsibility": "Push verdicts over WebSocket/SSE; fallback polling endpoint."
+   },
+   {
+    "name": "Contest service",
+    "responsibility": "Start/end gates, scoring rules, penalty calculation, Redis sorted set leaderboard, freeze/unfreeze."
+   },
+   {
+    "name": "Plagiarism service",
+    "responsibility": "Post-contest pairwise similarity via token fingerprinting (winnowing), flags for review."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Submit during a contest",
+    "steps": [
+     "Client POST /submissions with code, language, problem, contest; gateway checks rate limit and contest window.",
+     "Submission service inserts row (status PENDING, submitted_at = server time) and enqueues job to q.contest.<lang>; returns 202 with id.",
+     "Worker leases job, verifies test bundle version in local cache (download if missing, check SHA-256).",
+     "Compile in sandbox (compile limits 10 s, 512 MB); on failure emit CE with truncated compiler output.",
+     "For each test ordered small-to-large: fresh sandbox process, feed stdin, enforce CPU time limit, memory, output size; compare with checker; stop on first failure.",
+     "Emit verdict (status, failed test index, max time, max memory) to results topic; ack job.",
+     "Submission DB updated idempotently; Contest service updates score using submitted_at; Result service pushes to client."
+    ]
+   },
+   {
+    "name": "Rejudge after test fix",
+    "steps": [
+     "Setter uploads new test bundle version v2; Problem service validates reference solution passes all tests.",
+     "Rejudge job enumerates affected submissions and enqueues them at low priority with judge_version = v2.",
+     "Workers write new verdict rows keyed by (submission_id, judge_version); scores recomputed; users notified of changed verdicts."
+    ]
+   },
+   {
+    "name": "Run with custom input",
+    "steps": [
+     "Client POST /runs with code and input (<= 1 MB); goes to q.run.<lang> with high priority but small budget (single test).",
+     "Worker compiles (cache likely hit on repeated runs), runs once, returns stdout/stderr truncated to 64 KB; nothing persisted beyond 24 h."
+    ]
+   }
+  ],
+  "data_flow": "Code flows from browser to the Submission DB and into a job message (code inline up to 64 KB). Test data flows one way from object storage into the isolated judge plane and never back out. Verdicts flow back as small events to the Submission DB, contest scoring and client push. The judge plane has no credentials to any database; it only reads jobs and test bundles and writes result events."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/submissions",
+    "request": "{problemId, language, code, contestId?} + Idempotency-Key",
+    "response": "202 {submissionId, status:'PENDING', queuePosition}",
+    "notes": "Rate limited per user; idempotency key prevents double submit on retry."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/submissions/{id}",
+    "request": "-",
+    "response": "{id, status, verdict, failedTest, runtimeMs, memoryKb, compileOutput?}",
+    "notes": "Poll fallback; ETag to avoid resending unchanged state."
+   },
+   {
+    "method": "WS",
+    "path": "/v1/stream?submissionId=",
+    "request": "Subscribe",
+    "response": "events {status: COMPILING|RUNNING test k/N|DONE, verdict}",
+    "notes": "Progress events optional; final verdict always persisted."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/runs",
+    "request": "{problemId, language, code, stdin}",
+    "response": "200 {stdout, stderr, timeMs, memoryKb, exitCode} or 202 with runId",
+    "notes": "Short synchronous wait up to 5 s then async."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/contests/{id}/leaderboard?page=1",
+    "request": "-",
+    "response": "{rows:[{rank, user, score, penalty, perProblem}], frozen}",
+    "notes": "Served from Redis ZSET; cached 5 s at edge."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/admin/problems/{id}/rejudge",
+    "request": "{testVersion, scope:'all'|'contest'|ids}",
+    "response": "{jobId, count}",
+    "notes": "Low-priority queue; verdicts versioned."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Submission",
+    "store": "PostgreSQL / MySQL sharded by user_id (or DynamoDB)",
+    "fields": [
+     "submission_id (snowflake)",
+     "user_id",
+     "problem_id",
+     "contest_id",
+     "language",
+     "code_ref",
+     "submitted_at",
+     "status",
+     "verdict",
+     "failed_test",
+     "runtime_ms",
+     "memory_kb",
+     "judge_version",
+     "attempt"
+    ],
+    "keys": "PK submission_id; secondary (user_id, submitted_at), (contest_id, problem_id)",
+    "notes": "Code > 16 KB stored in object storage with code_ref; verdict update conditional on attempt."
+   },
+   {
+    "entity": "Problem / TestBundle",
+    "store": "PostgreSQL + object storage",
+    "fields": [
+     "problem_id",
+     "version",
+     "time_limit_ms",
+     "memory_mb",
+     "lang_multipliers",
+     "checker_type",
+     "bundle_uri",
+     "bundle_sha256",
+     "test_count"
+    ],
+    "keys": "PK (problem_id, version)",
+    "notes": "Bundles immutable; new version on any change."
+   },
+   {
+    "entity": "ContestScore",
+    "store": "Redis sorted set + PostgreSQL",
+    "fields": [
+     "contest_id",
+     "user_id",
+     "solved",
+     "penalty_min",
+     "per_problem {attempts, accepted_at}"
+    ],
+    "keys": "ZSET key contest:{id}:lb, score = solved*1e9 - penalty",
+    "notes": "PostgreSQL is source of truth; Redis rebuilt from it if lost."
+   },
+   {
+    "entity": "JudgeJob",
+    "store": "Broker (SQS/Kafka/RabbitMQ)",
+    "fields": [
+     "submission_id",
+     "attempt",
+     "problem_id",
+     "test_version",
+     "language",
+     "code",
+     "priority",
+     "deadline"
+    ],
+    "keys": "Queue per (priority, language)",
+    "notes": "Visibility timeout ~ 2x worst-case judge time; DLQ after 3 attempts."
+   }
+  ],
+  "classes": [
+   {
+    "name": "JudgeWorker",
+    "responsibility": "Main loop: lease job, judge, publish result, ack.",
+    "methods": [
+     "leaseJob(queues)",
+     "judge(job): Verdict",
+     "publish(verdict)",
+     "ack(job)"
+    ]
+   },
+   {
+    "name": "Sandbox",
+    "responsibility": "Create isolated process environment and enforce limits.",
+    "methods": [
+     "create(limits): Sandbox",
+     "run(cmd, stdin, cpuMs, memMb): RunResult",
+     "destroy()"
+    ]
+   },
+   {
+    "name": "Compiler",
+    "responsibility": "Compile with caching by hash of (language, toolchain version, code).",
+    "methods": [
+     "compile(lang, code): Artifact | CompileError",
+     "cacheKey(lang, code)"
+    ]
+   },
+   {
+    "name": "Checker",
+    "responsibility": "Compare output to expected according to problem rule.",
+    "methods": [
+     "check(input, expected, actual): bool",
+     "TokenChecker",
+     "FloatChecker(eps)",
+     "SpecialJudge(binary)"
+    ]
+   },
+   {
+    "name": "LeaderboardService",
+    "responsibility": "Update and query contest rankings.",
+    "methods": [
+     "onAccepted(contest, user, problem, submittedAt)",
+     "onRejected(...)",
+     "top(contest, page)",
+     "rankOf(contest, user)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Judge loop with early termination",
+    "explain": "Run tests ordered by size so that cheap failures are found first; measure CPU time from cgroup accounting, not wall clock; kill on limit.",
+    "pseudocode": "def judge(job):\n  tests = cache.get(job.problem_id, job.test_version)   # verify sha256\n  art = compiler.compile(job.language, job.code)\n  if art.error: return Verdict('CE', msg=truncate(art.error, 4096))\n  tl = problem.time_limit_ms * multiplier[job.language]\n  max_t = max_m = 0\n  for i, t in enumerate(sorted(tests, key=size)):\n    sb = Sandbox.create(cpu_ms=tl, mem_mb=problem.mem, pids=64, net=False)\n    r = sb.run(art.cmd, stdin=t.input, out_limit=64 << 20)\n    sb.destroy()\n    max_t = max(max_t, r.cpu_ms); max_m = max(max_m, r.peak_mem)\n    if r.killed_cpu: return Verdict('TLE', test=i)\n    if r.oom: return Verdict('MLE', test=i)\n    if r.exit_code != 0: return Verdict('RE', test=i)\n    if not checker.check(t.input, t.expected, r.stdout): return Verdict('WA', test=i)\n  return Verdict('AC', time=max_t, mem=max_m)"
+   },
+   {
+    "name": "ICPC-style leaderboard score in one sorted set",
+    "explain": "Rank by problems solved desc, then penalty asc (minutes to each AC plus 20 per wrong attempt before AC). Encode both into one numeric score so a ZSET orders it.",
+    "pseudocode": "def on_accepted(c, user, prob, submitted_at):\n  st = db.get_state(c, user, prob)\n  if st.accepted: return            # only first AC counts\n  minutes = (submitted_at - c.start) // 60\n  pen = minutes + 20 * st.wrong_attempts\n  db.mark_accepted(c, user, prob, pen)   # idempotent on submission_id\n  solved, total_pen = db.totals(c, user)\n  redis.zadd(f'contest:{c}:lb', {user: solved * 10**9 - total_pen})"
+   },
+   {
+    "name": "Plagiarism detection by winnowing",
+    "explain": "Normalise code (strip comments, rename identifiers), tokenise, hash k-grams, keep the minimum hash in each window as fingerprints, then compare fingerprint sets with Jaccard similarity; flag pairs above a threshold.",
+    "pseudocode": "def fingerprints(code, k=5, w=4):\n  toks = normalize_tokens(code)\n  hs = [hash(toks[i:i+k]) for i in range(len(toks)-k+1)]\n  return {min(hs[i:i+w]) for i in range(len(hs)-w+1)}\ndef similar(a, b):\n  fa, fb = fingerprints(a), fingerprints(b)\n  return len(fa & fb) / max(1, len(fa | fb))"
+   }
+  ],
+  "sequence": "Browser     API/Submission   Broker(q.contest.cpp)   Judge worker      Sandbox     Contest/Redis\n   |-- POST code -->|                 |                    |                |              |\n   |                |-- insert PENDING|                    |                |              |\n   |                |-- enqueue ----->|                    |                |              |\n   |<-- 202 id -----|                 |                    |                |              |\n   |== WS subscribe =>                |<-- lease (vt=60s) -|                |              |\n   |                |                 |                    |-- compile ---->|              |\n   |                |                 |                    |<-- binary -----|              |\n   |                |                 |                    |-- run test 1..N (fresh each) ->|\n   |                |                 |                    |<-- cpu ms, mem, stdout -------|\n   |                |                 |                    | checker: AC                   |\n   |                |<--------------- result event --------|                               |\n   |                |-- update row (cond. attempt)         |-- ack -------->|              |\n   |                |------------------------------------------------- onAccepted -------->|\n   |<= WS verdict AC =|                                                        ZADD lb     |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Fork bomb",
+   "handling": "cgroup pids.max = 64 and seccomp blocks clone/fork for languages that do not need threads; process killed, verdict RE."
+  },
+  {
+   "case": "Infinite loop that sleeps (wall time grows, CPU time does not)",
+   "handling": "Enforce both CPU limit and a wall clock limit (e.g. 2x CPU limit + 1 s); exceeding wall limit gives TLE."
+  },
+  {
+   "case": "Program prints 10 GB of output",
+   "handling": "Output limit (64 MB) enforced by pipe reader; kill and report OLE."
+  },
+  {
+   "case": "Code tries to open a socket or read /etc/passwd",
+   "handling": "Network namespace with no interfaces and seccomp deny socket; read-only minimal rootfs with no secrets; returns RE; incident counter increments."
+  },
+  {
+   "case": "Worker dies mid-judgement",
+   "handling": "Lease expires (visibility timeout), job returns to queue with attempt+1; verdict write is conditional on attempt so a late result from the dead worker is ignored."
+  },
+  {
+   "case": "Submission that crashes the sandbox host every time",
+   "handling": "After 3 attempts the job goes to a DLQ with verdict 'System Error'; on-call reviews; user not penalised."
+  },
+  {
+   "case": "Noisy neighbour skews timing",
+   "handling": "One job per pinned core, hyperthreading siblings disabled or reserved, CPU frequency fixed; measure CPU time; periodic calibration program per worker flags drifting machines."
+  },
+  {
+   "case": "Same user double-clicks Submit",
+   "handling": "Idempotency key from the client and a 5 s per-user rate limit; second request returns the first submission id."
+  },
+  {
+   "case": "Test data updated during a contest",
+   "handling": "Bundles are immutable and versioned; jobs carry test_version; a fix triggers explicit rejudge, never silent mixing."
+  },
+  {
+   "case": "Submission accepted at 89:59 but judged at 91:00",
+   "handling": "Score uses server-side submitted_at, so it counts; contest end gate checks submitted_at, not verdict time."
+  },
+  {
+   "case": "Java/Python slower than C++",
+   "handling": "Per-language time multipliers (e.g. Java 2x, Python 3-5x) set per problem after measuring reference solutions."
+  },
+  {
+   "case": "Floating point answers",
+   "handling": "Float checker with absolute/relative tolerance 1e-6; problem setter chooses checker."
+  },
+  {
+   "case": "Interactive problems",
+   "handling": "Referee process connected by pipes to the solution, both sandboxed; total CPU of solution limited; referee decides verdict."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Linux namespaces + seccomp + cgroups v2 (via nsjail / isolate)",
+   "layer": "Sandbox",
+   "overview": "Kernel primitives for isolation (pid, net, mount, user), syscall filtering and resource limits.",
+   "why": "Low overhead (tens of ms to start), precise CPU and memory accounting, proven in judges like IOI's isolate.",
+   "alternatives": "Plain Docker (convenient but larger attack surface and slower startup), gVisor (user-space kernel, stronger isolation, ~10-30% syscall overhead)."
+  },
+  {
+   "name": "Firecracker microVMs or gVisor",
+   "layer": "Sandbox hardening",
+   "overview": "Lightweight VM (Firecracker) or user-space kernel (gVisor) between untrusted code and the host kernel.",
+   "why": "Defense against kernel exploits for high-risk runtimes; Firecracker boots in ~125 ms.",
+   "alternatives": "Full VMs (too slow per test), namespaces only (weaker against kernel 0-days)."
+  },
+  {
+   "name": "SQS / RabbitMQ / Kafka",
+   "layer": "Job queue",
+   "overview": "Message brokers with leases or consumer groups.",
+   "why": "Per-language and per-priority queues with visibility timeouts and DLQ match job semantics.",
+   "alternatives": "Kafka is great for result events but awkward for per-job leases and priorities; Redis lists are simple but less durable."
+  },
+  {
+   "name": "PostgreSQL (sharded) or DynamoDB",
+   "layer": "Submission store",
+   "overview": "Relational or key-value store for submissions and problems.",
+   "why": "Small rows, simple queries by user and by contest; strong consistency for verdict updates.",
+   "alternatives": "MongoDB (flexible), Cassandra (overkill for this write rate)."
+  },
+  {
+   "name": "Redis sorted sets",
+   "layer": "Leaderboard",
+   "overview": "In-memory ordered sets with O(log N) updates and rank queries.",
+   "why": "30-50k contestants ranked in real time; ZREVRANK and ZRANGE are exactly the operations needed.",
+   "alternatives": "Recomputing from SQL each refresh (too slow at 3k reads/s), custom in-memory service."
+  },
+  {
+   "name": "S3 / GCS + local SSD cache",
+   "layer": "Test data",
+   "overview": "Object storage with versioning and checksums.",
+   "why": "Test bundles are immutable files; workers cache hot problems locally for fast access.",
+   "alternatives": "Shared NFS (single point of failure, slow under contention), baking tests into images (slow updates)."
+  },
+  {
+   "name": "Kubernetes with dedicated node pools",
+   "layer": "Compute orchestration",
+   "overview": "Container orchestration with node affinity, taints and autoscaling.",
+   "why": "Separate judge pools per language on dedicated, isolated nodes; scheduled pre-scaling before contests.",
+   "alternatives": "Nomad, raw autoscaling groups (simpler, fewer primitives)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Sandboxing untrusted code (defense in depth)",
+   "explain": "Running a stranger's program on your machine means assuming it is malicious. A sandbox restricts what a process can see and do. On Linux the building blocks are namespaces, which give the process its own view of process ids, mounts, network interfaces, users and hostnames, so it cannot see or signal host processes or reach the network; seccomp-bpf filters, which allow only an explicit list of system calls (read, write, mmap, exit_group ...) and kill the process on anything else; cgroups, which cap CPU, memory and number of processes; and a minimal read-only root filesystem with a small writable tmpfs. Each layer has known bypasses on its own, especially kernel bugs reachable through allowed syscalls, so serious systems layer them and may add a second kernel boundary: gVisor intercepts syscalls in a user-space kernel, and Firecracker runs each workload in a lightweight virtual machine. The surrounding environment matters as much: workers should hold no credentials, live in an isolated network segment, and be recycled frequently so a compromise does not persist.",
+   "in_this_design": "Each test runs in a fresh sandbox: new pid, mount, net, ipc and user namespaces, seccomp allowlist per language, cgroup limits (cpu, memory 256 MB, pids 64), read-only rootfs with the toolchain, tmpfs 64 MB, no network. Judge nodes sit in a VPC with no egress and no database credentials; for interpreted languages with large syscall surfaces we run gVisor.",
+   "key_points": [
+    "Assume all submitted code is hostile.",
+    "Layer namespaces, seccomp, cgroups and read-only fs; no single layer is enough.",
+    "Add a second kernel boundary (gVisor, microVM) for high-risk runtimes.",
+    "Workers hold no secrets and have no network egress; recycle them often."
+   ],
+   "qa": [
+    {
+     "q": "Why not just run each submission in a Docker container?",
+     "a": "Default Docker shares the host kernel and allows hundreds of syscalls; it is a packaging tool, not a security boundary. We add seccomp, no network, user namespaces and optionally gVisor."
+    },
+    {
+     "q": "How do you stop a fork bomb?",
+     "a": "cgroup pids.max caps process count, and seccomp can deny clone for single-threaded languages; the run is killed and reported as RE."
+    },
+    {
+     "q": "What happens if someone does escape?",
+     "a": "Blast radius is a worker with no credentials, no egress, in an isolated VPC, recycled within hours; detection via syscall audit alerts."
+    }
+   ]
+  },
+  {
+   "name": "Work queues, leases and visibility timeouts",
+   "explain": "A work queue distributes independent jobs to a pool of workers. The key reliability mechanism is the lease: when a worker takes a job, the broker hides it for a visibility timeout instead of deleting it. If the worker acknowledges in time, the job is deleted; if the worker crashes or stalls, the lease expires and the job becomes visible to another worker. This gives at-least-once processing, so results must be idempotent. The timeout must exceed the worst-case processing time, or slow but healthy jobs get duplicated; long jobs can extend their lease with heartbeats. Jobs that fail repeatedly are moved to a dead-letter queue after N attempts so one poison message cannot loop forever. Priorities are usually implemented as separate queues with weighted polling, because a single queue cannot reorder. Queue depth and age are the natural autoscaling and alerting signals: depth tells you backlog, age tells you user-visible waiting time.",
+   "in_this_design": "Jobs live in queues keyed by (priority, language). Workers poll contest queues first, then run, then practice. Visibility timeout is about 60 s (2x worst case), the result write is conditional on attempt number, and after 3 failures the job goes to the DLQ as System Error. Queue age per language drives alerts and pre-scaling decisions.",
+   "key_points": [
+    "Lease, do not delete, on receive; ack after completion.",
+    "Visibility timeout > worst-case job time, or heartbeat to extend.",
+    "At-least-once means idempotent result writes.",
+    "Dead-letter after N attempts to contain poison jobs.",
+    "Priorities = separate queues + weighted polling."
+   ],
+   "qa": [
+    {
+     "q": "Why separate queues per language?",
+     "a": "Pools have different images and costs; a Python surge should not delay C++ jobs, and each pool scales on its own queue depth."
+    },
+    {
+     "q": "What if the visibility timeout is too short?",
+     "a": "A slow job is handed to a second worker while the first still runs, doubling load and producing duplicate verdicts; we size it from worst-case time and use conditional writes."
+    },
+    {
+     "q": "How do you prevent starvation of practice jobs during a contest?",
+     "a": "Weighted polling, for example 8:2 contest to practice, rather than strict priority, plus a max-age escalation."
+    }
+   ]
+  },
+  {
+   "name": "Capacity planning and pre-scaling for predictable spikes",
+   "explain": "Reactive autoscaling watches a metric (CPU, queue depth) and adds capacity when it crosses a threshold. It works for gradual load but fails for step functions: new nodes take minutes to boot, pull images and warm caches, while a contest start multiplies load within seconds. When the spike is predictable in time, as with scheduled contests or sales, the better tool is scheduled pre-scaling: provision capacity for the forecast peak plus headroom some minutes before the event, warm it (images, caches, JIT), and keep reactive autoscaling as a safety net on top. The forecast comes from simple arithmetic, Little's law and history: concurrency equals arrival rate times service time, and utilisation should stay around 60-70% to keep queueing delay low, because waiting time grows sharply as utilisation approaches 100%. After the event, capacity is released; cheaper preemptible or spot capacity can serve non-critical work like practice traffic and rejudges.",
+   "in_this_design": "Contest peak of 50 submissions/s at about 5 core-seconds each needs about 250 busy cores; at 60% target utilisation that is about 420, plus practice, so ~600 dedicated cores are scheduled 30 minutes before each contest with warm sandboxes and cached test bundles for contest problems. Practice and rejudge pools run on spot instances and re-enqueue on eviction.",
+   "key_points": [
+    "Concurrency = arrival rate x service time (Little's law).",
+    "Keep utilisation ~60-70%; queueing delay explodes near 100%.",
+    "Predictable spikes: pre-scale and pre-warm; autoscale is the safety net.",
+    "Use spot capacity only for work that tolerates eviction."
+   ],
+   "qa": [
+    {
+     "q": "Why not rely on autoscaling on queue depth?",
+     "a": "Nodes take 2-5 minutes to become ready; contest load arrives in seconds. By the time capacity is up, queues are minutes long and rankings are unfair."
+    },
+    {
+     "q": "How do you size for a contest?",
+     "a": "From history: submissions per minute per participant at peak, times participants, times average core-seconds per submission, divided by target utilisation."
+    },
+    {
+     "q": "Where does spot capacity fit?",
+     "a": "Practice, Run for free users and rejudge jobs, which can be re-enqueued if the node is reclaimed; contest pools are on-demand."
+    }
+   ]
+  },
+  {
+   "name": "Deterministic and fair measurement",
+   "explain": "A judge compares a program's resource use against limits, so measurement noise directly becomes unfairness. Wall-clock time is affected by scheduling, other processes, I/O and CPU frequency changes; CPU time (user plus system) consumed by the process is much more stable. Sources of noise include shared CPU cores and hyperthreading siblings, turbo boost and frequency scaling, cache contention from neighbours, different CPU generations across a fleet, and cold caches on first run. Mitigations are to pin one job per physical core, disable or reserve SMT siblings, fix CPU frequency, keep homogeneous hardware per pool, and measure with cgroup CPU accounting. Determinism also requires pinned toolchain versions and flags, fixed environment variables and locale, and the same test ordering. Fleets should run calibration programs periodically and drain machines whose results drift. For borderline TLEs, some judges re-run once to absorb rare noise.",
+   "in_this_design": "Judge nodes are a homogeneous instance type; each worker pins one job to one physical core with its sibling idle; TLE uses cgroup CPU time with a wall-clock backstop; compilers and runtimes are pinned per contest; a calibration binary runs every 10 minutes and nodes with > 5% drift are drained; borderline TLE (within 10% of the limit) is re-run once.",
+   "key_points": [
+    "Measure CPU time, not wall time, with a wall backstop.",
+    "One job per physical core; no SMT sharing; fixed frequency.",
+    "Homogeneous hardware per pool, pinned toolchains.",
+    "Calibrate continuously and drain drifting nodes."
+   ],
+   "qa": [
+    {
+     "q": "Why not pack 4 jobs per core to cut cost?",
+     "a": "Contention changes runtimes by 20-50%, turning ACs into TLEs randomly; for rated contests fairness is the product."
+    },
+    {
+     "q": "Why keep a wall clock limit if you measure CPU?",
+     "a": "A program that sleeps or blocks on input uses no CPU and would hang forever; the wall limit kills it."
+    },
+    {
+     "q": "How do you handle Python being slower?",
+     "a": "Per-language multipliers based on reference solutions, set per problem."
+    }
+   ]
+  },
+  {
+   "name": "Idempotent result writes and versioned rejudging",
+   "explain": "In any system with retries and at-least-once delivery, the same work may complete twice, and late results from a worker that was presumed dead may arrive after a newer result. The fix is to make writes idempotent and ordered: each attempt carries a fencing value (an attempt number, lease id or version), and the database update is conditional, applied only if the stored value is not newer. This is the same idea as fencing tokens in distributed locking: the resource itself rejects stale writers rather than trusting the writer to know it is stale. Versioning extends this to deliberate recomputation: when inputs change (a corrected test set), results are recomputed under a new version and stored alongside the old ones, so history is auditable and effects (score changes) can be recalculated deterministically.",
+   "in_this_design": "A verdict update is UPDATE submission SET verdict=?, attempt=? WHERE id=? AND attempt <= ?, so a late result from an expired lease cannot overwrite a newer one. Rejudges store verdicts keyed by (submission_id, judge_version) and the contest service recomputes scores from the latest version.",
+   "key_points": [
+    "Retries plus slow workers mean duplicate and stale results.",
+    "Fence writes with attempt numbers or versions; reject stale ones at the store.",
+    "Keep versioned results for audit and deterministic recomputation.",
+    "Downstream effects (scores) must also be idempotent on submission id."
+   ],
+   "qa": [
+    {
+     "q": "Two workers both judged the same submission. Which wins?",
+     "a": "The one with the higher attempt number; the conditional update rejects the lower one regardless of arrival order."
+    },
+    {
+     "q": "How do you rejudge 200k submissions without hurting live traffic?",
+     "a": "Enqueue to a low-priority rejudge queue on spot pools with rate limits; results versioned; users notified only if their verdict changes."
+    },
+    {
+     "q": "Why not just overwrite verdicts on rejudge?",
+     "a": "You lose audit history and cannot explain rank changes; versioning keeps both and lets you roll back a bad test fix."
+    }
+   ]
+  },
+  {
+   "name": "Real-time leaderboard with sorted sets",
+   "explain": "A leaderboard needs fast updates when a score changes and fast queries for the top N and for any user's rank. A sorted set (skip list plus hash map, as in Redis ZSET) supports insert/update in O(log N), rank lookup in O(log N) and range queries in O(log N + M). Multi-criteria ranking (solved desc, penalty asc, last AC time asc) can be packed into one numeric score by placing more important criteria in higher-order digits, or by using a lexicographic member encoding. The in-memory set is a cache of the true state, which lives in a durable store, so it can be rebuilt after a failure. Very large boards can be sharded by score range, and read load is absorbed by caching pages for a few seconds. Contests often freeze the public board in the last hour while still updating internally, which is a product feature that also reduces read storms at the end.",
+   "in_this_design": "Each contest has one ZSET with score = solved x 1e9 - total penalty. Accepted verdicts update Postgres transactionally (idempotent on submission id) then ZADD. Clients poll every 10 s through a 5 s edge cache, giving ~3k reads/s for 30k users. After freeze, the public view is served from a snapshot while the live ZSET continues.",
+   "key_points": [
+    "ZSET gives O(log N) update and rank, O(log N + M) top pages.",
+    "Pack multi-key ordering into one score or member encoding.",
+    "Redis is the cache; Postgres is the source of truth.",
+    "Cache pages for a few seconds; freeze reduces end-game load."
+   ],
+   "qa": [
+    {
+     "q": "How do you break ties on equal solved and penalty?",
+     "a": "Add a third component like last-AC timestamp into lower digits of the score, or sort by member encoding; ties at that point are true ties."
+    },
+    {
+     "q": "What if Redis loses the leaderboard mid-contest?",
+     "a": "Rebuild from Postgres contest state in seconds; 30k rows is trivial."
+    },
+    {
+     "q": "How would you support 1M participants?",
+     "a": "Same ZSET handles millions; add read replicas and page caching; compute a user's rank directly with ZREVRANK."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Isolation technology",
+   "options": "Docker defaults / namespaces+seccomp+cgroups (nsjail, isolate) / gVisor / Firecracker",
+   "choice": "nsjail-style for compiled languages, gVisor for complex runtimes",
+   "why": "Fast start and precise accounting for most runs, plus a second kernel boundary where syscall surface is large."
+  },
+  {
+   "decision": "Run all tests vs stop at first failure",
+   "options": "Run all / stop at first failure",
+   "choice": "Stop at first failure, ordered small-to-large",
+   "why": "Cuts CPU for failing submissions (the majority) and gives faster feedback; full results only for setters."
+  },
+  {
+   "decision": "Sandbox per test vs per submission",
+   "options": "One sandbox for all tests / fresh per test",
+   "choice": "Fresh process per test in a warm sandbox template",
+   "why": "Prevents state carry-over between tests (files, caches) while pooling keeps cost ~tens of ms."
+  },
+  {
+   "decision": "Push vs poll for verdicts",
+   "options": "Polling / WebSocket / SSE",
+   "choice": "WebSocket with polling fallback",
+   "why": "Instant feedback without poll storms; fallback for restrictive networks."
+  },
+  {
+   "decision": "Autoscale vs pre-provision for contests",
+   "options": "Reactive autoscaling / scheduled pre-scaling",
+   "choice": "Scheduled pre-scaling plus autoscale safety net",
+   "why": "Contest load is a predictable step function; boot times would cause queues."
+  },
+  {
+   "decision": "Spot vs on-demand compute",
+   "options": "All on-demand / all spot / mixed",
+   "choice": "Contests on-demand, practice and rejudge on spot",
+   "why": "Saves ~60-70% on tolerant workloads without risking contest fairness."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Judge worker crash or node loss",
+   "behavior": "Leases expire, jobs re-queued with attempt+1; verdict delay of one timeout; no lost submissions."
+  },
+  {
+   "failure": "Queue backlog during contest peak",
+   "behavior": "Users see queue position; practice and Run de-prioritised or temporarily disabled for free users; contest scoring uses submitted_at so ranking is unaffected by delay."
+  },
+  {
+   "failure": "Object storage outage",
+   "behavior": "Workers use cached test bundles; problems not in cache fail over to a replica bucket; pre-contest warming ensures contest problems are cached."
+  },
+  {
+   "failure": "Redis leaderboard loss",
+   "behavior": "Rebuild from Postgres; leaderboard briefly stale; scores unaffected."
+  },
+  {
+   "failure": "Bad test data discovered mid-contest",
+   "behavior": "Pause judging for that problem (jobs held), fix and validate with reference solution, rejudge affected submissions; announce."
+  },
+  {
+   "failure": "Sandbox kernel exploit suspected",
+   "behavior": "Quarantine node pool, rotate to patched images, review audit logs; workers hold no secrets so data exposure is limited to test bundles on that node."
+  }
+ ],
+ "metrics": [
+  "Queue age and depth per (priority, language); alert if contest queue age > 30 s.",
+  "Verdict latency p50/p95/p99 from submit to final verdict.",
+  "Worker utilisation, sandbox start time, compile cache hit rate, test cache hit rate.",
+  "Verdict distribution per problem (spike in RE/TLE may indicate bad tests or bad nodes).",
+  "Calibration drift per node; TLE re-run rate.",
+  "Blocked syscall counts and seccomp kills per submission (abuse signal).",
+  "DLQ count and System Error rate (should be near 0)."
+ ],
+ "follow_ups": [
+  {
+   "q": "A contest starts and the queue is 5 minutes long. What do you do right now?",
+   "a": "Shift weight to contest queues, pause practice and Run for free users, add on-demand capacity, show queue position; ranking uses submit time so fairness holds. Post-incident, fix the capacity forecast."
+  },
+  {
+   "q": "How do you prevent users from extracting hidden test cases?",
+   "a": "Never return hidden inputs or expected outputs; truncate stderr; return only the failing test index; limit submissions per problem per minute to make probing slow; detect patterns of probing."
+  },
+  {
+   "q": "How would you support a new language quickly?",
+   "a": "Build a pinned toolchain image, define compile and run commands, a seccomp profile and a time multiplier; validate with reference solutions across the problem set before enabling."
+  },
+  {
+   "q": "How do you handle interactive problems?",
+   "a": "Run a trusted referee and the untrusted solution in separate sandboxes connected by pipes; the referee enforces protocol and decides the verdict; limits apply to the solution."
+  },
+  {
+   "q": "How would you design for 1M contest participants?",
+   "a": "Same architecture scaled out: ~20x cores pre-provisioned across regions, problems cached on all nodes, leaderboard sharded or cached aggressively, admission control for submits per user."
+  },
+  {
+   "q": "How do you detect cheating?",
+   "a": "Post-contest winnowing similarity across submissions per problem, cluster by similarity, combine with signals like account age and IP; manual review before penalties."
+  },
+  {
+   "q": "Can you run test cases in parallel to cut latency?",
+   "a": "Yes, across cores for a single submission when idle capacity exists, but it consumes more cores per submission during peaks; we enable it only for practice when utilisation is low."
+  }
+ ],
+ "key_points": [
+  "The web tier is ordinary; the execution plane is the design.",
+  "Treat code as hostile: namespaces, seccomp, cgroups, read-only fs, no network, plus gVisor/microVM for risky runtimes.",
+  "Async submit: persist PENDING, enqueue, push verdict over WebSocket.",
+  "Per-language, per-priority queues with leases, visibility timeouts and a DLQ.",
+  "Size contests with Little's law: ~50 submissions/s x 5 core-s = 250 cores, ~600 with headroom; pre-scale, do not autoscale.",
+  "Fairness: CPU time on dedicated pinned cores, homogeneous hardware, calibration.",
+  "Stop at first failing test, tests ordered small-to-large, compile cache.",
+  "Conditional, versioned verdict writes make retries and rejudges safe.",
+  "Leaderboard is a Redis ZSET cache over durable contest state; ranking uses submit time."
+ ],
+ "quiz": [
+  {
+   "q": "Why is default Docker alone not a sufficient sandbox for untrusted code?",
+   "options": [
+    "Docker cannot limit memory",
+    "It shares the host kernel and allows a wide syscall surface, so kernel exploits can escape",
+    "Docker containers cannot run C++",
+    "Docker has no networking controls"
+   ],
+   "answer": 1,
+   "why": "Containers are a packaging boundary over a shared kernel. Docker can limit memory, so that tempting option is false; the real gap is kernel attack surface."
+  },
+  {
+   "q": "A submission sleeps for 100 seconds. Which limit catches it?",
+   "options": [
+    "Wall-clock limit",
+    "CPU time limit",
+    "Memory limit",
+    "pids limit"
+   ],
+   "answer": 0,
+   "why": "Sleeping uses no CPU, so the CPU limit never fires; a wall-clock backstop is required."
+  },
+  {
+   "q": "Contest peak is 50 submissions/s at 5 core-seconds each. Roughly how many cores at 60% utilisation?",
+   "options": [
+    "About 150",
+    "About 250",
+    "About 1,500",
+    "About 420"
+   ],
+   "answer": 3,
+   "why": "50 x 5 = 250 busy cores; 250 / 0.6 is about 420. 250 is the tempting answer but leaves no headroom, so queueing delay explodes."
+  },
+  {
+   "q": "Why are contest jobs on separate queues from practice jobs rather than one queue with a priority field?",
+   "options": [
+    "Queues are cheaper than fields",
+    "Practice jobs are larger",
+    "Most brokers cannot reorder a single FIFO queue; separate queues with weighted polling give real priority",
+    "To make rejudging easier"
+   ],
+   "answer": 2,
+   "why": "FIFO queues cannot jump items; priorities are implemented as multiple queues. Size difference is not the reason."
+  },
+  {
+   "q": "A worker's lease expired, the job was re-run, and then the first worker's late result arrives. What prevents it overwriting?",
+   "options": [
+    "Last write wins",
+    "Conditional update on attempt number (fencing)",
+    "Deleting the job on lease",
+    "Longer TCP timeouts"
+   ],
+   "answer": 1,
+   "why": "Fencing at the store rejects stale writers. Last write wins is exactly the bug."
+  },
+  {
+   "q": "Why run tests ordered small-to-large and stop at first failure?",
+   "options": [
+    "Most failing submissions fail early, saving CPU and returning feedback faster",
+    "To make the verdict more accurate",
+    "Large tests must run last for security",
+    "Checkers require it"
+   ],
+   "answer": 0,
+   "why": "It is a cost and latency optimisation; accuracy is unchanged because any failure is a failure."
+  },
+  {
+   "q": "Timing variance across workers is 25%. Most likely cause?",
+   "options": [
+    "Slow object storage",
+    "Too many test cases",
+    "Redis latency",
+    "Multiple jobs sharing cores or SMT siblings and frequency scaling"
+   ],
+   "answer": 3,
+   "why": "CPU contention and frequency changes dominate timing noise. Storage affects setup time, not measured CPU time."
+  },
+  {
+   "q": "Why use scheduled pre-scaling before a contest instead of autoscaling on queue depth?",
+   "options": [
+    "Autoscaling is not supported on Kubernetes",
+    "Pre-scaling is cheaper",
+    "Contest load is a step function arriving faster than nodes can boot and warm",
+    "Autoscaling breaks sandboxing"
+   ],
+   "answer": 2,
+   "why": "Boot plus warm takes minutes; load arrives in seconds. Pre-scaling is usually more expensive, not cheaper."
+  },
+  {
+   "q": "Which is the best way to rank ICPC-style (solved desc, penalty asc) in a single Redis ZSET?",
+   "options": [
+    "score = penalty",
+    "score = solved * 1e9 - penalty",
+    "score = solved + penalty",
+    "Two separate ZSETs joined at read time"
+   ],
+   "answer": 1,
+   "why": "Higher-order digits encode the primary key; subtracting penalty makes lower penalty rank higher. Adding penalty would reward slow solvers."
+  },
+  {
+   "q": "A user tries to discover hidden tests by submitting code that prints input when a condition holds. Best defense?",
+   "options": [
+    "Never return hidden inputs/outputs, truncate stderr, rate limit submissions per problem",
+    "Return full outputs only for failed tests",
+    "Encrypt test files on disk",
+    "Disable WA verdicts"
+   ],
+   "answer": 0,
+   "why": "Probing relies on leaked output and many attempts. Encrypting on disk does not stop the running program from reading stdin."
+  },
+  {
+   "q": "A poison submission crashes the sandbox host on every attempt. What should happen?",
+   "options": [
+    "Retry forever",
+    "Delete the user",
+    "Mark it Accepted",
+    "After N attempts move to a DLQ with System Error and alert"
+   ],
+   "answer": 3,
+   "why": "DLQs contain poison jobs so they cannot consume capacity forever."
+  },
+  {
+   "q": "Where should practice-mode compute run to save cost?",
+   "options": [
+    "On the contest pool",
+    "On the API servers",
+    "On spot/preemptible instances with re-enqueue on eviction",
+    "On users' browsers via WebAssembly only"
+   ],
+   "answer": 2,
+   "why": "Practice tolerates delays; spot saves ~60-70%. Running on API servers mixes untrusted code with credentials."
+  },
+  {
+   "q": "Score updates at contest end are computed from...",
+   "options": [
+    "Verdict completion time",
+    "Server-side submitted_at",
+    "Client clock",
+    "Leaderboard refresh time"
+   ],
+   "answer": 1,
+   "why": "Using submission time makes queue delays irrelevant to ranking. Client clocks are untrusted."
+  },
+  {
+   "q": "What does cgroup pids.max primarily protect against?",
+   "options": [
+    "Fork bombs",
+    "Memory leaks",
+    "Network abuse",
+    "Disk filling"
+   ],
+   "answer": 0,
+   "why": "It caps process count. Memory is the memory controller's job."
+  },
+  {
+   "q": "Visibility timeout is 10 s but worst-case judging takes 30 s. What happens?",
+   "options": [
+    "Nothing; timeouts are advisory",
+    "Jobs are lost",
+    "The broker crashes",
+    "Slow jobs are duplicated to other workers, wasting capacity and racing results"
+   ],
+   "answer": 3,
+   "why": "Expired leases make the job visible again while the first worker still runs. Jobs are not lost; they are duplicated."
+  },
+  {
+   "q": "Why store test bundles as immutable versioned objects?",
+   "options": [
+    "Object storage cannot overwrite",
+    "To save storage",
+    "So every verdict is tied to an exact test set and rejudges are explicit and auditable",
+    "Because checkers need it"
+   ],
+   "answer": 2,
+   "why": "Versioning prevents silent mixing of old and new tests mid-contest. Object stores can overwrite; immutability is a choice."
+  },
+  {
+   "q": "Which signal best drives alerting on user-visible delay?",
+   "options": [
+    "CPU utilisation",
+    "Age of the oldest job per queue",
+    "Number of workers",
+    "Submission count"
+   ],
+   "answer": 1,
+   "why": "Queue age directly measures waiting time. CPU can be high while queues are fine."
+  },
+  {
+   "q": "Why measure CPU time via cgroup accounting instead of wall time?",
+   "options": [
+    "It excludes time the process spent waiting for the CPU or I/O, reducing noise from neighbours",
+    "It includes I/O wait",
+    "It is easier to code",
+    "It runs faster"
+   ],
+   "answer": 0,
+   "why": "CPU time counts only cycles consumed. Including I/O wait is a property of wall time, which is the noisy one."
+  },
+  {
+   "q": "For plagiarism detection, why normalise identifiers before fingerprinting?",
+   "options": [
+    "To compress code",
+    "Compilers require it",
+    "To speed up execution",
+    "Renaming variables is the cheapest disguise; normalisation makes renamed copies match"
+   ],
+   "answer": 3,
+   "why": "Winnowing on normalised tokens survives cosmetic changes. Compression is unrelated."
+  },
+  {
+   "q": "A Python solution TLEs while the same algorithm in C++ passes in 0.2 s. Best platform response?",
+   "options": [
+    "Ban Python in contests",
+    "Run Python on faster machines",
+    "Per-language time multipliers calibrated from reference solutions",
+    "Remove time limits"
+   ],
+   "answer": 2,
+   "why": "Multipliers keep fairness per language. Faster machines for one language break measurement homogeneity."
+  }
+ ],
+ "references": [
+  {
+   "title": "System Design: Online Judge - Code Execution, Sandboxing, Test Cases, and Scalable Evaluation (techinterview.org)",
+   "url": "https://techinterview.org/system-design-online-judge/"
+  },
+  {
+   "title": "Low-Level Design: Online Code Judge (techinterview.org)",
+   "url": "https://techinterview.org/lld-online-code-judge/"
+  },
+  {
+   "title": "Designing online judge or LeetCode (tianpan.co)",
+   "url": "https://tianpan.co/notes/243-designing-online-judge-or-leetcode"
+  },
+  {
+   "title": "Design LeetCode (interviewing.io)",
+   "url": "https://interviewing.io/questions/design-leetcode"
+  },
+  {
+   "title": "Judge0 CE - open source code execution system",
+   "url": "https://ce.judge0.com/"
+  }
+ ]
+}

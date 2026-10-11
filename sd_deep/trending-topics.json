@@ -1,0 +1,1100 @@
+{
+ "slug": "trending-topics",
+ "title": "Design trending topics",
+ "prompt": "Design trending topics.",
+ "group": "feeds",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 100,
+ "summary": "Trending topics must spot, within a minute or two, which terms are being discussed unusually more than normal, per country or city, from a stream of tens of thousands of term events per second. The core tension is accuracy versus memory and latency: approximate sketches (Count-Min, Space-Saving, HyperLogLog) keep state bounded, velocity-versus-baseline scoring separates real surges from perennially popular terms, and manipulation resistance keeps bots off a highly visible list. Hot keys during breaking news, late events and gaming are what interviewers probe.",
+ "framework": {
+  "clarify": [
+   "What is a topic: hashtags only, or also entities and phrases? Assume hashtags, named entities and 1-3 word n-grams.",
+   "Granularity: global, country and city; personalised trends out of scope initially.",
+   "Freshness: a surge should appear within 2 minutes; list refreshes every 30 seconds.",
+   "Scale: 500M posts/day, ~4 terms per post, peaks 5x during big events.",
+   "Definition of trending: unusual velocity versus normal, not raw volume.",
+   "Read scale: trends shown on home and explore, ~200k QPS peak reads.",
+   "Policy: denylist, manual removal, anti-manipulation required.",
+   "Accuracy tolerance: approximate counts acceptable (a few percent) as ranking is relative."
+  ],
+  "design": [
+   "Baseline: count every term per minute in a hashmap, sort, show top 10. Then show why it fails (memory, popularity bias, hot keys).",
+   "Ingest: posts topic to stateless extractors (normalise, entity extraction, geo, spam/reputation), pre-aggregate 1s, emit to term-events keyed by term (salted for hot terms).",
+   "Count: Flink counters keep per-(term, geo) minute buckets, Space-Saving top 10k candidates, CMS for the tail, HLL of authors, event-time windows with watermarks.",
+   "Score every 30s: velocity vs hour-of-week baseline, unique-author and trust weighting, variant clustering, denylist; publish top 30 per geo to Redis.",
+   "Serve: GET /v1/trends?geo= via CDN/edge with 30s TTL; moderation API to remove or block terms."
+  ],
+  "defend": [
+   "Bottleneck: hot terms during breaking news; local pre-aggregation and salting.",
+   "Scale writes: Kafka partitions, stateless extractors, approximate sketches keep state bounded per task.",
+   "Scale reads: per-geo precomputed lists cached at edge; reads never touch the stream job.",
+   "Failure: Flink exactly-once checkpoints; if scorer is down, serve last list (stale up to 10 min) with a freshness flag; event-time windows avoid fake spikes after recovery; retries with jitter on Redis writes.",
+   "Measure: detection latency vs labelled events, precision (moderator removals, spam rate), consumer lag, watermark delay, CTR on trends."
+  ],
+  "script": "Let me pin down what trending means: terms being discussed unusually more than normal, not just a lot, shown per country and city, refreshed every 30 seconds with a surge visible within about two minutes. Input is around 500 million posts a day, roughly 23 thousand term events a second on average and five times that at peaks. A naive hashmap of exact counts fails on memory, on popularity bias, and on hot keys. So: extract and normalise terms from the post stream, pre-aggregate for a second, then count in Flink using event-time minute buckets, a Space-Saving top-k for candidates, count-min sketches for the tail and HyperLogLogs for unique authors. Every 30 seconds a scorer compares each candidate's rate with its same-hour-of-week baseline, weights by author trust and breadth, merges variants and applies policy, then publishes per-geo lists that are served from edge caches. In defence: hot keys are handled with combiners and salting, approximate sketches bound memory, event time prevents fake spikes after outages, and I would measure detection latency, precision and lag."
+ },
+ "brd": {
+  "problem": "Users want to know what is happening right now around them, and trends drive discovery and engagement, but a naive popularity list is stale, dominated by always-popular topics, easy to manipulate, and expensive to compute exactly at stream scale.",
+  "goals": [
+   "Surface emerging topics within 2 minutes of a surge.",
+   "Provide trends per country and major city.",
+   "Keep manipulated or policy-violating trends off the list.",
+   "Serve trends at high read QPS with negligible latency.",
+   "Keep compute and memory bounded under 5x event spikes."
+  ],
+  "non_goals": [
+   "Personalised trends per user (phase 2).",
+   "Editorial curation and summaries of trends.",
+   "Search ranking for trend click-through results.",
+   "Ads on trends."
+  ],
+  "stakeholders": [
+   {
+    "who": "Users",
+    "needs": "Timely, relevant, trustworthy list of what is happening."
+   },
+   {
+    "who": "Trust and safety / legal",
+    "needs": "Rapid removal, denylist, audit trail."
+   },
+   {
+    "who": "Product/growth",
+    "needs": "Engagement on explore and trends surfaces."
+   },
+   {
+    "who": "Data platform",
+    "needs": "Bounded stream state and predictable costs."
+   },
+   {
+    "who": "Journalists and brands",
+    "needs": "Accurate, non-gamed signals of public conversation."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Detection latency for labelled events",
+    "target": "p50 < 90 s, p90 < 3 min"
+   },
+   {
+    "metric": "Trends removed by moderators",
+    "target": "< 1 percent of trends shown"
+   },
+   {
+    "metric": "Trend click-through rate",
+    "target": "+10 percent vs volume-based list"
+   },
+   {
+    "metric": "Trends API p99 latency",
+    "target": "< 50 ms at edge"
+   },
+   {
+    "metric": "Stream consumer lag at 5x peak",
+    "target": "< 30 s"
+   }
+  ],
+  "constraints": [
+   "Stream state must fit memory per task even with millions of distinct terms per hour.",
+   "Multiple scripts and languages (Hindi, Tamil, English, code-mixed).",
+   "Legal takedown obligations vary by country.",
+   "Mobile clients deliver late events."
+  ],
+  "risks": [
+   {
+    "risk": "Bot campaigns push propaganda or spam to trends.",
+    "mitigation": "Trust weighting, breadth requirements, near-dup collapse, cluster detection, human removal."
+   },
+   {
+    "risk": "Hot keys stall the pipeline during the very events we must detect.",
+    "mitigation": "Pre-aggregation and salting; autoscaling."
+   },
+   {
+    "risk": "Offensive or illegal term trends.",
+    "mitigation": "Denylist and classifier checks before publish."
+   },
+   {
+    "risk": "Outage recovery creates fake spikes.",
+    "mitigation": "Event-time processing and watermarks."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Casual user",
+    "needs": "Glance at what is happening in their city or country."
+   },
+   {
+    "name": "News-seeker",
+    "needs": "Earliest possible signal of breaking events."
+   },
+   {
+    "name": "Moderator",
+    "needs": "Console to review, remove and block terms quickly."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want to see what is trending in my city so that I know what people around me are talking about.",
+   "As a user, I want trends to update within minutes so that I catch breaking news.",
+   "As a user, I want to tap a trend and see relevant posts so that I can follow the conversation.",
+   "As a user, I want to switch location so that I can see trends elsewhere.",
+   "As a moderator, I want to remove a trend globally within a minute so that harmful content stops spreading.",
+   "As a user, I want trends that reflect real conversations so that I am not misled by bots.",
+   "As a user, I want variants like #IPL and IPL 2026 shown once so that the list is not repetitive."
+  ],
+  "functional": [
+   "Extract hashtags, entities and n-grams from posts with language and geo.",
+   "Maintain windowed counts and unique-author counts per term per geo.",
+   "Score candidates against seasonal baselines every 30 seconds.",
+   "Cluster variants and pick a display name.",
+   "Apply denylist, policy classifier and moderator actions before publishing.",
+   "Serve top 30 per geo with post counts ('25.3K posts').",
+   "Provide moderation API with audit log."
+  ],
+  "non_functional": [
+   {
+    "name": "Freshness",
+    "target": "List refresh every 30s; surge visible within 2 min p90"
+   },
+   {
+    "name": "Read latency",
+    "target": "p99 < 50ms at edge"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95 percent reads (stale list acceptable up to 10 min)"
+   },
+   {
+    "name": "Accuracy",
+    "target": "Count error < 2 percent for terms above trending thresholds"
+   },
+   {
+    "name": "Scalability",
+    "target": "Handle 5x peak (~120k term events/s) without lag growth"
+   },
+   {
+    "name": "Moderation latency",
+    "target": "Removal effective < 60s"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "500M posts/day, 4 terms per post, peak 5x average.",
+    "Distinct terms per hour across all geos: ~20M (long tail).",
+    "500 geos (global, ~100 countries, ~400 cities).",
+    "Trends reads 200k QPS peak."
+   ],
+   "math": [
+    "Term events: 2B/day = ~23k/s avg, ~120k/s peak.",
+    "Exact hashmap of 20M terms x 60 minute buckets x 8B = ~10GB per hour window before geo split, plus key strings; multiplied by geos it explodes, hence sketches.",
+    "CMS per geo per minute: 32k x 5 x 4B = 640KB; 500 geos x 60 buckets = ~19GB worst case, but only active geos/buckets allocated, ~2-4GB in practice.",
+    "Candidates: 500 geos x 10k terms x (60 x 4B buckets + 3KB HLL) = ~16GB across the cluster.",
+    "Scorer: 500 geos x 10k candidates every 30s = ~170k scores/s, trivial CPU.",
+    "Serving: 200k QPS at edge with ~99 percent hit ratio, origin ~2k QPS."
+   ],
+   "summary": "Ingest is ~23k-120k term events per second, state is a few tens of GB across the Flink cluster thanks to sketches and candidate pruning, scoring is cheap, and serving is a cached per-geo list; the hard parts are hot keys and trust, not raw throughput."
+  },
+  "out_of_scope": [
+   "Personalised trends.",
+   "Trend summaries and editorial context.",
+   "Search results page for trends.",
+   "Historical trend analytics product."
+  ]
+ },
+ "hld": {
+  "overview": "A streaming pipeline. Stateless extractors turn posts into normalised (term, geo, author, trust, ts) events and pre-aggregate them. A Flink counter tier keyed by term maintains event-time minute buckets, a Space-Saving candidate set, CMS for the tail and HLL for unique authors. A scorer runs every 30 seconds per geo, compares rates with hour-of-week baselines, applies trust, breadth, clustering and policy, and writes ranked lists to Redis. A read API serves those lists through edge caches. A baseline job maintains seasonal history.",
+  "diagram": "\n Post Svc --> Kafka: posts (key=post_id, 512 parts)\n                    |\n                    v\n      +----------------------------+\n      | Extractor (stateless)      |  hashtags, entities (NER), n-grams,\n      |  - normalise, language,    |  geo (country/city), spam score,\n      |    geo, dedupe near-dups   |  author reputation\n      +-------------+--------------+\n                    | Kafka: term-events (key = hash(term) % N, salted for hot terms)\n                    v\n      +----------------------------+     +----------------------------+\n      | Counter tier (Flink)       |---->| Per-geo top candidates     |\n      |  - local pre-aggregation   |     |  (Space-Saving, k=10k)     |\n      |  - 1-min tumbling buckets  |     +-------------+--------------+\n      |  - CMS for long tail       |                   |\n      |  - unique-author HLL       |                   v\n      +-------------+--------------+     +----------------------------+\n                    |                    | Trend Scorer (every 30s)   |\n                    v                    |  - velocity vs baseline    |\n      +----------------------------+     |  - z-score / ratio         |\n      | Baseline store (hourly,    |---->|  - diversity, spam filter  |\n      | 7-day same-hour history)   |     |  - clustering of variants  |\n      +----------------------------+     +-------------+--------------+\n                                                       v\n                                         +----------------------------+\n                                         | Trends store (Redis):      |\n                                         |  trends:{geo} ranked list  |\n                                         +-------------+--------------+\n                                                       v\n                         Client --> API --> CDN/edge cache (TTL 30s) --> trends list\n                         Moderation console --> denylist / pin -> Scorer\n",
+  "components": [
+   {
+    "name": "Extractor",
+    "responsibility": "Tokenise, normalise (case, Unicode, transliteration), entity extraction, geo resolution, spam/trust tagging, SimHash, 1s pre-aggregation."
+   },
+   {
+    "name": "Kafka term-events",
+    "responsibility": "Shuffle by term (salted for hot terms); buffer spikes; replay."
+   },
+   {
+    "name": "Counter tier (Flink)",
+    "responsibility": "Event-time minute buckets, sliding windows, Space-Saving, CMS, HLL; checkpointed state."
+   },
+   {
+    "name": "Baseline service",
+    "responsibility": "Hourly job storing 7-28 day hour-of-week medians per (term, geo) for candidates; EWMA fallback."
+   },
+   {
+    "name": "Trend scorer",
+    "responsibility": "Every 30s per geo: velocity score, thresholds, trust weighting, variant clustering, policy, publish."
+   },
+   {
+    "name": "Trends store (Redis)",
+    "responsibility": "Ranked list per geo with counts and display names, versioned."
+   },
+   {
+    "name": "Trends API + CDN",
+    "responsibility": "Serve per-geo lists with 30s TTL, geo fallback, localisation."
+   },
+   {
+    "name": "Moderation console",
+    "responsibility": "Denylist, remove/pin, audit log; consumed by scorer each cycle."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Event to count",
+    "steps": [
+     "Post created; extractor emits terms with geo, author trust and server timestamp.",
+     "Extractor pre-aggregates (term, geo) per second; hot terms salted 8 ways.",
+     "Flink task assigns to event-time minute bucket; updates count, HLL, Space-Saving and CMS.",
+     "Watermark at max_ts - 20s closes buckets; late events within 2 min update buckets."
+    ]
+   },
+   {
+    "name": "Score and publish",
+    "steps": [
+     "Every 30s, scorer pulls candidate summaries per geo (merged from subtasks).",
+     "Compute c5, c60, unique authors, weighted counts; look up baselines.",
+     "Score, apply thresholds and per-author share cap; cluster variants (normalised form, co-occurrence).",
+     "Apply denylist and policy classifier; keep top 30.",
+     "Write trends:{geo}:v{n} then switch pointer atomically; CDN picks up within 30s."
+    ]
+   },
+   {
+    "name": "Moderator removal",
+    "steps": [
+     "Moderator removes term in console; written to denylist store with audit entry.",
+     "Scorer reads denylist each cycle and republishes lists without the term.",
+     "API purges CDN keys for affected geos for immediate effect."
+    ]
+   }
+  ],
+  "data_flow": "Posts flow from Kafka through extractors into the term-events topic, then into Flink counters that hold windowed sketch state. Candidate summaries flow every 30 seconds into the scorer, which joins them with baselines from the baseline store and the denylist, then publishes ranked lists to Redis. The API and CDN serve those lists to clients. An hourly job writes window aggregates for candidates to the baseline store (and to the data lake for analytics and offline evaluation)."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/trends",
+    "request": "geo=IN|IN-TN|chennai, lang?, limit=30",
+    "response": "{geo, generated_at, items:[{name, query, post_count_display, category}]}",
+    "notes": "Cached at edge 30s; falls back to parent geo if too few trends."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/trends/{term}/posts",
+    "request": "geo, cursor",
+    "response": "{posts:[...], next_cursor}",
+    "notes": "Backed by search."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/moderation/trends/remove",
+    "request": "{term_id, geos|global, reason}",
+    "response": "{action_id}",
+    "notes": "Audited; effective next cycle + CDN purge."
+   },
+   {
+    "method": "PUT",
+    "path": "/internal/moderation/denylist",
+    "request": "{pattern, scope, expires_at}",
+    "response": "204",
+    "notes": "Patterns normalised the same way as extractor."
+   },
+   {
+    "method": "GET",
+    "path": "/internal/trends/debug",
+    "request": "geo, term",
+    "response": "{c5, c60, baseline, unique_authors, score, filters_hit}",
+    "notes": "For explaining why something trended."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "TermEvent",
+    "store": "Kafka term-events",
+    "fields": [
+     "term_id (hash of normalised term)",
+     "display",
+     "geo",
+     "author_id",
+     "trust",
+     "simhash",
+     "ts",
+     "count"
+    ],
+    "keys": "Partition by term_id (salt suffix for hot terms)",
+    "notes": "Pre-aggregated per second."
+   },
+   {
+    "entity": "CounterState",
+    "store": "Flink keyed state (RocksDB backend)",
+    "fields": [
+     "ring[60] minute counts",
+     "ring[60] weighted counts",
+     "ring[60] HLL",
+     "last_seen"
+    ],
+    "keys": "(term_id, geo)",
+    "notes": "Only for candidates; tail in CMS per geo-minute."
+   },
+   {
+    "entity": "Baseline",
+    "store": "Cassandra / Redis",
+    "fields": [
+     "term_id",
+     "geo",
+     "hour_of_week",
+     "median_count",
+     "mad",
+     "ewma"
+    ],
+    "keys": "Partition (term_id, geo)",
+    "notes": "Updated hourly; TTL 90 days."
+   },
+   {
+    "entity": "TrendList",
+    "store": "Redis",
+    "fields": [
+     "ranked items",
+     "scores",
+     "generated_at",
+     "version"
+    ],
+    "keys": "trends:{geo}:v{n}, pointer trends:{geo}",
+    "notes": "Atomic pointer swap."
+   },
+   {
+    "entity": "Denylist / ModAction",
+    "store": "MySQL",
+    "fields": [
+     "pattern",
+     "scope",
+     "reason",
+     "actor",
+     "created_at",
+     "expires_at"
+    ],
+    "keys": "id; index by scope",
+    "notes": "Audit trail."
+   }
+  ],
+  "classes": [
+   {
+    "name": "TermExtractor",
+    "responsibility": "Post to term events.",
+    "methods": [
+     "extract(post)",
+     "normalise(term)",
+     "resolveGeo(post)",
+     "preAggregate(events, 1s)"
+    ]
+   },
+   {
+    "name": "WindowedCounter",
+    "responsibility": "Per-key minute buckets and sketches.",
+    "methods": [
+     "add(evt)",
+     "onWatermark(ts)",
+     "window(minutes)",
+     "uniqueAuthors(minutes)"
+    ]
+   },
+   {
+    "name": "SpaceSaving",
+    "responsibility": "Top-k candidates with error bounds.",
+    "methods": [
+     "offer(item, n)",
+     "topK(k)",
+     "merge(other)"
+    ]
+   },
+   {
+    "name": "TrendScorer",
+    "responsibility": "Velocity scoring, filters, clustering.",
+    "methods": [
+     "score(cand, baseline)",
+     "passesBreadth(cand)",
+     "cluster(cands)",
+     "publish(geo, list)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Space-Saving update",
+    "explain": "Keep k counters; evict the minimum and inherit its count as error.",
+    "pseudocode": "offer(x, n=1):\n  if x in table: table[x].count += n; return\n  if len(table) < k: table[x] = (n, 0); return\n  (y, m) = minEntry(table)          # O(1) with stream-summary\n  del table[y]\n  table[x] = (m + n, m)             # count, error"
+   },
+   {
+    "name": "Velocity score per candidate",
+    "explain": "Rate vs seasonal baseline with breadth and trust.",
+    "pseudocode": "c5  = sum(weighted[-5:])\nu60 = hll_merge(hll[-60:]).count()\nif sum(counts[-60:]) < MIN_VOL[geo] or u60 < MIN_AUTH[geo]: return 0\nif max_author_share(term) > 0.02: return 0\nb = baseline(term, geo, hour_of_week(now)) or ewma(term, geo)\nratio = (c5 / 5) / (b / 60 + 0.2)\naccel = (c5 - prev_c5) / max(prev_c5, 1)\nreturn log1p(ratio) * log1p(u60) * (1 + 0.3 * max(accel, 0))"
+   },
+   {
+    "name": "Sliding window via ring buffer",
+    "explain": "O(1) window maintenance with minute buckets.",
+    "pseudocode": "onMinuteClose(t):\n  idx = t % 60\n  total60 -= ring[idx]      # expired minute\n  ring[idx] = bucket[t]\n  total60 += ring[idx]"
+   }
+  ],
+  "sequence": "\nPost     Kafka     Extractor   Kafka(terms)  Counter(Flink)  Scorer      Trends(Redis)  API/CDN\n |  post   |           |            |              |            |             |           |\n |-------->|           |            |              |            |             |           |\n |         |---------->| terms,geo  |              |            |             |           |\n |         |           |----------->| (term,geo,   |            |             |           |\n |         |           |            |  author,ts)  |            |             |           |\n |         |           |            |------------->| bucket[t]++|             |           |\n |         |           |            |              | HLL add    |             |           |\n |         |           |            |              | SpaceSaving|             |           |\n |         |           |            |              |   every 30s: top 10k      |           |\n |         |           |            |              |----------->| score vs    |           |\n |         |           |            |              |            | baseline    |           |\n |         |           |            |              |            | filter,group|           |\n |         |           |            |              |            |------------>| SET list  |\n | GET /trends?geo=IN-TN                                                     |           |\n |----------------------------------------------------------------------------------->|\n |                                                       miss -> read trends:{geo}  <--|\n |<-----------------------------------------------------------------------------------|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Breaking news creates a single term at 20k events/s.",
+   "handling": "1s pre-aggregation plus salting into 8 sub-keys; merge downstream."
+  },
+  {
+   "case": "Consumer outage then backlog replay.",
+   "handling": "Event-time buckets place events correctly; no fake spike; scorer suppresses publish while watermark lag > 2 min."
+  },
+  {
+   "case": "Late mobile events beyond allowed lateness.",
+   "handling": "Side output to correction stream; counted in baselines, not live window."
+  },
+  {
+   "case": "Variants: #IPL, #ipl, IPL2026, 'IPL 2026'.",
+   "handling": "Case folding, Unicode normalisation, digit/space normalisation, co-occurrence clustering; display most common form."
+  },
+  {
+   "case": "Multiple scripts (Tamil, Hindi, Roman transliterations).",
+   "handling": "Per-language tokenisation, transliteration map for entities, cluster across scripts."
+  },
+  {
+   "case": "Bot farm of new accounts.",
+   "handling": "Low trust weights, unique-author minimum, author-share cap, cluster detection."
+  },
+  {
+   "case": "Copy-paste campaign of identical text.",
+   "handling": "SimHash dedupe within 10 minutes counts the group once per author cluster."
+  },
+  {
+   "case": "A term trends every day at 9am (e.g. 'good morning').",
+   "handling": "Hour-of-week baseline neutralises routine surges; stopword list for generic phrases."
+  },
+  {
+   "case": "Brand new term with zero baseline.",
+   "handling": "Smoothing constant and minimum volume/authors gate it; EWMA baseline builds quickly."
+  },
+  {
+   "case": "Small city with sparse data.",
+   "handling": "Scaled thresholds; fewer than N valid trends falls back to state or country list."
+  },
+  {
+   "case": "Tragic event term should trend but with sensitive handling.",
+   "handling": "Policy classifier labels category; display with context and no promoted ads adjacent."
+  },
+  {
+   "case": "Clock skew in client timestamps.",
+   "handling": "Use server ingestion timestamp for event time; ignore client time."
+  },
+  {
+   "case": "Flink task failure mid-window.",
+   "handling": "Restore from checkpoint (every 30s) and replay from offsets; exactly-once state."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Kafka",
+   "layer": "Ingest and shuffle",
+   "overview": "Partitioned replicated log.",
+   "why": "Buffers 5x spikes, partitions by term, enables replay after bugs.",
+   "alternatives": "Pulsar, Kinesis (lower per-shard throughput)."
+  },
+  {
+   "name": "Apache Flink",
+   "layer": "Stream counting",
+   "overview": "Stateful stream processor with event time, watermarks and checkpoints.",
+   "why": "Event-time windows, exactly-once state, RocksDB state backend for large keyed state.",
+   "alternatives": "Kafka Streams (simpler, fewer windowing features), Spark Structured Streaming (micro-batch latency), Storm/Heron (Twitter historically)."
+  },
+  {
+   "name": "Sketch libraries (Apache DataSketches)",
+   "layer": "Approximate counting",
+   "overview": "Production implementations of CMS, frequent-items (Space-Saving family), HLL, quantiles.",
+   "why": "Mergeable, well-tested, serialisable sketches with known error bounds.",
+   "alternatives": "Hand-rolled implementations (risky), Redis built-in HLL."
+  },
+  {
+   "name": "Redis",
+   "layer": "Trend lists",
+   "overview": "In-memory KV.",
+   "why": "Tiny per-geo lists, atomic pointer swap, fast reads for origin.",
+   "alternatives": "DynamoDB, Memcached."
+  },
+  {
+   "name": "CDN / edge cache",
+   "layer": "Serving",
+   "overview": "Geo-distributed HTTP caches.",
+   "why": "Same list for everyone in a geo; 30s TTL absorbs 200k QPS.",
+   "alternatives": "Regional in-memory caches in API tier."
+  },
+  {
+   "name": "Cassandra",
+   "layer": "Baselines",
+   "overview": "Wide-column store.",
+   "why": "Time-series of hourly aggregates per (term, geo) with TTL.",
+   "alternatives": "Druid/Pinot (OLAP, good for analytics too), ClickHouse."
+  },
+  {
+   "name": "NER / language ID models",
+   "layer": "Extraction",
+   "overview": "Entity recognition and language detection.",
+   "why": "Topics beyond hashtags across Indian languages.",
+   "alternatives": "Hashtags only (simpler, misses entity trends)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Count-Min Sketch (approximate frequency counting)",
+   "explain": "Counting every distinct term exactly needs memory proportional to the number of distinct terms, which in a social stream includes millions of misspellings, one-off hashtags and n-grams per hour. A Count-Min Sketch (CMS) counts frequencies approximately in fixed memory. It is a 2D array of counters with d rows and w columns and d independent hash functions. To add an item, hash it with each function and increment one counter per row. To estimate its count, hash again and take the minimum of the d counters. Collisions can only add to a counter, never subtract, so the estimate never undercounts; taking the minimum picks the least-polluted row. With w = ceil(e / epsilon) and d = ceil(ln(1 / delta)), the overestimate is at most epsilon times the total stream count with probability at least 1 - delta. For example, epsilon 0.0001 and delta 0.001 gives w about 27,000 and d 7, roughly 190k counters, under 1MB with 4-byte counters. Sketches are mergeable: two CMS with identical dimensions and hashes can be added cell-by-cell, which makes them ideal for parallel counting across partitions and time buckets. The weakness is that the error is relative to the total stream size, so it is good for heavy items and poor for rare ones, and a CMS alone cannot list which items are heavy; you pair it with a heap or Space-Saving to track candidates.",
+   "in_this_design": "Each counter task keeps a CMS (w=2^15, d=5) per geo per 1-minute bucket for the long tail of terms, merged into 5-minute and 60-minute windows. Exact counts are kept only for the top 10k candidates tracked by Space-Saving; the CMS supplies estimates for terms entering the candidate set and for baseline lookups.",
+   "key_points": [
+    "Fixed memory regardless of distinct terms.",
+    "Never undercounts; error <= epsilon x N with probability 1 - delta.",
+    "Mergeable across partitions and time buckets.",
+    "Good for heavy hitters, poor for rare items.",
+    "Pair with a top-k structure to know which items are heavy."
+   ],
+   "qa": [
+    {
+     "q": "Why take the minimum across rows?",
+     "a": "Each row's counter is the true count plus collisions; collisions only add, so the smallest counter is the closest to the truth."
+    },
+    {
+     "q": "How do you size a CMS?",
+     "a": "Width w = e/epsilon controls error relative to the total count; depth d = ln(1/delta) controls the probability of exceeding it. Pick epsilon so that epsilon x N is small compared with the smallest count you care about."
+    },
+    {
+     "q": "Can you delete or decay counts?",
+     "a": "Standard CMS supports increments (and decrements in the turnstile variant, losing the min guarantee). For time decay, keep one sketch per time bucket and drop old buckets, or scale all counters periodically."
+    }
+   ]
+  },
+  {
+   "name": "Heavy hitters and Top-K (Space-Saving / Misra-Gries)",
+   "explain": "The heavy-hitters problem asks for all items whose frequency exceeds a fraction phi of the stream, and the top-k problem asks for the k most frequent. Exact answers need a counter for every distinct item. Misra-Gries and its variant Space-Saving solve it with k counters. Space-Saving keeps a table of at most k (item, count, error) entries. When an item arrives and is in the table, increment it. If it is absent and the table has room, insert it with count 1. If the table is full, evict the item with the smallest count m and insert the new item with count m + 1 and error m. The guarantee is that any item with true frequency above N / k is in the table, and each count overestimates by at most its recorded error. With a min-heap or the stream-summary linked structure, each update is O(1) or O(log k). Space-Saving tables are also mergeable approximately, so each partition can keep its own and a coordinator merges them. In trend detection, raw frequency top-k is only a candidate generator, because the most frequent terms (good morning, cricket, India) are always frequent; trendiness is about change, which requires comparing against a baseline.",
+   "in_this_design": "Each Flink counter subtask keeps Space-Saving with k=10k per geo per window. Every 30 seconds the scorer merges subtask summaries per geo into a candidate set, then computes velocity scores using exact counts held for candidates.",
+   "key_points": [
+    "k counters guarantee every item above N/k is captured.",
+    "Evict the minimum, inherit its count as error.",
+    "O(1)/O(log k) per update; mergeable.",
+    "Frequency top-k is a candidate source, not the trend list.",
+    "Track error to know how confident each count is."
+   ],
+   "qa": [
+    {
+     "q": "Why not a global min-heap of exact counts?",
+     "a": "You would still need exact counts for every item to know when one should enter the heap. Space-Saving bounds memory to k entries with a guarantee."
+    },
+    {
+     "q": "What if two partitions both have a term just below their local cut-off?",
+     "a": "A merged global count could qualify but neither reported it. Mitigate by reporting more than k per partition (for example 2k) or partitioning by term so each term is counted in one place."
+    },
+    {
+     "q": "Why are top-frequency terms not trends?",
+     "a": "Always-popular terms dominate raw counts. Trends are terms whose current rate is unusually high relative to their own history."
+    }
+   ]
+  },
+  {
+   "name": "Windowing, event time and watermarks",
+   "explain": "Stream processing groups events into windows to compute aggregates over time. Tumbling windows are fixed, non-overlapping intervals (each minute). Sliding (hopping) windows have a length and a slide, for example a 60-minute window computed every minute, so each event belongs to many windows. Session windows group by gaps in activity. Computing a sliding window naively by re-scanning events is expensive; the standard technique stores per-bucket partial aggregates (one per minute) and computes the window by summing the buckets, adding the new bucket and subtracting the expired one. Time itself has two meanings: event time (when the post was created) and processing time (when the system saw it). Mobile clients and backlogs deliver late and out-of-order events, so computing by processing time distorts trends after a lag spike. Event-time processing uses watermarks, a running estimate that no events older than T will arrive, to decide when a window is complete. Events arriving after the watermark are late; you either drop them, add them with allowed lateness, or route them to a side output. The trade-off is latency versus completeness: a longer watermark delay means more complete counts but slower trends.",
+   "in_this_design": "Counters aggregate in event time with 1-minute tumbling buckets and a bounded-out-of-orderness watermark of 20 seconds, allowed lateness 2 minutes. Sliding windows of 5 and 60 minutes are sums over ring buffers of minute buckets. Server-assigned post timestamps are used, never client clocks.",
+   "key_points": [
+    "Store per-minute buckets; slide by add-new, subtract-old.",
+    "Use event time so backlogs do not fake a spike.",
+    "Watermarks trade latency for completeness.",
+    "Allowed lateness and side outputs handle stragglers.",
+    "Use server-assigned timestamps to avoid client clock skew."
+   ],
+   "qa": [
+    {
+     "q": "After a 10-minute consumer outage, processing-time counts spike. Why?",
+     "a": "The backlog is processed in a burst, so 10 minutes of events land in one processing-time minute, faking a surge. Event-time windows put them in the right minutes."
+    },
+    {
+     "q": "How do you compute a 60-minute sliding count every minute cheaply?",
+     "a": "Keep a ring of 60 minute-buckets per term; window = running sum, add newest bucket, subtract the one falling out. O(1) per slide."
+    },
+    {
+     "q": "What watermark delay would you pick?",
+     "a": "Measure event lateness distribution; choose roughly the p99 lateness (here ~20s) so trends stay fresh while capturing nearly all events, with allowed lateness for corrections."
+    }
+   ]
+  },
+  {
+   "name": "Trend scoring: velocity against a seasonal baseline",
+   "explain": "A trend is something being talked about unusually more than normal, not simply a lot. The core score compares a current rate with an expected rate. A simple ratio is current_count / (baseline + smoothing), where smoothing (for example 10) prevents a term going from 1 to 5 mentions from looking like a 500 percent spike. A z-score form uses (current - mean) / (stddev + epsilon) over historical windows. Baselines should be seasonal: Monday 9am traffic differs from Sunday 3am, so compare with the same hour of the same weekday over the past weeks, or use an exponentially weighted moving average for terms without long history. Acceleration (second derivative) helps catch trends early. Real systems also require minimum volume and minimum unique authors so that one account or a small cluster cannot create a trend, and decay the score so trends naturally fall off once the surge subsides. Twitter has described its trend detection as favouring terms whose velocity is high relative to their baseline rather than raw volume, which is why perennially popular topics rarely trend.",
+   "in_this_design": "score = (c5 / 5) / ((b_same_hour / 60) + 0.2) x log(1 + unique_authors_5m) x quality, where c5 is the 5-minute count, b_same_hour is the 7-day median count for that hour-of-week, and quality discounts spammy or low-reputation contributions. Minimum 200 mentions and 100 unique authors in 60 minutes per geo for city level, scaled up for countries.",
+   "key_points": [
+    "Trending = rate relative to its own baseline, not raw volume.",
+    "Use hour-of-week seasonal baselines.",
+    "Smoothing constants stop tiny counts from looking explosive.",
+    "Unique authors beat raw mentions for robustness.",
+    "Decay lets trends fall off naturally."
+   ],
+   "qa": [
+    {
+     "q": "Why does 'cricket' rarely trend in India despite huge volume?",
+     "a": "Its baseline is always high; the ratio of current to baseline stays near 1 unless there is an unusual event, like a final."
+    },
+    {
+     "q": "What does the smoothing term do?",
+     "a": "It sets a floor on the denominator, so a brand-new term with baseline 0 needs real volume to score highly rather than exploding from tiny counts."
+    },
+    {
+     "q": "How do you catch a trend earlier?",
+     "a": "Use shorter windows (5 min vs 60 min) and acceleration, accepting more false positives, and require a confirmation step (two consecutive scoring rounds)."
+    }
+   ]
+  },
+  {
+   "name": "Hot keys and two-level (local then global) aggregation",
+   "explain": "Partitioning a stream by term sends all events for a term to one partition and one task, which is what you want for exact per-term state, but a breaking-news term can carry thousands of events per second and saturate a single task, creating a hot key. The remedy is two-level aggregation. In the first level, events are pre-aggregated locally, either in the producer or in a task keyed randomly, combining many events for the same term into one partial count per short interval (for example per second). In the second level, partial counts are shuffled by term to the owner task, which now sees a few messages per second per upstream task instead of thousands. Another approach is key salting: append a random suffix 0..N-1 to hot terms so they spread over N tasks, then merge results downstream. Both reduce network shuffle volume dramatically, since a combiner turning 10,000 events into one message per second is a 10,000x reduction for that key. The cost is a little extra latency (the pre-aggregation interval) and slightly more complex merge logic. Detecting hot keys can be dynamic using the heavy-hitter tracker itself.",
+   "in_this_design": "Extractors pre-aggregate (term, geo) counts for 1 second before emitting to term-events, and any term in the current top-1000 is salted across 8 sub-keys. Counter tasks merge salted partials per minute bucket. This cut shuffle volume about 20x in back-of-envelope terms and kept per-task load balanced during spikes.",
+   "key_points": [
+    "Partition by term gives exact state but creates hot keys.",
+    "Pre-aggregate locally (combiner) before the shuffle.",
+    "Salt known-hot keys and merge downstream.",
+    "Use the heavy-hitter list to decide what to salt.",
+    "Trade a second of latency for massive shuffle reduction."
+   ],
+   "qa": [
+    {
+     "q": "Why not just add more partitions?",
+     "a": "A single key still maps to a single partition. More partitions help aggregate throughput, not one hot key."
+    },
+    {
+     "q": "What does salting cost?",
+     "a": "Downstream must merge N partial counts per key and exact per-key state is now split, so unique-author HLLs must also be merged (they are mergeable, so it works)."
+    },
+    {
+     "q": "How big is the win from 1-second pre-aggregation?",
+     "a": "For a term at 5k events/s from 100 producers, the shuffle goes from 5k messages/s to at most 100/s, a 50x reduction."
+    }
+   ]
+  },
+  {
+   "name": "HyperLogLog for unique-author counting",
+   "explain": "Counting distinct elements exactly requires storing every element seen. HyperLogLog (HLL) estimates cardinality in tiny fixed memory. It hashes each element to a uniform bit string, uses the first p bits to choose one of m = 2^p registers, and stores in that register the maximum number of leading zeros seen in the remaining bits. Intuitively, seeing a hash with many leading zeros is rare, so the maximum observed suggests how many distinct elements were hashed. The estimate combines registers with a harmonic mean and bias corrections; standard error is about 1.04 / sqrt(m). With p = 14 (16,384 registers of 6 bits, about 12KB) the error is around 0.8 percent, regardless of whether the set has a thousand or a billion elements. HLLs are mergeable by taking the register-wise maximum, so per-partition and per-minute sketches combine into windows and global counts. Redis implements HLL natively with PFADD, PFCOUNT and PFMERGE, using a sparse representation for small sets. In abuse-resistant metrics, distinct counts of contributors are often more meaningful than raw event counts.",
+   "in_this_design": "For each candidate (term, geo, minute) the counter keeps an HLL of author ids with p=12 (about 3KB, ~1.6 percent error). Window unique-author counts are register-wise max merges of minute HLLs. The scorer requires minimum unique authors and uses log(unique_authors) in the score, which blunts bot amplification.",
+   "key_points": [
+    "Distinct count in kilobytes with ~1 percent error.",
+    "Mergeable by register-wise max.",
+    "Error ~1.04/sqrt(m), independent of cardinality.",
+    "Unique authors resist single-account spam.",
+    "Redis PFADD/PFCOUNT/PFMERGE built in."
+   ],
+   "qa": [
+    {
+     "q": "Why count unique authors and not mentions?",
+     "a": "One bot can post 10k times; unique authors measures breadth of conversation, which is what a trend should reflect."
+    },
+    {
+     "q": "Can you subtract an HLL to remove an author?",
+     "a": "No, HLL does not support deletion. Rebuild from minute sketches excluding flagged authors' contributions, or filter spammers before counting."
+    },
+    {
+     "q": "How do sliding windows work with HLL?",
+     "a": "Keep one HLL per minute bucket and merge the last 60 on demand; merging 60 x 3KB registers is microseconds."
+    }
+   ]
+  },
+  {
+   "name": "Manipulation resistance and trust signals",
+   "explain": "Trending lists are valuable real estate, so coordinated campaigns, bot networks and paid promoters try to game them. Defences combine several layers. Contribution weighting: discount posts from new accounts, low-reputation accounts and accounts flagged by spam models, so the effective count is a weighted sum. Diversity requirements: minimum unique authors, a cap on the share contributed by any single author, and checks on the author graph, since campaigns often come from densely connected clusters of accounts created around the same time. Content signals: near-duplicate detection (MinHash or SimHash) collapses copy-paste campaigns into one effective post. Velocity anomalies: a term rising perfectly linearly or from a narrow set of IP ranges is suspicious. Human review: policy denylists for illegal or harmful content and the ability to remove a trend quickly. These checks must be fast because trends are time-sensitive, so most run inline as weights and filters, while heavier graph analysis runs in parallel and can retroactively remove a trend. Transparency and appeal processes matter for public trust.",
+   "in_this_design": "Each event carries author reputation and spam score from the extractor; counts are weighted (reputation in 0..1). Near-duplicate posts are collapsed by 64-bit SimHash within a 10-minute window. A trend needs 100+ unique authors with no author over 2 percent of mentions; a denylist and moderator removal take effect at the next 30-second scoring cycle.",
+   "key_points": [
+    "Weight contributions by author trust.",
+    "Collapse near-duplicate campaigns with SimHash/MinHash.",
+    "Require breadth: unique authors and per-author share caps.",
+    "Policy denylists and fast human removal.",
+    "Inline cheap checks, async heavy graph analysis."
+   ],
+   "qa": [
+    {
+     "q": "A bot farm of 5000 new accounts pushes a hashtag. What stops it?",
+     "a": "Low reputation weights for new accounts, author-cluster detection (creation time, shared IPs, follow graph density), and near-duplicate collapsing reduce its effective score below threshold."
+    },
+    {
+     "q": "Why not rely only on human moderators?",
+     "a": "Trends change every 30 seconds across hundreds of geos; humans handle escalations and policy, automation handles volume."
+    },
+    {
+     "q": "How do you avoid suppressing genuine grassroots movements?",
+     "a": "Use breadth and trust signals rather than topic-based suppression, keep audit logs, measure false positive rates on reviewed samples, and have an appeal path."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Exact vs approximate counting",
+   "options": "Exact hashmaps vs sketches",
+   "choice": "Sketches for the tail, exact for top-k candidates",
+   "why": "Bounded memory with exact numbers where they matter."
+  },
+  {
+   "decision": "Trend definition",
+   "options": "Raw volume vs velocity vs baseline",
+   "choice": "Velocity vs hour-of-week baseline with breadth",
+   "why": "Surfaces what is new, not what is always popular."
+  },
+  {
+   "decision": "Time semantics",
+   "options": "Processing time vs event time",
+   "choice": "Event time with 20s watermark",
+   "why": "Correct under backlog and late events; small latency cost."
+  },
+  {
+   "decision": "Window length",
+   "options": "5 min vs 60 min",
+   "choice": "Both: 5 min for velocity, 60 min for volume/breadth gates",
+   "why": "Fast detection with stability."
+  },
+  {
+   "decision": "Hot keys",
+   "options": "More partitions vs combiners and salting",
+   "choice": "Combiners and salting",
+   "why": "One key cannot be split by more partitions."
+  },
+  {
+   "decision": "Serving",
+   "options": "Compute on read vs precompute and cache",
+   "choice": "Precompute every 30s, edge cache",
+   "why": "Identical results per geo; reads must not touch stream state."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Flink job crash",
+   "behavior": "Restore from latest checkpoint and replay; trends stale up to a minute; API serves last list."
+  },
+  {
+   "failure": "Scorer down",
+   "behavior": "Last published lists remain; after 10 min mark stale and fall back to slower batch-computed list."
+  },
+  {
+   "failure": "Kafka lag at peak",
+   "behavior": "Autoscale extractors; scorer suppresses publish when watermark lag exceeds 2 minutes to avoid partial counts."
+  },
+  {
+   "failure": "Redis loss",
+   "behavior": "Scorer republishes within 30s; CDN continues serving cached lists meanwhile."
+  },
+  {
+   "failure": "Bad normalisation deploy merges unrelated terms",
+   "behavior": "Canary on one geo, compare trend overlap with previous version; rollback and replay from Kafka."
+  },
+  {
+   "failure": "Spam surge overwhelms filters",
+   "behavior": "Raise breadth thresholds dynamically; moderators can freeze a geo's list to last known good."
+  }
+ ],
+ "metrics": [
+  "Detection latency against labelled ground-truth events.",
+  "Precision proxies: moderator removals, spam rate among trending terms.",
+  "Kafka consumer lag and watermark delay.",
+  "Flink checkpoint duration, state size per task, backpressure.",
+  "Hot-key load skew across tasks.",
+  "Trends API hit ratio and p99 latency.",
+  "CTR and dwell on trends; geo coverage (geos with >= 10 trends)."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you personalise trends?",
+   "a": "Compute global/geo candidates as now, then re-rank per user by interest affinity (topic embeddings, followed accounts discussing it) at read time; still filter by policy and breadth globally."
+  },
+  {
+   "q": "How do you evaluate detection quality?",
+   "a": "Label a set of known events (from news wires) and measure time-to-trend and recall; sample shown trends for human relevance and spam judgement; A/B on CTR."
+  },
+  {
+   "q": "How do you name and explain a trend?",
+   "a": "Pick the most common surface form in the cluster, attach category from entity linking, and show post counts; optionally a short summary from representative posts."
+  },
+  {
+   "q": "Why not use a batch job every 5 minutes?",
+   "a": "Possible for v1, but detection latency becomes 5-10 minutes and spikes are diluted. Streaming gives sub-2-minute detection with similar cost."
+  },
+  {
+   "q": "How would you handle 'trending in your network'?",
+   "a": "Count terms within the user's followee set using the fanout inbox or a per-user sketch over recent candidates; far more expensive, so restrict to active users."
+  },
+  {
+   "q": "How do you prevent a trend from flapping on and off the list?",
+   "a": "Hysteresis: enter above score T_in, leave below T_out < T_in, and a minimum display duration (for example 10 minutes)."
+  }
+ ],
+ "key_points": [
+  "Trending = unusual velocity vs a seasonal baseline, not raw volume.",
+  "Sketches bound memory: Space-Saving for candidates, CMS for the tail, HLL for unique authors.",
+  "Event time with watermarks avoids fake spikes after outages.",
+  "Minute buckets in ring buffers make sliding windows O(1).",
+  "Hot keys need combiners and salting, not more partitions.",
+  "Breadth and trust (unique authors, author-share cap, near-dup collapse) resist manipulation.",
+  "Precompute per-geo lists every 30s and serve from edge caches.",
+  "Measure detection latency, precision (removals), lag and CTR."
+ ],
+ "quiz": [
+  {
+   "q": "A Count-Min Sketch estimate for a term is 1,240. What can you say about the true count?",
+   "options": [
+    "It is exactly 1,240",
+    "It is at most 1,240",
+    "It is at least 1,240",
+    "It could be anything"
+   ],
+   "answer": 1,
+   "why": "CMS only overcounts due to collisions, so the true count is <= the estimate. 'At least' is the tempting reversal."
+  },
+  {
+   "q": "Why is raw top-k by frequency a poor trending list?",
+   "options": [
+    "It is too slow to compute",
+    "It needs too much memory",
+    "It changes too fast",
+    "Always-popular terms dominate; trends need change vs baseline"
+   ],
+   "answer": 3,
+   "why": "Trending is about velocity relative to normal. Space-Saving computes top-k fast in small memory, so cost is not the issue."
+  },
+  {
+   "q": "After a 10-minute consumer outage, a processing-time pipeline shows a huge spike for many terms. Fix?",
+   "options": [
+    "Event-time windows with watermarks",
+    "Increase Kafka partitions",
+    "Shorter windows",
+    "Raise trend thresholds"
+   ],
+   "answer": 0,
+   "why": "Backlog compressed into one processing minute fakes a spike; event time puts events in their real minutes."
+  },
+  {
+   "q": "HyperLogLog with 16,384 registers has a standard error of roughly?",
+   "options": [
+    "8 percent",
+    "0.08 percent",
+    "0.8 percent",
+    "16 percent"
+   ],
+   "answer": 2,
+   "why": "1.04 / sqrt(16384) = 1.04/128 = 0.81 percent."
+  },
+  {
+   "q": "A breaking-news hashtag saturates one Flink task. Best remedy?",
+   "options": [
+    "More Kafka partitions",
+    "Local pre-aggregation plus salting hot keys",
+    "Bigger Redis",
+    "Drop the hashtag"
+   ],
+   "answer": 1,
+   "why": "One key maps to one partition regardless of count; combiners and salting spread it."
+  },
+  {
+   "q": "Space-Saving with k counters guarantees capturing every item with frequency above?",
+   "options": [
+    "N/k",
+    "k",
+    "N/2",
+    "sqrt(N)"
+   ],
+   "answer": 0,
+   "why": "Any item above N/k cannot be evicted permanently. k alone ignores stream size."
+  },
+  {
+   "q": "Why add a smoothing constant to the baseline in the trend ratio?",
+   "options": [
+    "To speed up computation",
+    "To make baselines seasonal",
+    "To decay old trends",
+    "So tiny counts (1 to 5) do not look like huge spikes"
+   ],
+   "answer": 3,
+   "why": "It floors the denominator. Seasonality comes from hour-of-week baselines, a different mechanism."
+  },
+  {
+   "q": "Best robustness signal against a single bot posting 10,000 times?",
+   "options": [
+    "Total mentions",
+    "Unique authors (HLL)",
+    "Average post length",
+    "Retweet count"
+   ],
+   "answer": 1,
+   "why": "Distinct contributors measure breadth. Retweets can be bot-driven too."
+  },
+  {
+   "q": "500M posts/day, ~4 extracted terms each. Average term events per second?",
+   "options": [
+    "About 2,300",
+    "About 23k",
+    "About 230k",
+    "About 2.3M"
+   ],
+   "answer": 1,
+   "why": "500M x 4 = 2e9 events/day; 2e9 / 86,400 is about 23k/s average (peaks 3-5x higher). 230k is off by a factor of ten."
+  },
+  {
+   "q": "Which baseline best handles daily and weekly cycles?",
+   "options": [
+    "Global all-time average",
+    "Previous minute",
+    "Same hour-of-week median over past weeks",
+    "Fixed constant per term"
+   ],
+   "answer": 2,
+   "why": "Seasonal baselines compare like with like. Previous minute catches noise and misses daily rhythm."
+  },
+  {
+   "q": "Merging Count-Min Sketches from two partitions requires?",
+   "options": [
+    "Same width, depth and hash functions; add cell-wise",
+    "Taking the max cell-wise",
+    "Re-hashing all items",
+    "Sorting both"
+   ],
+   "answer": 0,
+   "why": "CMS is linear; cell-wise addition works only with identical shape and hashes. Max is how HLLs merge."
+  },
+  {
+   "q": "A copy-paste campaign posts the same text from 3000 accounts. Which technique collapses it?",
+   "options": [
+    "Bloom filter",
+    "Consistent hashing",
+    "Count-Min Sketch",
+    "SimHash/MinHash near-duplicate detection"
+   ],
+   "answer": 3,
+   "why": "Near-duplicate detection groups similar texts. A Bloom filter only tests exact membership."
+  },
+  {
+   "q": "The trends API is read at 200k QPS but trends change every 30s. Best serving approach?",
+   "options": [
+    "Compute on every request",
+    "Precompute per geo; serve via CDN/edge cache with ~30s TTL",
+    "Query Flink state directly",
+    "Strong consistency reads from the counter tier"
+   ],
+   "answer": 1,
+   "why": "Same answer for everyone in a geo; cache it. Querying Flink state would overload the stream job."
+  },
+  {
+   "q": "Raising the watermark delay from 20s to 2 minutes mainly does what?",
+   "options": [
+    "Increases completeness and trend latency",
+    "Reduces memory",
+    "Reduces accuracy",
+    "Has no effect"
+   ],
+   "answer": 0,
+   "why": "Waiting longer captures more late events but delays results. Memory actually rises slightly with more open windows."
+  },
+  {
+   "q": "Why do #IPL and #ipl and 'IPL 2026' need special handling?",
+   "options": [
+    "They are spam",
+    "They break hashing",
+    "They are variants of one topic and should be normalised/clustered",
+    "They have different languages"
+   ],
+   "answer": 2,
+   "why": "Variants split counts and duplicate list slots. Case folding and clustering merge them."
+  },
+  {
+   "q": "A city-level trend list for a small town shows random noise. Best fix?",
+   "options": [
+    "Lower thresholds",
+    "Use processing time",
+    "Remove HLL",
+    "Scale minimum volume/authors to geo size and fall back to the parent region"
+   ],
+   "answer": 3,
+   "why": "Small geos lack volume; scaled thresholds plus fallback to state/country avoid noise."
+  },
+  {
+   "q": "Space for a CMS with w=32,768 and d=5 using 4-byte counters?",
+   "options": [
+    "About 64KB",
+    "About 640KB",
+    "About 6.4MB",
+    "About 64MB"
+   ],
+   "answer": 1,
+   "why": "32768 x 5 x 4 = 655,360 bytes, about 640KB."
+  },
+  {
+   "q": "Which is the right place to apply a legal/policy denylist?",
+   "options": [
+    "In the scorer and serving layer, effective next cycle",
+    "Only in the client",
+    "In Kafka retention",
+    "In the CDN"
+   ],
+   "answer": 0,
+   "why": "Server-side enforcement before publish is reliable and fast. Client-side can be bypassed."
+  },
+  {
+   "q": "What does exactly-once checkpointing in Flink protect here?",
+   "options": [
+    "Kafka retention",
+    "Client retries",
+    "Counter state consistency across task failures and restarts",
+    "CDN freshness"
+   ],
+   "answer": 2,
+   "why": "Checkpoints snapshot state aligned with offsets, so a restart neither double-counts nor loses events within the job."
+  },
+  {
+   "q": "A term goes from 50 to 5,000 mentions in 5 minutes with 40 unique authors. Likely outcome?",
+   "options": [
+    "Top trend immediately",
+    "Trends after one cycle",
+    "Never counted",
+    "Blocked by the unique-author minimum and author-share cap"
+   ],
+   "answer": 3,
+   "why": "Velocity is huge but breadth is tiny; ~125 posts per author screams coordination."
+  },
+  {
+   "q": "Why compute sliding windows from minute buckets?",
+   "options": [
+    "Kafka requires it",
+    "Each slide is O(1): add newest bucket, subtract expired one",
+    "It is more accurate than raw events",
+    "To reduce watermark delay"
+   ],
+   "answer": 1,
+   "why": "Avoids rescanning events each slide. It is not more accurate than raw events, just cheaper."
+  },
+  {
+   "q": "Per-geo trend lists for 500 geos at top 30 each, refreshed every 30s. Write rate to the trends store?",
+   "options": [
+    "About 17 list writes per second",
+    "About 500 per second",
+    "About 15,000 per second",
+    "About 1 per second"
+   ],
+   "answer": 0,
+   "why": "500 lists / 30s = ~17 writes/s. Tiny; the serving side, not writes, is the scale concern."
+  }
+ ],
+ "references": [
+  {
+   "title": "System Design: Design Twitter Trending Topics (techinterview.org)",
+   "url": "https://www.techinterview.org/post/3233474336/system-design-design-twitter-trending-topics-real-time-analytics-stream-processing-count-min-sketch-sliding-window/"
+  },
+  {
+   "title": "Trending Topics Low-Level Design: Sliding Window Counts, Time Decay, and Top-K",
+   "url": "https://www.techinterview.org/post/3233468386/lld-trending-topics/"
+  },
+  {
+   "title": "Design a Trending Topics System (count-min sketch, sliding window, ranking)",
+   "url": "https://programmingappliedai.substack.com/p/design-a-trending-topics-system-with"
+  },
+  {
+   "title": "Design a system which finds Top K Heavy Hitters",
+   "url": "https://asquare14.notion.site/Design-a-systems-which-finds-Top-K-Heavy-Hitters-569d55fadc2148bdadae965069b3c8b2"
+  }
+ ]
+}

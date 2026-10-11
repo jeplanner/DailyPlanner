@@ -1,0 +1,1146 @@
+{
+ "slug": "distributed-kv-store",
+ "title": "Design a Distributed Key-Value Store (Dynamo-style)",
+ "prompt": "Design a distributed key-value store (Dynamo-style).",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "A Dynamo-style store chooses availability over consistency: writes must succeed even during network partitions and node failures, so replicas may diverge and the system needs tools to detect and repair that divergence. The design is a toolkit of classic techniques - consistent hashing with virtual nodes, N/R/W quorums, sloppy quorum with hinted handoff, vector clocks, read repair, Merkle-tree anti-entropy and gossip membership - and the interview is about knowing why each one exists.",
+ "framework": {
+  "clarify": [
+   "API shape: get(key) and put(key, value) only, no range scans or multi-key transactions? Assume yes, like Dynamo's shopping cart.",
+   "Value size: assume small values, under 1 MB, typical 1-10 KB.",
+   "Consistency need: is it acceptable to return a stale or conflicting value if we never reject writes? Assume AP with tunable consistency.",
+   "Scale: assume 100 TB of data, 1 million reads/sec and 500k writes/sec at peak.",
+   "Latency SLO: p99.9 under 10 ms within a region for reads and writes - Dynamo targeted the 99.9th percentile, not the mean.",
+   "Failure model: nodes and disks fail daily, racks occasionally, and whole data centres rarely; no Byzantine failures.",
+   "Multi-region: assume replicas spread across 3 availability zones in one region first, cross-region later.",
+   "Conflict resolution: can the application merge siblings (cart union), or do we want last-writer-wins? Support both."
+  ],
+  "design": [
+   "Baseline: a single-node hash table with a write-ahead log; then shard it with consistent hashing; then replicate each shard N=3.",
+   "Partitioning: consistent hash ring with ~256 virtual nodes per physical node; preference list = next N distinct physical nodes clockwise.",
+   "Replication and quorum: coordinator sends to N replicas and waits for W acks on writes and R responses on reads; default N=3, W=2, R=2.",
+   "Availability under failure: sloppy quorum - if a preferred replica is down, write to the next healthy node with a hint; hand the data back later.",
+   "Versioning: each value carries a vector clock; concurrent versions are kept as siblings and returned to the client to reconcile.",
+   "Storage engine per node: LSM-tree (memtable + WAL + SSTables + Bloom filters + compaction).",
+   "Repair: read repair on reads, hinted handoff for short outages, Merkle-tree anti-entropy for long ones; membership via gossip and seed nodes."
+  ],
+  "defend": [
+   "Bottleneck: hot keys and tail latency; spread with virtual nodes, client-side request routing, and returning on the fastest R of N.",
+   "Scale reads: tune R=1 for read-heavy, eventually-consistent use cases; add a caching tier only for read-mostly keys.",
+   "Scale writes: LSM storage makes writes sequential; W=1 for highest write availability where losing the latest write on a crash is acceptable.",
+   "Failure: node down -> sloppy quorum + hinted handoff; disk lost -> Merkle anti-entropy rebuild; partition -> both sides accept writes, vector clocks surface conflicts.",
+   "Consistency knobs: R + W > N gives read-your-latest-ack overlap in the absence of sloppy failover; explain why it is still not linearizable.",
+   "Measure: p99/p99.9 latency per operation, sibling (conflict) rate, hinted handoff backlog, Merkle divergence, read-repair rate, compaction debt."
+  ],
+  "script": "I will start by confirming this is a simple get/put store with small values where availability matters more than strict consistency - the Dynamo shopping-cart model - at around a million reads a second and 100 TB. My baseline is a single node hash table with a write-ahead log. To scale, I partition with a consistent hash ring using virtual nodes, and each key is replicated to the next three distinct nodes on the ring. Any node can coordinate a request; with N=3, W=2, R=2 the read and write sets overlap. When a replica is down I use a sloppy quorum: write to the next healthy node with a hint and hand it back later, so writes never fail. Because concurrent writes can happen, every value carries a vector clock and divergent versions are returned as siblings to merge. Each node uses an LSM tree. Then I will defend it: read repair and Merkle trees for convergence, gossip for membership, hot keys, tail latency, and exactly what R and W buy you and what they do not."
+ },
+ "brd": {
+  "problem": "Many core services - carts, sessions, preferences, feature flags, device state - need a store that never rejects a write, answers in single-digit milliseconds at the 99.9th percentile, and scales horizontally. Relational databases with a primary and failover give strong consistency but reject writes during failover and are hard to scale past one machine's write capacity.",
+  "goals": [
+   "Always-writable: no customer-visible write failures during node, disk or AZ failures.",
+   "p99.9 latency under 10 ms for get and put within a region.",
+   "Linear horizontal scaling by adding nodes, with no manual resharding.",
+   "Tunable consistency per table (N, R, W) so each team chooses its trade-off.",
+   "Durability: no acknowledged write lost unless more than W replicas fail permanently before repair.",
+   "Self-healing: replicas converge automatically after failures."
+  ],
+  "non_goals": [
+   "Multi-key transactions or secondary indexes.",
+   "Range scans or SQL queries.",
+   "Strong (linearizable) consistency by default.",
+   "Large blob storage (values over 1 MB go to object storage)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Product service teams (cart, session, profile)",
+    "needs": "Simple API, predictable low latency, clear semantics for conflicts."
+   },
+   {
+    "who": "SRE / platform",
+    "needs": "Automatic rebalancing, observability, safe rolling upgrades, capacity planning."
+   },
+   {
+    "who": "Finance / capacity",
+    "needs": "Cost per GB and per million operations; commodity hardware."
+   },
+   {
+    "who": "Security / compliance",
+    "needs": "Encryption at rest and in transit, deletion that really deletes (tombstones and compaction)."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Write availability",
+    "target": "99.99 percent of puts succeed"
+   },
+   {
+    "metric": "p99.9 get/put latency",
+    "target": "< 10 ms in region"
+   },
+   {
+    "metric": "Sibling (conflict) rate",
+    "target": "< 0.1 percent of reads return more than one version"
+   },
+   {
+    "metric": "Rebalance time after adding a node",
+    "target": "< 2 hours with no SLO breach"
+   },
+   {
+    "metric": "Data loss incidents",
+    "target": "0 acknowledged writes lost"
+   }
+  ],
+  "constraints": [
+   "Commodity servers with local NVMe SSDs; failures are normal.",
+   "Three availability zones per region; cross-AZ latency ~1 ms, cross-region 50-150 ms.",
+   "Clients include old service versions, so the protocol must be backward compatible.",
+   "Operational team is small; must be largely self-managing."
+  ],
+  "risks": [
+   {
+    "risk": "Teams assume strong consistency and build features that break under conflicts.",
+    "mitigation": "Clear docs, default conflict policies per table, sibling-rate dashboards per client."
+   },
+   {
+    "risk": "Hot keys overload one replica set.",
+    "mitigation": "Hot-key detection, client-side caching, key splitting guidance."
+   },
+   {
+    "risk": "Correlated failure across replicas (same rack/AZ).",
+    "mitigation": "Preference list placement across AZs, rack awareness."
+   },
+   {
+    "risk": "Tombstones resurrect deleted data after long partitions.",
+    "mitigation": "gc_grace period longer than max repair interval; enforce regular anti-entropy."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Service developer",
+    "needs": "A client library with get/put/delete, per-request consistency override, and conflict callbacks."
+   },
+   {
+    "name": "Platform operator",
+    "needs": "Add/remove nodes, see ring ownership, repair status, and per-table SLOs."
+   },
+   {
+    "name": "On-call engineer",
+    "needs": "Clear alerts on latency, hinted handoff backlog, and disk/compaction pressure."
+   }
+  ],
+  "user_stories": [
+   "As a cart service, I want add-to-cart to succeed even if a replica is down so that customers never lose items.",
+   "As a session service, I want reads under 5 ms so that every page load stays fast.",
+   "As a developer, I want to choose R and W per table so that I can trade consistency for latency.",
+   "As a developer, I want concurrent updates surfaced as siblings so that I can merge them instead of losing one.",
+   "As an operator, I want to add nodes without downtime so that capacity grows with traffic.",
+   "As an operator, I want replicas to converge automatically after a node returns so that I do not run manual repairs.",
+   "As a developer, I want TTLs on keys so that sessions expire automatically.",
+   "As compliance, I want deletes to be permanent after a bounded time so that we meet data-deletion obligations."
+  ],
+  "functional": [
+   "get(key) returns one value or a set of sibling values plus an opaque context (vector clock).",
+   "put(key, value, context) writes a new version descending from the given context.",
+   "delete(key, context) writes a tombstone.",
+   "Per-table N, R, W configuration with per-request override.",
+   "Optional TTL per key.",
+   "Automatic partitioning, replication, rebalancing on membership change.",
+   "Conflict policy per table: return siblings, last-writer-wins, or a registered CRDT type (counter, set)."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "p99.9 < 10 ms get/put; p50 < 2 ms"
+   },
+   {
+    "name": "Write availability",
+    "target": "99.99 percent; writes accepted during single-AZ loss"
+   },
+   {
+    "name": "Durability",
+    "target": "Acked writes on >= W replicas, WAL fsync batched every 10 ms or per write for strict tables"
+   },
+   {
+    "name": "Consistency",
+    "target": "Eventual by default; read-your-writes when R + W > N and no sloppy failover"
+   },
+   {
+    "name": "Scalability",
+    "target": "Hundreds of nodes, petabyte scale, linear throughput"
+   },
+   {
+    "name": "Convergence",
+    "target": "Replicas converge within minutes after transient failures, within 24h via full anti-entropy"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "100 TB of logical data, replication N=3.",
+    "Average key 50 bytes, value 2 KB.",
+    "Peak 1M gets/sec and 500k puts/sec.",
+    "Node: 32 cores, 256 GB RAM, 4 TB usable NVMe.",
+    "Target disk utilisation 50 percent to leave room for compaction and rebalancing."
+   ],
+   "math": [
+    "Raw stored: 100 TB x 3 = 300 TB; at 2 TB usable per node (50 percent of 4 TB) = 150 nodes for storage.",
+    "Keys: 100 TB / ~2 KB = ~50 billion keys.",
+    "Read fan-out: 1M gets/sec, coordinator sends to all N=3 replicas, so ~3M replica reads/sec; ~20k/sec per node across 150 nodes - comfortable.",
+    "Write fan-out: 500k puts x 3 replicas = 1.5M replica writes/sec, ~10k/node/sec; at 2 KB = 20 MB/sec/node plus compaction amplification ~10x = 200 MB/sec of disk writes - NVMe handles it.",
+    "Network: 1.5M x 2 KB = 3 GB/sec of replication traffic cluster-wide, ~20 MB/sec per node.",
+    "Memory: Bloom filters at 10 bits/key for ~1 billion keys per node replica share = ~1.25 GB per node, fits easily."
+   ],
+   "summary": "About 150 storage nodes for 100 TB at N=3, each handling ~20k replica reads and ~10k replica writes per second. Storage, not CPU, sizes the cluster; disk write amplification from compaction is the hidden cost."
+  },
+  "out_of_scope": [
+   "Cross-key ACID transactions.",
+   "Secondary indexes and range queries.",
+   "Strongly consistent compare-and-set (would need Paxos/Raft per key, as Cassandra's LWT does).",
+   "Large object storage."
+  ]
+ },
+ "hld": {
+  "overview": "A symmetric, leaderless cluster: every node runs the same software, owns ranges of a consistent hash ring through virtual nodes, stores data in a local LSM engine, and can coordinate any request. Clients route requests either through a load balancer to any node or directly to a node in the key's preference list using a ring-aware client. Membership and failure detection propagate by gossip. Replicas are kept in sync by quorum writes, hinted handoff, read repair and Merkle-tree anti-entropy.",
+  "diagram": "         Clients (ring-aware library or via LB)\n                     |\n                     v\n      +-------- Coordinator (any node, ideally a replica) --------+\n      | hash(key) -> ring position -> preference list [A, B, C]  |\n      | send to N=3, wait W acks (put) / R replies (get)          |\n      +-----------+------------------+------------------+--------+\n                  |                  |                  |\n                  v                  v                  v\n         +--------------+   +--------------+   +--------------+    (C down)\n         | Node A (AZ1) |   | Node B (AZ2) |   | Node D (AZ3) |<-- hint for C\n         | WAL          |   | WAL          |   | hinted store |\n         | memtable     |   | memtable     |   +--------------+\n         | SSTables+BF  |   | SSTables+BF  |\n         +--------------+   +--------------+\n                 ^   gossip (membership, heartbeats) every 1s   ^\n                 +----------------------------------------------+\n      Anti-entropy: Merkle tree per key range compared between replicas\n\n   Ring (virtual nodes):  A1 . C1 . B1 . D1 . A2 . B2 . C2 . D2 ...  (2^64 space)\n",
+  "components": [
+   {
+    "name": "Client library",
+    "responsibility": "Holds a copy of the ring, routes to a replica in the preference list, retries with jitter, carries vector-clock contexts, exposes conflict callbacks."
+   },
+   {
+    "name": "Request coordinator",
+    "responsibility": "Any node; computes preference list, fans out to N replicas, waits for W or R, does read repair, returns siblings."
+   },
+   {
+    "name": "Partitioner (consistent hash ring)",
+    "responsibility": "Maps key -> token via a 64-bit hash (Murmur3); vnodes map tokens to physical nodes; rack/AZ-aware replica placement."
+   },
+   {
+    "name": "Storage engine (LSM)",
+    "responsibility": "WAL + memtable + immutable SSTables with Bloom filters and indexes; size-tiered or leveled compaction; tombstones and TTL."
+   },
+   {
+    "name": "Gossip and failure detector",
+    "responsibility": "Each node gossips state with 1-3 random peers per second; phi-accrual detector marks nodes suspect; seed nodes bootstrap."
+   },
+   {
+    "name": "Hinted handoff manager",
+    "responsibility": "Stores writes meant for down replicas with a hint; replays them when the target returns; caps hint window (e.g. 3 hours)."
+   },
+   {
+    "name": "Anti-entropy service",
+    "responsibility": "Builds Merkle trees per token range, exchanges roots with replicas, streams only differing ranges."
+   },
+   {
+    "name": "Admin / rebalancer",
+    "responsibility": "Adds and removes nodes, streams ranges to new owners, tracks repair status and ring view."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Put (write path)",
+    "steps": [
+     "Client hashes key, picks a coordinator in the preference list (or any node).",
+     "Coordinator increments its entry in the vector clock from the client's context.",
+     "Coordinator writes locally (WAL append + memtable) and sends to the other N-1 replicas in parallel.",
+     "If a replica is unreachable, send to the next healthy node on the ring with a hint naming the intended owner (sloppy quorum).",
+     "Return success after W acks (including its own); remaining replicas complete asynchronously.",
+     "On timeout with fewer than W acks, return an error with a retryable flag; client retries with the same context."
+    ]
+   },
+   {
+    "name": "Get (read path)",
+    "steps": [
+     "Coordinator sends read to all N replicas (or R plus speculative extra for tail latency).",
+     "Wait for R responses; compare vector clocks.",
+     "If one version descends from all others, return it; else return all concurrent versions as siblings with a merged context.",
+     "Asynchronously push the newest version(s) to replicas that returned stale data (read repair)."
+    ]
+   },
+   {
+    "name": "Node failure and recovery",
+    "steps": [
+     "Gossip and phi-accrual detector mark node C as down after ~10 s without heartbeats.",
+     "Writes for C go to D with hints; reads use the remaining replicas.",
+     "When C returns, D replays hints to C and deletes them.",
+     "If C was down longer than the hint window, Merkle-tree repair between C and its peers streams differing ranges."
+    ]
+   },
+   {
+    "name": "Adding a node",
+    "steps": [
+     "New node E takes ~256 random tokens and announces via gossip.",
+     "For each token range E now owns, the previous owners stream SSTables to E.",
+     "Writes during streaming go to both old and new owners; after streaming completes ownership switches.",
+     "Old owners clean up data they no longer own."
+    ]
+   }
+  ],
+  "data_flow": "Writes: client -> coordinator -> N replicas (WAL, memtable) -> flush to SSTables -> compaction. Reads: client -> coordinator -> R replicas (memtable, Bloom filter, SSTables) -> reconcile -> read repair. Background: gossip for membership, hints for transient failures, Merkle exchanges for permanent divergence."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/{table}/{key}?r=2",
+    "request": "-",
+    "response": "{values: [bytes], context: base64(vector_clock)} or 404",
+    "notes": "More than one value means siblings; client must merge and write back with the context."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/{table}/{key}?w=2",
+    "request": "{value: bytes, context: base64, ttl_s?: int}",
+    "response": "{context: base64}",
+    "notes": "Context from a prior read makes the write descend from it; omitting it may create a sibling."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/{table}/{key}",
+    "request": "{context: base64}",
+    "response": "{ok: true}",
+    "notes": "Writes a tombstone; purged after gc_grace (e.g. 10 days) once repair has run."
+   },
+   {
+    "method": "POST",
+    "path": "/admin/v1/nodes",
+    "request": "{host, az, rack, tokens: 256}",
+    "response": "{node_id, streaming_ranges: int}",
+    "notes": "Bootstraps a node; streaming progress visible via /admin/v1/ring."
+   },
+   {
+    "method": "RPC",
+    "path": "Replica.Write / Replica.Read",
+    "request": "{key, value, vclock, hint_for?}",
+    "response": "{ok, vclock}",
+    "notes": "Internal node-to-node RPC; hint_for set when a node stands in for a down replica."
+   },
+   {
+    "method": "RPC",
+    "path": "AntiEntropy.CompareTree",
+    "request": "{range, depth, hashes: [bytes]}",
+    "response": "{mismatched_children: [int]}",
+    "notes": "Walk Merkle trees top-down; only mismatched leaves trigger streaming."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Record (on disk)",
+    "store": "LSM SSTable per node",
+    "fields": [
+     "key",
+     "value or tombstone",
+     "vector_clock [(node_id, counter)]",
+     "write_ts",
+     "ttl_expiry"
+    ],
+    "keys": "Sorted by token(key) then key; partitioned by token range",
+    "notes": "Siblings stored as multiple versions under one key until reconciled."
+   },
+   {
+    "entity": "Ring state",
+    "store": "Gossiped in memory, persisted to local system table",
+    "fields": [
+     "node_id",
+     "address",
+     "az",
+     "tokens[256]",
+     "status (joining/normal/leaving/down)",
+     "heartbeat generation, version"
+    ],
+    "keys": "node_id",
+    "notes": "Eventually consistent view; versions resolve which state is newer."
+   },
+   {
+    "entity": "Hint",
+    "store": "Local hints log on stand-in node",
+    "fields": [
+     "target_node_id",
+     "key",
+     "value",
+     "vector_clock",
+     "created_ts"
+    ],
+    "keys": "(target_node_id, created_ts)",
+    "notes": "Dropped after hint window (3h) - Merkle repair then takes over."
+   },
+   {
+    "entity": "Merkle tree",
+    "store": "Memory, built per token range on demand",
+    "fields": [
+     "range",
+     "depth (e.g. 15 = 32k leaves)",
+     "leaf hashes",
+     "inner hashes"
+    ],
+    "keys": "token range",
+    "notes": "Rebuilt by repair jobs; comparing roots is O(1) when in sync."
+   }
+  ],
+  "classes": [
+   {
+    "name": "Ring",
+    "responsibility": "Token-to-node mapping and preference lists.",
+    "methods": [
+     "token(key) -> int",
+     "preference_list(key, n) -> [Node]",
+     "add_node(node, tokens)",
+     "remove_node(node)"
+    ]
+   },
+   {
+    "name": "Coordinator",
+    "responsibility": "Quorum reads and writes.",
+    "methods": [
+     "put(key, value, ctx, w) -> ctx",
+     "get(key, r) -> (values, ctx)",
+     "read_repair(key, responses)"
+    ]
+   },
+   {
+    "name": "VectorClock",
+    "responsibility": "Causality tracking.",
+    "methods": [
+     "increment(node_id)",
+     "compare(other) -> BEFORE|AFTER|EQUAL|CONCURRENT",
+     "merge(other)",
+     "prune(max_entries=10)"
+    ]
+   },
+   {
+    "name": "LsmEngine",
+    "responsibility": "Local durable storage.",
+    "methods": [
+     "append_wal(rec)",
+     "put(rec)",
+     "get(key) -> [rec]",
+     "flush()",
+     "compact()"
+    ]
+   },
+   {
+    "name": "Gossiper",
+    "responsibility": "Membership and failure detection.",
+    "methods": [
+     "tick()",
+     "merge_state(remote)",
+     "phi(node) -> float"
+    ]
+   },
+   {
+    "name": "HintStore",
+    "responsibility": "Hinted handoff.",
+    "methods": [
+     "store(target, rec)",
+     "replay(target)",
+     "expire(older_than)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Quorum write with sloppy quorum",
+    "explain": "Walk the ring from the key's token collecting the first N healthy distinct nodes, skipping down ones and attaching a hint naming the original owner. Send in parallel, succeed after W acks.",
+    "pseudocode": "def put(key, value, ctx, W):\n    clock = ctx.increment(self.id)\n    targets, hints = [], {}\n    for node in ring.walk(token(key)):            # distinct physical nodes\n        if len(targets) == N: break\n        if node.up: targets.append(node)\n        else: hints[node] = None                  # remember skipped owner\n    # pair each stand-in after the first N with a skipped owner\n    acks = parallel_send(targets, key, value, clock, hints, timeout=50ms)\n    if acks >= W: return clock\n    raise Unavailable(retryable=True)\n"
+   },
+   {
+    "name": "Vector clock comparison and sibling resolution",
+    "explain": "A vector clock maps node id to counter. A descends from B if every counter in A is >= B's. If neither descends from the other, they are concurrent and both are kept as siblings.",
+    "pseudocode": "def compare(a, b):\n    ge = all(a.get(n, 0) >= c for n, c in b.items())\n    le = all(b.get(n, 0) >= c for n, c in a.items())\n    if ge and le: return EQUAL\n    if ge: return AFTER\n    if le: return BEFORE\n    return CONCURRENT\n\ndef reconcile(versions):\n    return [v for v in versions\n            if not any(compare(o.clock, v.clock) == AFTER for o in versions)]\n"
+   },
+   {
+    "name": "Merkle tree anti-entropy",
+    "explain": "Each replica hashes its keys in a token range into a binary hash tree. Two replicas compare roots; if equal, done. Otherwise recurse into children with different hashes and stream only the mismatched leaf ranges. Cost is proportional to the differences, not the data size.",
+    "pseudocode": "def sync(range, me, peer, depth=0):\n    if me.hash(range) == peer.hash(range): return\n    if depth == MAX_DEPTH:\n        stream_diff(range, me, peer); return\n    for child in split(range):\n        sync(child, me, peer, depth + 1)\n"
+   },
+   {
+    "name": "Phi-accrual failure detection",
+    "explain": "Instead of a fixed timeout, track the distribution of heartbeat inter-arrival times and compute phi = -log10(P(no heartbeat for this long)). Mark down when phi > 8 (Cassandra's default), which adapts to network jitter.",
+    "pseudocode": "def phi(node, now):\n    t = now - last_heartbeat[node]\n    mean = intervals[node].mean()\n    p_later = exp(-t / mean)          # exponential approximation\n    return -log10(p_later)\n"
+   }
+  ],
+  "sequence": "Client        Coordinator(A)       B             C(down)        D(stand-in)\n  | put(k,v,ctx)    |               |                |               |\n  |---------------->|               |                |               |\n  |                 | clock = ctx + A:1               |               |\n  |                 | WAL + memtable (local ack 1)    |               |\n  |                 | write(k,v,clock)                |               |\n  |                 |-------------->|                |               |\n  |                 | write ........................ X (timeout)    |\n  |                 | write(k,v,clock, hint_for=C)                    |\n  |                 |------------------------------------------------>|\n  |                 |<--------------| ack 2          |               |\n  |<----------------| ok(ctx) since W=2              |               |\n  |                 |<------------------------------------------------| ack 3\n  |                 |               |                |               |\n  |         ... later C recovers, gossip marks C up ...              |\n  |                 |               |                |<--------------| replay hint\n  |                 |               |                |-------------->| ack, D deletes hint\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Concurrent writes to the same key from two clients during a partition.",
+   "handling": "Both accepted; vector clocks are concurrent so both are kept as siblings; next reader merges (e.g. cart union) and writes back with the merged context."
+  },
+  {
+   "case": "Deleted item reappears in a shopping cart after a merge.",
+   "handling": "Known Dynamo anomaly with union merges; use tombstones or an OR-Set CRDT that tracks removes with unique tags so deletes win over concurrent stale adds."
+  },
+  {
+   "case": "Sloppy quorum: W=2 acks came from stand-in nodes, so a subsequent R=2 read on the true owners misses the write.",
+   "handling": "Explain that R + W > N only guarantees overlap on the same node set; offer strict-quorum mode for tables that need it (fail the write instead of using stand-ins)."
+  },
+  {
+   "case": "Vector clocks grow large with many coordinators.",
+   "handling": "Coordinate via replicas only (client-side routing) and prune entries older than a threshold beyond 10 entries, accepting rare false conflicts."
+  },
+  {
+   "case": "Tombstone resurrection: a node down longer than gc_grace returns with the old value.",
+   "handling": "gc_grace (10 days) must exceed the repair interval; block nodes from rejoining after being down longer than gc_grace without a full rebuild."
+  },
+  {
+   "case": "Hot key (a celebrity's profile or a flash-sale counter).",
+   "handling": "Detect via per-key counters; client-side cache with short TTL, read from any replica (R=1), split counters into sharded sub-keys and sum on read."
+  },
+  {
+   "case": "Clock skew with last-writer-wins tables.",
+   "handling": "LWW by wall clock can silently drop a newer write if a node's clock lags; use NTP with alerting on > 50 ms skew, or hybrid logical clocks, and prefer siblings/CRDTs for important data."
+  },
+  {
+   "case": "Client retries a put after a timeout that actually succeeded.",
+   "handling": "Same context and same value produce an equivalent version; for non-idempotent ops (counter increment) use CRDT counters keyed by writer or idempotency tokens."
+  },
+  {
+   "case": "Network partition splits the cluster 2-vs-1 across AZs.",
+   "handling": "Both sides keep serving with sloppy quorum; on heal, hints and Merkle repair converge data; conflicts surfaced as siblings."
+  },
+  {
+   "case": "Gossip partitions membership views (logical partition) after adding nodes via different seeds.",
+   "handling": "Every node is configured with the same seed list and seeds gossip with each other, so views merge."
+  },
+  {
+   "case": "A disk silently corrupts data.",
+   "handling": "Per-block checksums in SSTables; corrupt reads fall back to other replicas and trigger repair of that range."
+  },
+  {
+   "case": "Large value (50 MB) written by mistake.",
+   "handling": "Reject above 1 MB at the client and coordinator; large values destroy compaction and tail latency."
+  },
+  {
+   "case": "Rebalance streaming saturates the network and hurts p99.",
+   "handling": "Throttle streaming (e.g. 200 Mbps per node) and add one node at a time; vnodes spread the source load across many nodes."
+  },
+  {
+   "case": "Read-repair storm after a node returns from a long outage.",
+   "handling": "Run Merkle repair before admitting reads to the node, or mark it as 'joining' so coordinators avoid it until caught up."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "RocksDB / LevelDB (LSM engine)",
+   "layer": "Per-node storage",
+   "overview": "Embedded log-structured merge-tree key-value library with WAL, memtables, SSTables, Bloom filters and compaction.",
+   "why": "Turns random writes into sequential ones, which is what a write-heavy replicated store needs.",
+   "alternatives": "B-tree engines (InnoDB, WiredTiger) - better read latency and in-place updates, worse write amplification for small random writes; Bitcask - very fast but keys must fit in RAM."
+  },
+  {
+   "name": "Murmur3 / xxHash partitioner",
+   "layer": "Partitioning",
+   "overview": "Fast non-cryptographic 64-bit hash functions.",
+   "why": "Uniform token distribution at low CPU cost.",
+   "alternatives": "MD5 (Dynamo used it) - uniform but slower; order-preserving partitioner - enables range scans but creates hot spots."
+  },
+  {
+   "name": "Gossip protocol (SWIM-style)",
+   "layer": "Membership",
+   "overview": "Epidemic dissemination where each node exchanges state with a few random peers per round.",
+   "why": "No single point of failure; state reaches all nodes in O(log N) rounds.",
+   "alternatives": "ZooKeeper/etcd membership - strongly consistent and simpler to reason about but a dependency that can block changes if it loses quorum."
+  },
+  {
+   "name": "gRPC over HTTP/2",
+   "layer": "Node RPC",
+   "overview": "Binary RPC framework with multiplexed streams and deadlines.",
+   "why": "Low overhead fan-out to replicas with per-call deadlines and cancellation.",
+   "alternatives": "Custom TCP protocol (Cassandra's native protocol) - lower overhead, more work; HTTP/1.1 JSON - simpler, slower."
+  },
+  {
+   "name": "Apache Cassandra / Riak / DynamoDB",
+   "layer": "Build vs buy reference",
+   "overview": "Production descendants of the Dynamo design (Cassandra mixes Dynamo replication with a Bigtable data model).",
+   "why": "In a real company you would likely run Cassandra or use DynamoDB rather than build; the interview tests whether you know their internals.",
+   "alternatives": "ScyllaDB - Cassandra-compatible C++ with shard-per-core; FoundationDB/Spanner/CockroachDB - strongly consistent alternatives when CP is needed."
+  },
+  {
+   "name": "NTP / chrony",
+   "layer": "Time",
+   "overview": "Clock synchronisation daemons.",
+   "why": "Needed for TTL expiry, LWW tables and tombstone GC timing; must be monitored.",
+   "alternatives": "Hybrid logical clocks layered on NTP; atomic clocks/TrueTime for strict ordering (Spanner)."
+  },
+  {
+   "name": "Prometheus + Grafana",
+   "layer": "Observability",
+   "overview": "Pull-based metrics and dashboards.",
+   "why": "Per-node latency histograms, compaction backlog, hint queue sizes, sibling rates.",
+   "alternatives": "Datadog - managed; OpenTelemetry pipelines into any backend."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Consistent hashing with virtual nodes",
+   "explain": "To spread keys over many machines you need a function from key to node. Modulo hashing, node = hash(key) mod N, is uniform but when N changes almost every key moves, which would mean copying nearly all data on every scaling event. Consistent hashing maps both keys and nodes onto the same circular hash space, for example 0 to 2^64. A key is owned by the first node found walking clockwise from the key's position. When a node is added it takes over only the keys between itself and its predecessor; when one leaves, only its keys move to the successor. On average just K/N keys move. With one point per node, though, the arcs are uneven, so some nodes own far more data than others, and a departing node dumps all its load on a single neighbour. Virtual nodes fix both: each physical node takes many tokens (Cassandra historically used 256, newer versions default to 16 with a smarter allocator), so ownership averages out and when a node fails its load spreads over many peers. Virtual nodes also let a bigger machine take proportionally more tokens. Dynamo's paper describes moving from random tokens to equal-sized fixed partitions assigned to nodes, which made bootstrapping and archival simpler.",
+   "in_this_design": "Keys are hashed with Murmur3 to a 64-bit token. Each node owns ~256 vnodes. The preference list for a key is the next N distinct physical nodes clockwise, skipping vnodes of nodes already chosen and placing replicas in different AZs.",
+   "key_points": [
+    "Only ~K/N keys move when membership changes.",
+    "Virtual nodes even out ownership and spread recovery load.",
+    "Preference list must skip duplicate physical nodes and span failure domains.",
+    "Hash partitioning kills range scans; that is an accepted trade-off here."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use modulo hashing and rehash when we add nodes?",
+     "a": "Going from 10 to 11 nodes with modulo moves about 91 percent of keys; consistent hashing moves about 9 percent. At 100 TB that is the difference between days of streaming and hours."
+    },
+    {
+     "q": "What problem do virtual nodes solve?",
+     "a": "Uneven arc sizes and lumpy recovery. With many tokens per node, variance in ownership falls and a failed node's ranges are re-replicated from many peers in parallel."
+    },
+    {
+     "q": "How do you keep replicas out of the same rack or AZ?",
+     "a": "When walking the ring to build the preference list, skip nodes in a failure domain already used until each replica is in a distinct AZ."
+    }
+   ]
+  },
+  {
+   "name": "Quorum replication (N, R, W)",
+   "explain": "Replicating each key to N nodes protects against failures, but raises the question of how many replicas must respond before an operation is considered done. A quorum system answers this with two numbers: W, the number of replicas that must acknowledge a write, and R, the number that must answer a read. If R + W > N, every read set intersects every write set in at least one node, so a read will see at least one replica holding the most recent acknowledged write. If W > N/2, two conflicting writes cannot both reach a quorum on disjoint sets. Common settings with N=3: W=2, R=2 balances latency and consistency; W=1, R=3 gives fast writes and slow reads; W=3, R=1 the opposite; W=1, R=1 is fastest but only eventually consistent. Quorums tolerate N - W failed replicas for writes and N - R for reads. Importantly, quorum overlap alone is not linearizability: without read repair completing synchronously and without coordination on concurrent writes, two readers can observe values in different orders, and sloppy quorums break the overlap altogether. Latency of a quorum operation is the latency of the W-th or R-th fastest replica, which is why quorum systems help the tail: slow replicas are simply not waited for.",
+   "in_this_design": "Default N=3, W=2, R=2 per table; session tables use R=1, W=1 for speed; carts use W=2 with siblings. Coordinators send to all N and return on the fastest W or R, cutting p99.9 latency.",
+   "key_points": [
+    "R + W > N means read and write sets overlap.",
+    "Latency = the W-th / R-th fastest replica, so quorums shave tail latency.",
+    "Overlap is not linearizability; sloppy quorums break even overlap.",
+    "Tune per table, override per request."
+   ],
+   "qa": [
+    {
+     "q": "With N=3, W=2, R=2, can a read return stale data?",
+     "a": "Yes, in edge cases: if the write's acks came from stand-in nodes under a sloppy quorum, or if a concurrent write is in flight, or the read overlaps on a replica that had not yet applied the write when another one had. It is usually fresh, not guaranteed."
+    },
+    {
+     "q": "Why might you choose W=1?",
+     "a": "For maximum write availability and lowest latency, e.g. telemetry or sessions, accepting that a single-node crash before replication can lose the latest write."
+    },
+    {
+     "q": "How do quorums help tail latency?",
+     "a": "The coordinator sends to all N replicas and returns after the fastest W or R, so one slow replica (GC pause, compaction) does not set the request's latency."
+    }
+   ]
+  },
+  {
+   "name": "CAP and PACELC",
+   "explain": "The CAP theorem says that when a network partition happens, a replicated system must choose between consistency (every read sees the latest write, in a linearizable sense) and availability (every request to a non-failed node gets a non-error response). You cannot opt out of partitions in a distributed system, so the real choice is what to do during one: refuse some requests (CP) or answer with possibly stale or divergent data (AP). CAP is often over-applied; it says nothing about the normal case. PACELC, proposed by Daniel Abadi, fills that gap: if there is a Partition, choose Availability or Consistency; Else, choose Latency or Consistency. Even without failures, waiting for more replicas to agree costs latency. Dynamo, Cassandra and Riak are PA/EL: available under partition and low-latency otherwise, with eventual consistency. Spanner and other Paxos/Raft systems are PC/EC: they block minority sides and pay consensus latency on every write. Many systems are tunable, which is exactly what N, R, W provide.",
+   "in_this_design": "This store is PA/EL by default - the shopping cart must accept writes even when replicas cannot talk to each other, and p99.9 must be low. Tables that need stronger guarantees can set strict quorums and accept unavailability during partitions.",
+   "key_points": [
+    "Partitions are not optional; the choice is behaviour during one.",
+    "PACELC adds the everyday trade-off: latency versus consistency.",
+    "Dynamo-style stores are PA/EL; Spanner-style are PC/EC.",
+    "Tunable quorums let one system sit at different points per table."
+   ],
+   "qa": [
+    {
+     "q": "Is a single-node database CA?",
+     "a": "Trivially, since there is nothing to partition, but it is not a distributed system. Once you replicate, you must pick C or A during partitions."
+    },
+    {
+     "q": "Why did Amazon choose AP for the cart?",
+     "a": "A rejected add-to-cart is lost revenue and trust; a rare merged cart with a reappearing item is a small annoyance. The business cost of unavailability exceeded the cost of inconsistency."
+    },
+    {
+     "q": "Where would you not use this store?",
+     "a": "Account balances, inventory reservations, or unique username claims - anything needing compare-and-set or invariants across concurrent writers. Use a CP store or a consensus-backed LWT there."
+    }
+   ]
+  },
+  {
+   "name": "Vector clocks and conflict resolution",
+   "explain": "Without a global clock, a system needs another way to decide whether one version of a value replaced another or whether they were written concurrently. Lamport clocks give a total order consistent with causality but cannot tell you that two events were concurrent. A vector clock can. It is a map from node (or actor) id to counter. When a node updates a value it increments its own counter in the clock it read. Version A happened-before B if every counter in A is less than or equal to the corresponding counter in B and at least one is strictly less. If neither dominates, the versions are concurrent: neither writer saw the other's update. In Dynamo, the coordinator attaches clocks, replicas keep all versions that are not dominated, and a read that finds concurrent versions returns them all as siblings with a merged context. The client reconciles - for a cart, the union of items - and writes back, producing a version that dominates both. Clocks can grow when many nodes coordinate writes; Dynamo truncated the oldest entries beyond about 10. Alternatives are last-writer-wins by timestamp (simple, silently loses data under skew or concurrency) and CRDTs, which merge automatically.",
+   "in_this_design": "Every value carries a vector clock; the opaque context returned by get must be passed to put. Tables choose between sibling mode (application merge), LWW (for caches/sessions), or built-in CRDT types.",
+   "key_points": [
+    "Vector clocks detect concurrency; Lamport clocks cannot.",
+    "Dominated versions are discarded; concurrent ones become siblings.",
+    "Client reads, merges, writes back with the merged context.",
+    "LWW is simple but loses concurrent writes and depends on clock sync."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use timestamps?",
+     "a": "Clock skew means a later write can carry an earlier timestamp and be discarded, and true concurrent writes lose one side silently. Vector clocks detect concurrency rather than guessing."
+    },
+    {
+     "q": "What happens if a client writes without the context from its read?",
+     "a": "The new version will not descend from existing ones, so it becomes a sibling. Client libraries should enforce read-modify-write with contexts."
+    },
+    {
+     "q": "How do you stop vector clocks growing without bound?",
+     "a": "Route writes through a small set of coordinators (the replicas), and prune the least recently updated entries beyond a size limit, accepting occasional false conflicts. Riak later moved to dotted version vectors to reduce sibling explosion."
+    }
+   ]
+  },
+  {
+   "name": "Sloppy quorum and hinted handoff",
+   "explain": "A strict quorum requires W acknowledgements from the key's designated N replicas. If two of three are down, writes fail. A sloppy quorum relaxes this: the coordinator walks further along the ring and uses the first N healthy nodes, even if some are not the key's normal owners. A stand-in node stores the write with a hint that records the intended owner. A background process periodically checks whether the owner is back and, if so, delivers the hinted writes and deletes them locally. This is hinted handoff. It keeps the system writable through transient failures, which was Dynamo's top priority, but it has a cost: the quorum overlap property no longer holds, because a later read may contact the true owners, none of which has the write yet. Hints also consume disk on stand-ins, so systems cap the hint window - Cassandra's default is 3 hours - after which full anti-entropy repair is needed. Hinted handoff is for short outages; Merkle-tree repair is for long ones.",
+   "in_this_design": "Writes never fail while at least W healthy nodes exist anywhere along the ring walk. Stand-ins keep hints for up to 3 hours; tables with strict needs disable sloppy quorum and fail writes instead.",
+   "key_points": [
+    "Sloppy quorum = first N healthy nodes, not the first N owners.",
+    "Hints let stand-ins hand writes back when owners recover.",
+    "It buys availability and costs the R + W > N guarantee.",
+    "Cap hint windows; rely on anti-entropy for longer outages."
+   ],
+   "qa": [
+    {
+     "q": "Why is a sloppy quorum not a 'real' quorum?",
+     "a": "Its W acks may all come from nodes outside the key's home replicas, so a read quorum of the home replicas can miss the write entirely until handoff completes."
+    },
+    {
+     "q": "What happens if the stand-in node dies before handing off?",
+     "a": "The hint is lost; the write still exists on other acked replicas, and Merkle-tree repair later brings the owner up to date. That is why W >= 2 is common."
+    },
+    {
+     "q": "Why cap the hint window?",
+     "a": "Hints pile up on stand-ins and replaying a huge backlog can overload the returning node. Beyond a few hours it is cheaper to stream differences via repair."
+    }
+   ]
+  },
+  {
+   "name": "Anti-entropy with Merkle trees and read repair",
+   "explain": "Replicas drift: hints get lost, nodes crash between WAL write and replication, disks are replaced. The system needs ways to find and fix differences. Read repair fixes data on the read path: when a coordinator sees replicas returning different versions, it writes the newest version back to the stale ones. It is cheap but only repairs keys that are read. Anti-entropy repairs everything in the background. Comparing replicas key by key would mean shipping all data; a Merkle tree avoids that. Each leaf is a hash of the keys in a small range, each parent is the hash of its children, and the root summarises the whole range. Two replicas exchange root hashes; if they match, the range is identical. If not, they compare children and descend only into subtrees that differ, so the data transferred is proportional to the amount of divergence. A tree of depth 15 has about 32,000 leaves per range. The cost is building the trees, which requires reading the data, so repair runs are scheduled and throttled, and keyed ranges must align across replicas, which is easier with fixed partitions.",
+   "in_this_design": "Read repair runs on every read that sees divergence (asynchronously). A weekly scheduled repair builds Merkle trees per token range and streams only mismatched leaves; it must complete within gc_grace so tombstones propagate before they are purged.",
+   "key_points": [
+    "Read repair: fixes what is read, at no extra scan cost.",
+    "Merkle trees: compare O(log n) hashes, transfer only differences.",
+    "Repair must complete within the tombstone grace period.",
+    "Hints, read repair and Merkle repair are three layers of convergence."
+   ],
+   "qa": [
+    {
+     "q": "Why not rely only on read repair?",
+     "a": "Cold keys are never read, so they never get repaired; after another failure they could be lost. Anti-entropy covers everything."
+    },
+    {
+     "q": "What is the cost of a Merkle repair?",
+     "a": "Each replica must scan the range to build the tree (disk I/O and CPU), then stream mismatched ranges. It is throttled and scheduled off-peak."
+    },
+    {
+     "q": "How does repair relate to deletes?",
+     "a": "Deletes are tombstones. If a tombstone is purged before every replica saw it, a stale replica can resurrect the value. Repair within gc_grace prevents that."
+    }
+   ]
+  },
+  {
+   "name": "Gossip-based membership and failure detection",
+   "explain": "In a large leaderless cluster, nodes need to know who is alive and which tokens each node owns, without a central registry that could fail. Gossip protocols spread information the way rumours spread: every second, each node picks one to three random peers and exchanges its view of cluster state, each entry stamped with a version so the newer one wins on merge. Information reaches all N nodes in O(log N) rounds with high probability, and the load per node is constant. Failure detection on top of gossip should be adaptive. A fixed timeout either declares slow nodes dead too eagerly or reacts too slowly. The phi-accrual detector keeps a history of heartbeat inter-arrival times and outputs a suspicion level phi; Cassandra marks a node down when phi exceeds 8. Failure detection is local and probabilistic - different nodes may briefly disagree - which is acceptable because the quorum and hinted-handoff logic tolerates it. Seed nodes are well-known contact points that new nodes gossip with first and that prevent the cluster splitting into separate gossip islands.",
+   "in_this_design": "Each node gossips ring state and heartbeats every second; coordinators consult the local failure detector to decide whether to send to a replica or a stand-in. Permanent membership changes (add/remove) are explicit admin operations, as Dynamo did, so a flapping node does not trigger data movement.",
+   "key_points": [
+    "Gossip spreads state in O(log N) rounds with constant per-node load.",
+    "Versioned entries make merges deterministic.",
+    "Phi-accrual adapts to network jitter better than fixed timeouts.",
+    "Temporary failure (route around) differs from permanent removal (rebalance)."
+   ],
+   "qa": [
+    {
+     "q": "Why not use ZooKeeper for membership?",
+     "a": "You can, and many systems do; it gives a consistent view. But it adds a dependency that can block membership changes if it loses quorum, and Dynamo aimed for full decentralisation."
+    },
+    {
+     "q": "Why separate transient failure from permanent removal?",
+     "a": "Network blips and GC pauses are common. If every missed heartbeat triggered rebalancing, the cluster would constantly stream data. Transient failures are handled by sloppy quorum; removals are deliberate."
+    },
+    {
+     "q": "What are seed nodes for?",
+     "a": "Bootstrap contact points and a way to ensure all nodes eventually gossip with a common set, preventing logical partitions in the membership view."
+    }
+   ]
+  },
+  {
+   "name": "LSM-tree storage engine",
+   "explain": "A log-structured merge tree optimises for writes. Every write is appended to a write-ahead log for durability and inserted into an in-memory sorted structure, the memtable (often a skip list). When the memtable reaches a size such as 64 MB, it is flushed to disk as an immutable sorted file, an SSTable. Writes are therefore always sequential I/O. Reads check the memtable, then SSTables from newest to oldest; to avoid touching every file, each SSTable has a Bloom filter (about 10 bits per key for 1 percent false positives) and a sparse index. Background compaction merges SSTables, discarding overwritten values and expired tombstones. Size-tiered compaction merges similar-sized files and favours write throughput; leveled compaction keeps each level's key ranges non-overlapping, bounding read amplification at the cost of more write amplification. The three amplifications - write, read, space - cannot all be minimised at once. Deletes are tombstones because you cannot modify immutable files.",
+   "in_this_design": "Each node runs RocksDB-style storage. Replica writes become WAL append plus memtable insert, which keeps put latency under a millisecond locally. Leveled compaction for read-heavy tables, size-tiered for write-heavy; tombstones purged after gc_grace.",
+   "key_points": [
+    "Writes: WAL append + memtable insert = sequential I/O.",
+    "Reads: memtable then SSTables, with Bloom filters to skip files.",
+    "Compaction trades write amplification for read and space amplification.",
+    "Deletes are tombstones until compaction after the grace period."
+   ],
+   "qa": [
+    {
+     "q": "Why LSM rather than a B-tree?",
+     "a": "Replicated stores take N times the writes; LSM turns them into sequential appends. B-trees update in place with random I/O and are better for read-heavy workloads."
+    },
+    {
+     "q": "What causes LSM read latency spikes?",
+     "a": "Too many SSTables (compaction falling behind), cold block cache, or reading through many tombstones. Monitor pending compaction bytes and SSTables per read."
+    },
+    {
+     "q": "Leveled or size-tiered?",
+     "a": "Leveled for read-heavy and space-sensitive tables (bounded files per read); size-tiered for write-heavy ingest where write amplification matters more."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "AP vs CP",
+   "options": "Leaderless quorum (AP); leader-based consensus per shard (CP)",
+   "choice": "AP with tunable quorums",
+   "why": "Always-writable carts and sessions; CP tables can use strict quorum or a different store."
+  },
+  {
+   "decision": "Conflict resolution",
+   "options": "Last-writer-wins; vector clocks with siblings; CRDTs",
+   "choice": "Per-table: siblings by default, LWW for caches, CRDTs for counters/sets",
+   "why": "Different data has different merge semantics; LWW alone loses data silently."
+  },
+  {
+   "decision": "Strict vs sloppy quorum",
+   "options": "Fail writes when owners are down; write to stand-ins",
+   "choice": "Sloppy by default, strict opt-in",
+   "why": "Availability for the default use cases; strict for teams relying on R + W > N overlap."
+  },
+  {
+   "decision": "Membership",
+   "options": "Gossip; ZooKeeper/etcd",
+   "choice": "Gossip with seeds and explicit admin add/remove",
+   "why": "No central dependency in the data path; explicit changes avoid churn."
+  },
+  {
+   "decision": "Storage engine",
+   "options": "LSM; B-tree; in-memory",
+   "choice": "LSM (RocksDB)",
+   "why": "Write-heavy with replication fan-out; Bloom filters keep point reads fast."
+  },
+  {
+   "decision": "Request routing",
+   "options": "Load balancer to any node; ring-aware client",
+   "choice": "Ring-aware client, LB as fallback",
+   "why": "Saves a network hop and Dynamo measured lower tail latency with client-driven coordination."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Single node crash",
+   "behavior": "Gossip marks it down in ~10 s; sloppy quorum continues writes; hints replay when it returns; no client-visible errors at W=2."
+  },
+  {
+   "failure": "AZ outage (one of three)",
+   "behavior": "Each key still has 2 replicas in other AZs; W=2/R=2 continue; replication factor temporarily degraded; repair after recovery."
+  },
+  {
+   "failure": "Network partition between AZs",
+   "behavior": "Both sides accept writes with stand-ins; divergent versions reconciled via vector clocks after heal; strict tables fail on the minority side."
+  },
+  {
+   "failure": "Disk failure",
+   "behavior": "Node replaced; new node bootstraps its ranges by streaming from replicas; Merkle repair confirms consistency."
+  },
+  {
+   "failure": "Compaction falls behind",
+   "behavior": "Read latency rises as SSTables pile up; throttle writes (backpressure) and alert on pending compaction bytes before it hits SLO."
+  },
+  {
+   "failure": "Slow node (GC pause, noisy neighbour)",
+   "behavior": "Quorum returns on fastest replicas; speculative retry to another replica after p99 latency; dynamic snitch routes away."
+  }
+ ],
+ "metrics": [
+  "p50/p99/p99.9 latency for get and put, per table and per coordinator.",
+  "Unavailable/timeout error rate by consistency level.",
+  "Sibling rate (reads returning more than one version).",
+  "Hinted handoff backlog size and age per node.",
+  "Read repair rate and Merkle repair mismatched-range count.",
+  "Pending compaction bytes, SSTables per read, tombstones scanned per read.",
+  "Ring ownership balance (max/min load per node).",
+  "Clock skew across nodes."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you add strongly consistent compare-and-set for some keys?",
+   "a": "Run a Paxos round among the key's replicas (like Cassandra lightweight transactions) for those operations only; it costs about four round trips and is unavailable without a majority, so restrict it to small critical tables."
+  },
+  {
+   "q": "How do you make this multi-region?",
+   "a": "Replicate with per-region N (e.g. 3 per region) and use LOCAL_QUORUM for latency, shipping writes asynchronously across regions; conflicts across regions resolved by vector clocks or CRDTs. Global quorum is available but adds 100 ms+."
+  },
+  {
+   "q": "How do you handle a hot key that one replica set cannot serve?",
+   "a": "Client-side or proxy caching for reads, R=1 spreading across replicas, request coalescing, and for writes split the key into k sub-keys (counter shards) and aggregate on read."
+  },
+  {
+   "q": "Why is quorum not linearizable?",
+   "a": "Concurrent reads during an in-progress write can see the new value then the old one, because read repair is asynchronous and writes land on replicas at different times. Linearizability needs synchronous read repair or consensus."
+  },
+  {
+   "q": "How do you migrate tokens when adding 50 nodes at once?",
+   "a": "Add them gradually, a few at a time, throttle streaming bandwidth, and keep writes going to both old and pending owners until streaming completes."
+  },
+  {
+   "q": "How would DynamoDB differ from this design?",
+   "a": "Modern DynamoDB uses Multi-Paxos leaders per partition with strongly consistent reads available, automatic partition splits, and a request router fleet - closer to CP per partition than the original leaderless Dynamo."
+  },
+  {
+   "q": "What is your backup strategy?",
+   "a": "Per-node SSTable snapshots (immutable files make this cheap via hard links) shipped to object storage, plus commit-log archiving for point-in-time recovery."
+  }
+ ],
+ "key_points": [
+  "This is the Dynamo shopping cart: always writable beats always consistent.",
+  "Consistent hashing with vnodes: only ~1/N of keys move; recovery is spread across peers.",
+  "N=3, W=2, R=2: overlapping quorums, latency set by the fastest replicas.",
+  "Sloppy quorum + hinted handoff keeps writes flowing but breaks the overlap guarantee.",
+  "Vector clocks detect concurrency; siblings are merged by the client or by CRDTs.",
+  "Three convergence layers: hinted handoff, read repair, Merkle-tree anti-entropy.",
+  "Gossip + phi-accrual for membership; permanent changes are explicit.",
+  "LSM storage because replication multiplies writes.",
+  "Size the cluster by storage: 100 TB x 3 at 50 percent disk = ~150 nodes.",
+  "Know where not to use it: balances, inventory, uniqueness constraints."
+ ],
+ "quiz": [
+  {
+   "q": "With N=3, which (R, W) pair guarantees that read and write replica sets overlap under a strict quorum?",
+   "options": [
+    "R=1, W=1",
+    "R=1, W=2",
+    "R=2, W=2",
+    "R=2, W=1"
+   ],
+   "answer": 2,
+   "why": "Overlap requires R + W > N, so 2 + 2 = 4 > 3. R=1, W=2 sums to 3, which equals N, so a read can miss the write."
+  },
+  {
+   "q": "Why do Dynamo-style systems use virtual nodes?",
+   "options": [
+    "To encrypt data at rest",
+    "To even out data ownership and spread recovery load across many peers",
+    "To allow range scans",
+    "To reduce the replication factor"
+   ],
+   "answer": 1,
+   "why": "Many tokens per node smooth the arc lengths and let a failed node's ranges be rebuilt from many sources. They do not enable range scans - hashing prevents that."
+  },
+  {
+   "q": "Two clients update a cart concurrently during a partition. With vector clocks, what does the next reader get?",
+   "options": [
+    "The version with the later wall-clock timestamp",
+    "An error until an operator resolves it",
+    "Only the version from the majority partition",
+    "Both versions as siblings, to be merged and written back"
+   ],
+   "answer": 3,
+   "why": "Concurrent clocks mean neither dominates, so both are kept. Picking the later timestamp is last-writer-wins, which silently drops one update."
+  },
+  {
+   "q": "What is the main cost of a sloppy quorum?",
+   "options": [
+    "A later read of the home replicas can miss an acknowledged write",
+    "Writes become slower",
+    "It requires a leader election",
+    "It doubles storage permanently"
+   ],
+   "answer": 0,
+   "why": "Acks may come from stand-ins outside the key's home set, so R + W > N no longer guarantees overlap. It improves, not hurts, write latency during failures."
+  },
+  {
+   "q": "Your cluster adds one node to 10. Roughly what fraction of keys move with consistent hashing?",
+   "options": [
+    "About 90 percent",
+    "About 50 percent",
+    "About 9 percent",
+    "About 1 percent"
+   ],
+   "answer": 2,
+   "why": "Only the keys the new node takes over move, roughly 1/11. About 90 percent is what modulo hashing would move."
+  },
+  {
+   "q": "Which mechanism repairs cold keys that are never read?",
+   "options": [
+    "Read repair",
+    "Merkle-tree anti-entropy",
+    "Hinted handoff",
+    "Bloom filters"
+   ],
+   "answer": 1,
+   "why": "Read repair only fixes keys that are read. Hinted handoff covers short outages but hints can be lost; Merkle trees scan every range."
+  },
+  {
+   "q": "A deleted item reappears after a node returns from a 3-week outage. Most likely cause?",
+   "options": [
+    "Vector clock overflow",
+    "Bloom filter false positive",
+    "The node's clock was ahead",
+    "Tombstones were purged after gc_grace before the stale node received them"
+   ],
+   "answer": 3,
+   "why": "Once tombstones are compacted away, the returning node's old value looks new. Repair must run within gc_grace, and nodes down longer must be rebuilt."
+  },
+  {
+   "q": "p99.9 latency spikes on one node while others are fine. Which built-in behaviour limits client impact?",
+   "options": [
+    "Coordinators return after the fastest R or W replicas",
+    "Gossip removes the node from the ring permanently",
+    "Hinted handoff",
+    "Compaction pauses automatically"
+   ],
+   "answer": 0,
+   "why": "Fan out to all N and wait only for R or W, so one slow replica is ignored. Gossip does not remove nodes for being slow - that would cause data movement."
+  },
+  {
+   "q": "Why do Dynamo-style stores typically use LSM trees?",
+   "options": [
+    "They support range scans better than B-trees",
+    "Replication multiplies writes, and LSM turns them into sequential appends",
+    "They use less memory than hash tables",
+    "They do not need compaction"
+   ],
+   "answer": 1,
+   "why": "Write-optimised storage suits N-way replicated writes. LSM trees need compaction, which is their main cost."
+  },
+  {
+   "q": "Under PACELC, Dynamo-style stores are classified as:",
+   "options": [
+    "PC/EC",
+    "PC/EL",
+    "PA/EL",
+    "PA/EC"
+   ],
+   "answer": 2,
+   "why": "Available under partition, low latency otherwise. Spanner-style systems are PC/EC."
+  },
+  {
+   "q": "Which phi threshold behaviour describes phi-accrual failure detection?",
+   "options": [
+    "A fixed 5-second heartbeat timeout",
+    "A node is down when two other nodes agree",
+    "A node is down when its disk is full",
+    "Suspicion rises continuously with time since last heartbeat relative to the observed interval distribution"
+   ],
+   "answer": 3,
+   "why": "Phi adapts to each link's jitter. A fixed timeout is what it replaces."
+  },
+  {
+   "q": "A table uses last-writer-wins and a node's clock is 2 seconds slow. What can happen?",
+   "options": [
+    "Newer writes coordinated by that node may be silently discarded",
+    "Reads fail with an error",
+    "Siblings are created",
+    "Hinted handoff stops"
+   ],
+   "answer": 0,
+   "why": "LWW compares timestamps, so a lagging clock makes newer writes look older. Siblings only exist when vector clocks detect concurrency."
+  },
+  {
+   "q": "Approximately how many nodes for 100 TB logical, N=3, 4 TB disks kept 50 percent full?",
+   "options": [
+    "About 25",
+    "About 75",
+    "About 150",
+    "About 600"
+   ],
+   "answer": 2,
+   "why": "300 TB raw / 2 TB usable per node = 150. Forgetting replication gives 50; forgetting headroom gives 75."
+  },
+  {
+   "q": "Why should permanent membership changes be explicit rather than triggered by failure detection?",
+   "options": [
+    "Gossip cannot carry membership information",
+    "Transient failures are common, and auto-rebalancing would cause constant data streaming",
+    "Explicit changes are faster",
+    "It is required by CAP"
+   ],
+   "answer": 1,
+   "why": "A GC pause or network blip should not move terabytes. Gossip does carry membership; the question is what triggers rebalancing."
+  },
+  {
+   "q": "A Merkle tree comparison between two replicas finds root hashes equal. What does that mean?",
+   "options": [
+    "The range is identical (with overwhelming probability); nothing to transfer",
+    "Only the leaves need comparing",
+    "The trees must be rebuilt",
+    "Hints must be replayed"
+   ],
+   "answer": 0,
+   "why": "Equal roots mean every subtree matches. The power of Merkle trees is that in-sync replicas cost one hash comparison."
+  },
+  {
+   "q": "Which workload is a poor fit for this AP store?",
+   "options": [
+    "Shopping cart",
+    "User session data",
+    "Unique username registration",
+    "Product view counters"
+   ],
+   "answer": 2,
+   "why": "Uniqueness needs compare-and-set across concurrent writers, which an AP store cannot guarantee during partitions. Counters work with CRDTs."
+  },
+  {
+   "q": "A client writes without passing the context from its earlier read. Result?",
+   "options": [
+    "The write is rejected",
+    "The write overwrites everything",
+    "The write is converted to LWW",
+    "The new version is concurrent with existing ones and becomes a sibling"
+   ],
+   "answer": 3,
+   "why": "Without the context the new clock does not descend from existing versions. It is not rejected - Dynamo accepts all writes."
+  },
+  {
+   "q": "Why cap the hinted-handoff window (e.g. 3 hours)?",
+   "options": [
+    "Hints are not durable",
+    "Huge hint backlogs fill stand-in disks and overload the returning node; repair is cheaper beyond that",
+    "Vector clocks expire",
+    "Gossip cannot track longer outages"
+   ],
+   "answer": 1,
+   "why": "Hints are for short outages; Merkle repair handles long ones efficiently."
+  },
+  {
+   "q": "What does a Bloom filter per SSTable save during a get?",
+   "options": [
+    "Disk reads of SSTables that definitely do not contain the key",
+    "Network round trips to replicas",
+    "Compaction work",
+    "WAL fsyncs"
+   ],
+   "answer": 0,
+   "why": "Bloom filters answer 'definitely not here' so the engine skips files. They do nothing for replica fan-out."
+  },
+  {
+   "q": "Sibling rate jumps from 0.01 percent to 2 percent after a client deploy. Most likely cause?",
+   "options": [
+    "A disk failure",
+    "Gossip slowed down",
+    "Compaction backlog",
+    "The new client stopped passing read contexts on writes"
+   ],
+   "answer": 3,
+   "why": "Blind writes create concurrent versions. Disk failure or compaction would show latency or errors, not siblings."
+  },
+  {
+   "q": "Which is true of quorum reads with R + W > N and no failures?",
+   "options": [
+    "They are linearizable",
+    "They usually return the latest value but are not linearizable during concurrent writes",
+    "They never return stale data",
+    "They require a leader"
+   ],
+   "answer": 1,
+   "why": "Asynchronous read repair and in-flight writes allow non-linearizable orderings. Overlap is not the same as linearizability."
+  }
+ ],
+ "references": [
+  {
+   "title": "Dynamo: Amazon's Highly Available Key-value Store (SOSP 2007)",
+   "url": "https://www.cs.princeton.edu/courses/archive/fall15/cos518/papers/dynamo.pdf"
+  },
+  {
+   "title": "Amazon Science - Dynamo publication page",
+   "url": "https://amazon.science/publications/dynamo-amazons-highly-available-key-value-store"
+  },
+  {
+   "title": "ByteByteGo - Design a Key-Value Store",
+   "url": "https://bytebytego.com/courses/system-design-interview/design-a-key-value-store"
+  },
+  {
+   "title": "Designing A Key-Value Store (Yusuf Aytas)",
+   "url": "https://yusufaytas.com/designing-a-key-value-store"
+  }
+ ]
+}

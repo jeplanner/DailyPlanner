@@ -1,0 +1,1116 @@
+{
+ "slug": "ad-click-aggregation",
+ "title": "Design an ad click event aggregation system",
+ "prompt": "Design an ad click event aggregation system.",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "Ad click aggregation turns billions of raw click events into per-ad, per-minute counts that drive advertiser billing, budget pacing and real-time dashboards. Because the counts are money, the core tension is freshness (budgets must stop spending within a minute) versus correctness (no double counting, no lost clicks, late and duplicate events handled). The canonical answer is a Kafka plus Flink streaming pipeline with event-time windows, watermarks, keyed dedup and exactly-once sinks, backed by a raw event archive and a batch reconciliation path for the authoritative billing numbers.",
+ "framework": {
+  "clarify": [
+   "Inputs: click events (ad_id, campaign_id, user/device, ts, ip, placement); impressions too? Assume clicks primarily, impressions with the same pipeline.",
+   "Queries: clicks per ad per minute for the last N minutes, top-N ads per minute, filtered by country/device; advertiser dashboards and billing.",
+   "Scale: 10 billion clicks per day (about 115k/s average, 1M/s peak), 2 million active ads.",
+   "Freshness: dashboard and budget pacing within 1-2 minutes; billing can be finalised hourly/daily.",
+   "Correctness: billing must be exactly-once in effect; dedup duplicate clicks within a window; filter invalid traffic (bots, click fraud).",
+   "Late events: mobile SDKs batch and send events late; accept up to, say, 10 minutes late into real-time windows and up to 24 hours via batch correction.",
+   "Retention: raw events 1-2 years for audits and disputes; minute aggregates 90 days; hourly/daily rollups for years.",
+   "Who is the consumer: internal budget service, advertiser reporting UI, and finance billing."
+  ],
+  "design": [
+   "Baseline: click redirect service logs the click and 302-redirects to the landing page; events go to Kafka (raw-clicks topic, partitioned by ad_id).",
+   "Raw archive: Kafka -> object storage (S3/HDFS Parquet) for replay, audits and batch recompute.",
+   "Stream aggregation: Flink job validates, enriches (campaign, advertiser), dedups by click_id in keyed state, filters invalid traffic, then 1-minute tumbling event-time windows keyed by ad_id (and dims).",
+   "Sinks: aggregated rows with deterministic IDs to an OLAP store (Pinot/Druid/ClickHouse) via Kafka with transactional writes; budget service consumes per-campaign spend deltas.",
+   "Serving: query service on top of OLAP; top-N per minute via pre-aggregation or OLAP group-by; rollups to hourly/daily.",
+   "Batch reconciliation: daily Spark job recomputes from raw archive (with late data and final fraud labels) and is the billing source of record; discrepancies over threshold alert.",
+   "Critical path for pacing: click -> Kafka -> Flink 1-min window -> spend delta -> budget service stops serving a campaign within about 1-2 minutes of exhausting budget."
+  ],
+  "defend": [
+   "Bottleneck: hot ads (a viral campaign) skew Kafka partitions and Flink keys; mitigate with two-phase aggregation (pre-aggregate on random sub-key, then merge) and local combiners.",
+   "Scale writes: Kafka partitions (e.g. 512) and Flink parallelism scale with throughput; the aggregation reduces 1M events/s into about 2M ad-minute rows per minute at most, typically far fewer.",
+   "Scale reads: OLAP store with pre-aggregated minute rows, star-tree or rollups for top-N, cache recent dashboard queries for 10-30 s.",
+   "Failure: Flink checkpoints (every 1-2 min) plus Kafka transactional sinks give exactly-once into Kafka; downstream upserts keyed on window ID make replays idempotent.",
+   "Correctness: watermarks with allowed lateness for real time, and the batch recompute (lambda-style reconciliation) as the final authority; late events beyond the window go to a side output for correction.",
+   "Measure: end-to-end freshness, consumer lag, checkpoint duration and failures, late event rate, dedup rate, real-time vs batch discrepancy percent, invalid traffic rate."
+  ],
+  "script": "I will treat this as the pipeline that turns raw ad clicks into per-ad, per-minute counts for billing, budget pacing and dashboards. Let me assume ten billion clicks a day, peaking near a million per second, two million active ads, freshness within a minute or two, and that because this is money we need no double counting and no loss. Clicks hit a redirect service that logs to Kafka, partitioned by ad. Kafka is archived raw to object storage. A Flink job dedups by click id, filters invalid traffic, and aggregates in one-minute event-time tumbling windows with watermarks, writing results transactionally with deterministic ids so the OLAP store can upsert them idempotently. A budget service consumes spend deltas to stop campaigns on time, and a daily batch job recomputes from the raw archive as the billing source of record. In the defence I will cover hot ads and data skew, late and duplicate events, exactly-once semantics, and how I reconcile real-time with batch numbers."
+ },
+ "brd": {
+  "problem": "Advertisers pay per click and need accurate, timely reporting; the ad platform needs near-real-time spend to pace budgets and stop overspend. Raw click volumes in the billions per day make naive counting in a database impossible, and errors directly become revenue loss, advertiser refunds or disputes.",
+  "goals": [
+   "Accurate per-ad click counts for billing with less than 0.01 percent discrepancy versus the audited batch.",
+   "Freshness of 1-2 minutes for budget pacing and dashboards.",
+   "Exactly-once effect: no double counting from retries, replays or duplicate clicks.",
+   "Filter invalid traffic (bots, click farms, rapid repeat clicks) before billing.",
+   "Support flexible slicing (country, device, placement) and top-N ads per minute.",
+   "Full replayability from raw events for audits and bug fixes."
+  ],
+  "non_goals": [
+   "Ad serving, auction and ranking.",
+   "Attribution of conversions (orders, installs) to clicks, beyond hooks for it.",
+   "Advertiser invoicing and payments UI."
+  ],
+  "stakeholders": [
+   {
+    "who": "Advertisers",
+    "needs": "Trustworthy, timely reports; no paying for fraud."
+   },
+   {
+    "who": "Ads platform (pacing, auction)",
+    "needs": "Spend per campaign within a minute to throttle or stop delivery."
+   },
+   {
+    "who": "Finance and billing",
+    "needs": "Auditable, final daily numbers that reconcile."
+   },
+   {
+    "who": "Ad quality / fraud team",
+    "needs": "Signals and labels for invalid traffic; ability to reprocess."
+   },
+   {
+    "who": "Data platform / SRE",
+    "needs": "Operable pipeline, bounded lag, cost control."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "End-to-end freshness (click to queryable)",
+    "target": "p95 < 2 min"
+   },
+   {
+    "metric": "Real-time vs batch discrepancy",
+    "target": "< 0.1 percent per ad per day, < 0.01 percent overall"
+   },
+   {
+    "metric": "Data loss",
+    "target": "0 events after Kafka ack"
+   },
+   {
+    "metric": "Budget overspend due to lag",
+    "target": "< 1 percent of daily budget"
+   },
+   {
+    "metric": "Dashboard query latency",
+    "target": "p99 < 1 s"
+   }
+  ],
+  "constraints": [
+   "Click path must add negligible latency for the user (redirect p99 < 50 ms).",
+   "Events arrive late and out of order from mobile SDKs (offline batching).",
+   "Privacy regulations (GDPR, DPDP Act): minimise and expire PII such as IP and device IDs.",
+   "Cost: storing and processing 10B events/day must stay within budget; compress and roll up."
+  ],
+  "risks": [
+   {
+    "risk": "Double counting after a pipeline failure and replay.",
+    "mitigation": "Exactly-once checkpoints, deterministic window IDs and idempotent upserts downstream."
+   },
+   {
+    "risk": "Click fraud inflates bills.",
+    "mitigation": "Real-time rules (rate per IP/device per ad), ML scoring, post-hoc batch labels with credits."
+   },
+   {
+    "risk": "Hot ad overwhelms a partition.",
+    "mitigation": "Key salting and two-stage aggregation; partition count headroom."
+   },
+   {
+    "risk": "Silent drift between real-time and billing numbers.",
+    "mitigation": "Automated daily reconciliation with thresholds and alerts."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Advertiser marketer",
+    "needs": "See clicks and spend for my campaigns by minute, hour, day, sliced by country and device."
+   },
+   {
+    "name": "Budget pacing service",
+    "needs": "Per-campaign spend deltas every minute, reliably and in order."
+   },
+   {
+    "name": "Finance analyst",
+    "needs": "Daily final numbers per advertiser that match invoices and survive audits."
+   },
+   {
+    "name": "Fraud analyst",
+    "needs": "Raw events and invalid-traffic labels to investigate and credit advertisers."
+   }
+  ],
+  "user_stories": [
+   "As an advertiser, I want to see clicks per minute for my ad over the last hour so that I can monitor a launch.",
+   "As an advertiser, I want to filter by country and device so that I can compare segments.",
+   "As the pacing service, I want spend per campaign per minute so that I stop serving when the budget is hit.",
+   "As a finance analyst, I want final daily counts that reconcile with raw logs so that invoices are defensible.",
+   "As an analyst, I want the top 100 most clicked ads in the last minute so that I can spot trends and anomalies.",
+   "As a fraud analyst, I want invalid clicks excluded and labelled so that advertisers are not charged for them.",
+   "As an engineer, I want to replay a day of raw events after a bug fix so that aggregates are corrected."
+  ],
+  "functional": [
+   "Capture click events at the redirect endpoint with a unique click_id; respond with 302 to the landing URL.",
+   "Ingest events into Kafka durably; archive raw events to object storage.",
+   "Validate, enrich and dedup events; filter invalid traffic with rules and model scores.",
+   "Aggregate clicks per (ad_id, minute) and per selected dimensions; compute top-N ads per minute.",
+   "Serve aggregate queries via API with time range, granularity and filters.",
+   "Emit spend deltas to the budget service.",
+   "Handle late events within allowed lateness; correct beyond it via batch.",
+   "Daily batch recompute and reconciliation; publish final billing numbers."
+  ],
+  "non_functional": [
+   {
+    "name": "Throughput",
+    "target": "1M events/s peak ingest, 3x headroom for events like IPL finals"
+   },
+   {
+    "name": "Freshness",
+    "target": "p95 under 2 min from click to queryable aggregate"
+   },
+   {
+    "name": "Correctness",
+    "target": "Exactly-once effect; dedup window 24 h by click_id"
+   },
+   {
+    "name": "Durability",
+    "target": "Kafka RF=3, min.insync.replicas=2, acks=all; raw archive 11 nines"
+   },
+   {
+    "name": "Availability",
+    "target": "Ingest 99.99 percent (clicks must never fail the redirect); query 99.9 percent"
+   },
+   {
+    "name": "Query latency",
+    "target": "p99 < 1 s for 24 h minute-level ranges"
+   },
+   {
+    "name": "Retention",
+    "target": "Raw 1-2 years cold; minute aggregates 90 days; hourly/daily 5 years"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "10 billion clicks/day; peak is 8-10x average.",
+    "Raw event about 200 bytes after Avro/Protobuf encoding (about 500 B JSON).",
+    "2 million active ads; on average 30 percent have at least one click in a given minute.",
+    "Aggregated row (ad_id, minute, dims, count, spend) about 100 bytes.",
+    "Dimensions sliced: country (about 200) and device type (4), but cardinality per ad per minute is small in practice."
+   ],
+   "math": [
+    "Average rate = 1e10 / 86,400 = about 116k events/s; peak about 1M/s.",
+    "Ingest bandwidth at peak = 1M x 200 B = 200 MB/s; with RF=3 Kafka writes 600 MB/s across the cluster.",
+    "Kafka partitions: at about 5-10 MB/s per partition for safe consumer throughput, about 40 needed at peak; choose 256-512 for parallelism and skew headroom.",
+    "Raw storage = 1e10 x 200 B = 2 TB/day; Parquet compression about 5x gives about 400 GB/day, about 146 TB/year.",
+    "Minute aggregates: 2M ads x 30 percent = 600k rows/min base; with dimension breakdowns say 3M rows/min x 100 B = 300 MB/min = about 430 GB/day before OLAP compression.",
+    "Flink dedup state: 24 h of click_ids = 1e10 x about 20 B = about 200 GB; use RocksDB state backend or a Bloom filter per hour (1 percent FPR, about 1.2 GB per 1B ids)."
+   ],
+   "summary": "Peak ingest of 1M events/s and 2 TB/day of raw data is standard Kafka plus Flink territory; aggregation shrinks data by about 100x. The hard parts are dedup state size, skewed hot ads, late events, and making the money numbers exactly right."
+  },
+  "out_of_scope": [
+   "Ad auction and serving decisions.",
+   "Conversion attribution models.",
+   "Invoice generation and payment collection.",
+   "Advertiser-facing UI design."
+  ]
+ },
+ "hld": {
+  "overview": "Clicks enter through a lightweight redirect service that assigns a click_id, writes the event to Kafka with acks=all and redirects the user. Kafka is the durable backbone: a connector archives raw events to object storage, and a Flink job does the real-time work. The Flink job parses and validates, enriches with ad metadata from a broadcast state, deduplicates by click_id in keyed state, scores invalid traffic, and aggregates in 1-minute event-time tumbling windows keyed by ad_id (with a pre-aggregation stage for hot keys). Results are written transactionally to an aggregates topic with deterministic row IDs, loaded into an OLAP store that upserts on that ID, and consumed by the budget service. A daily Spark job recomputes from the archive with final fraud labels and late data, producing the billing source of record and a reconciliation report.",
+  "diagram": " User click\n     |\n +---v------------+  302 redirect\n | Click redirect |-------------> Landing page\n | (assign id)    |\n +---+------------+\n     | produce (acks=all)\n +---v---------------------+      +--------------------------+\n | Kafka raw-clicks        |----->| Archiver -> S3 Parquet   |\n | 512 partitions by ad_id |      | (raw, partitioned by hr) |\n +---+---------------------+      +------------+-------------+\n     |                                         |\n +---v-----------------------------------+     | daily\n | Flink: validate -> enrich -> dedup -> |     v\n | IVT filter -> pre-agg (salted) ->     |  +-----------------------+\n | 1-min event-time window per ad        |  | Spark batch recompute |\n | checkpoints every 60 s (RocksDB)      |  | + reconciliation      |\n +---+---------------+-------------------+  +-----------+-----------+\n     | txn write     | late side output              |\n +---v-------------+ +--> corrections topic          v\n | Kafka agg topic |                         Billing tables (warehouse)\n +---+---------+---+\n     |         |\n +---v-----+ +-v--------------+     +-------------------+\n | Pinot / | | Budget pacing  |     | Query service +   |\n | Druid   | | service        |     | cache (dashboards)|\n | (upsert)|<------------------------+------------------+\n +---------+\n",
+  "components": [
+   {
+    "name": "Click redirect service",
+    "responsibility": "Stateless edge service: parse tracking URL, assign click_id (UUID or snowflake), log event to Kafka, 302 to landing page; local disk spool if Kafka is unavailable."
+   },
+   {
+    "name": "Kafka raw-clicks topic",
+    "responsibility": "Durable, partitioned buffer (RF=3, 7 day retention) keyed by ad_id; replay source."
+   },
+   {
+    "name": "Raw archiver",
+    "responsibility": "Kafka Connect / Flink sink writing Parquet to S3 by event hour; source for batch and audits."
+   },
+   {
+    "name": "Flink aggregation job",
+    "responsibility": "Validation, enrichment, dedup, invalid-traffic filtering, event-time windowing, watermarking, exactly-once output."
+   },
+   {
+    "name": "Ad metadata service",
+    "responsibility": "ad_id -> campaign, advertiser, CPC price, targeting; broadcast to Flink as changelog stream."
+   },
+   {
+    "name": "Invalid traffic (IVT) filter",
+    "responsibility": "Rules (clicks per IP/device per ad per minute, known bot user agents, data-centre IPs) and model scores; labels rather than drops."
+   },
+   {
+    "name": "Kafka aggregates topic",
+    "responsibility": "Committed, transactional aggregate rows with deterministic IDs; consumed by OLAP and budget service."
+   },
+   {
+    "name": "OLAP store (Pinot / Druid / ClickHouse)",
+    "responsibility": "Real-time ingestion with upsert, fast group-by and top-N on minute aggregates, rollups."
+   },
+   {
+    "name": "Budget pacing service",
+    "responsibility": "Tracks spend per campaign, signals ad server to throttle or stop."
+   },
+   {
+    "name": "Query service",
+    "responsibility": "API for dashboards with caching, auth by advertiser, query limits."
+   },
+   {
+    "name": "Batch recompute and reconciliation",
+    "responsibility": "Daily Spark job from raw archive producing authoritative billing numbers and discrepancy reports."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Click to dashboard",
+    "steps": [
+     "User taps an ad; the browser hits /c?ad=123&ctx=signed_blob.",
+     "Redirect service verifies the signed context (prevents forged ad_ids), assigns click_id, produces to Kafka keyed by ad_id with acks=all (p99 under 10 ms in-region), returns 302.",
+     "Flink source reads the partition; event-time timestamp from the event, watermark = max seen ts - 30 s per partition.",
+     "Validate schema, enrich from broadcast ad metadata, check dedup state for click_id (24 h TTL), apply IVT rules.",
+     "Pre-aggregate by (ad_id, salt, minute), then merge by (ad_id, minute) in a 1-minute tumbling window with allowed lateness of 10 minutes.",
+     "When the watermark passes the window end, emit (window_id = hash(ad_id, minute, dims), count, spend) transactionally to the aggregates topic; committed at the next checkpoint (60 s).",
+     "Pinot consumes read_committed and upserts by window_id; dashboard queries see the minute about 1-2 minutes after it closes."
+    ]
+   },
+   {
+    "name": "Late event correction",
+    "steps": [
+     "A mobile SDK flushes clicks from 7 minutes ago.",
+     "Within allowed lateness: the window fires an updated result with the same window_id and the new count; the OLAP upsert overwrites the earlier row.",
+     "Beyond allowed lateness: Flink routes the event to a late side-output topic; an hourly correction job adds it to the hourly rollup; the daily batch includes it in billing."
+    ]
+   },
+   {
+    "name": "Daily billing and reconciliation",
+    "steps": [
+     "After the day closes plus 24 h grace, Spark reads raw Parquet for the day.",
+     "Dedup by click_id, join final IVT labels from the fraud team, aggregate per advertiser and ad.",
+     "Compare with real-time aggregates; if discrepancy > 0.1 percent for any large advertiser, alert and hold invoicing.",
+     "Write final numbers to billing tables; issue credits for invalid clicks previously counted in real time."
+    ]
+   }
+  ],
+  "data_flow": "Click -> redirect -> Kafka raw (source of truth for the stream) -> (a) S3 raw archive -> daily Spark -> billing tables; (b) Flink -> Kafka aggregates (transactional) -> Pinot upsert -> query service; Kafka aggregates -> budget service. Late events -> side output -> corrections. The raw archive allows full recompute of any derived dataset."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/c?ad={adId}&ctx={signedCtx}",
+    "request": "signed context: impression_id, placement, ts, sig",
+    "response": "302 Location: landing URL",
+    "notes": "Never blocks on downstream; spools locally if Kafka is unavailable."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/ads/{adId}/clicks?from=&to=&granularity=minute&filter=country:IN",
+    "request": "time range, granularity (minute|hour|day), filters",
+    "response": "[{ts, clicks, spend}]",
+    "notes": "Advertiser-scoped auth; served from Pinot; cached 15 s."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/top-ads?window=1m&n=100&filter=country:IN",
+    "request": "window, n, filters",
+    "response": "[{adId, clicks}]",
+    "notes": "From precomputed top-N rows or Pinot group-by order-by limit."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/campaigns/{id}/spend?date=",
+    "request": "date",
+    "response": "{realtimeSpend, finalSpend?, status}",
+    "notes": "finalSpend appears after batch reconciliation."
+   },
+   {
+    "method": "Kafka",
+    "path": "agg.clicks.minute",
+    "request": "-",
+    "response": "{windowId, adId, minute, dims, clicks, invalidClicks, spendMicros, version}",
+    "notes": "Transactional producer; consumers read_committed."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Raw click event",
+    "store": "Kafka raw-clicks (Avro) and S3 Parquet",
+    "fields": [
+     "click_id",
+     "ad_id",
+     "campaign_id",
+     "impression_id",
+     "event_ts",
+     "ingest_ts",
+     "ip_hash",
+     "device_id_hash",
+     "user_agent",
+     "country",
+     "placement"
+    ],
+    "keys": "Kafka key ad_id; S3 partitioned by dt/hour",
+    "notes": "PII hashed; raw IP kept 30 days only for fraud."
+   },
+   {
+    "entity": "Minute aggregate",
+    "store": "Pinot real-time table with upsert",
+    "fields": [
+     "window_id (PK)",
+     "ad_id",
+     "campaign_id",
+     "advertiser_id",
+     "minute_ts",
+     "country",
+     "device",
+     "clicks",
+     "invalid_clicks",
+     "spend_micros"
+    ],
+    "keys": "Primary key window_id; time column minute_ts; partitioned by ad_id",
+    "notes": "Star-tree index on (advertiser_id, ad_id, minute_ts) for fast slicing."
+   },
+   {
+    "entity": "Dedup state",
+    "store": "Flink keyed state (RocksDB), checkpointed to S3",
+    "fields": [
+     "click_id -> first_seen_ts"
+    ],
+    "keys": "keyed by click_id hash, TTL 24 h",
+    "notes": "About 200 GB across the job; alternatively hourly Bloom filters."
+   },
+   {
+    "entity": "Billing daily",
+    "store": "Warehouse (BigQuery / Snowflake / Hive)",
+    "fields": [
+     "date",
+     "advertiser_id",
+     "ad_id",
+     "valid_clicks",
+     "invalid_clicks",
+     "spend_micros",
+     "realtime_clicks",
+     "discrepancy"
+    ],
+    "keys": "PK (date, ad_id)",
+    "notes": "Authoritative; immutable after invoicing except via credit records."
+   },
+   {
+    "entity": "Campaign spend",
+    "store": "Budget service (Redis + DB)",
+    "fields": [
+     "campaign_id",
+     "date",
+     "spend_micros",
+     "budget_micros",
+     "last_window_applied"
+    ],
+    "keys": "PK (campaign_id, date)",
+    "notes": "Applies window deltas idempotently using last_window_applied per window_id."
+   }
+  ],
+  "classes": [
+   {
+    "name": "ClickRedirectHandler",
+    "responsibility": "Verify, assign id, produce, redirect.",
+    "methods": [
+     "handle(req) -> 302",
+     "verifySignature(ctx)",
+     "produce(event)",
+     "spoolLocally(event)"
+    ]
+   },
+   {
+    "name": "DedupFunction (KeyedProcessFunction)",
+    "responsibility": "Drop repeated click_ids within TTL.",
+    "methods": [
+     "processElement(evt, ctx, out)",
+     "onTimer(ts) -> clear state"
+    ]
+   },
+   {
+    "name": "IvtScorer",
+    "responsibility": "Rule and model based invalid traffic labelling.",
+    "methods": [
+     "score(evt) -> label",
+     "updateRules(broadcast)"
+    ]
+   },
+   {
+    "name": "ClickAggregator (AggregateFunction)",
+    "responsibility": "Incremental count and spend per window.",
+    "methods": [
+     "createAccumulator()",
+     "add(evt, acc)",
+     "merge(a, b)",
+     "getResult(acc)"
+    ]
+   },
+   {
+    "name": "WindowResultEmitter (ProcessWindowFunction)",
+    "responsibility": "Attach window_id and version, emit to transactional sink.",
+    "methods": [
+     "process(key, window, aggs, out)"
+    ]
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Compare batch vs real-time and alert.",
+    "methods": [
+     "compare(date) -> report",
+     "alertIfAbove(threshold)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Event-time tumbling window with watermark and allowed lateness",
+    "explain": "Windows are defined by when the click happened, not when it arrived. The watermark is Flink's estimate that no earlier events will arrive; a window fires when the watermark passes its end. Allowed lateness keeps window state a little longer so late events update the result (re-emitted with the same window_id); anything later goes to a side output.",
+    "pseudocode": "clicks = (env.from_kafka('raw-clicks', isolation='read_committed')\n   .assign_timestamps(lambda e: e.event_ts)\n   .with_watermarks(bounded_out_of_orderness=30s, idleness=1min))\nvalid = clicks.key_by(lambda e: e.click_id).process(Dedup(ttl=24h)).map(ivt_label)\nagg = (valid.filter(lambda e: e.label == 'VALID')\n   .key_by(lambda e: (e.ad_id, e.country, e.device))\n   .window(Tumbling(1min))\n   .allowed_lateness(10min)\n   .side_output_late('late-clicks')\n   .aggregate(CountAndSpend(), EmitWithWindowId()))\nagg.sink_to(kafka('agg.clicks.minute', semantic=EXACTLY_ONCE,\n                  txn_timeout=15min))\nenv.enable_checkpointing(60s, mode=EXACTLY_ONCE)\n"
+   },
+   {
+    "name": "Two-stage aggregation for hot keys (salting)",
+    "explain": "A single viral ad can send 100k clicks/s to one key, overloading one Flink subtask. Add a random salt (0..N-1) to the key for a first partial aggregation, then strip the salt and merge partials. Each stage handles 1/N of the hot key's load; the final merge processes only N partials per window.",
+    "pseudocode": "partial = (valid.map(lambda e: (e.ad_id, rand(0, 16), minute(e.event_ts), 1, e.cpc))\n   .key_by(lambda t: (t.ad_id, t.salt))\n   .window(Tumbling(1min)).sum_count_and_spend())\nfinal = (partial.key_by(lambda p: p.ad_id)\n   .window(Tumbling(1min)).merge_partials())\n// only apply salting to keys flagged hot by a heavy-hitter sketch to save state\n"
+   },
+   {
+    "name": "Top-N ads per minute",
+    "explain": "After the per-ad window fires, key everything for the same minute together and keep a min-heap of size N. Because there are at most a few hundred thousand ad rows per minute, one subtask per minute (or a two-level local/global top-N) is enough.",
+    "pseudocode": "def top_n(minute_rows, n=100):\n    heap = []\n    for r in minute_rows:\n        if len(heap) < n: heappush(heap, (r.clicks, r.ad_id))\n        elif r.clicks > heap[0][0]: heapreplace(heap, (r.clicks, r.ad_id))\n    return sorted(heap, reverse=True)\n"
+   }
+  ],
+  "sequence": "User    Redirect    Kafka(raw)   Flink        Kafka(agg)   Pinot     Budget svc\n | click  |            |           |              |           |           |\n |------->| click_id   |           |              |           |           |\n |        |----------->| acks=all  |              |           |           |\n |<-------| 302        |           |              |           |           |\n |        |            |---------->| dedup, IVT   |           |           |\n |        |            |           | window 1 min |           |           |\n |        |            |           |------------->| txn write |           |\n |        |            |           | checkpoint   |           |           |\n |        |            |<----------| commit offs  | commit    |           |\n |        |            |           |              |---------->| upsert id |\n |        |            |           |              |---------------------->| spend\n"
+ },
+ "edge_cases": [
+  {
+   "case": "User double-clicks an ad (two clicks within 1 second).",
+   "handling": "Rule-based IVT: repeated clicks from the same device on the same ad within N seconds are counted once (labelled duplicate); advertisers are charged once."
+  },
+  {
+   "case": "Redirect service retries the Kafka produce and writes the same event twice.",
+   "handling": "Idempotent producer (enable.idempotence=true) prevents broker duplicates; click_id dedup in Flink catches anything else."
+  },
+  {
+   "case": "Flink job crashes after emitting a window but before checkpointing.",
+   "handling": "Output was in an uncommitted Kafka transaction; consumers in read_committed never saw it; on restore Flink reprocesses from the checkpointed offsets and re-emits."
+  },
+  {
+   "case": "Mobile SDK sends clicks hours late.",
+   "handling": "Beyond allowed lateness they go to the late side output; hourly correction job and daily batch include them; billing is based on batch."
+  },
+  {
+   "case": "One Kafka partition is idle (no clicks for an ad shard at night).",
+   "handling": "Watermark idleness timeout (1 min) so an idle partition does not hold back the global watermark and stall all windows."
+  },
+  {
+   "case": "Client clock is wrong (event_ts in the future or far past).",
+   "handling": "Clamp: if event_ts is more than 5 minutes ahead of ingest_ts or older than 7 days, use ingest_ts and flag; prevents watermark jumping forward and dropping everything as late."
+  },
+  {
+   "case": "Viral ad creates a hot key.",
+   "handling": "Heavy-hitter detection (count-min sketch) flags keys above a threshold and salts them for two-stage aggregation."
+  },
+  {
+   "case": "Click farm in one region generates millions of clicks.",
+   "handling": "Real-time rules on IP/device/ASN rates, data-centre IP lists; model scoring; batch re-labelling with credits to advertisers."
+  },
+  {
+   "case": "Budget exhausted mid-minute.",
+   "handling": "Pacing uses per-minute deltas plus a predictive throttle as spend approaches budget (e.g. slow delivery at 90 percent); small overspend accepted and not billed above budget."
+  },
+  {
+   "case": "Ad metadata change (CPC price updated) mid-day.",
+   "handling": "Enrichment uses the price effective at event time via a versioned broadcast state; batch uses the same historical version table."
+  },
+  {
+   "case": "Kafka cluster unavailable for a minute.",
+   "handling": "Redirect service never fails the user: it spools events to local disk and replays later; latency of aggregates increases but no loss."
+  },
+  {
+   "case": "Pinot upsert table receives the same window_id with an older version after a newer one.",
+   "handling": "Include a version (window emission count or watermark) and use comparison column so older versions do not overwrite newer ones."
+  },
+  {
+   "case": "Daylight saving / time zone reporting.",
+   "handling": "Store everything in UTC minutes; convert for advertiser time zones at query time; daily billing boundaries per advertiser time zone are computed from UTC minutes."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Kafka",
+   "layer": "Ingestion and transport",
+   "overview": "Distributed, partitioned, replicated commit log with idempotent and transactional producers.",
+   "why": "Handles 1M events/s with replay; transactions plus read_committed enable exactly-once pipelines.",
+   "alternatives": "Kinesis (managed, shard limits 1 MB/s each), Pulsar (tiered storage, geo-replication)."
+  },
+  {
+   "name": "Apache Flink",
+   "layer": "Stream processing",
+   "overview": "Stateful stream processor with event-time windows, watermarks, RocksDB state and checkpoint-based exactly-once.",
+   "why": "Native event-time semantics, large keyed state for dedup, two-phase commit sinks; Uber runs its ads aggregation on Flink.",
+   "alternatives": "Spark Structured Streaming (micro-batch, higher latency), Kafka Streams (simpler, tied to Kafka, smaller scale per app)."
+  },
+  {
+   "name": "Apache Pinot (or Druid / ClickHouse)",
+   "layer": "Real-time OLAP",
+   "overview": "Columnar store with real-time Kafka ingestion, upserts and star-tree indexes.",
+   "why": "Sub-second group-by and top-N on billions of rows, real-time upserts keyed on window_id for idempotency.",
+   "alternatives": "Druid (mature rollups, limited upsert), ClickHouse (ReplacingMergeTree dedup is eventual), Elasticsearch (costly for aggregations)."
+  },
+  {
+   "name": "S3 + Parquet (data lake, Iceberg/Hudi tables)",
+   "layer": "Raw archive",
+   "overview": "Cheap durable object storage with columnar files and table formats.",
+   "why": "Replay, audits, batch recompute; Iceberg gives snapshot isolation for recomputes.",
+   "alternatives": "HDFS (on-prem), keeping raw in Kafka with tiered storage."
+  },
+  {
+   "name": "Apache Spark",
+   "layer": "Batch recompute",
+   "overview": "Distributed batch engine.",
+   "why": "Daily authoritative billing over 2 TB/day of raw data with joins to final fraud labels.",
+   "alternatives": "Flink batch mode (one codebase for both, kappa style), BigQuery SQL."
+  },
+  {
+   "name": "Redis",
+   "layer": "Budget pacing state and query cache",
+   "overview": "In-memory store.",
+   "why": "Low-latency spend counters per campaign read by ad servers; dashboard caching.",
+   "alternatives": "DynamoDB with atomic counters."
+  },
+  {
+   "name": "Schema registry (Avro/Protobuf)",
+   "layer": "Data contracts",
+   "overview": "Central schemas with compatibility rules.",
+   "why": "Producers and consumers evolve safely; compact encoding (about 200 B per event).",
+   "alternatives": "JSON (2-3x larger, no contract enforcement)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Event time, processing time and watermarks",
+   "explain": "In stream processing every event has two times: event time, when it actually happened, and processing time, when the system sees it. They differ because of network delays, retries, batching on mobile devices and backlogs. If you aggregate by processing time, results depend on when the pipeline happened to run, so a replay or a lag spike changes the numbers: unacceptable for billing. Aggregating by event time gives reproducible results, but raises a question: when is a window complete, given that late events may still arrive? A watermark is the stream processor's assertion that it does not expect events with timestamps earlier than W any more. A common strategy is bounded out-of-orderness: watermark = max event time seen minus a fixed bound (say 30 seconds). When the watermark passes a window's end, the window fires. Events arriving after that are late; you can keep window state for an extra allowed-lateness period and emit updated results, or route them to a side output. Watermarks are per source partition and the operator takes the minimum, so an idle partition can stall everything unless idleness detection marks it idle.",
+   "in_this_design": "Clicks are windowed by event_ts into 1-minute tumbling windows. The watermark lags the max event time by 30 s, so a minute's result is first emitted about 30-60 s after it ends. Allowed lateness of 10 minutes lets SDK stragglers update the row (same window_id, OLAP upsert). Later events go to a side output for hourly and daily correction. Idleness of 1 minute prevents quiet partitions from stalling output, and future-dated timestamps are clamped so they cannot push the watermark ahead.",
+   "key_points": [
+    "Bill by event time; processing time makes numbers depend on lag.",
+    "Watermark = 'no earlier events expected'; windows fire when it passes.",
+    "Allowed lateness updates results; side outputs catch the rest.",
+    "Handle idle partitions and bogus future timestamps explicitly."
+   ],
+   "qa": [
+    {
+     "q": "What happens if the out-of-orderness bound is too small?",
+     "a": "Many events arrive after the watermark and become late; with allowed lateness they cause extra updates, without it they are dropped from real-time counts and only fixed by batch."
+    },
+    {
+     "q": "And if it is too large?",
+     "a": "Every window waits longer before firing, increasing freshness lag and state size."
+    },
+    {
+     "q": "Why can one idle partition stall the whole job?",
+     "a": "The operator's watermark is the minimum across its inputs; a partition with no events never advances, so the minimum is stuck. Idleness detection excludes it until data returns."
+    }
+   ]
+  },
+  {
+   "name": "Exactly-once processing (checkpoints and two-phase commit sinks)",
+   "explain": "Delivery guarantees describe what happens to a message across failures. At-most-once may lose messages; at-least-once never loses but may duplicate; exactly-once means each message affects the result exactly one time, even if it was physically processed more than once. True exactly-once delivery over a network is impossible, so systems achieve exactly-once effect by combining replayable sources, consistent snapshots of state, and idempotent or transactional sinks. Flink periodically takes a checkpoint: barriers flow through the dataflow, each operator snapshots its state, and the source offsets are recorded, all as one consistent cut (based on the Chandy-Lamport algorithm). On failure, the job restores the last checkpoint and replays from the recorded offsets. For outputs, Flink's two-phase commit sink opens a Kafka transaction per checkpoint interval, writes into it, pre-commits at the barrier and commits only after the checkpoint completes. Consumers using read_committed never see uncommitted output. The cost is latency: results become visible only at checkpoint commit, so checkpoint interval directly bounds freshness.",
+   "in_this_design": "Flink checkpoints every 60 s to S3 with RocksDB incremental state. The aggregates sink is a transactional Kafka producer with a transaction timeout above the max checkpoint duration. Pinot and the budget service consume read_committed and upsert by window_id, so even a downstream replay is idempotent. Uber's ads pipeline uses the same pattern with a 2-minute checkpoint interval.",
+   "key_points": [
+    "Exactly-once is an effect: replayable source + consistent state snapshot + transactional or idempotent sink.",
+    "Checkpoint interval bounds freshness when using transactional sinks.",
+    "Consumers must read_committed or they see aborted data.",
+    "Deterministic IDs make every hop idempotent beyond Kafka."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use at-least-once and dedup in the OLAP store?",
+     "a": "That works if every sink upserts on a deterministic key, and we do that too, but the budget service and other consumers are simpler and safer with committed-only input; defence in depth for money."
+    },
+    {
+     "q": "What limits the checkpoint interval?",
+     "a": "Shorter intervals improve freshness but increase overhead and transaction count; with hundreds of GB of state we use incremental checkpoints and about 60 s."
+    },
+    {
+     "q": "What if a transaction times out on the broker before Flink commits?",
+     "a": "The broker aborts it and data is lost from that interval; so set transaction.timeout.ms (e.g. 15 min) well above checkpoint duration plus restart time."
+    }
+   ]
+  },
+  {
+   "name": "Deduplication at scale",
+   "explain": "Duplicates appear at every layer: users double-click, SDKs retry, producers retry, and pipelines replay after failures. Removing them requires a stable identity for each logical event and memory of which identities have been seen. Exact dedup keeps every id seen within a time window in a keyed store; the size is ids-per-window times bytes-per-id, which at billions of events per day means hundreds of gigabytes, so it must live in disk-backed state (RocksDB) partitioned across workers, with TTLs to expire old ids. Approximate dedup uses Bloom filters: a bit array and k hash functions that answer 'definitely not seen' or 'probably seen', using about 10 bits per element for a 1 percent false positive rate. A false positive drops a genuine event, which is a real cost when events are money, so Bloom filters suit pre-filtering or analytics more than billing. The dedup window must cover the realistic retry horizon. Dedup is distinct from business rules like 'two clicks from the same device within 5 seconds count once', which merge distinct events by policy.",
+   "in_this_design": "The redirect assigns click_id; Flink keys by click_id and keeps it in RocksDB state with a 24 h TTL (about 200 GB across the cluster). Kafka idempotent producers remove broker-level duplicates. Rapid repeat clicks by the same device are a separate IVT rule. The daily batch dedups again by click_id over the whole day as the final authority.",
+   "key_points": [
+    "Dedup needs a stable id assigned as early as possible.",
+    "State = ids per window x bytes per id; size it explicitly.",
+    "Bloom filters are compact but false positives drop real events.",
+    "Technical dedup (same id) differs from policy dedup (same user, short interval)."
+   ],
+   "qa": [
+    {
+     "q": "Where should click_id be generated?",
+     "a": "At the redirect service, the first server-side touch, so retries downstream carry the same id; SDK-generated ids can also be used for client retries if trusted."
+    },
+    {
+     "q": "How big is a Bloom filter for 1 billion ids at 1 percent FPR?",
+     "a": "About 9.6 bits per element, so roughly 1.2 GB."
+    },
+    {
+     "q": "Why keep dedup in both stream and batch?",
+     "a": "Stream gives fast, mostly correct numbers; batch over the full day catches anything outside the stream's TTL or state issues and is the billing authority."
+    }
+   ]
+  },
+  {
+   "name": "Data skew and hot keys in stream processing",
+   "explain": "Partitioned systems assume keys spread work evenly. Real data follows power laws: a small number of keys carry most of the traffic. In stream processing, all events for one key go to one subtask, so a hot key turns one worker into the bottleneck while others idle, causing backpressure that slows the entire job and raises latency for everyone. Mitigations: local pre-aggregation (combine events within each upstream subtask before the shuffle, like a MapReduce combiner), key salting (append a random suffix to split a hot key across N subtasks, then merge partial results in a second stage), and adaptive detection of heavy hitters using a count-min sketch so only hot keys pay the extra stage. Kafka partitioning has the same issue: keying by ad_id puts a viral ad on one partition, which bounds its throughput to one partition's capacity; keying raw events by click_id avoids it at the cost of losing per-ad locality.",
+   "in_this_design": "Raw events are keyed by ad_id for locality, but the hottest ads are salted into 16 sub-keys for the first aggregation stage, then merged. A count-min sketch updated each minute decides which ads are hot. Flink's mini-batch local aggregation reduces shuffle volume for all keys.",
+   "key_points": [
+    "Power-law traffic means some keys are 1000x hotter.",
+    "Combine locally before shuffling.",
+    "Salt hot keys and merge in a second stage.",
+    "Detect heavy hitters adaptively with a count-min sketch."
+   ],
+   "qa": [
+    {
+     "q": "How do you know skew is the problem?",
+     "a": "Backpressure concentrated on one subtask, uneven records-in per subtask, and one Kafka partition with much higher lag than others."
+    },
+    {
+     "q": "Does salting change the result?",
+     "a": "No, counts and sums are associative and commutative, so merging partials gives the exact total. It would not work for non-mergeable aggregates without care."
+    },
+    {
+     "q": "Why not key raw Kafka by click_id instead?",
+     "a": "Even spread, but then every event must be shuffled by ad_id in Flink anyway; keying by ad_id keeps locality and we handle hot ads with salting."
+    }
+   ]
+  },
+  {
+   "name": "Lambda vs Kappa architecture (real-time plus reconciliation)",
+   "explain": "Lambda architecture runs two paths over the same data: a batch layer that recomputes complete, accurate results from the immutable master dataset, and a speed layer that computes approximate, low-latency results from recent data. A serving layer merges them. It gives both freshness and correctness, but you maintain two codebases that must agree, which is costly and error prone. Kappa architecture uses a single streaming path: everything is a stream; to recompute, you replay the log (or the archive) through a new version of the streaming job. It removes duplicated logic but needs long log retention and a stream engine that handles bounded replays and very late data well. Modern engines such as Flink can run the same job in batch mode over files, which blurs the line: one codebase, two execution modes. For financial numbers many companies keep a batch reconciliation step anyway, because it can incorporate information unavailable in real time (final fraud labels, very late data) and provides an independent check.",
+   "in_this_design": "Real-time numbers from Flink drive pacing and dashboards. A daily job recomputes from the raw archive, applies final invalid-traffic labels and very late events, and produces billing. Ideally the batch job reuses the same aggregation logic (Flink batch mode or shared library) to minimise divergence; the reconciliation report alerts when the two differ beyond 0.1 percent.",
+   "key_points": [
+    "Lambda: batch for truth, stream for speed, two codebases.",
+    "Kappa: one streaming codebase, recompute by replay.",
+    "Money numbers benefit from an independent batch reconciliation.",
+    "Share logic between paths to limit divergence."
+   ],
+   "qa": [
+    {
+     "q": "Which would you choose?",
+     "a": "Kappa-style single logic with Flink for both streaming and replay, plus a daily batch reconciliation for billing because fraud labels arrive later and finance needs an independent check."
+    },
+    {
+     "q": "What causes real-time and batch to disagree?",
+     "a": "Events later than allowed lateness, fraud labels applied after the fact, dedup TTL expiry, bugs, and enrichment version differences."
+    },
+    {
+     "q": "How do you replay a week after fixing a bug?",
+     "a": "Run the fixed job in batch mode over the archived Parquet for that week, write to a new table version (Iceberg snapshot), validate, then swap."
+    }
+   ]
+  },
+  {
+   "name": "Idempotent sinks and upserts with deterministic IDs",
+   "explain": "Any stage that might write the same logical result more than once (after retries, replays or late-data updates) must make repeated writes harmless. The simplest technique is to give every output record a deterministic identity derived from its logical meaning, for example hash(ad_id, minute, dimensions), and have the sink upsert on that key so writing it again replaces rather than adds. Random UUIDs also work if the UUID is generated once and persisted with the record before any retry, but deterministic IDs survive full recomputation. When updates can arrive out of order, add a version or comparison column so an older version never overwrites a newer one. For counters in external systems (like campaign spend), store the set of applied window ids, or apply absolute values per window rather than increments. Idempotent sinks complement exactly-once processing: they make each hop safe on its own, so a bug or manual replay in one component does not corrupt totals.",
+   "in_this_design": "Each aggregate row carries window_id = hash(ad_id, minute, country, device) and a version. Pinot upserts on window_id with version as the comparison column; the budget service records last_window_applied per campaign and replaces that window's contribution rather than adding twice; the warehouse merges on (date, ad_id).",
+   "key_points": [
+    "Derive output IDs from logical keys so replays overwrite.",
+    "Add a version so stale writes do not win.",
+    "Prefer replacing per-window values over incrementing totals.",
+    "Idempotent sinks make every hop independently safe."
+   ],
+   "qa": [
+    {
+     "q": "Why not use random UUIDs as Uber does for some outputs?",
+     "a": "Random UUIDs generated once inside a transactional output work for dedup across consumers, but a full recompute generates new UUIDs; deterministic IDs let recomputed rows replace old ones."
+    },
+    {
+     "q": "How does the budget service avoid double counting when a window is re-emitted with a new count?",
+     "a": "It stores per-window contributions keyed by window_id and applies the difference between new and old values."
+    },
+    {
+     "q": "What about ClickHouse?",
+     "a": "ReplacingMergeTree dedups by key only at merge time, so queries need FINAL or argMax by version to be exact."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Stream engine",
+   "options": "Flink vs Spark Structured Streaming vs Kafka Streams",
+   "choice": "Flink",
+   "why": "True event-time streaming, large RocksDB state for dedup, exactly-once Kafka sinks, low latency."
+  },
+  {
+   "decision": "Window size",
+   "options": "10 s vs 1 min vs 5 min",
+   "choice": "1 minute tumbling, with hourly and daily rollups",
+   "why": "Matches dashboard granularity and pacing needs; smaller windows multiply rows and transactions."
+  },
+  {
+   "decision": "Freshness vs exactly-once",
+   "options": "At-least-once with fast emit vs transactional sink tied to checkpoints",
+   "choice": "Transactional sink with 60 s checkpoints, plus idempotent downstream",
+   "why": "Money correctness first; 1-2 minute freshness meets requirements."
+  },
+  {
+   "decision": "Dedup method",
+   "options": "Exact keyed state vs Bloom filter",
+   "choice": "Exact RocksDB state, 24 h TTL",
+   "why": "False positives would drop billable clicks; 200 GB of state is affordable."
+  },
+  {
+   "decision": "Billing source of truth",
+   "options": "Real-time aggregates vs daily batch recompute",
+   "choice": "Daily batch, reconciled with real time",
+   "why": "Batch includes final fraud labels and very late data; provides an independent audit trail."
+  },
+  {
+   "decision": "OLAP store",
+   "options": "Pinot vs Druid vs ClickHouse",
+   "choice": "Pinot",
+   "why": "Real-time upserts keyed on window_id and star-tree indexes for advertiser slicing; Druid and ClickHouse are good alternatives with weaker upsert semantics."
+  },
+  {
+   "decision": "Kafka key for raw events",
+   "options": "ad_id vs click_id vs random",
+   "choice": "ad_id with hot-key salting in Flink",
+   "why": "Locality for per-ad aggregation; skew handled downstream."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Flink TaskManager dies",
+   "behavior": "Job restarts from the last checkpoint (about 60 s old), replays Kafka from checkpointed offsets; uncommitted transactions aborted; freshness dips for a few minutes, no double counting."
+  },
+  {
+   "failure": "Kafka broker loss",
+   "behavior": "RF=3 with min.insync.replicas=2 keeps partitions writable; leaders move; redirect producers retry idempotently."
+  },
+  {
+   "failure": "Whole Kafka cluster unavailable",
+   "behavior": "Redirects still succeed; events spool to local disk on redirect hosts and are replayed when Kafka returns; aggregates delayed."
+  },
+  {
+   "failure": "Pinot ingestion lag",
+   "behavior": "Dashboards show data as of the last ingested minute with a freshness banner; budget service is unaffected because it consumes Kafka directly."
+  },
+  {
+   "failure": "Checkpoint failures accumulate (state too large / slow S3)",
+   "behavior": "Alert after 3 consecutive failures; output stalls because transactions do not commit; scale state backend, enable incremental and unaligned checkpoints."
+  },
+  {
+   "failure": "Bug in aggregation logic deployed",
+   "behavior": "Detected by reconciliation or canary comparison; roll back, replay affected period from the archive into a new table version, swap."
+  },
+  {
+   "failure": "Region outage",
+   "behavior": "Per-region pipelines (as Uber does) with cross-region union for global views; clicks routed to the healthy region; real-time numbers degrade until recovery, batch remains correct."
+  }
+ ],
+ "metrics": [
+  "End-to-end freshness: now minus latest complete minute visible in the OLAP store.",
+  "Kafka consumer lag per partition (skew indicator) and produce error rates at redirect.",
+  "Flink checkpoint duration, size, failures; backpressure per operator; state size.",
+  "Late event rate (within allowed lateness and dropped to side output).",
+  "Duplicate rate (click_id dedup hits) and IVT rate by rule.",
+  "Real-time vs batch discrepancy per advertiser and overall.",
+  "Budget overspend percentage per campaign.",
+  "Redirect latency p99 and local spool size."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just increment a counter in Redis or a database per click?",
+   "a": "1M increments/s on hot rows creates contention, offers no dedup or event-time semantics, and a retry double counts. Streaming aggregation reduces 1M writes/s to about 10k rows/s with exactly-once semantics."
+  },
+  {
+   "q": "How do you support arbitrary new dimensions (e.g. by OS version)?",
+   "a": "Add them to the raw event and aggregate key in a new job version; for ad hoc slices, query the raw data in the lake; avoid exploding cardinality in real-time rows."
+  },
+  {
+   "q": "How do you query top 100 ads in the last 5 minutes?",
+   "a": "Either a sliding-window top-N computed in Flink every minute, or Pinot group-by over the last 5 minute rows with order by clicks limit 100, which is cheap on pre-aggregated data."
+  },
+  {
+   "q": "What if the advertiser disputes the numbers?",
+   "a": "Raw events are retained for 1-2 years; we can recompute their campaign from the archive, show IVT labels, and compare with their own analytics."
+  },
+  {
+   "q": "How would you also count impressions, which are 100x clicks?",
+   "a": "Same pipeline with more partitions and parallelism; impressions are often sampled or pre-aggregated on ad servers; dedup state becomes the main cost, so use shorter TTLs or Bloom filters for impressions where exactness is less critical."
+  },
+  {
+   "q": "How do you choose allowed lateness?",
+   "a": "From the observed delay distribution: e.g. if 99.9 percent of events arrive within 10 minutes, set 10 minutes; the remainder is corrected via batch."
+  },
+  {
+   "q": "How would you handle conversion attribution?",
+   "a": "Store cleaned clicks in a keyed store with TTL equal to the attribution window; when an order arrives, look up matching clicks, emit attributed conversion with a deterministic id, as Uber's attribution job does."
+  }
+ ],
+ "key_points": [
+  "Clicks are money: optimise for correctness first, freshness of 1-2 minutes second.",
+  "Kafka (RF=3, acks=all, idempotent producer) is the durable backbone; raw archive enables replay and audits.",
+  "Flink with event-time 1-minute tumbling windows, watermarks, allowed lateness and side outputs for late data.",
+  "Exactly-once = checkpoints + replayable source + transactional sink; consumers read_committed.",
+  "Deterministic window IDs and upserts make every downstream hop idempotent.",
+  "Dedup by click_id in RocksDB state (24 h TTL, about 200 GB); IVT rules handle double clicks and bots.",
+  "Hot ads: local pre-aggregation and key salting with two-stage merge.",
+  "Daily batch recompute is the billing source of truth; reconcile against real time and alert on drift.",
+  "Redirect path never fails the user: spool locally if Kafka is down.",
+  "Capacity: 10B/day, 1M/s peak, 2 TB raw/day; aggregation shrinks data about 100x."
+ ],
+ "quiz": [
+  {
+   "q": "Why should billing aggregates use event time rather than processing time?",
+   "options": [
+    "Event-time results are reproducible regardless of pipeline lag or replays",
+    "Processing time is not available in Kafka",
+    "Event time is always earlier",
+    "Processing time requires more memory"
+   ],
+   "answer": 0,
+   "why": "Event time ties a click to when it happened, so replays give the same answer. Processing time is available but makes numbers depend on lag."
+  },
+  {
+   "q": "A Flink job's output stopped advancing although events are flowing on most partitions. Likely cause?",
+   "options": [
+    "The OLAP store is down",
+    "Kafka retention expired",
+    "An idle partition is holding back the minimum watermark",
+    "Too many dashboards"
+   ],
+   "answer": 2,
+   "why": "The watermark is the minimum across inputs; an idle partition stalls it without idleness detection. An OLAP outage would not stop Flink's output."
+  },
+  {
+   "q": "What do Flink checkpoints plus a Kafka transactional sink achieve?",
+   "options": [
+    "At-most-once delivery",
+    "Exactly-once effect into Kafka, with outputs visible only after checkpoint commit",
+    "Lower latency than at-least-once",
+    "Automatic dedup of user double clicks"
+   ],
+   "answer": 1,
+   "why": "Two-phase commit ties output visibility to checkpoints. It adds latency rather than reducing it, and user double clicks are a business rule, not a delivery issue."
+  },
+  {
+   "q": "Consumers of the aggregates topic see duplicate rows from aborted transactions. What is misconfigured?",
+   "options": [
+    "The producer is not idempotent",
+    "The topic has too few partitions",
+    "The checkpoint interval is too long",
+    "Consumers use read_uncommitted instead of read_committed"
+   ],
+   "answer": 3,
+   "why": "Only read_committed hides aborted transactional data. Idempotent producers stop broker duplicates but not visibility of aborted transactions."
+  },
+  {
+   "q": "Roughly what is the average click rate for 10 billion clicks per day?",
+   "options": [
+    "About 11.6k/s",
+    "About 1.16M/s",
+    "About 11.6M/s",
+    "About 116k/s"
+   ],
+   "answer": 3,
+   "why": "1e10 / 86,400 is about 115,700/s. 1.16M/s is roughly the peak, not the average."
+  },
+  {
+   "q": "How much exact dedup state is needed for 24 hours of 10B click_ids at about 20 bytes each?",
+   "options": [
+    "About 2 GB",
+    "About 200 GB",
+    "About 20 GB",
+    "About 2 TB"
+   ],
+   "answer": 1,
+   "why": "1e10 x 20 B = 200 GB, which is why it lives in RocksDB across the cluster. 20 GB is the off-by-ten slip."
+  },
+  {
+   "q": "Why not use a Bloom filter for dedup of billable clicks?",
+   "options": [
+    "Bloom filters cannot be checkpointed",
+    "Bloom filters have false negatives",
+    "False positives would drop genuine billable clicks",
+    "They are larger than exact sets"
+   ],
+   "answer": 2,
+   "why": "Bloom filters never give false negatives but do give false positives, which here means lost revenue. They are much smaller than exact sets, so that distractor is backwards."
+  },
+  {
+   "q": "A viral ad causes one Flink subtask to show 100 percent backpressure. Best fix?",
+   "options": [
+    "Salt the hot key for a first aggregation stage, then merge partials",
+    "Increase the checkpoint interval",
+    "Increase Kafka retention",
+    "Switch to processing time"
+   ],
+   "answer": 0,
+   "why": "Salting splits the hot key's work; counts are mergeable. Checkpoint interval does not change per-key load."
+  },
+  {
+   "q": "What is the purpose of allowed lateness on a window?",
+   "options": [
+    "To delay all output by that amount",
+    "To keep window state so late events can update the result after the first firing",
+    "To drop events older than the watermark",
+    "To reduce state size"
+   ],
+   "answer": 1,
+   "why": "Allowed lateness enables updates after the initial fire; it does not delay the first output. It increases state, not reduces it."
+  },
+  {
+   "q": "Why does each aggregate row carry a deterministic window_id?",
+   "options": [
+    "To compress better",
+    "Because Kafka requires a key",
+    "To sort rows by time",
+    "So replays and late updates upsert the same row instead of adding duplicates"
+   ],
+   "answer": 3,
+   "why": "Deterministic IDs make sinks idempotent across retries and full recomputes. Kafka does not require keys."
+  },
+  {
+   "q": "Which number should be the billing source of record?",
+   "options": [
+    "Daily batch recompute from the raw archive with final fraud labels, reconciled with real time",
+    "Real-time Flink aggregates",
+    "Advertiser's own analytics",
+    "The redirect service's counter"
+   ],
+   "answer": 0,
+   "why": "Batch incorporates late data and final IVT labels and provides an audit trail. Real-time numbers are tempting because they exist first, but they are provisional."
+  },
+  {
+   "q": "Kafka is down for 2 minutes. What should the click redirect do?",
+   "options": [
+    "Return 500 to the user",
+    "Drop the click",
+    "Spool the event to local disk and still redirect the user, replaying later",
+    "Block until Kafka returns"
+   ],
+   "answer": 2,
+   "why": "The user experience and revenue capture both depend on never failing the redirect. Blocking adds user-visible latency and timeouts."
+  },
+  {
+   "q": "A user double-clicks an ad within a second, generating two click_ids. How is the advertiser charged?",
+   "options": [
+    "Twice, since click_ids differ",
+    "Zero times",
+    "Once, via an IVT rule that collapses rapid repeat clicks by device and ad",
+    "Depends on Kafka partitioning"
+   ],
+   "answer": 2,
+   "why": "Technical dedup by click_id cannot catch this; a policy rule does. Charging twice is what the distinct ids naively imply."
+  },
+  {
+   "q": "What sets the lower bound on freshness when using transactional Kafka sinks in Flink?",
+   "options": [
+    "Checkpoint interval, because outputs commit at checkpoint completion",
+    "Kafka partition count",
+    "OLAP segment size",
+    "Number of ads"
+   ],
+   "answer": 0,
+   "why": "Results become visible only on commit. Partition count affects throughput, not commit timing."
+  },
+  {
+   "q": "Which is a key drawback of classic Lambda architecture?",
+   "options": [
+    "It cannot handle late data",
+    "It has no batch layer",
+    "It requires a single database",
+    "Two codebases (batch and speed) must produce matching results"
+   ],
+   "answer": 3,
+   "why": "Maintaining duplicate logic is the main cost. Late data is actually handled well by its batch layer."
+  },
+  {
+   "q": "An event arrives with event_ts one day in the future due to a wrong device clock. Risk?",
+   "options": [
+    "None, it is just counted later",
+    "It can push the watermark forward, making all real events look late",
+    "It breaks Kafka ordering",
+    "It doubles the count"
+   ],
+   "answer": 1,
+   "why": "Watermarks follow max event time; a future timestamp jumps them. Clamp to ingest time when skew is implausible."
+  },
+  {
+   "q": "Why partition the raw Kafka topic by ad_id?",
+   "options": [
+    "To guarantee global ordering",
+    "Because click_ids are not unique",
+    "To reduce retention",
+    "To keep all events of an ad together for per-ad aggregation locality"
+   ],
+   "answer": 3,
+   "why": "Locality reduces shuffling; skew is then handled by salting. Kafka never gives global ordering across partitions."
+  },
+  {
+   "q": "Peak ingest is 1M events/s at 200 bytes. Approximate bandwidth into Kafka before replication?",
+   "options": [
+    "2 MB/s",
+    "200 MB/s",
+    "20 MB/s",
+    "2 GB/s"
+   ],
+   "answer": 1,
+   "why": "1e6 x 200 B = 200 MB/s; with RF=3 the cluster writes about 600 MB/s. 2 GB/s overstates by 10x."
+  },
+  {
+   "q": "The budget service receives an updated count for a window it already applied. Correct handling?",
+   "options": [
+    "Replace that window's previous contribution with the new value (apply the difference)",
+    "Add the new count to spend",
+    "Ignore all updates",
+    "Reset campaign spend"
+   ],
+   "answer": 0,
+   "why": "Per-window replacement keeps spend exact. Adding again is the classic double-count bug."
+  },
+  {
+   "q": "Why might you keep raw click events for 1-2 years?",
+   "options": [
+    "To speed up dashboards",
+    "Kafka requires it",
+    "For audits, disputes, fraud investigations and recomputation after bugs",
+    "To train the redirect service"
+   ],
+   "answer": 2,
+   "why": "Raw data is the ultimate source of truth for money. Dashboards use aggregates, not raw data."
+  },
+  {
+   "q": "Which OLAP feature most directly supports idempotent ingestion of re-emitted windows?",
+   "options": [
+    "Inverted indexes",
+    "Primary-key upserts with a comparison/version column",
+    "Bitmap compression",
+    "Segment replication"
+   ],
+   "answer": 1,
+   "why": "Upserts by window_id with version replace earlier rows correctly. Indexes and compression help queries, not idempotency."
+  }
+ ],
+ "references": [
+  {
+   "title": "Real-Time Exactly-Once Ad Event Processing with Apache Flink, Kafka, and Pinot (Uber Engineering)",
+   "url": "https://www.uber.com/en-US/blog/real-time-exactly-once-ad-event-processing/"
+  },
+  {
+   "title": "System Design: Ad Click Event Aggregation (Medium)",
+   "url": "https://medium.com/@nvedansh/system-design-ad-click-event-aggregation-8fb6aa7817fc"
+  },
+  {
+   "title": "Designing robust real-time pipelines with Flink, Kafka and an OLAP store (HackerNoon)",
+   "url": "https://sia.hackernoon.com/designing-robust-realtime-pipelines-with-flink-kafka-and-an-olap-store"
+  }
+ ]
+}

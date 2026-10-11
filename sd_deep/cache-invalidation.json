@@ -1,0 +1,1169 @@
+{
+ "slug": "cache-invalidation",
+ "title": "Design cache invalidation for frequently updated content",
+ "prompt": "Design cache invalidation for frequently updated content.",
+ "group": "caching",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 110,
+ "summary": "When content changes often - prices and stock during a sale, live scores, CMS banners, post counters - the cache is only useful if invalidation is fast, complete and correct across every layer (CDN, Redis, in-process caches, other regions). The hard parts are not deleting a key: they are knowing every key a change affects (dependency fan-out), never letting an older value overwrite a newer one (races and reordering), not losing invalidations when components fail, and not melting the origin when a burst of updates empties the cache. The senior answer separates data by change rate, drives invalidation from the database log, and makes every cache write version-aware.",
+ "framework": {
+  "clarify": [
+   "What content and how often does it change? Assume 100M product/content items; 20k updates/s at peak (price, stock, offers, CMS edits); 1M reads/s.",
+   "What freshness does each field need? Assume stock and price: under 2s p99 visible; descriptive content: under 30s; CMS banners: under 60s and scheduled.",
+   "What layers cache it today? Assume CDN (anonymous pages and API GETs), Redis (object cache), in-process caches in services, and a second region.",
+   "Is the same content embedded in many cached views? Assume yes - a product appears in its detail page, listing pages, search tiles, carts and wishlists.",
+   "Who writes? Assume multiple writers: services, batch repricing jobs, sellers' bulk uploads and occasional manual DB fixes.",
+   "Is it acceptable to briefly show stale data if checkout re-verifies? Assume yes for display, never for the committed order.",
+   "What is the cost of a purge storm on the CDN and origin? Assume CDN purge APIs are rate-limited and origin can serve about 50k QPS of misses."
+  ],
+  "design": [
+   "Baseline: TTL-only caching - simple but either stale (long TTL) or useless (short TTL) for content that changes every few seconds.",
+   "Split by change rate: stable fields (title, images, specs) cached long and invalidated by event; volatile fields (stock band, price) cached seconds or fetched from a dedicated fast store and merged at the edge or client.",
+   "Invalidation pipeline: DB commit -> binlog CDC (Debezium) -> Kafka topic partitioned by entity id -> Invalidator service -> Redis deletes, L1 pub/sub, CDN surrogate-key purge, cross-region relay.",
+   "Dependency tracking: every cached response is tagged with the entities it contains (surrogate keys like product:42, brand:7, listing:shoes-p1); invalidation purges by tag, not by URL.",
+   "Version-aware writes: every row has a monotonically increasing version; cache fills use leases or compare-version Lua so an older value can never overwrite a newer one.",
+   "Coalescing and rate control: the invalidator batches tags per 250ms window, dedupes repeated updates to the same id, and caps purge rate; refill uses single-flight and stale-while-revalidate."
+  ],
+  "defend": [
+   "Bottleneck: invalidation fan-out - one brand-wide price change can touch 200k products and 50k listing pages; use tag purges, batching and a priority queue so stock changes are not stuck behind bulk CMS purges.",
+   "Scale reads: stale-while-revalidate at CDN and Redis so purges never create synchronous misses; request collapsing at the CDN shield.",
+   "Scale writes: Kafka partitions by entity id (ordering per id, parallelism across ids); invalidators scale horizontally by partition; coalesce repeat updates within a window.",
+   "Failure: at-least-once delivery with idempotent deletes; consumer lag alerts; TTL as the last-resort bound; if CDN purge API fails, retry with exponential backoff and jitter, then fall back to short TTL headers.",
+   "Correctness: leases (Facebook memcache style) to block stale sets, delayed double delete for replica lag, and remote markers for cross-region reads after a write.",
+   "Measure: end-to-end invalidation latency (commit to purge confirmed) p50/p99 per layer, consumer lag, purge error rate, stale-read rate from a sampling checker, origin miss QPS after purges."
+  ],
+  "script": "For frequently updated content, the cache is only worth having if invalidation is fast and correct, so I'd start by asking how often each kind of field changes and how stale each can be. I'll assume 20k updates per second at peak against a million reads, with stock and price needing to be visible within two seconds and descriptive content within thirty. My first design decision is to split data by change rate: stable fields get long-lived cache entries invalidated by events, volatile fields are cached for seconds or served from a fast store and merged late. The invalidation pipeline is driven by the database log, not by application code: binlog CDC into Kafka partitioned by entity id, an invalidator that deletes Redis keys, evicts in-process caches and purges the CDN by surrogate tags, so one product change reaches every page that embeds it. Every cache fill is version-aware so an old value can never overwrite a new one. Then I'll defend it on fan-out storms, ordering and races, failure of the pipeline, and the one metric I'd watch above all: commit-to-purge latency at p99."
+ },
+ "brd": {
+  "problem": "Prices, stock, offers and editorial content change thousands of times per second during sales. Today TTL-based caches either show stale prices and out-of-stock items as available (lost trust, cancelled orders) or use such short TTLs that the origin carries most of the traffic. Invalidation is scattered across services, misses out-of-band writes, and has caused incidents where a bulk repricing purged the CDN and overloaded origin.",
+  "goals": [
+   "Make updates visible to shoppers within 2s p99 for price/stock and 30s for other content.",
+   "Keep cache hit ratio above 90% at the CDN and 95% at Redis despite the update rate.",
+   "Capture 100% of writes, including batch jobs and manual DB fixes, in the invalidation path.",
+   "Guarantee that an older version never overwrites a newer one in any cache layer.",
+   "Prevent purge storms from overloading origin (origin miss QPS stays under 50k).",
+   "Provide one shared invalidation platform instead of per-team ad hoc deletes."
+  ],
+  "non_goals": [
+   "Strong (linearizable) consistency for every display read.",
+   "Real-time push of every update to every connected client (handled by a separate live-update channel).",
+   "Replacing the system of record or changing its schema.",
+   "Invalidating client-side app caches beyond HTTP semantics (ETag, max-age)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Shoppers",
+    "needs": "Accurate price and availability on the page they are looking at."
+   },
+   {
+    "who": "Pricing and inventory teams",
+    "needs": "Their changes go live within seconds, especially for timed deals."
+   },
+   {
+    "who": "CMS / marketing",
+    "needs": "Scheduled banner and page changes take effect on time across all pages."
+   },
+   {
+    "who": "SRE / platform",
+    "needs": "A single observable pipeline with backpressure and safe purge limits."
+   },
+   {
+    "who": "Customer support / finance",
+    "needs": "Fewer order cancellations and price disputes caused by stale displays."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Commit-to-invisible-stale latency p99 (price/stock)",
+    "target": "< 2s"
+   },
+   {
+    "metric": "Commit-to-purge latency p99 (other content)",
+    "target": "< 30s"
+   },
+   {
+    "metric": "CDN hit ratio during sale",
+    "target": ">= 90%"
+   },
+   {
+    "metric": "Stale read rate measured by sampling checker",
+    "target": "< 0.1% of sampled reads beyond budget"
+   },
+   {
+    "metric": "Orders cancelled for price/stock mismatch",
+    "target": "-70% vs baseline"
+   },
+   {
+    "metric": "Invalidations lost (detected by reconciler)",
+    "target": "0 beyond TTL bound"
+   }
+  ],
+  "constraints": [
+   "CDN purge APIs are rate-limited (assume about 1000 purge requests/s per account, each with up to 256 tags).",
+   "MySQL primaries with async replicas (replica lag normally 50-500ms, spikes to seconds).",
+   "Two regions: primary region takes writes, secondary serves reads.",
+   "Many legacy writers cannot be changed quickly to publish events."
+  ],
+  "risks": [
+   {
+    "risk": "Bulk update purges millions of objects and overloads origin.",
+    "mitigation": "Batch and rate-limit purges, soft purge (mark stale) with stale-while-revalidate, priority lanes."
+   },
+   {
+    "risk": "Lost or reordered invalidation leaves stale data.",
+    "mitigation": "CDC from binlog, per-id ordering in Kafka, versions on every cache entry, TTL bound, reconciler."
+   },
+   {
+    "risk": "Race between a slow cache fill and a delete reinstates stale data.",
+    "mitigation": "Leases / compare-version writes and delayed double delete."
+   },
+   {
+    "risk": "Dependency map incomplete, so a listing page keeps an old price.",
+    "mitigation": "Tag responses at render time with every entity they include; audit with sampling checker."
+   },
+   {
+    "risk": "Pipeline outage silently stops invalidation.",
+    "mitigation": "Heartbeat events through the pipeline, lag alerts, automatic TTL shortening when lag exceeds budget."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Deal hunter",
+    "needs": "Sees the flash-deal price exactly when it starts and sees 'sold out' quickly."
+   },
+   {
+    "name": "Inventory system",
+    "needs": "Pushes stock changes thousands of times a second without caring which caches exist."
+   },
+   {
+    "name": "Editor in CMS",
+    "needs": "Publishes a banner change and sees it live everywhere within a minute."
+   },
+   {
+    "name": "Platform engineer",
+    "needs": "Registers a new cache and gets invalidation for free by tagging responses."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want the displayed price to match the price at checkout so that I am not surprised.",
+   "As a shopper, I want sold-out items to show as sold out within seconds so that I do not waste time.",
+   "As a pricing analyst, I want a repricing job of 200k items to go live within a minute without breaking the site.",
+   "As an editor, I want scheduled content to switch on time even if nobody triggers a purge.",
+   "As a service owner, I want to tag my cached responses with entity ids so that they are invalidated automatically.",
+   "As an SRE, I want to see invalidation lag per layer so that I can tell which cache is serving stale data.",
+   "As an SRE, I want a kill switch that shortens TTLs globally if the invalidation pipeline is down.",
+   "As a regional user, I want the same freshness as users in the primary region."
+  ],
+  "functional": [
+   "Capture every committed change to product, price, inventory and CMS tables via CDC with per-entity ordering.",
+   "Map each change to cache keys and surrogate tags (entity, parent entities, listings) and emit invalidations.",
+   "Invalidate Redis keys with version-aware semantics and publish L1 evictions to all service instances.",
+   "Purge CDN objects by surrogate key, using soft purge (mark stale) by default and hard purge for legal/takedown.",
+   "Relay invalidations to secondary regions after replication has applied the change there.",
+   "Support scheduled invalidation for time-based content (publish_at) independent of writes.",
+   "Expose APIs for manual purge by key/tag with audit log and rate limits.",
+   "Reconcile: sample cached entries continuously and compare versions with the source of truth."
+  ],
+  "non_functional": [
+   {
+    "name": "Invalidation latency",
+    "target": "p99 < 2s for price/stock, < 30s others, end to end including CDN"
+   },
+   {
+    "name": "Throughput",
+    "target": "20k source updates/s, fanning out to 200k tag invalidations/s"
+   },
+   {
+    "name": "Delivery",
+    "target": "At-least-once; deletes idempotent; no lost invalidation beyond TTL bound"
+   },
+   {
+    "name": "Ordering",
+    "target": "Per-entity order preserved; cross-entity order not required"
+   },
+   {
+    "name": "Availability",
+    "target": "Pipeline 99.95%; reads unaffected by pipeline outage (fallback to short TTL)"
+   },
+   {
+    "name": "Origin protection",
+    "target": "Origin miss QPS < 50k during any purge burst"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "100M entities; 20k updates/s peak (15k stock, 4k price, 1k other).",
+    "1M reads/s across CDN and APIs; CDN hit ratio target 90%.",
+    "Average fan-out: each update touches 1 object key + 1 tile key + ~3 listing/search tags = 5 invalidation targets.",
+    "Repeat updates: hot items change several times per second; about 40% of updates are to an id already updated in the same 250ms window.",
+    "Kafka event size about 300 bytes; invalidation message about 120 bytes."
+   ],
+   "math": [
+    "Raw invalidation targets = 20k * 5 = 100k/s; after 40% coalescing = 60k/s.",
+    "CDN purge: batching 256 tags per request over 250ms windows -> 60k/256 = about 235 purge calls/s, under the 1000/s limit.",
+    "Kafka ingress: 20k * 300 B = 6 MB/s; 48 partitions give about 420 events/s per partition, easy headroom.",
+    "Origin refill after purge: if 60k objects/s are invalidated and 30% are read within their next second, about 18k refill misses/s - within 50k origin capacity only because of single-flight and stale-while-revalidate.",
+    "Volatile split: if stock were embedded in the 4 KB product page, 15k stock updates/s would purge 15k pages/s; separating a 100-byte stock endpoint with 1s TTL cuts page purges by 75%.",
+    "Cross-region relay: 60k/s * 120 B = 7 MB/s over the inter-region link."
+   ],
+   "summary": "The pipeline itself is cheap (single-digit MB/s on Kafka). The real load is fan-out and refill: 20k updates become 100k invalidation targets, so coalescing, batching purges and splitting volatile fields out of large cached pages decide whether the CDN hit ratio and the origin survive."
+  },
+  "out_of_scope": [
+   "Client push channel (WebSocket/SSE) for live price ticks.",
+   "Search index updates (separate indexing pipeline, though it consumes the same CDC stream).",
+   "Inventory reservation and checkout correctness.",
+   "Personalised page caching."
+  ]
+ },
+ "hld": {
+  "overview": "Writers commit to MySQL. Debezium tails the binlog and publishes change events to Kafka, partitioned by entity id. An Invalidator service consumes them, resolves each change to cache keys and surrogate tags via a dependency resolver, coalesces within a short window, and fans out to Redis (version-aware deletes), service L1 caches (pub/sub), the CDN (soft purge by tag through a rate-limited purger) and the secondary region (relay that waits for replication). Reads use stale-while-revalidate and leases so purges never cause stampedes or stale sets. A reconciler samples caches against the DB, and a scheduler handles time-based content.",
+  "diagram": " Writers (services, batch jobs, sellers, manual fixes)\n        |\n        v\n +--------------+  binlog  +-----------+     +-------------------------------+\n | MySQL primary|--------->| Debezium  |---->| Kafka 'changes' (by entity id)|\n +------+-------+          +-----------+     +---------------+---------------+\n        | async repl                                         |\n        v                                                    v\n +--------------+                         +-------------------------------------+\n | Replicas     |                         | Invalidator (N consumers)           |\n +------+-------+                         |  dependency resolver -> tags/keys   |\n        ^ miss                            |  coalesce 250ms, priority lanes     |\n        |                                 +--+---------+-----------+----------+-+\n +------+---------------+  DEL/lease        |         |           |          |\n | Redis (object cache) |<------------------+         |           |          |\n +------+---------------+          L1 pub/sub         |  CDN purger (batched,  |\n        ^                          to services <------+  soft purge by tag) ---+--> CDN\n        |                                                                      |\n +------+-----------+                                      region relay <------+\n | API / renderers  |-- emit Surrogate-Key headers         (waits for replica GTID)\n +------------------+                                                          \n Reconciler (samples cache vs DB)   Scheduler (publish_at -> synthetic change) \n",
+  "components": [
+   {
+    "name": "Change Data Capture (Debezium)",
+    "responsibility": "Reads the MySQL binlog and emits ordered row-change events with version and GTID; captures every writer."
+   },
+   {
+    "name": "Kafka 'changes' topic",
+    "responsibility": "Durable, replayable log partitioned by entity id; preserves per-entity order; 7-day retention for replay."
+   },
+   {
+    "name": "Dependency resolver",
+    "responsibility": "Maps a changed row to cache keys and surrogate tags (product:42, brand:7, category:shoes); uses the tag index for reverse lookups."
+   },
+   {
+    "name": "Invalidator",
+    "responsibility": "Consumes changes, coalesces per id within a window, routes into priority lanes (stock/price fast lane, bulk/CMS slow lane), fans out to sinks."
+   },
+   {
+    "name": "Redis sink",
+    "responsibility": "Version-aware delete or lease invalidation of object keys; delayed second delete after replica lag."
+   },
+   {
+    "name": "L1 broadcast",
+    "responsibility": "Pub/sub (Redis pub/sub or Kafka compacted topic) telling every service instance to evict ids from in-process caches."
+   },
+   {
+    "name": "CDN purger",
+    "responsibility": "Batches surrogate keys (up to 256 per call), soft purges by default, rate-limits and retries with jittered backoff."
+   },
+   {
+    "name": "Region relay",
+    "responsibility": "Forwards invalidations to the secondary region only after its replicas have applied the change (GTID check) to avoid refilling stale data."
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Continuously samples cached entries, compares versions to DB, re-invalidates and reports stale-read rate."
+   },
+   {
+    "name": "Scheduler",
+    "responsibility": "Emits synthetic change events at publish_at/expire_at times for scheduled CMS and deals."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Price update to every layer",
+    "steps": [
+     "Pricing service commits price for product 42, version 105, in MySQL (GTID g1).",
+     "Debezium emits {table:price, id:42, ver:105, gtid:g1} to Kafka partition hash(42).",
+     "Invalidator dedupes with any pending event for 42 in the 250ms window and routes it to the fast lane.",
+     "Resolver returns keys [obj:product:42, tile:product:42] and tags [product:42].",
+     "Redis sink invalidates keys (lease-aware); L1 broadcast evicts id 42 in all services.",
+     "CDN purger soft-purges tag product:42 - every page tagged with it (detail, listings, search tiles) is marked stale.",
+     "Next request for a marked page gets the stale copy while the CDN shield revalidates once with the origin.",
+     "Region relay waits until region B replicas report GTID >= g1, then repeats steps 5-6 in region B."
+    ]
+   },
+   {
+    "name": "Read with lease after invalidation",
+    "steps": [
+     "Renderer misses obj:product:42 in Redis; Redis issues a lease token L to this caller.",
+     "Other callers missing the same key within the lease window get 'wait/retry' or the stale value.",
+     "Caller reads DB (replica with GTID >= last invalidation, else primary) and SETs with token L.",
+     "If an invalidation arrived meanwhile, L was revoked and the SET is rejected - the stale value never lands."
+    ]
+   },
+   {
+    "name": "Bulk repricing of 200k items",
+    "steps": [
+     "Batch job writes 200k rows over 60s; CDC emits 200k events.",
+     "Invalidator routes them to the bulk lane with its own rate cap so the fast lane is unaffected.",
+     "Resolver collapses item tags into broader tags where cheaper (e.g. brand:7) when more than N items of one brand change.",
+     "CDN purger soft-purges in batches; stale-while-revalidate keeps hit ratio high while pages refresh gradually."
+    ]
+   }
+  ],
+  "data_flow": "Data flows from writers to MySQL only. Change events flow from the binlog through Kafka to the invalidator, which emits deletes and purges to Redis, L1 caches, the CDN and the remote region. Cached responses flow back to readers carrying Surrogate-Key headers that register their dependencies. Reconciler and lag metrics flow to monitoring, and the scheduler injects time-based change events into the same Kafka topic."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/internal/invalidate",
+    "request": "{keys:[...], tags:[...], mode:'soft'|'hard', reason, priority}",
+    "response": "202 {request_id}",
+    "notes": "Manual or service-initiated; audited; rate-limited per caller; publishes onto the same Kafka topic so ordering and fan-out are shared."
+   },
+   {
+    "method": "GET",
+    "path": "/internal/invalidate/{request_id}",
+    "request": "-",
+    "response": "200 {status, per_layer:{redis:'done', cdn:'done', region_b:'pending'}, latency_ms}",
+    "notes": "Lets callers (e.g. deal launch) confirm propagation."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/products/{id}",
+    "request": "If-None-Match",
+    "response": "200 with headers Surrogate-Key: product:42 brand:7 category:shoes, Cache-Control: max-age=60, stale-while-revalidate=30, ETag \"105\"",
+    "notes": "Renderer emits every entity it includes as a tag."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/stock/{id}",
+    "request": "-",
+    "response": "200 {id, stock_band:'in_stock'|'low'|'out', ver}",
+    "notes": "Tiny volatile endpoint, max-age=1, merged client-side; removes stock from big cached pages."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/schedule",
+    "request": "{entity, id, at: ISO8601, action:'publish'|'expire'}",
+    "response": "201",
+    "notes": "Scheduler emits a synthetic change at the given time."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Change event",
+    "store": "Kafka topic 'changes' (48 partitions, RF=3, min.insync=2)",
+    "fields": [
+     "entity_type",
+     "entity_id",
+     "version",
+     "gtid",
+     "changed_fields",
+     "commit_ts"
+    ],
+    "keys": "partition key = entity_type:entity_id",
+    "notes": "Per-entity ordering; consumers commit offsets after sinks ack."
+   },
+   {
+    "entity": "Cache entry",
+    "store": "Redis",
+    "fields": [
+     "key obj:{type}:{id}",
+     "value",
+     "version",
+     "soft_expiry"
+    ],
+    "keys": "obj:product:{42}",
+    "notes": "Lua SET-IF-NEWER compares version; lease tokens stored alongside."
+   },
+   {
+    "entity": "Tag index",
+    "store": "Redis sets / Cassandra for large fan-out",
+    "fields": [
+     "tag",
+     "member cache keys or URLs"
+    ],
+    "keys": "tag:{brand:7} -> set of keys",
+    "notes": "Used for Redis-side tag invalidation; CDN maintains its own surrogate-key index."
+   },
+   {
+    "entity": "Invalidation ledger",
+    "store": "Kafka compacted topic + ClickHouse for analytics",
+    "fields": [
+     "request_id",
+     "entity",
+     "version",
+     "layer",
+     "acked_at"
+    ],
+    "keys": "request_id",
+    "notes": "Gives per-layer propagation latency and audit trail."
+   },
+   {
+    "entity": "Row version",
+    "store": "MySQL",
+    "fields": [
+     "id",
+     "...",
+     "version BIGINT",
+     "updated_at"
+    ],
+    "keys": "PK id",
+    "notes": "version incremented in the same transaction as the change."
+   }
+  ],
+  "classes": [
+   {
+    "name": "ChangeConsumer",
+    "responsibility": "Reads Kafka partitions, decodes events, hands to Coalescer, commits offsets after downstream acks.",
+    "methods": [
+     "poll()",
+     "commit(offsets)"
+    ]
+   },
+   {
+    "name": "Coalescer",
+    "responsibility": "Keeps the newest version per entity id within a 250ms window; flushes to lanes.",
+    "methods": [
+     "add(event)",
+     "flush() -> list"
+    ]
+   },
+   {
+    "name": "DependencyResolver",
+    "responsibility": "Maps an event to keys and tags; collapses to broader tags under heavy fan-out.",
+    "methods": [
+     "resolve(event) -> (keys, tags)",
+     "collapse(tags) -> tags"
+    ]
+   },
+   {
+    "name": "RedisSink",
+    "responsibility": "Lease-aware delete, delayed second delete, version-guarded set helper.",
+    "methods": [
+     "invalidate(key, ver)",
+     "scheduleDelete(key, delayMs)"
+    ]
+   },
+   {
+    "name": "CdnPurger",
+    "responsibility": "Batches tags, soft/hard purge, token-bucket rate limit, retries with jitter.",
+    "methods": [
+     "enqueue(tags, mode)",
+     "drain()"
+    ]
+   },
+   {
+    "name": "RegionRelay",
+    "responsibility": "Holds invalidations until remote replica GTID passes the event's GTID.",
+    "methods": [
+     "forward(event)",
+     "onReplicaProgress(gtid)"
+    ]
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Samples cache entries and compares to DB versions.",
+    "methods": [
+     "sample(n)",
+     "repair(key)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Version-guarded cache set (Lua)",
+    "explain": "Atomic in Redis: only write if the incoming version is newer than what is stored, so an out-of-order or slow fill cannot overwrite fresher data. Deletes leave a short tombstone with the deleted version so a slow fill of an older version also loses.",
+    "pseudocode": "-- KEYS[1]=key ARGV[1]=ver ARGV[2]=payload ARGV[3]=ttl\nlocal cur = redis.call('HGET', KEYS[1], 'ver')\nif cur and tonumber(cur) >= tonumber(ARGV[1]) then\n  return 0            -- stale fill rejected\nend\nredis.call('HSET', KEYS[1], 'ver', ARGV[1], 'v', ARGV[2])\nredis.call('EXPIRE', KEYS[1], ARGV[3])\nreturn 1\n\n-- invalidate(key, ver): write tombstone instead of plain DEL\nHSET key ver <ver> v '' ; EXPIRE key 10\n"
+   },
+   {
+    "name": "Coalesce and route",
+    "explain": "Within a window keep only the newest version per id, then route by priority; bulk lane is rate-limited separately so stock/price never queue behind it.",
+    "pseudocode": "pending = {}   # id -> event\ndef add(e):\n  p = pending.get(e.id)\n  if not p or e.version > p.version: pending[e.id] = e\n\nevery 250ms:\n  batch, pending = pending.values(), {}\n  for e in batch:\n    keys, tags = resolver.resolve(e)\n    lane = FAST if e.type in ('price','stock') else BULK\n    redis_sink.invalidate_all(keys, e.version)\n    l1_bus.publish(e.id)\n    cdn[lane].enqueue(tags, mode='soft')\n    relay.forward(e)\n  commit_offsets_after_acks(batch)\n"
+   },
+   {
+    "name": "Lease-based fill (memcache leases)",
+    "explain": "On a miss the cache hands out a lease token; only the token holder may fill, and any delete revokes outstanding leases. Leases also rate-limit refills to one per key per lease interval (Facebook used about 10s).",
+    "pseudocode": "def get(key):\n  v, token = cache.get_or_lease(key)\n  if v: return v\n  if token is None:            # someone else holds the lease\n    sleep(10ms); return cache.get(key) or stale_or_wait(key)\n  row = db.read(key)\n  ok = cache.set_with_lease(key, row, token)   # fails if invalidated since\n  return row\n"
+   },
+   {
+    "name": "Cross-region relay gated by replication",
+    "explain": "Purging region B before its replica has the new row lets a reader refill the old value. Hold the invalidation until the replica's executed GTID set includes the event's GTID, then purge.",
+    "pseudocode": "def forward(e):\n  if replica_b.executed_gtids.contains(e.gtid): send_b(e)\n  else: waiting.add(e)\ndef onReplicaProgress(gtids):\n  for e in waiting.ready(gtids): send_b(e)\n# safety: also send immediately + again after max(lag, 2s)\n"
+   }
+  ],
+  "sequence": "Pricing svc   MySQL      Debezium/Kafka    Invalidator     Redis    CDN      Region B\n    |-UPDATE v105->|            |               |            |        |          |\n    |<---commit----|            |               |            |        |          |\n    |              |--binlog--->|               |            |        |          |\n    |              |            |--event v105-->|            |        |          |\n    |              |            |               |-tombstone->|        |          |\n    |              |            |               |  v105      |        |          |\n    |              |            |               |-soft purge product:42->|        |\n    |              |            |               |-L1 evict (pub/sub)     |        |\n    |              |            |               |-- wait GTID applied -->|------->|\n    |              |            |<-commit offset|            |        |          |\nReader -> CDN (stale, revalidate) -> API -> Redis miss (tombstone) -> DB v105 -> SET v105\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Stale set: reader reads v104, writer commits v105 and invalidates, reader then writes v104 to cache.",
+   "handling": "Leases revoked by the delete, or version-guarded SET against a tombstone holding v105; delayed second delete as an extra guard."
+  },
+  {
+   "case": "Events for the same id arrive out of order (retries, two producers).",
+   "handling": "Partition by entity id for per-key order; versions on every event so consumers ignore anything older than what they have applied."
+  },
+  {
+   "case": "Duplicate events after consumer restart (at-least-once).",
+   "handling": "Deletes and version-guarded writes are idempotent; reprocessing is harmless."
+  },
+  {
+   "case": "Replica lag: invalidation fires before the replica has the new row, refill loads the old one.",
+   "handling": "Refill reads must see a GTID >= the invalidation's GTID (or go to primary); delayed second delete after observed lag."
+  },
+  {
+   "case": "Bulk change of 200k products purges every listing page at once.",
+   "handling": "Bulk lane with separate rate cap, tag collapsing (brand:7 instead of 200k product tags), soft purge so pages serve stale while refreshing."
+  },
+  {
+   "case": "Very hot item updated 50 times per second (stock countdown).",
+   "handling": "Coalesce per window; do not embed stock in the cached page - serve it from a tiny endpoint with 1s TTL or a push channel."
+  },
+  {
+   "case": "Writes that bypass the service (manual SQL fix, batch ETL).",
+   "handling": "Binlog CDC captures them; that is the reason not to rely on application-level deletes alone."
+  },
+  {
+   "case": "Invalidation pipeline down for 10 minutes.",
+   "handling": "Heartbeat events detect it within seconds; automatic fallback publishes short max-age headers and shrinks Redis TTLs; on recovery Kafka replays from committed offsets."
+  },
+  {
+   "case": "Dependency missed: a cart widget embeds price but its responses are not tagged.",
+   "handling": "Rendering framework adds Surrogate-Key automatically for every entity fetched through the data layer; reconciler detects untagged stale responses."
+  },
+  {
+   "case": "Scheduled deal starts at 12:00:00 but no write happens at that moment.",
+   "handling": "Scheduler emits synthetic change events; also cap TTL so no cached copy outlives publish_at (expires = min(ttl, publish_at - now))."
+  },
+  {
+   "case": "Clock skew between scheduler hosts and CDN.",
+   "handling": "Use server-side scheduling from one time source (NTP-synced, leader-elected scheduler) and versions, not wall-clock comparisons, for ordering."
+  },
+  {
+   "case": "CDN purge API rate limit hit during sale.",
+   "handling": "Token bucket with batching (256 tags/request), priority to fast lane, fall back to short TTL headers for affected paths."
+  },
+  {
+   "case": "Takedown/legal removal must disappear immediately, not serve stale.",
+   "handling": "Hard purge mode and a deny-list check at the edge; skip stale-while-revalidate for these."
+  },
+  {
+   "case": "Region failover while invalidations are buffered in the relay.",
+   "handling": "Relay state lives in Kafka offsets; after failover the new primary region replays from the last committed offset; caches in the promoted region are flushed for keys changed in the lag window."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Debezium (MySQL connector)",
+   "layer": "Change data capture",
+   "overview": "Kafka Connect source that reads the MySQL binlog and emits row-level change events with transaction metadata.",
+   "why": "Captures every committed write including those from batch jobs and manual fixes, in commit order, without changing writers.",
+   "alternatives": "Application-published events (simpler but miss out-of-band writes and suffer dual-write bugs); transactional outbox (reliable for app writes but still misses SQL fixes); Maxwell or Canal."
+  },
+  {
+   "name": "Apache Kafka",
+   "layer": "Event log",
+   "overview": "Partitioned, replicated append-only log with consumer groups and offset-based replay.",
+   "why": "Per-key ordering by partition, durable replay after consumer failure, fan-out to many sinks (cache, search, analytics).",
+   "alternatives": "Redis Streams (lower ops, weaker durability at scale); Pulsar (tiered storage, more moving parts); SQS FIFO (managed but lower throughput per group)."
+  },
+  {
+   "name": "Redis with Lua",
+   "layer": "Object cache",
+   "overview": "In-memory store with atomic server-side scripts.",
+   "why": "Version-guarded sets and tombstones in one atomic step; pub/sub for L1 evictions.",
+   "alternatives": "Memcached with leases (mcrouter) as at Facebook; Aerospike for larger datasets."
+  },
+  {
+   "name": "Fastly / Cloudflare / Akamai with surrogate keys (cache tags)",
+   "layer": "CDN",
+   "overview": "CDNs that index cached objects by tags from a Surrogate-Key or Cache-Tag header and purge by tag in roughly 150ms globally (Fastly) or seconds.",
+   "why": "One product change purges every page that embeds it without the origin knowing the URLs.",
+   "alternatives": "URL-based purge (needs a full URL dependency map); short TTLs only (high origin load); edge compute that fetches volatile fields at request time."
+  },
+  {
+   "name": "mcrouter-style cache proxy",
+   "layer": "Cache routing",
+   "overview": "Proxy that routes cache operations, broadcasts deletes to replicated pools and handles failover.",
+   "why": "Centralizes delete fan-out to replicated pools and regions.",
+   "alternatives": "Smart client libraries; Envoy Redis proxy."
+  },
+  {
+   "name": "ClickHouse",
+   "layer": "Analytics / audit",
+   "overview": "Columnar OLAP database.",
+   "why": "Stores the invalidation ledger for per-layer latency percentiles and audits.",
+   "alternatives": "BigQuery or Druid; Elasticsearch for ad hoc search."
+  },
+  {
+   "name": "Prometheus + alerting",
+   "layer": "Observability",
+   "overview": "Metrics and alert rules.",
+   "why": "Consumer lag, purge errors, end-to-end latency SLO burn.",
+   "alternatives": "Datadog, New Relic."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Change Data Capture and the transactional outbox (avoiding dual writes)",
+   "explain": "The naive way to invalidate a cache is for the code that writes the database to also delete the cache key. That is a dual write: two systems updated without a shared transaction. If the process crashes between the commit and the delete, or the delete fails and is not retried, the cache stays stale until its TTL. Worse, many writes do not go through that code at all - batch jobs, migrations, a DBA's manual fix. Change Data Capture solves this by treating the database's own replication log (MySQL binlog, Postgres WAL) as the event source. A CDC connector such as Debezium reads the log like a replica would and publishes each committed row change to a stream, in commit order. Because the log only contains committed transactions, there is no event for a rolled-back write and no missed event for a committed one. The transactional outbox is the application-level cousin: the service writes its business row and an outbox row in the same local transaction, and a relay (often CDC on the outbox table) publishes outbox rows. Outbox gives you clean, intention-revealing domain events; raw CDC gives you completeness including out-of-band writes. CDC adds latency (typically tens to hundreds of milliseconds), couples consumers to table schemas, and needs care with snapshots and schema changes.",
+   "in_this_design": "Debezium on the product, price, inventory and CMS tables is the single source of invalidation events, so every writer is covered. Services may additionally delete immediately for lower latency, but correctness relies on CDC.",
+   "key_points": [
+    "Writing DB then deleting cache is a dual write - it can silently fail.",
+    "The DB log is the only complete record of committed changes.",
+    "CDC catches out-of-band writes; outbox gives clean domain events.",
+    "CDC lag (10-500ms) is part of the staleness budget.",
+    "Schema changes on source tables are a CDC operational risk."
+   ],
+   "qa": [
+    {
+     "q": "Why not just delete the cache in the service after committing?",
+     "a": "It is a dual write: a crash or failed delete leaves the cache stale, and writes from batch jobs or manual SQL never trigger it. Keep the fast in-service delete as an optimisation, but make CDC the correctness path."
+    },
+    {
+     "q": "Outbox or CDC on business tables?",
+     "a": "For invalidation, CDC on the business tables, because invalidation must react to every change regardless of who made it. For domain events consumed by other services, outbox, because consumers should not depend on table layouts."
+    },
+    {
+     "q": "What happens to CDC during a schema migration?",
+     "a": "Debezium tracks schema history; additive changes are fine, but renames or type changes can break consumers. Use a schema registry with compatibility rules and make consumers tolerant of unknown fields."
+    }
+   ]
+  },
+  {
+   "name": "Ordering, idempotency and at-least-once delivery",
+   "explain": "Distributed messaging offers three delivery semantics. At-most-once may lose messages but never duplicates. At-least-once never loses a message but may deliver it more than once, typically after a consumer crashes before committing its offset. Exactly-once processing is only achievable within closed systems (Kafka transactions between Kafka topics) or by making effects idempotent. For external side effects like cache deletes, the practical recipe is at-least-once delivery plus idempotent operations. A delete is naturally idempotent: deleting twice is the same as deleting once. Ordering is the other half. Kafka guarantees order only within a partition, so partitioning by entity id gives per-entity order while allowing parallelism across entities. But order can still be broken by producer retries without idempotent producers, by multiple producers for one entity, or by re-sharding. The robust answer is to carry a monotonically increasing version on each event and in each cache entry, so that every consumer and every cache write can say 'I already have something newer, ignore this'. Versions convert an ordering requirement into a comparison, which survives duplicates, replays and reordering. Offsets should be committed only after all sinks acknowledge, otherwise a crash loses invalidations.",
+   "in_this_design": "Kafka partitioned by entity id, idempotent producer enabled, offsets committed after Redis, L1 and CDN acks; every event and cache entry carries the row version, and version-guarded writes discard older values.",
+   "key_points": [
+    "At-least-once + idempotent effects is the practical 'exactly-once'.",
+    "Partition by entity id for per-entity order.",
+    "Versions turn ordering into a comparison that survives replays.",
+    "Commit offsets after side effects succeed, not before.",
+    "Deletes are idempotent; sets are not unless version-guarded."
+   ],
+   "qa": [
+    {
+     "q": "A consumer crashes after deleting keys but before committing offsets. What happens?",
+     "a": "On restart it re-reads and re-deletes; deletes are idempotent so the only cost is extra work and possibly a few extra cache misses."
+    },
+    {
+     "q": "Two events for product 42 (v105, v106) are processed by different consumers. Can v105 win?",
+     "a": "Not if partitioning is by id - both land in one partition and one consumer. If something does reorder them, the version check in the cache rejects v105 after v106 is applied."
+    },
+    {
+     "q": "Why not use Kafka exactly-once semantics?",
+     "a": "Kafka EOS covers read-process-write within Kafka. Redis deletes and CDN purges are outside the transaction, so they still need idempotency. EOS would add latency without solving the external part."
+    }
+   ]
+  },
+  {
+   "name": "Leases and the stale-set race (Facebook memcache)",
+   "explain": "In look-aside caching a reader that misses goes to the database and then fills the cache. If, between the reader's database read and its cache fill, a writer commits a new value and deletes the key, the reader's fill puts the old value back - and it stays until the next write or TTL. This is the stale-set race, and it is more likely when the reader is slow or reads from a lagging replica. Facebook's 'Scaling Memcache' paper introduced leases to solve it. On a miss, memcached gives the client a 64-bit lease token bound to that key. The client may only set the value by presenting the token. If a delete for the key arrives in the meantime, memcached invalidates the token, so the late set is rejected. Leases also tame thundering herds: the server issues a token for a key at most once every few seconds (Facebook used 10s), and other clients that miss are told to wait briefly and retry, by which time the holder has usually filled it; they can also be given a slightly stale value. Facebook reported this cut peak database query rates for hot keys from about 17k/s to about 1.3k/s. Equivalent mechanisms in Redis are version-guarded sets with tombstones, or a lock key whose deletion on invalidation fails the filler's compare-and-set.",
+   "in_this_design": "Redis sink writes a tombstone holding the invalidated version instead of a plain delete; fills use a Lua SET-IF-NEWER, which rejects older versions; misses take a lease-style lock so one filler per key reaches the DB.",
+   "key_points": [
+    "Stale set: slow fill lands after a delete and resurrects old data.",
+    "Lease = permission to fill, revoked by any delete.",
+    "Leases also rate-limit refills, killing herds.",
+    "Tombstone + version compare is the Redis equivalent.",
+    "TTL remains the backstop if all else fails."
+   ],
+   "qa": [
+    {
+     "q": "Explain the stale-set race in one sentence.",
+     "a": "A reader fetches the old value from the DB, a writer then updates and deletes, and the reader's late SET puts the old value back into the cache."
+    },
+    {
+     "q": "How does a lease prevent it?",
+     "a": "The reader can only SET with the lease token it got on the miss; the writer's delete invalidates that token, so the late SET is rejected."
+    },
+    {
+     "q": "Why a tombstone instead of DEL in Redis?",
+     "a": "After a plain DEL there is nothing to compare against, so an old fill looks valid. A short-lived tombstone storing the deleted version lets the Lua script reject any fill with a version <= it."
+    }
+   ]
+  },
+  {
+   "name": "Dependency tracking and tag-based (surrogate key) purging",
+   "explain": "Invalidating a key is easy; knowing which keys to invalidate is hard. Frequently updated content is usually embedded in many cached artefacts: a product's price appears on its detail page, in several listing pages, in search result tiles, in a recommendations carousel and in cached API responses for carts. URL-based purging requires the origin to know every URL that includes the product, which is impractical with pagination, filters and sort orders. Tag-based invalidation inverts the problem. When the origin renders a response it attaches a header listing the entities it used, for example Surrogate-Key: product:42 brand:7 category:shoes. The cache (CDN or an internal tag index) maintains a reverse index from tag to cached objects. A purge by tag removes or marks stale every object carrying that tag, without anyone enumerating URLs. Tags compose hierarchically: a brand-wide change can purge brand:7 rather than thousands of product tags. The trade-offs are over-invalidation (purging pages where the changed field was not even displayed, which lowers hit ratio) and tag-index cost (header size limits, memory for the index). Teams reduce over-invalidation by tagging at field-group granularity (product:42:price vs product:42:content) and by keeping volatile fields out of big cached pages.",
+   "in_this_design": "Renderers auto-tag responses through the data access layer; the CDN purges by surrogate key; Redis composite entries use a tag index set. Price changes purge product:42:price-tagged objects, and bulk changes collapse to brand or category tags.",
+   "key_points": [
+    "The hard problem is knowing what to invalidate, not how.",
+    "Tag responses with every entity they include; purge by tag.",
+    "Auto-tag in the data layer so developers cannot forget.",
+    "Field-group tags reduce over-invalidation.",
+    "Collapse to coarser tags under bulk changes."
+   ],
+   "qa": [
+    {
+     "q": "A price change updated the product page but a listing page still shows the old price. Why?",
+     "a": "The listing response was not tagged with product:42 (or was cached under a layer that does not honour tags). Fix by auto-tagging in the data layer and by sampling listings in the reconciler."
+    },
+    {
+     "q": "What is the downside of tagging every listing page with every product on it?",
+     "a": "Every stock or price change purges the listing, so a busy category page is purged several times a second and barely caches. Separate volatile fields (fetch price/stock late) or tag at field-group granularity."
+    },
+    {
+     "q": "How do you purge 200k products efficiently?",
+     "a": "Collapse to a coarser tag (brand:7 or category), batch purges, use soft purge with stale-while-revalidate and a separate rate-limited lane."
+    }
+   ]
+  },
+  {
+   "name": "TTL, soft purge and stale-while-revalidate (freshness vs origin load)",
+   "explain": "There are two families of freshness control. Expiry-based control uses TTLs: data is assumed fresh for a fixed time. It needs no coordination but forces a trade-off - long TTLs mean stale data, short TTLs mean high origin load and low hit ratio. Event-based control invalidates on change, giving freshness without short TTLs, but depends on a reliable pipeline. Production systems combine them: event-driven invalidation for the typical case and a TTL as a bound on the worst case. HTTP adds finer tools. Cache-Control: max-age sets the fresh period; stale-while-revalidate lets a cache serve the stale copy for a further period while it fetches a new one in the background, so users never wait for the origin; stale-if-error lets it serve stale when the origin fails. A soft purge (Fastly's term) marks objects stale instead of deleting them, so after a purge the first request is served instantly from the stale copy and only one background revalidation reaches the origin, instead of a burst of synchronous misses. Micro-caching - TTLs of 1-5 seconds on very volatile resources - is surprisingly powerful: at 10k requests per second, a 1s TTL still absorbs 99.99% of requests while bounding staleness to one second. ETags and conditional requests make revalidation cheap by returning 304 Not Modified without a body.",
+   "in_this_design": "Stable content: max-age=60, stale-while-revalidate=30 with soft purge on change. Volatile stock band: separate endpoint with max-age=1 (micro-cache). TTL capped at publish_at for scheduled content. Hard purge reserved for legal takedowns.",
+   "key_points": [
+    "Events give freshness; TTLs bound the damage when events fail.",
+    "Soft purge + stale-while-revalidate turns a purge burst into one origin fetch per object.",
+    "Micro-caching (1s) absorbs huge QPS with tiny staleness.",
+    "stale-if-error keeps pages up during origin failures.",
+    "Use hard purge only when serving stale is unacceptable."
+   ],
+   "qa": [
+    {
+     "q": "Why soft purge instead of hard purge for price changes?",
+     "a": "Hard purge deletes the object, so every request until refill misses and may hit origin simultaneously. Soft purge marks it stale; the CDN serves stale for a moment and refreshes once. The extra staleness is a few hundred ms, well within budget."
+    },
+    {
+     "q": "A key gets 10k req/s and changes every 2s. Cache it?",
+     "a": "Yes with micro-caching: a 1s TTL means at most one origin fetch per second per edge, absorbing ~99.99% of requests while staying within a 1s staleness bound. Not caching it would send 10k req/s to origin."
+    },
+    {
+     "q": "When must you not use stale-while-revalidate?",
+     "a": "For content that must disappear immediately - legal takedowns, security fixes, prices that would be illegal to show - use hard purge and possibly an edge deny-list."
+    }
+   ]
+  },
+  {
+   "name": "Replication lag and cross-region invalidation",
+   "explain": "Most databases replicate asynchronously: a replica applies the primary's changes milliseconds to seconds later. This interacts badly with invalidation. If the cache is invalidated the instant the primary commits, a reader that misses may read from a replica that has not yet applied the change and refill the cache with the old value - now with a full TTL ahead of it. In multi-region setups the gap is larger, because the remote region's replica may be hundreds of milliseconds to seconds behind. There are several fixes. Delayed double delete issues a second invalidation after the expected lag. GTID or LSN gating makes the invalidation (or the refill) wait until the replica has applied the change: MySQL GTIDs let a reader ask 'has this replica executed transaction X'. Facebook's memcache used remote markers: when a non-primary region writes, it sets a marker key so subsequent reads for that key go to the primary region until replication catches up and the marker is cleared. Facebook also routed invalidations for remote regions through the replication stream itself (the mcsqueal daemons tail the MySQL commit log in each region), so a region's caches are invalidated only after that region's database has the change - ordering comes for free.",
+   "in_this_design": "Refills read a replica only if its executed GTID set covers the latest invalidation for that key (else primary); region B invalidations are gated on its replica GTID; a delayed second delete runs after max(observed lag, 1s).",
+   "key_points": [
+    "Invalidate-then-refill-from-lagging-replica re-caches old data.",
+    "Gate invalidation or refill on replication position (GTID/LSN).",
+    "Run invalidation from each region's own log for natural ordering.",
+    "Remote markers route reads to primary until replication catches up.",
+    "Delayed double delete is the simple fallback."
+   ],
+   "qa": [
+    {
+     "q": "Why invalidate region B from region B's binlog rather than region A's event?",
+     "a": "Region B's binlog only contains the change once B's database has applied it, so the invalidation can never precede the data. That avoids refilling B's cache with the old value."
+    },
+    {
+     "q": "What is delayed double delete and its weakness?",
+     "a": "Delete on commit and again after a delay (say 1s) to catch fills that read a lagging replica. Its weakness is that lag is not bounded - during a lag spike longer than the delay, stale data can still be re-cached; GTID gating is precise."
+    },
+    {
+     "q": "A user updates their listing and immediately sees the old one. Fix?",
+     "a": "Read-your-writes: route that user's reads for that key to the primary (or set a short-lived marker) until replicas catch up, and return the updated object in the write response."
+    }
+   ]
+  },
+  {
+   "name": "Backpressure, coalescing and priority lanes",
+   "explain": "An invalidation pipeline is a stream processor whose input rate can spike far above its sinks' capacity: a repricing job can emit hundreds of thousands of changes per minute, but a CDN purge API might accept a thousand calls per second and the origin can only refill so fast. Backpressure is the mechanism by which a slower downstream signals an upstream to slow down, rather than being overwhelmed or dropping work. In a Kafka-based pipeline backpressure is natural: the consumer simply reads slower and lag grows, with the log buffering safely. The design question is then what to do with lag. Coalescing removes redundant work: if product 42 changes ten times in 250ms only the newest version matters for invalidation, so keep the latest per id in a window. Batching amortizes per-call overhead, for example 256 tags per purge call. Priority lanes stop head-of-line blocking: urgent invalidations (stock, price) travel through a separate topic or consumer pool from bulk ones (CMS rebuilds), each with its own rate limit, so a bulk job cannot delay a sold-out signal. Finally, adaptive degradation: if lag exceeds the freshness budget, shorten TTLs at the edge so caches self-heal while the pipeline catches up.",
+   "in_this_design": "Kafka lag is the buffer; Coalescer keeps the newest version per id every 250ms; CdnPurger batches 256 tags per call under a token bucket; fast lane (price/stock) and bulk lane have separate consumers and limits; lag over budget triggers shorter TTL headers.",
+   "key_points": [
+    "Let the log absorb bursts; lag is a signal, not a failure.",
+    "Coalesce: only the newest version per id matters.",
+    "Batch purges to fit API rate limits.",
+    "Separate lanes prevent head-of-line blocking.",
+    "When lag exceeds budget, shorten TTLs automatically."
+   ],
+   "qa": [
+    {
+     "q": "A CMS rebuild delays stock invalidations by 3 minutes. What design change prevents this?",
+     "a": "Priority lanes: separate topics or consumer groups for volatile commerce data versus bulk content, with independent rate limits and capacity."
+    },
+    {
+     "q": "Why coalesce instead of processing every event?",
+     "a": "Invalidation is state-based, not delta-based: after the latest change is applied, earlier ones are irrelevant. Coalescing a hot item's 10 updates into one cuts sink load by 10x without losing correctness."
+    },
+    {
+     "q": "What is the risk of a too-long coalescing window?",
+     "a": "It adds directly to invalidation latency. A 250ms window fits a 2s budget; a 5s window would break it."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Invalidation source",
+   "options": "App-level deletes; transactional outbox; binlog CDC",
+   "choice": "Binlog CDC as correctness path, optional app delete for speed",
+   "why": "Only CDC captures every committed change including out-of-band writes; app delete shaves latency."
+  },
+  {
+   "decision": "Invalidate vs update caches on change",
+   "options": "Delete/soft purge; push new value (write-through to cache)",
+   "choice": "Delete/soft purge, with refresh on demand",
+   "why": "Pushing values to every layer and region is costly and ordering-sensitive; invalidation plus stale-while-revalidate gives freshness with one refill per object."
+  },
+  {
+   "decision": "Purge granularity",
+   "options": "URL purge; tag purge per entity; field-group tags; purge-all",
+   "choice": "Field-group surrogate keys, collapsing to coarser tags in bulk",
+   "why": "Balances precision (hit ratio) with completeness; purge-all is a last resort."
+  },
+  {
+   "decision": "Volatile fields in cached pages",
+   "options": "Embed and purge often; separate micro-cached endpoint; edge-side include",
+   "choice": "Separate micro-cached endpoint merged late",
+   "why": "Keeps large pages cacheable for long and limits purge volume to tiny objects."
+  },
+  {
+   "decision": "Soft vs hard purge",
+   "options": "Soft (mark stale); hard (delete)",
+   "choice": "Soft by default, hard for takedowns",
+   "why": "Soft purge prevents miss storms; hard purge when stale is unacceptable."
+  },
+  {
+   "decision": "Race protection",
+   "options": "Delayed double delete; leases; version-guarded sets",
+   "choice": "Version-guarded sets with tombstones plus delayed delete",
+   "why": "Versions are precise and idempotent; delayed delete covers replica lag cheaply."
+  },
+  {
+   "decision": "Cross-region",
+   "options": "Relay from primary region; invalidate from each region's own log",
+   "choice": "Each region's own CDC stream (or GTID-gated relay)",
+   "why": "Guarantees the region's DB has the change before its cache is invalidated."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Debezium connector stops",
+   "behavior": "Heartbeat table events stop arriving; alert within 30s; edge TTLs automatically shortened; connector restarts from stored binlog position and replays."
+  },
+  {
+   "failure": "Kafka partition leader failover",
+   "behavior": "Producer retries with idempotence; brief consumer pause; no loss with acks=all and min.insync.replicas=2."
+  },
+  {
+   "failure": "CDN purge API errors or throttling",
+   "behavior": "Retries with exponential backoff and jitter, queued in purger; if backlog exceeds budget, set short max-age on affected paths via edge config."
+  },
+  {
+   "failure": "Redis node failover during invalidation",
+   "behavior": "Delete may hit the old primary; retried on new primary; version guard prevents stale fills; TTL bounds residual staleness."
+  },
+  {
+   "failure": "Binlog position lost (e.g. purge of binlogs during long outage)",
+   "behavior": "Connector re-snapshots; invalidator treats snapshot as a full purge by namespace version bump rather than millions of individual deletes."
+  },
+  {
+   "failure": "Purge storm overloads origin",
+   "behavior": "Soft purge serves stale; shield collapses requests; origin admission control sheds low priority; bulk lane rate auto-throttles."
+  }
+ ],
+ "metrics": [
+  "End-to-end invalidation latency p50/p99 per layer (commit_ts to Redis ack, CDN purge ack, region B ack).",
+  "Kafka consumer lag (events and seconds) per lane.",
+  "Coalescing ratio (events in vs invalidations out).",
+  "CDN purge request rate, error rate, throttle count.",
+  "Stale read rate from the reconciler (cached version < DB version beyond budget).",
+  "Hit ratio per layer before and after purge bursts.",
+  "Origin miss QPS and revalidation rate.",
+  "Version-guard rejection count (stale-set races caught).",
+  "Heartbeat freshness of the CDC pipeline."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you know invalidation is actually working?",
+   "a": "Three signals: end-to-end latency from the ledger, a heartbeat row updated every second whose cached copy we read through every layer (synthetic freshness probe), and the reconciler's stale-read rate on real keys."
+  },
+  {
+   "q": "Why not just set very short TTLs everywhere?",
+   "a": "At 1M reads/s a 2s TTL across 100M objects pushes most long-tail reads to origin and drops hit ratio sharply. Event-driven invalidation lets stable content stay cached for minutes while still updating within seconds."
+  },
+  {
+   "q": "What would you do differently for a news site with breaking stories?",
+   "a": "Same pipeline, but front pages are high fan-out and change constantly, so I'd micro-cache them (5-10s) with stale-while-revalidate, and purge article pages by tag on edit. Edge-side includes for the 'latest' module."
+  },
+  {
+   "q": "How do you handle a cache that cannot be invalidated (third-party proxy, browser)?",
+   "a": "Control it through HTTP headers: short max-age with ETags so revalidation is cheap, and URL versioning (content hashes) for static assets so new versions get new URLs."
+  },
+  {
+   "q": "What is the hardest bug you'd expect here?",
+   "a": "A stale fill from a lagging replica during a lag spike - intermittent, unreproducible, and it lasts a full TTL. That is why I use GTID-gated reads or version-guarded sets rather than only delayed deletes."
+  },
+  {
+   "q": "How do you keep teams from forgetting to tag responses?",
+   "a": "Tagging is automatic in the shared data access layer: any entity fetched while rendering adds its tag. Plus a lint/test that fails if a cacheable response has no surrogate keys, and the reconciler catches the rest."
+  },
+  {
+   "q": "Could you push updates to caches instead of invalidating?",
+   "a": "For a few very hot keys, yes - refresh-ahead writes the new value right after the change. In general, pushing to every layer and region multiplies writes for data that may never be read; invalidation is lazier and cheaper."
+  }
+ ],
+ "key_points": [
+  "Split data by change rate; keep volatile fields out of large cached objects.",
+  "Drive invalidation from the database log (CDC), not from scattered application code.",
+  "Partition events by entity id and carry versions everywhere - ordering becomes a comparison.",
+  "At-least-once delivery plus idempotent deletes; commit offsets after sinks ack.",
+  "Guard fills with leases or version checks to kill the stale-set race.",
+  "Tag responses with every entity they include and purge by tag.",
+  "Soft purge with stale-while-revalidate so purges never become miss storms.",
+  "Gate cross-region invalidation on replication position.",
+  "TTL is the safety net; monitor commit-to-purge latency and stale-read rate."
+ ],
+ "quiz": [
+  {
+   "q": "Why is 'commit to DB, then delete the cache key in the same service' insufficient as the only invalidation path?",
+   "options": [
+    "Deletes are not idempotent",
+    "Redis cannot delete keys under load",
+    "It is a dual write and misses writes made outside that service",
+    "It violates CAP"
+   ],
+   "answer": 2,
+   "why": "A crash between commit and delete, or a batch/manual SQL write, leaves stale data. Deletes are idempotent, so that option is wrong."
+  },
+  {
+   "q": "Which mechanism captures manual SQL fixes made by a DBA?",
+   "options": [
+    "Transactional outbox",
+    "Binlog-based CDC",
+    "Application-level publish",
+    "Client-side TTL"
+   ],
+   "answer": 1,
+   "why": "The binlog records every committed change regardless of who made it. An outbox only covers code paths that write the outbox row."
+  },
+  {
+   "q": "A reader fetches v104, a writer commits v105 and deletes, then the reader SETs v104. What best prevents this?",
+   "options": [
+    "Lease tokens or a version-guarded set against a tombstone",
+    "Longer TTL",
+    "More Redis replicas",
+    "Hard purge at the CDN"
+   ],
+   "answer": 0,
+   "why": "The race is fixed by rejecting the late older fill. A longer TTL just keeps the stale value around longer."
+  },
+  {
+   "q": "Kafka is partitioned by entity id. What ordering do you get?",
+   "options": [
+    "Total order across all entities",
+    "No ordering at all",
+    "Order by wall-clock timestamp",
+    "Order per entity id, none across ids"
+   ],
+   "answer": 3,
+   "why": "Kafka orders within a partition, so per-key order is preserved. Total order would require a single partition."
+  },
+  {
+   "q": "After a consumer crash, invalidations are reprocessed. Why is this safe?",
+   "options": [
+    "Kafka prevents duplicates",
+    "Consumers keep an in-memory dedupe set",
+    "Deletes and version-guarded writes are idempotent",
+    "The CDN ignores duplicate purges"
+   ],
+   "answer": 2,
+   "why": "At-least-once delivery plus idempotent effects makes duplicates harmless. Kafka itself does not prevent consumer-side reprocessing."
+  },
+  {
+   "q": "20k updates/s, average fan-out 5 targets, 40% coalesced away. About how many invalidation targets per second?",
+   "options": [
+    "12k",
+    "60k",
+    "100k",
+    "200k"
+   ],
+   "answer": 1,
+   "why": "20k x 5 = 100k raw; removing 40% leaves 60k. 100k forgets coalescing."
+  },
+  {
+   "q": "A price change updated the product page but a category listing still shows the old price. Most likely cause?",
+   "options": [
+    "The listing response was not tagged with the product's surrogate key",
+    "Kafka lost the event",
+    "Replica lag",
+    "TTL too short"
+   ],
+   "answer": 0,
+   "why": "If the detail page updated, the event flowed; the listing simply was not linked to it. Replica lag would affect the detail page too."
+  },
+  {
+   "q": "Why prefer soft purge over hard purge for price changes?",
+   "options": [
+    "Soft purge is faster to propagate",
+    "Hard purge is not supported by CDNs",
+    "Soft purge guarantees consistency",
+    "Soft purge serves stale briefly while one revalidation refreshes, avoiding a miss storm"
+   ],
+   "answer": 3,
+   "why": "Marking stale lets the CDN keep serving and refresh once. It does not guarantee consistency; it trades a few hundred ms of staleness for origin protection."
+  },
+  {
+   "q": "A key gets 10k req/s and changes every 2 seconds. Best caching approach?",
+   "options": [
+    "Do not cache it",
+    "Cache for 10 minutes with event invalidation",
+    "Micro-cache with ~1s TTL",
+    "Cache only in the browser"
+   ],
+   "answer": 2,
+   "why": "A 1s TTL absorbs nearly all requests with tiny staleness. Not caching sends all 10k req/s to origin."
+  },
+  {
+   "q": "Invalidation fires at commit, and a miss refills from a replica 800ms behind. What happens?",
+   "options": [
+    "Nothing, replicas are consistent",
+    "The old value is re-cached with a full TTL",
+    "The read fails",
+    "Redis rejects the set automatically"
+   ],
+   "answer": 1,
+   "why": "This is the replica-lag stale fill. Without GTID gating or version guards Redis accepts any SET."
+  },
+  {
+   "q": "Best way to make region B's cache invalidation never precede region B's data?",
+   "options": [
+    "Drive B's invalidation from B's own replicated log or gate on B's GTID",
+    "Invalidate region B first",
+    "Use a longer TTL in region B",
+    "Disable caching in region B"
+   ],
+   "answer": 0,
+   "why": "B's binlog contains the change only after B applied it, so ordering is guaranteed. Longer TTLs worsen staleness."
+  },
+  {
+   "q": "A CMS rebuild delays stock invalidations by minutes. Best fix?",
+   "options": [
+    "Bigger Kafka cluster",
+    "Hard purge everything",
+    "Shorter TTL for CMS pages",
+    "Priority lanes with separate consumers and rate limits"
+   ],
+   "answer": 3,
+   "why": "Head-of-line blocking is solved by isolating lanes. More capacity helps temporarily but the bulk job can still swamp a shared queue."
+  },
+  {
+   "q": "Why commit Kafka offsets only after sinks acknowledge?",
+   "options": [
+    "To reduce latency",
+    "Kafka requires it",
+    "So a crash causes reprocessing rather than lost invalidations",
+    "To preserve order across partitions"
+   ],
+   "answer": 2,
+   "why": "Committing first risks skipping events whose deletes never happened. Ordering across partitions is not provided either way."
+  },
+  {
+   "q": "Which is the main downside of tagging listing pages with every product they contain?",
+   "options": [
+    "Header too small",
+    "Frequent purges of busy listings, lowering hit ratio",
+    "Tags break HTTP caching",
+    "Tags prevent soft purge"
+   ],
+   "answer": 1,
+   "why": "Every price or stock change on any product purges the page. Mitigate by moving volatile fields out or tagging at field-group level."
+  },
+  {
+   "q": "Kafka exactly-once semantics would make cache invalidation exactly-once.",
+   "options": [
+    "False - Redis deletes and CDN purges are outside Kafka transactions",
+    "True, EOS covers all side effects",
+    "True only with idempotent producers",
+    "False because Kafka has no transactions"
+   ],
+   "answer": 0,
+   "why": "EOS covers Kafka-to-Kafka processing. External effects still need idempotency. Kafka does have transactions, so the last option is wrong."
+  },
+  {
+   "q": "A scheduled deal must go live at 12:00 with no DB write at that time. What ensures caches flip?",
+   "options": [
+    "Nothing; wait for TTL",
+    "Hard purge at 11:59",
+    "Client-side polling",
+    "A scheduler emitting a synthetic change, plus TTL capped at publish_at"
+   ],
+   "answer": 3,
+   "why": "Synthetic events plus TTL capping guarantee timely expiry. A hard purge at 11:59 refills with the pre-deal content."
+  },
+  {
+   "q": "Which layer's purge API is most likely to be the rate-limiting step during a sale?",
+   "options": [
+    "Redis DEL",
+    "Kafka produce",
+    "CDN purge API",
+    "L1 pub/sub"
+   ],
+   "answer": 2,
+   "why": "CDN purge APIs have account-level limits; Redis and Kafka handle far higher rates. Hence batching tags per call."
+  },
+  {
+   "q": "What is delayed double delete's main weakness?",
+   "options": [
+    "It doubles Redis memory",
+    "It fails if replica lag exceeds the delay",
+    "It breaks ordering in Kafka",
+    "It disables TTL"
+   ],
+   "answer": 1,
+   "why": "Lag is unbounded during spikes; GTID gating or version guards are precise. Memory is unaffected."
+  },
+  {
+   "q": "Why keep a TTL when event-driven invalidation exists?",
+   "options": [
+    "To bound staleness when an invalidation is lost or wrong",
+    "To improve hit ratio",
+    "CDNs require TTLs",
+    "To reduce Kafka load"
+   ],
+   "answer": 0,
+   "why": "TTL is the backstop for every pipeline bug. It slightly lowers hit ratio rather than improving it."
+  },
+  {
+   "q": "Which content must bypass stale-while-revalidate?",
+   "options": [
+    "Product descriptions",
+    "Category banners",
+    "Search tiles",
+    "Legal takedowns"
+   ],
+   "answer": 3,
+   "why": "Content that must vanish immediately needs a hard purge. The others tolerate a short stale window."
+  },
+  {
+   "q": "Best synthetic check that the whole invalidation path works end to end?",
+   "options": [
+    "Ping Redis",
+    "Check Kafka broker CPU",
+    "A heartbeat row updated every second, read through every cache layer and compared",
+    "Count CDN purge calls"
+   ],
+   "answer": 2,
+   "why": "A canary that writes and reads through all layers measures true freshness. Purge counts show activity, not correctness."
+  },
+  {
+   "q": "Coalescing window raised from 250ms to 5s to save purge calls. Main effect?",
+   "options": [
+    "Better freshness",
+    "Invalidation latency rises by up to 5s, breaking a 2s budget",
+    "No effect",
+    "Lost updates"
+   ],
+   "answer": 1,
+   "why": "The window adds directly to latency. Updates are not lost because the newest version is kept."
+  }
+ ],
+ "references": [
+  {
+   "title": "Automating cache invalidation with change data capture (Debezium blog)",
+   "url": "https://debezium.io/blog/2018/12/05/automating-cache-invalidation-with-change-data-capture"
+  },
+  {
+   "title": "Scaling Memcache at Facebook (USENIX NSDI 2013)",
+   "url": "https://www.usenix.org/node/172909"
+  },
+  {
+   "title": "Memcache FAQ (MIT 6.824)",
+   "url": "https://pdos.csail.mit.edu/6.824/papers/memcache-faq.txt"
+  },
+  {
+   "title": "Fastly purging API reference",
+   "url": "https://fastly.com/documentation/reference/api/purging/"
+  },
+  {
+   "title": "Fastly surrogate keys: a better way to purge API caches",
+   "url": "https://hackernoon.com/fastly-surrogate-keys-a-better-way-to-purge-api-caches"
+  },
+  {
+   "title": "Cache-Tag header (http.dev)",
+   "url": "https://http.dev/cache-tag"
+  }
+ ]
+}

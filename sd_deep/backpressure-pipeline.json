@@ -1,0 +1,1190 @@
+{
+ "slug": "backpressure-pipeline",
+ "title": "Design backpressure for a write-heavy pipeline",
+ "prompt": "Design backpressure for a write-heavy pipeline.",
+ "group": "messaging",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 90,
+ "summary": "A write-heavy pipeline breaks when producers can push faster than the slowest stage (usually the database) can absorb, and every unbounded queue between them silently converts overload into memory exhaustion and latency. The core tension is where to put the slack: absorb bursts in a durable log, slow producers down with explicit signals, or drop and degrade, while keeping the system stable under a 10x spike and never losing acknowledged data.",
+ "framework": {
+  "clarify": [
+   "What is the write pattern: steady 50k events/s with 5-10x bursts during sale events, or a constant firehose? Bursts change the answer from 'add capacity' to 'add buffering plus admission control'.",
+   "Which stage is the bottleneck today: the sink database (most common), an external API with a quota, or CPU in a transform step? Backpressure is designed around the slowest stage.",
+   "Can producers be slowed down or told to retry (our own services and SDKs), or are they uncontrollable (third-party webhooks, IoT devices that cannot buffer)?",
+   "What is the acceptable end-to-end freshness: seconds, minutes, or 'eventually within an hour'? That decides how much durable lag we can tolerate before shedding.",
+   "Are all writes equal? I will assume priority classes: orders and payments are critical, clickstream and logs are sheddable or sample-able.",
+   "Durability contract: once we return 2xx, the write must never be lost. Before that, the client owns the retry. Is that acceptable?",
+   "Ordering and idempotency: do we need per-key ordering (e.g. per order id), and does every event carry an idempotency key so retries are safe?",
+   "Multi-tenant? If yes, one noisy tenant must not starve others, so we need per-tenant quotas and fair queuing."
+  ],
+  "design": [
+   "Baseline: producers call the ingest API, which writes synchronously to the database. Show that under a 10x burst this fails: DB latency climbs, threads pile up, timeouts trigger retries, and retries amplify load into a metastable collapse.",
+   "Insert a durable buffer (Kafka, 3 replicas, min.insync.replicas=2, 7 days retention) between ingest and sink, so the producer-facing path only depends on an append, and the sink is drained by pull-based consumers at the rate it can sustain.",
+   "Bound every in-memory queue: ingest pods keep a bounded buffer (e.g. 10k messages or 64 MB); when full, the API returns 429/503 with Retry-After instead of growing memory. Bounded queues are what turn overload into a signal.",
+   "Consumers use a bounded worker pool plus pause()/resume() on partitions, and an AIMD concurrency limiter on sink writes driven by observed p99 latency and error rate, so they slow down before the database falls over.",
+   "A Pressure Controller aggregates consumer lag, sink p99 and buffer occupancy, and pushes admission rates back to the gateway: per-tenant token buckets shrink when pressure rises, priority classes are shed in order (debug logs, then clickstream, never orders).",
+   "Critical path end to end: client token bucket -> gateway admission -> bounded buffer -> idempotent Kafka produce (acks=all) -> 202 -> consumer poll -> batched idempotent upsert -> commit offset; poison messages go to a DLQ after 3 attempts.",
+   "Client contract: SDK retries with exponential backoff and full jitter, honours Retry-After, has a retry budget (max 10% extra traffic), and buffers locally where possible."
+  ],
+  "defend": [
+   "Bottleneck: the sink DB write path. Scale it by batching (500 rows per UPSERT cuts per-row overhead 10-50x), partitioning writes by key across shards, and making writes idempotent so redelivery is harmless.",
+   "Scaling writes into the buffer: Kafka partitions scale linearly (each partition comfortably handles 10+ MB/s), so we size partitions for peak and use broker quotas per client id so one producer cannot saturate the cluster.",
+   "Scaling consumers: consumer parallelism is capped by partition count, so we over-provision partitions (e.g. 3x current need) and autoscale consumers on lag-in-seconds, not CPU, with a ceiling equal to what the DB can take.",
+   "Failure behaviour: timeouts at every hop (gateway 2s, produce 5s, DB 500ms), retries only with jitter and a budget, circuit breaker on the sink that opens after 50% errors in 10s, bulkheads so critical-class consumers have their own pool and topic.",
+   "Degradation ladder: (1) absorb in Kafka lag, (2) slow producers with 429 + Retry-After, (3) sample or drop low-priority classes, (4) spill to cheap object storage for later replay. Each step is automatic and reversible.",
+   "Measure: consumer lag in seconds per partition, buffer occupancy, 429 rate per tenant, sink p99 and error rate, retry rate as a percentage of traffic (the early warning for retry storms), and end-to-end freshness."
+  ],
+  "script": "Backpressure is about one thing: making the fastest part of the system respect the slowest part, without losing acknowledged data. Before drawing anything I want to pin down the burst profile, which stage is the bottleneck, whether producers can be slowed, the freshness SLO, and which writes are sheddable. I will assume about 50 thousand writes per second steady, 500 thousand at a sale peak, a sink database that can sustain around 80 thousand, and a hard rule that a 2xx means durable. The design is a pipeline of bounded queues. Producers go through a gateway with per-tenant token buckets. Ingest pods hold a small bounded buffer and append to Kafka with acks equal all, which is our shock absorber and lets us return 202 quickly. Consumers pull at the rate the database can take, with an adaptive concurrency limiter, batched idempotent upserts, and pause and resume on partitions. A pressure controller watches lag and database latency and tightens admission at the edge, shedding low-priority classes first. To defend it: retries use jitter and a budget so we never get a retry storm, every hop has a timeout and a circuit breaker, critical traffic has its own bulkhead, and I alert on lag in seconds and retry ratio, not CPU."
+ },
+ "brd": {
+  "problem": "During high-traffic events (sale launches, flash deals, end-of-month batch imports), the platform's write pipelines receive 5-10x their normal load within seconds. Today, overload cascades: the database slows, ingest threads block, clients time out and retry, and the retries multiply load until the pipeline collapses and stays down even after the burst ends. This loses orders and analytics data, breaks SLAs to downstream teams and costs revenue during exactly the hours that matter most.",
+  "goals": [
+   "Zero loss of acknowledged writes under any burst up to 10x steady state.",
+   "Graceful degradation: low-priority traffic is slowed or shed before critical traffic is affected.",
+   "Recover automatically within minutes after a burst, with no manual intervention and no metastable failure.",
+   "Fairness across tenants: one team's runaway producer cannot starve others.",
+   "Provide clear, standard backpressure signals (429/503 + Retry-After, quotas) that all producer SDKs honour."
+  ],
+  "non_goals": [
+   "Making the sink database itself infinitely scalable; we protect it rather than replace it.",
+   "Exactly-once end-to-end semantics across arbitrary sinks; we deliver at-least-once with idempotent writes.",
+   "Real-time (sub-second) freshness for every class; low-priority data may lag by minutes during peaks.",
+   "Rewriting every producer; we ship an SDK and gateway contract, not bespoke changes per team."
+  ],
+  "stakeholders": [
+   {
+    "who": "Producer teams (checkout, catalog, clickstream)",
+    "needs": "A stable write API with predictable latency and clear guidance when to retry."
+   },
+   {
+    "who": "Database / storage platform team",
+    "needs": "Protection from overload and write storms that degrade shared clusters."
+   },
+   {
+    "who": "Downstream consumers (analytics, search indexing, finance)",
+    "needs": "Bounded, visible freshness and no silent data loss."
+   },
+   {
+    "who": "SRE / on-call",
+    "needs": "Dashboards and alerts that show pressure before an outage and automatic degradation that does not page at 3 am."
+   },
+   {
+    "who": "Business (sale-event owners)",
+    "needs": "Orders and payments always flow during peaks, even if dashboards lag."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Acknowledged-write loss",
+    "target": "0 events per quarter (verified by reconciliation counts)"
+   },
+   {
+    "metric": "Critical-class ingest availability during peaks",
+    "target": ">= 99.95%"
+   },
+   {
+    "metric": "Time to drain lag after a 10x, 15-minute burst",
+    "target": "< 20 minutes"
+   },
+   {
+    "metric": "Retry traffic as share of total during incidents",
+    "target": "< 10%"
+   },
+   {
+    "metric": "Sink DB p99 write latency under peak",
+    "target": "< 50 ms (no saturation)"
+   },
+   {
+    "metric": "Pages caused by pipeline overload",
+    "target": "-80% vs previous sale season"
+   }
+  ],
+  "constraints": [
+   "Sink database capacity is fixed for the event (approx 80k row writes/s sustained); no emergency resharding mid-sale.",
+   "Mobile and partner producers are on flaky networks and old SDK versions; some cannot be changed quickly.",
+   "Kafka cluster is shared; we must stay within broker quotas and disk budget (7 days retention at peak rates).",
+   "Cost: buffer capacity must be provisioned without doubling infra spend for a few peak days per year."
+  ],
+  "risks": [
+   {
+    "risk": "Retry storms amplify overload into a metastable failure.",
+    "mitigation": "Retry budgets, full jitter, Retry-After honouring, and server-side load shedding that is cheap (reject before doing work)."
+   },
+   {
+    "risk": "Buffer fills disk during a long sink outage.",
+    "mitigation": "Retention sized for 24h of peak lag, disk alerts at 70%, spill to object storage, shed low-priority classes first."
+   },
+   {
+    "risk": "Shedding drops data a team considered important.",
+    "mitigation": "Explicit priority classes agreed per topic with owners; shed events are counted and sampled to S3 for audit."
+   },
+   {
+    "risk": "Adaptive limiter oscillates and under-utilises the DB.",
+    "mitigation": "AIMD with smoothing windows, min/max bounds, load tests at 1x/5x/10x before every sale."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Producer service engineer",
+    "needs": "A simple SDK: send, get 2xx or a clear retry signal, never block the request thread indefinitely."
+   },
+   {
+    "name": "Pipeline on-call SRE",
+    "needs": "See which stage is pressured, which tenant is causing it, and whether degradation is working."
+   },
+   {
+    "name": "Data consumer (analyst / search indexer)",
+    "needs": "Know how stale the data is and trust that nothing acknowledged was dropped."
+   }
+  ],
+  "user_stories": [
+   "As a checkout engineer, I want order events accepted even during a 10x peak so that no order is lost.",
+   "As a clickstream producer, I want a 429 with Retry-After when the pipeline is pressured so that my SDK backs off instead of hammering it.",
+   "As an SRE, I want consumer lag shown in seconds per topic so that I know exactly how stale each sink is.",
+   "As a DB owner, I want consumers to reduce write concurrency automatically when p99 rises so that the cluster never saturates.",
+   "As a platform owner, I want per-tenant quotas so that one runaway producer cannot starve others.",
+   "As a data consumer, I want poison messages isolated in a DLQ with replay so that one bad record does not block a partition.",
+   "As an incident commander, I want a manual override to shed a class or pause a topic so that I can protect critical flows quickly.",
+   "As a finance analyst, I want reconciliation counts (produced vs persisted) so that I can prove there was no loss."
+  ],
+  "functional": [
+   "Accept writes via HTTP/gRPC with idempotency key, tenant id, priority class and payload (max 1 MB).",
+   "Enforce per-tenant and per-class token-bucket rate limits at the gateway, returning 429 with Retry-After when exceeded.",
+   "Hold a bounded in-memory buffer per ingest pod; return 503 with Retry-After when full instead of queuing unboundedly.",
+   "Persist accepted writes to a replicated log before acknowledging (acks=all, min ISR 2).",
+   "Drain the log with pull-based consumers that batch, upsert idempotently, and adapt concurrency to sink latency.",
+   "Pause/resume partitions when the local worker queue is full; never pull more than can be processed.",
+   "Route messages that fail 3 attempts to a DLQ topic with error metadata and support replay.",
+   "Compute a pressure level (green/yellow/orange/red) from lag, buffer occupancy and sink latency and publish it to gateways every 1-5 s.",
+   "Shed or sample traffic by priority class according to the pressure level; count every shed event.",
+   "Expose admin APIs to change quotas, pause topics and override pressure level."
+  ],
+  "non_functional": [
+   {
+    "name": "Ingest latency",
+    "target": "p99 < 50 ms for 2xx responses at 10x load (only append, no DB work)"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95% for critical class; 99.9% for others (429 counts as available-by-design)"
+   },
+   {
+    "name": "Durability",
+    "target": "Acknowledged writes survive loss of 1 broker and 1 AZ; RPO 0"
+   },
+   {
+    "name": "Freshness",
+    "target": "Critical class lag < 5 s p99; low-priority lag < 15 min during peaks"
+   },
+   {
+    "name": "Stability",
+    "target": "No metastable failure: throughput returns to baseline within 5 min after load drops"
+   },
+   {
+    "name": "Fairness",
+    "target": "No tenant receives less than its guaranteed quota while another exceeds its own"
+   },
+   {
+    "name": "Memory safety",
+    "target": "No unbounded queue anywhere; pod memory < 70% at peak"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "Steady 50k writes/s, peak 500k writes/s for up to 15 minutes during sale launches.",
+    "Average event 1 KB; critical class (orders/payments) is 5% of volume.",
+    "Sink DB sustains 80k row upserts/s with batching; 20k/s without batching.",
+    "Kafka replication factor 3, retention 7 days."
+   ],
+   "math": [
+    "Ingest bandwidth at peak: 500k/s x 1 KB = 500 MB/s in; x3 replication = 1.5 GB/s broker write; with ~50 MB/s comfortable per broker-disk that is about 30 brokers worth of write headroom, so plan 36 brokers (or fewer with NVMe at 100+ MB/s).",
+    "Burst backlog: (500k - 80k) x 900 s = 378M events = ~378 GB of lag at the end of a 15-minute peak.",
+    "Drain time after peak returns to 50k/s: spare sink capacity 30k/s, so 378M / 30k = 12,600 s = 3.5 h. Too slow, so we shed or sample clickstream (say 70% of volume) during red, cutting backlog to ~110M and drain to ~1 h, while critical class (25k/s at peak) is always within DB capacity.",
+    "Storage: steady 50k/s x 1 KB x 86,400 = 4.3 TB/day; x3 replicas x 7 days = ~90 TB of Kafka disk, plus peak headroom: provision 120 TB.",
+    "Partitions: target 5 MB/s per partition at peak => 500 MB/s / 5 = 100 partitions for the main topic; round up to 128 to allow consumer scale-out.",
+    "Ingest pods: each handles ~10k req/s; peak 500k/s => 50 pods + 30% headroom = 65 pods; each buffer capped at 10k msgs (10 MB), so worst-case memory per pod for buffer is small and bounded."
+   ],
+   "summary": "The pipeline must accept 500 MB/s at peak but the database can only absorb about 16% of that, so roughly 380 GB of backlog accumulates per 15-minute burst; Kafka absorbs it cheaply, and admission control plus shedding of low-priority classes keeps drain time near an hour while critical writes stay real-time."
+  },
+  "out_of_scope": [
+   "Designing the sink database schema or resharding strategy.",
+   "Stream processing semantics (windowing, joins) on the data.",
+   "Cross-region active-active replication of the log.",
+   "Client UI behaviour when a 429 is returned to an end user."
+  ]
+ },
+ "hld": {
+  "overview": "The system is a chain of bounded queues with an explicit feedback loop. At the edge, a gateway enforces per-tenant, per-class token buckets and asks a Pressure Controller how much to admit. Stateless ingest pods hold a small bounded buffer and append to a replicated Kafka topic with idempotent producers and acks=all, acknowledging only after durable append. Consumers pull from Kafka, run a bounded worker pool, and write batched idempotent upserts to the sink through an adaptive concurrency limiter and a circuit breaker. Lag, buffer occupancy and sink latency flow into the Pressure Controller, which computes a pressure level and pushes tighter admission rates and shedding rules back to the gateway. Critical traffic has separate topics, consumer groups and quotas (bulkheads). A DLQ and replay tool isolate poison messages.",
+  "diagram": "\n Producers (apps, SDKs, CDC)\n   |  HTTPS/gRPC, client token bucket, retry w/ jitter, Retry-After honoured\n   v\n+------------------+   429 / 503 + Retry-After when shedding\n|  Edge / Gateway  |---------------------------------------------> back to client\n|  per-tenant rate |\n|  limit, admission|<---- pressure signal (lag, queue depth, p99) ----+\n+--------+---------+                                                  |\n         | bounded in-memory buffer (N msgs / M bytes)                |\n         v                                                            |\n+------------------+   acks=all, linger 10ms, batch 256KB,            |\n| Ingest service   |   max.in.flight=5, idempotent producer           |\n| (stateless pods) |----------------------------+                     |\n+------------------+                            v                     |\n                                    +-----------------------+         |\n                                    | Kafka (durable buffer)|         |\n                                    | 3x replicas, minISR 2 |         |\n                                    | 7d retention, quotas  |         |\n                                    +-----------+-----------+         |\n                                                | pull (consumer controls rate)\n                                                v                     |\n                                    +-----------------------+         |\n                                    | Consumers / workers   |--lag--->+\n                                    | bounded worker pool,  |   Pressure Controller\n                                    | pause()/resume(),     |   (AIMD, thresholds)\n                                    | circuit breaker on DB |         |\n                                    +-----+------------+----+         |\n                                          |            |              |\n                              batched UPSERT      poison msgs         |\n                                          v            v              |\n                                 +-------------+  +-----------+       |\n                                 | Sink DB     |  | DLQ topic |       |\n                                 | (Cassandra/ |  | + replay  |       |\n                                 |  Postgres)  |  +-----------+       |\n                                 +------+------+                      |\n                                        |  write latency, errors -----+\n",
+  "components": [
+   {
+    "name": "Producer SDK",
+    "responsibility": "Client-side token bucket, exponential backoff with full jitter, honours Retry-After, retry budget (10%), local bounded spool for mobile/edge."
+   },
+   {
+    "name": "API Gateway / Admission Control",
+    "responsibility": "Authenticates, classifies by tenant and priority, enforces token buckets whose rates come from the Pressure Controller, rejects early (cheap) with 429/503."
+   },
+   {
+    "name": "Ingest Service",
+    "responsibility": "Validates payload, attaches idempotency key, writes into a bounded buffer, produces to Kafka in batches (linger 10 ms, batch 256 KB), returns 202 after ack."
+   },
+   {
+    "name": "Kafka Cluster (durable buffer)",
+    "responsibility": "Absorbs bursts on disk; RF=3, min ISR 2, 7-day retention; per-client-id produce quotas; separate topics per priority class."
+   },
+   {
+    "name": "Consumer Workers",
+    "responsibility": "Pull batches (max.poll.records 500), process with bounded worker pool, pause partitions when local queue is full, commit offsets only after sink write succeeds."
+   },
+   {
+    "name": "Adaptive Concurrency Limiter",
+    "responsibility": "AIMD or gradient limiter around sink writes; increases in-flight writes while latency is healthy, halves on latency spike or errors."
+   },
+   {
+    "name": "Sink Writer + Circuit Breaker",
+    "responsibility": "Batched idempotent UPSERTs; opens the breaker on sustained errors to stop hammering a failing DB, half-opens to probe."
+   },
+   {
+    "name": "Pressure Controller",
+    "responsibility": "Aggregates lag-in-seconds, buffer occupancy, sink p99 and errors every second; computes level green/yellow/orange/red with hysteresis; publishes admission rates and shed rules."
+   },
+   {
+    "name": "DLQ + Replay Service",
+    "responsibility": "Stores messages that fail N attempts with error context; supports rate-limited replay after fix."
+   },
+   {
+    "name": "Spill-to-Object-Store",
+    "responsibility": "In red state, low-priority events are written to S3/GCS in compressed batches for later backfill instead of being dropped."
+   },
+   {
+    "name": "Observability",
+    "responsibility": "Metrics, traces and reconciliation counters (produced, persisted, shed, DLQ) per topic and tenant."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Normal write (green)",
+    "steps": [
+     "Producer SDK takes a token from its local bucket and POSTs the event with idempotency key.",
+     "Gateway checks tenant/class token bucket; admits.",
+     "Ingest pod enqueues into bounded buffer (occupancy < 50%).",
+     "Batch produced to Kafka with acks=all; broker acks after 2 of 3 replicas have it.",
+     "Ingest returns 202 Accepted; p99 around 20 ms.",
+     "Consumer polls 500 records, processes in worker pool, upserts batch of 500 rows, commits offsets."
+    ]
+   },
+   {
+    "name": "Burst with sink saturation (orange to red)",
+    "steps": [
+     "Traffic jumps 10x; Kafka absorbs, consumer lag grows from 1 s to 60 s.",
+     "Sink p99 rises from 15 ms to 80 ms; AIMD limiter halves in-flight writes from 64 to 32, protecting the DB.",
+     "Consumer local queues fill; consumers pause() partitions instead of buffering in memory.",
+     "Pressure Controller sees lag > 120 s on clickstream and moves to orange: gateway cuts clickstream admission to 50% and sampling begins; critical class untouched.",
+     "If lag exceeds 15 min or Kafka disk > 70%, red: clickstream spilled to object storage, debug logs dropped (counted), 429 with Retry-After 5 s to low-priority tenants.",
+     "SDKs back off with jitter; retry ratio stays under 10%.",
+     "Burst ends; with hysteresis the controller steps down one level every 2 minutes as lag drains; spilled data backfilled off-peak."
+    ]
+   },
+   {
+    "name": "Poison message",
+    "steps": [
+     "Consumer fails to process a record (schema error) three times with backoff.",
+     "Record with error metadata is produced to the DLQ; offset is committed so the partition continues.",
+     "Alert fires if DLQ rate > 0.1%; engineers fix and replay at a capped rate."
+    ]
+   }
+  ],
+  "data_flow": "Events flow producer -> gateway -> bounded ingest buffer -> Kafka topic (per priority class) -> consumer worker pool -> batched idempotent upsert into the sink. Control signals flow the opposite way: sink latency and errors shape consumer concurrency; consumer lag, buffer occupancy and broker disk feed the Pressure Controller; the controller adjusts gateway token-bucket rates and shed rules; the gateway signals clients with 429/503 and Retry-After; SDKs back off. Every arrow carrying data has a bounded queue and every bounded queue emits a fullness signal upstream."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/events",
+    "request": "{tenant_id, class: critical|standard|bulk, idempotency_key, key, payload, ts}",
+    "response": "202 {event_id, offset} | 429 {retry_after_ms} | 503 {retry_after_ms, reason: buffer_full}",
+    "notes": "Headers Retry-After and X-Pressure-Level always set; payload <= 1 MB; batch variant accepts up to 500 events."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/events:batch",
+    "request": "{tenant_id, class, events:[{idempotency_key, key, payload}] (<=500)}",
+    "response": "207 {results:[{index, status, retry_after_ms?}]}",
+    "notes": "Partial acceptance allowed; client retries only rejected indexes."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/pressure",
+    "request": "?topic=orders",
+    "response": "{level: green|yellow|orange|red, admit_rate, lag_seconds, updated_at}",
+    "notes": "Polled by gateways and smart SDKs every 1-5 s; cached."
+   },
+   {
+    "method": "PUT",
+    "path": "/admin/v1/quotas/{tenant_id}",
+    "request": "{class, rate_per_s, burst}",
+    "response": "200 {applied_at}",
+    "notes": "Audited; propagates to all gateway nodes within 5 s."
+   },
+   {
+    "method": "POST",
+    "path": "/admin/v1/topics/{topic}:override",
+    "request": "{level | pause: true, ttl_s}",
+    "response": "200",
+    "notes": "Manual incident lever; expires automatically."
+   },
+   {
+    "method": "POST",
+    "path": "/admin/v1/dlq/{topic}:replay",
+    "request": "{from_ts, to_ts, rate_per_s}",
+    "response": "202 {job_id}",
+    "notes": "Replay is itself rate limited to avoid re-overloading the sink."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Event (log record)",
+    "store": "Kafka topic events.<class>",
+    "fields": [
+     "key (partition key, e.g. order_id)",
+     "idempotency_key",
+     "tenant_id",
+     "class",
+     "payload (Avro/Protobuf)",
+     "produced_at",
+     "attempt"
+    ],
+    "keys": "Partitioned by hash(key) mod 128 for per-key ordering",
+    "notes": "RF=3, min.insync.replicas=2, retention 7 d, compression lz4."
+   },
+   {
+    "entity": "Sink row",
+    "store": "Cassandra or sharded Postgres",
+    "fields": [
+     "pk (business key)",
+     "idempotency_key",
+     "version / event_ts",
+     "data",
+     "updated_at"
+    ],
+    "keys": "Primary key = business key; upsert with 'only if event_ts newer' guard",
+    "notes": "Idempotent: redelivered event overwrites with same or older version and is a no-op."
+   },
+   {
+    "entity": "Quota",
+    "store": "Config store (etcd / Postgres) + in-memory on gateways",
+    "fields": [
+     "tenant_id",
+     "class",
+     "rate_per_s",
+     "burst",
+     "guaranteed_rate",
+     "updated_at"
+    ],
+    "keys": "PK (tenant_id, class)",
+    "notes": "Gateway-local token buckets; global reconciliation every few seconds."
+   },
+   {
+    "entity": "Pressure state",
+    "store": "Redis / controller memory, published via pub-sub",
+    "fields": [
+     "topic",
+     "level",
+     "lag_seconds",
+     "sink_p99_ms",
+     "buffer_occupancy",
+     "admit_multiplier",
+     "since"
+    ],
+    "keys": "topic",
+    "notes": "Hysteresis: must stay below threshold for 2 min to step down."
+   },
+   {
+    "entity": "DLQ record",
+    "store": "Kafka topic dlq.<topic> + index in Postgres",
+    "fields": [
+     "original topic/partition/offset",
+     "payload",
+     "error_class",
+     "error_msg",
+     "attempts",
+     "first_failed_at"
+    ],
+    "keys": "Index by (topic, error_class, first_failed_at)",
+    "notes": "Retention 14 d; replay jobs reference ranges."
+   }
+  ],
+  "classes": [
+   {
+    "name": "TokenBucket",
+    "responsibility": "Per tenant/class admission at gateway with refill rate set dynamically.",
+    "methods": [
+     "try_acquire(n) -> bool",
+     "set_rate(rate, burst)",
+     "wait_hint_ms() -> int"
+    ]
+   },
+   {
+    "name": "BoundedBuffer",
+    "responsibility": "Fixed-capacity queue in ingest pods; reject on full rather than block forever.",
+    "methods": [
+     "offer(evt, timeout_ms) -> bool",
+     "drain(max_n, max_bytes) -> list",
+     "occupancy() -> float"
+    ]
+   },
+   {
+    "name": "AimdLimiter",
+    "responsibility": "Adaptive in-flight limit for sink writes.",
+    "methods": [
+     "acquire() -> Permit|None",
+     "on_success(latency_ms)",
+     "on_drop_or_timeout()",
+     "limit() -> int"
+    ]
+   },
+   {
+    "name": "PartitionFlowController",
+    "responsibility": "Pauses/resumes Kafka partitions based on local worker queue depth.",
+    "methods": [
+     "on_poll(records)",
+     "maybe_pause()",
+     "maybe_resume()"
+    ]
+   },
+   {
+    "name": "CircuitBreaker",
+    "responsibility": "Stops calls to a failing sink and probes recovery.",
+    "methods": [
+     "allow() -> bool",
+     "record(success: bool)",
+     "state() -> CLOSED|OPEN|HALF_OPEN"
+    ]
+   },
+   {
+    "name": "PressureController",
+    "responsibility": "Computes level with hysteresis and publishes admission multipliers.",
+    "methods": [
+     "ingest_metrics(snapshot)",
+     "compute_level() -> Level",
+     "publish(level, multipliers)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "AIMD adaptive concurrency for sink writes",
+    "explain": "Like TCP congestion control: increase the number of in-flight writes by 1 every time a full window succeeds within the latency target, and multiply by 0.5 when latency exceeds the target or an error/timeout occurs. This finds the DB's knee automatically and backs off fast when it degrades. Bounds keep it between a floor (so we never stop) and a ceiling (agreed DB capacity).",
+    "pseudocode": "limit = 16; MIN = 4; MAX = 128; TARGET_P99 = 50ms\nin_flight = 0; successes = 0\n\ndef acquire():\n    if in_flight >= limit: return None   # caller pauses partition\n    in_flight += 1; return Permit()\n\ndef on_complete(latency_ms, ok):\n    in_flight -= 1\n    if not ok or latency_ms > TARGET_P99:\n        limit = max(MIN, int(limit * 0.5))   # multiplicative decrease\n        successes = 0\n    else:\n        successes += 1\n        if successes >= limit:              # one full window healthy\n            limit = min(MAX, limit + 1)      # additive increase\n            successes = 0"
+   },
+   {
+    "name": "Pressure level with hysteresis and priority shedding",
+    "explain": "Compute a score from the worst of several normalised signals, map it to a level, and only step down after the signal has been healthy for a hold period to avoid flapping. Each level maps to admission multipliers per class; critical is never reduced below its guaranteed rate.",
+    "pseudocode": "def score(m):\n    return max(m.lag_s / LAG_RED, m.buffer_occ / 0.9,\n               m.sink_p99 / P99_RED, m.kafka_disk / 0.85)\n\nLEVELS = [(0.5,'green'),(0.7,'yellow'),(0.9,'orange'),(inf,'red')]\nMULT = {'green':  {'critical':1,'standard':1,  'bulk':1},\n        'yellow': {'critical':1,'standard':1,  'bulk':0.5},\n        'orange': {'critical':1,'standard':0.7,'bulk':0.1},\n        'red':    {'critical':1,'standard':0.4,'bulk':0}}   # bulk spilled\n\ndef tick(m):\n    target = first(l for t,l in LEVELS if score(m) < t)\n    if rank(target) > rank(current): current = target; since = now()\n    elif rank(target) < rank(current) and now()-since > 120s:\n        current = step_down(current); since = now()\n    publish(current, MULT[current])"
+   },
+   {
+    "name": "Client retry with full jitter and retry budget",
+    "explain": "Clients wait a random time between 0 and min(cap, base * 2^attempt), or the server's Retry-After if larger. A token-based retry budget allows retries only up to 10% of recent successful requests so that, under overload, retries cannot multiply traffic.",
+    "pseudocode": "budget = TokenBucket(rate = 0.1 * success_rate)\nfor attempt in range(MAX_ATTEMPTS):\n    resp = send(evt)\n    if resp.ok: budget.deposit(0.1); return\n    if resp.status not in (429, 503, 504): raise\n    if not budget.try_acquire(1): spool_or_fail(evt); return\n    backoff = random.uniform(0, min(CAP, BASE * 2**attempt))\n    sleep(max(backoff, resp.retry_after_ms))"
+   }
+  ],
+  "sequence": "\nClient      Gateway        Ingest        Kafka        Consumer       SinkDB     Controller\n  |  POST /events |             |            |              |             |            |\n  |-------------->| tokens ok?  |            |              |             |            |\n  |               |-- yes ----->| buffer<cap?|              |             |            |\n  |               |             |-- produce ->| ack(ISR=2)  |             |            |\n  |<-- 202 -------|<------------|<-----------|              |             |            |\n  |               |             |            |<-- poll(500)-|             |            |\n  |               |             |            |-- batch ---->| semaphore   |            |\n  |               |             |            |              |-- UPSERT -->| p99 rising |\n  |               |             |            |              |<-- slow ----|----------->|\n  |               |             |            |              | AIMD: halve concurrency  |\n  |               |             |            |              |<------------- lag grows -|\n  |               |<----------- lower admit rate (tenant quota x0.7) -------------------|\n  |  POST /events |             |            |              |             |            |\n  |-------------->| no tokens   |            |              |             |            |\n  |<-- 429, Retry-After: 2s ----|            |              |             |            |\n  |  (sleep 2s + jitter, retry) |            |              | commit offsets after write|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Retry storm after a brief DB hiccup: clients time out and all retry at the same moment.",
+   "handling": "Full jitter spreads retries; retry budgets cap them at ~10% of traffic; gateway rejects cheaply (before parsing body) when pressured; server-side dedup via idempotency key makes accidental double-delivery harmless."
+  },
+  {
+   "case": "Metastable failure: load returns to normal but the system stays down because queues are full of timed-out work.",
+   "handling": "Drop work whose client deadline has passed (propagate deadline headers), use LIFO or CoDel-style queue discipline in ingest buffers under overload, shed retries first, and use hysteresis to recover gradually."
+  },
+  {
+   "case": "Hot partition: one key (a celebrity seller or a single big order batch) sends 30% of traffic to one partition.",
+   "handling": "Detect per-partition lag skew; for keys that do not need ordering, salt the key (key#0..7); for ordered keys, give that tenant a dedicated topic or rate limit it; consumer parallelism within partition by key-level sub-queues."
+  },
+  {
+   "case": "Slow consumer is mistaken for dead and rebalances repeatedly (max.poll.interval exceeded while processing a large batch).",
+   "handling": "Smaller max.poll.records, process asynchronously with pause()/resume() while still calling poll(), cooperative-sticky rebalancing, and set max.poll.interval.ms realistically (e.g. 5 min)."
+  },
+  {
+   "case": "Duplicate events after consumer crash between sink write and offset commit.",
+   "handling": "At-least-once is expected; sink upserts are idempotent keyed on business key and version, so replaying the batch is a no-op."
+  },
+  {
+   "case": "Kafka disk filling during a multi-hour sink outage.",
+   "handling": "Alert at 70% disk; red level stops admitting bulk class; spill bulk to object storage; retention is time-based but sized for 24h peak lag; as last resort extend cluster with pre-provisioned brokers."
+  },
+  {
+   "case": "Poison message blocks a partition (consumer crashes on it every time).",
+   "handling": "Bounded attempts (3) with backoff, then DLQ with metadata and commit offset; catch deserialisation errors separately; alert on DLQ rate."
+  },
+  {
+   "case": "Uncontrollable producers (third-party webhooks) that ignore 429s.",
+   "handling": "Accept into a dedicated, cheap, write-only queue and acknowledge, or respond 503 and rely on their retry policy; isolate in a bulkhead so they cannot impact first-party traffic; apply IP/tenant-level hard caps."
+  },
+  {
+   "case": "Thundering herd at recovery: all paused partitions resume and the DB gets slammed.",
+   "handling": "AIMD limiter starts low after breaker half-opens; resume partitions gradually; pressure level steps down one notch every 2 minutes, not straight to green."
+  },
+  {
+   "case": "Pressure signal is stale or controller is down.",
+   "handling": "Gateways fail static: keep last known rates with a TTL, then fall back to conservative default quotas; local signals (own buffer occupancy) always apply regardless of controller."
+  },
+  {
+   "case": "Large payloads (1 MB) mixed with tiny ones skew count-based limits.",
+   "handling": "Token buckets and buffers are bounded by bytes as well as count; separate topic for large payloads or store blob in object storage and send a pointer."
+  },
+  {
+   "case": "Mobile client on flaky network sends the same batch three times through different ingest pods.",
+   "handling": "Idempotency key per event stored in a short-TTL dedup cache (Redis SETNX, TTL 24h) at ingest or enforced by sink upsert; Kafka idempotent producer only dedups within one producer session, so business-level keys are required."
+  },
+  {
+   "case": "Clock skew across producers breaks 'newer version wins' upserts.",
+   "handling": "Use monotonic per-entity version numbers from the source of truth, or Kafka offset order per key, rather than wall-clock timestamps."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Kafka",
+   "layer": "Durable buffer / log",
+   "overview": "Distributed, partitioned, replicated append-only log with pull-based consumers and configurable retention.",
+   "why": "Disk-backed buffering decouples producer rate from consumer rate; pull model gives consumers natural backpressure; quotas, idempotent producers and replication give durability and fairness.",
+   "alternatives": "Pulsar (tiered storage, separate compute/storage, better multi-tenancy, more moving parts); Kinesis (managed, but per-shard 1 MB/s write limits and cost at scale); RabbitMQ (push model with prefetch, great for task queues but weaker for very high-volume replayable streams)."
+  },
+  {
+   "name": "Envoy / API gateway with rate limiting",
+   "layer": "Edge admission",
+   "overview": "L7 proxy with local and global rate limiting, circuit breaking, outlier detection and adaptive concurrency filters.",
+   "why": "Rejecting at the edge is the cheapest possible shed; Envoy's adaptive concurrency and local token buckets implement much of the edge control without custom code.",
+   "alternatives": "NGINX limit_req (simpler, leaky bucket, less dynamic); custom gateway (full control, more work); cloud API gateways (managed quotas, less tunable)."
+  },
+  {
+   "name": "Redis",
+   "layer": "Global quotas, dedup cache, pressure state",
+   "overview": "In-memory data store with atomic operations and Lua scripting.",
+   "why": "Atomic INCR/Lua-based token buckets for global per-tenant limits; SETNX with TTL for idempotency keys; pub-sub for pressure-level broadcast.",
+   "alternatives": "Local-only buckets (no network hop, approximate fairness); etcd (strong consistency, too slow for per-request checks); DynamoDB conditional writes (durable, higher latency)."
+  },
+  {
+   "name": "Resilience4j / Netflix concurrency-limits",
+   "layer": "Consumer-side flow control",
+   "overview": "Libraries implementing circuit breakers, bulkheads, rate limiters and adaptive (AIMD, Gradient, Vegas) concurrency limits.",
+   "why": "Battle-tested implementations of the exact algorithms we need around sink writes.",
+   "alternatives": "Hand-rolled limiter (more control, risk of bugs); service mesh policies (coarser, not aware of batch semantics)."
+  },
+  {
+   "name": "Cassandra (or sharded Postgres)",
+   "layer": "Sink store",
+   "overview": "Wide-column store optimised for high write throughput via LSM trees; or relational shards.",
+   "why": "LSM-based writes absorb high rates and upserts are naturally idempotent; Postgres shards fit when we need transactions and the write rate is moderate.",
+   "alternatives": "ScyllaDB (same model, lower tail latency); DynamoDB (managed, pay per write, adaptive capacity); ClickHouse for analytics sinks (batch inserts strongly preferred)."
+  },
+  {
+   "name": "Kubernetes HPA / KEDA",
+   "layer": "Autoscaling",
+   "overview": "KEDA scales deployments on external metrics such as Kafka consumer lag.",
+   "why": "Scale consumers on lag rather than CPU, which reflects actual backlog; cap max replicas at partition count and DB capacity.",
+   "alternatives": "CPU-based HPA (lags the real signal); manual pre-scaling before sales (predictable but wasteful); serverless consumers (fast scale, cold starts and connection storms on DB)."
+  },
+  {
+   "name": "Prometheus + Grafana + Burrow",
+   "layer": "Observability",
+   "overview": "Metrics scraping, dashboards and Kafka lag evaluation.",
+   "why": "Lag-in-seconds, buffer occupancy and retry ratio are the core backpressure SLIs; Burrow evaluates lag trends rather than raw offsets.",
+   "alternatives": "Datadog (managed, cost); Cruise Control for Kafka balancing; OpenTelemetry for traces across hops."
+  },
+  {
+   "name": "Object storage (S3 / GCS)",
+   "layer": "Spill and DLQ archive",
+   "overview": "Cheap, durable blob storage.",
+   "why": "Low-priority overflow and DLQ archives can be parked cheaply and backfilled off-peak instead of dropped.",
+   "alternatives": "Kafka tiered storage (keeps one system, needs recent Kafka); HDFS (on-prem)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Backpressure",
+   "explain": "Backpressure is the mechanism by which a slower downstream stage tells a faster upstream stage to slow down, so that the system as a whole runs at the rate of its slowest component instead of accumulating unbounded work. Every pipeline has a bottleneck; if the producer emits 100 units per second and the consumer handles 60, the excess 40 per second must go somewhere. There are only three options: buffer it (which is temporary unless the buffer is infinite), slow the producer (backpressure proper), or drop it (load shedding). Systems that ignore this choice end up buffering implicitly in thread pools, socket buffers, and heap, which shows up as rising latency, garbage collection pauses and eventually out-of-memory crashes. Backpressure can be implicit, as in TCP flow control where the receive window shrinks and the sender's write blocks, or in pull-based systems where consumers only fetch what they can process (Kafka, Reactive Streams request(n)). It can also be explicit, through status codes like 429 or 503 with Retry-After, credit-based protocols, or quotas. The key design rule is that every queue must be bounded and the bound must produce a signal that propagates upstream, all the way to the original source, which may be a user who sees a slower response.",
+   "in_this_design": "The sink DB is the bottleneck. Consumers pull from Kafka only as fast as the AIMD limiter allows, pausing partitions when full, which is implicit backpressure. Kafka absorbs the difference. When lag or disk grows, the Pressure Controller propagates the signal to the gateway, which returns 429 with Retry-After, making it explicit backpressure all the way to producers.",
+   "key_points": [
+    "Excess load has only three destinations: buffer, slow the source, or drop.",
+    "Every queue must be bounded; unbounded queues hide overload until they crash.",
+    "Pull-based consumption is backpressure for free.",
+    "The signal must reach the original producer, not stop at the first buffer.",
+    "Buffers handle bursts; backpressure and shedding handle sustained overload."
+   ],
+   "qa": [
+    {
+     "q": "Why not just make the buffer bigger?",
+     "a": "A bigger buffer only delays the problem when overload is sustained; it also increases latency for every item in it and recovery time. Buffers are for bursts whose average fits capacity. For sustained overload you must slow the source or shed."
+    },
+    {
+     "q": "How does Kafka provide backpressure if producers are not blocked by slow consumers?",
+     "a": "Kafka decouples them: producers are bounded by broker capacity and quotas, consumers pull at their own pace. The backlog is consumer lag on disk. True end-to-end backpressure needs an extra loop: monitor lag and tighten producer admission, which is what our controller does."
+    },
+    {
+     "q": "What is the difference between backpressure and rate limiting?",
+     "a": "Rate limiting is a static or policy-driven cap per client. Backpressure is dynamic and driven by actual downstream capacity. In practice we implement backpressure by adjusting rate limits from live pressure signals."
+    }
+   ]
+  },
+  {
+   "name": "Load shedding and graceful degradation",
+   "explain": "Load shedding is deliberately rejecting or dropping some work when a system is beyond capacity, so that the work it does accept is completed within its latency targets. The intuition comes from goodput versus throughput: an overloaded server that accepts everything spends its time on requests whose clients have already timed out, so its useful output falls toward zero even though it is busy. Shedding early, cheaply and selectively keeps goodput near capacity. Good shedding has three properties. First, it is cheap: the rejection happens before expensive work such as parsing, authentication against a database or acquiring locks. Second, it is prioritised: work is classified by business value (checkout before analytics, user-facing before batch, first attempt before retry) and lower classes are shed first. Third, it is observable and reversible: every shed item is counted, and the system returns to full service automatically with hysteresis to avoid flapping. Graceful degradation is the broader idea of offering a reduced but useful service under stress: sampling analytics events, serving cached results, disabling expensive features, or deferring work to off-peak batch jobs. Amazon and Google both describe priority-based shedding and deadline propagation as key to surviving overload.",
+   "in_this_design": "Traffic is tagged critical, standard or bulk. The Pressure Controller maps pressure levels to per-class admission multipliers; bulk is sampled at orange and spilled to object storage at red, standard is reduced, critical is never cut below its guarantee. The gateway rejects before reading the body. Retries are marked and shed before first attempts.",
+   "key_points": [
+    "Goodput, not throughput, is what matters under overload.",
+    "Shed early and cheaply, before doing the expensive work.",
+    "Prioritise by business value and shed retries before first attempts.",
+    "Count every shed item; degradation must be visible.",
+    "Use hysteresis so the system does not flap between levels."
+   ],
+   "qa": [
+    {
+     "q": "Why shed at the gateway rather than in the consumer?",
+     "a": "Shedding at the gateway costs microseconds and no downstream resources; shedding later means the event already consumed network, broker disk and replication. Also only the gateway can give the client a synchronous retry signal."
+    },
+    {
+     "q": "How do you decide priority classes?",
+     "a": "With business owners up front: revenue-affecting and user-visible writes are critical, operational and analytics data are standard or bulk. It is written into topic config, reviewed before each sale, and critical has a guaranteed quota."
+    },
+    {
+     "q": "Is dropping data ever acceptable?",
+     "a": "Only for explicitly agreed classes, and preferably we sample or spill to cheap storage instead of truly dropping. Anything acknowledged with 2xx is never dropped; shedding happens before acknowledgement."
+    }
+   ]
+  },
+  {
+   "name": "Rate limiting algorithms (token bucket, leaky bucket, windows)",
+   "explain": "Rate limiters decide whether a request may proceed based on recent usage. The token bucket keeps a bucket of capacity B that refills at rate R tokens per second; each request consumes a token and is rejected or delayed if none are available. It allows bursts up to B while enforcing an average of R, and is the most common choice for APIs. The leaky bucket is a queue drained at a constant rate; it smooths output perfectly but adds queueing delay and rejects when the queue is full. Fixed-window counters count requests per calendar window (per minute); they are simple but allow up to 2x bursts at window boundaries. Sliding-window log stores timestamps and is exact but memory heavy; sliding-window counter interpolates between two fixed windows and is a good cheap approximation. In distributed systems the challenge is where state lives: local per-node buckets are fast but only approximately fair across nodes; a central store like Redis with atomic Lua scripts gives global accuracy at the cost of a network hop; hybrid schemes give each node a share of the global rate and rebalance periodically. Adaptive rate limiting changes R dynamically based on downstream health, which is how rate limiting becomes backpressure.",
+   "in_this_design": "Producer SDKs have a client-side token bucket; the gateway has per-tenant, per-class token buckets whose rate R is multiplied by the pressure level multiplier. Buckets are local to each gateway node with the global rate divided by node count and reconciled via Redis every few seconds, giving fast checks without a per-request network hop. Retry budgets in the SDK are also token buckets.",
+   "key_points": [
+    "Token bucket: average rate R with bursts up to B; the default for APIs.",
+    "Leaky bucket smooths output at the cost of queueing delay.",
+    "Fixed windows allow 2x bursts at boundaries; sliding windows fix it.",
+    "Local buckets are fast but approximate; central buckets are accurate but add latency.",
+    "Make R dynamic and rate limiting becomes backpressure."
+   ],
+   "qa": [
+    {
+     "q": "Why a token bucket instead of a leaky bucket at the gateway?",
+     "a": "We want to allow short bursts (a producer flushing a batch) without delay while still capping the average; the leaky bucket would queue them and add latency. Smoothing is already provided by Kafka downstream."
+    },
+    {
+     "q": "How do you rate limit globally across 50 gateway nodes without a Redis call per request?",
+     "a": "Give each node rate R/N locally and periodically report usage to Redis; rebalance shares when traffic is uneven. Accept small inaccuracy for large latency savings. For strict, low-rate limits use Redis Lua atomically."
+    },
+    {
+     "q": "What Retry-After value do you return?",
+     "a": "The time until the bucket will have enough tokens, plus jitter, clamped to a sensible range like 1-30 s. Under red pressure we return longer values to actually reduce offered load."
+    }
+   ]
+  },
+  {
+   "name": "Retries, exponential backoff and jitter (avoiding retry storms)",
+   "explain": "Retries are essential because transient failures are common in distributed systems, but naive retries are one of the most frequent causes of large outages. If a service slows down and every client retries immediately, offered load multiplies: with three retries per layer across three layers, one user request can become 64 backend attempts. This positive feedback loop turns a small blip into a sustained outage, often called a retry storm, and can produce a metastable failure where the system stays overloaded even after the original trigger disappears. Exponential backoff increases the wait between attempts (base times 2 to the attempt), giving the server time to recover. Jitter randomises the wait so that clients that failed at the same moment do not retry in synchronized waves; AWS analysis showed full jitter (random between zero and the exponential cap) gives the best combination of low total work and fast completion. Retry budgets cap retries to a percentage of normal traffic (for example 10%), so retries can never more than marginally amplify load. Retries must be paired with idempotency so that a retried write which actually succeeded the first time does not cause duplicates, and with deadlines so that retries stop when the caller no longer cares.",
+   "in_this_design": "The SDK uses full jitter with a cap of 30 s, honours Retry-After, and keeps a 10% retry budget. Only the outermost layer retries; internal hops (ingest to Kafka) rely on the idempotent producer's internal retries, so we do not multiply attempts across layers. Every event carries an idempotency key, and sink upserts are idempotent.",
+   "key_points": [
+    "Retries multiply load exponentially across layers; retry at one layer only.",
+    "Full jitter de-synchronises clients and minimises total work.",
+    "Retry budgets bound amplification to a fixed percentage.",
+    "Retries require idempotency and deadlines.",
+    "Retry ratio is the earliest warning sign of a storm."
+   ],
+   "qa": [
+    {
+     "q": "Why is retrying at every layer dangerous?",
+     "a": "Attempts multiply: 3 attempts at each of 3 layers is 27 attempts at the bottom for one user action. Under overload this explodes load exactly when capacity is lowest. Retry at one layer, usually the edge or the client, and fail fast elsewhere."
+    },
+    {
+     "q": "What is a metastable failure?",
+     "a": "A state where the system remains overloaded after the trigger is gone because the failure itself sustains the load, typically via retries and queues full of expired work. Fixes: retry budgets, deadline-aware dropping, shedding retries first, and recovering capacity gradually."
+    },
+    {
+     "q": "Full jitter vs equal jitter?",
+     "a": "Full jitter waits random(0, cap); equal jitter waits cap/2 + random(0, cap/2). Full jitter spreads load best and finishes total work fastest in simulations; equal jitter guarantees some minimum wait. We use full jitter but floor it with Retry-After."
+    }
+   ]
+  },
+  {
+   "name": "Adaptive concurrency limits (Little's Law, AIMD)",
+   "explain": "Little's Law says the average number of items in a system equals arrival rate times average time in system: L = lambda x W. For a database, the number of concurrent in-flight writes equals throughput times latency. Up to the knee of its capacity curve, adding concurrency increases throughput while latency stays flat. Past the knee, throughput plateaus and extra concurrency only queues inside the database, raising latency and eventually causing timeouts and collapse. A static connection pool size is a guess at the knee, but the knee moves with compactions, cache hit rates, noisy neighbours and query mix. Adaptive concurrency limiting measures latency (or errors) and continuously searches for the right limit. AIMD, borrowed from TCP congestion control, adds one to the limit after a successful window and multiplies by a factor such as 0.5 on a congestion signal; it converges to a fair, stable operating point and reacts quickly to trouble. Gradient-based limiters (as in Netflix's concurrency-limits library) compare short-term latency against a long-term minimum and scale the limit by that ratio. Vegas-style algorithms estimate queue size directly. All of them implement the same idea: let latency tell you how much the downstream can take.",
+   "in_this_design": "Consumers wrap sink writes in an AIMD limiter with target p99 50 ms, floor 4 and ceiling 128 in-flight batches. When the DB compacts or gets slow, the limit halves within a second, consumers pause partitions, lag grows in Kafka instead of in the DB, and the pressure loop takes over. By Little's Law, sustaining the DB's 80k rows/s with 500-row batches at 25 ms needs only 160 batches/s x 0.025 s = 4 batches in flight, so the limiter normally settles low and the ceiling of 128 is just a safety bound confirmed by load tests.",
+   "key_points": [
+    "Little's Law: in-flight = throughput x latency.",
+    "Past the knee, more concurrency only adds latency.",
+    "AIMD: add 1 on success, halve on congestion.",
+    "Latency is the congestion signal; errors are the late one.",
+    "Bound limits with a floor and a ceiling from load tests."
+   ],
+   "qa": [
+    {
+     "q": "Why not just set a fixed connection pool of 50?",
+     "a": "The DB's capacity changes over time; a fixed pool is too high when the DB is degraded, causing overload, and too low when it is healthy, wasting capacity. Adaptive limits track the real knee."
+    },
+    {
+     "q": "Use Little's Law: the DB holds 40 ms average latency and we need 20k writes/s with single-row writes. How much concurrency?",
+     "a": "L = 20,000 x 0.04 = 800 concurrent writes, which is too many connections. Batch 500 rows per write: 40 batches/s x 0.04 = 1.6 in flight. Batching is the lever."
+    },
+    {
+     "q": "Why multiplicative decrease rather than subtract one?",
+     "a": "Congestion builds quickly; subtracting one recovers too slowly and lets queues grow. Halving drains the queue fast, and additive increase probes back up gently, which gives stability."
+    }
+   ]
+  },
+  {
+   "name": "Durable log as buffer and at-least-once delivery with idempotency",
+   "explain": "A replicated log such as Kafka stores records in ordered, append-only partitions on disk and lets many consumers read at their own pace by tracking an offset. Because disk is cheap and sequential appends are fast, the log is an ideal shock absorber: it can hold hours or days of backlog at a fraction of the cost of keeping the same data in memory or overprovisioning the downstream. Durability comes from replication: with replication factor 3, acks=all and min.insync.replicas=2, a write is acknowledged only once at least two replicas have it, so one broker failure loses nothing. Delivery semantics depend on when consumers commit offsets. Committing before processing gives at-most-once (crash loses data). Committing after processing gives at-least-once (crash causes redelivery). Exactly-once processing requires coordinating offsets and outputs in one transaction, which Kafka supports for Kafka-to-Kafka flows, but for external sinks the practical answer is at-least-once plus idempotent writes, giving effectively-once results. Idempotency means applying the same operation twice yields the same state as applying it once, achieved by upserts keyed on a business id, version checks, or a dedup table of processed idempotency keys.",
+   "in_this_design": "Kafka is the shock absorber that lets ingest return 202 at peak while the DB drains at its own pace. Ingest uses enable.idempotence=true and acks=all. Consumers commit offsets only after the batch upsert succeeds, and the sink upsert uses the business key plus a version guard, so redelivery after a crash is harmless.",
+   "key_points": [
+    "Disk-backed logs make large buffers cheap and replayable.",
+    "acks=all + min ISR 2 + RF 3 means one broker loss is lossless.",
+    "Commit after processing = at-least-once; pair it with idempotent sinks.",
+    "Exactly-once to external systems is effectively-once via idempotency.",
+    "Partition count caps consumer parallelism; over-provision it."
+   ],
+   "qa": [
+    {
+     "q": "Does the Kafka idempotent producer remove the need for application idempotency keys?",
+     "a": "No. It deduplicates retries within one producer session per partition. A client retrying through a different ingest pod, or a consumer redelivering after crash, creates duplicates it cannot see. Business-level idempotency keys and idempotent sinks are still required."
+    },
+    {
+     "q": "What happens if min.insync.replicas=2 and two of three brokers for a partition are down?",
+     "a": "Producers with acks=all receive NotEnoughReplicas errors and cannot write to that partition. We choose availability loss over durability loss; the gateway returns 503 for affected keys and other partitions continue."
+    },
+    {
+     "q": "How long can Kafka buffer?",
+     "a": "As long as retention and disk allow. At 500 MB/s peak with RF 3, every hour of backlog is ~5.4 TB of disk, so we size retention and alert on disk usage, and spill bulk data elsewhere in red state."
+    }
+   ]
+  },
+  {
+   "name": "Bulkheads and circuit breakers",
+   "explain": "Bulkheads come from ship design: watertight compartments stop one breach from sinking the whole ship. In software, a bulkhead isolates resources such as thread pools, connection pools, queues, topics or even whole clusters per workload, so that one overloaded or failing workload cannot consume resources needed by others. Without bulkheads, a single slow dependency can tie up every thread in a shared pool and take down unrelated features. Circuit breakers protect callers from a failing dependency. In the closed state calls flow normally while the breaker tracks failures. When failures exceed a threshold in a window (for example 50% of calls in 10 s with at least 20 calls), it opens and fails fast without calling the dependency, giving it room to recover and freeing the caller's resources. After a cooldown it goes half-open and lets a few probe requests through; success closes it, failure re-opens it. Together, bulkheads limit the blast radius and circuit breakers stop callers from piling onto a sick dependency, and both convert slow failure (timeouts) into fast failure, which is far easier to handle and backpressure upstream.",
+   "in_this_design": "Critical, standard and bulk classes have separate topics, consumer groups, worker pools and DB connection pools, so a bulk backlog never steals capacity from orders. Each sink writer has a circuit breaker; when it opens, consumers pause partitions and stop polling rather than retrying into a dead DB, and lag accumulates safely in Kafka.",
+   "key_points": [
+    "Bulkheads limit blast radius by isolating resources per workload.",
+    "Circuit breakers turn slow failures into fast failures.",
+    "Half-open probing prevents thundering herds at recovery.",
+    "When the breaker is open, pause consumption; do not drop or spin.",
+    "Thresholds need minimum call counts to avoid tripping on noise."
+   ],
+   "qa": [
+    {
+     "q": "How do bulkheads interact with backpressure?",
+     "a": "Each bulkhead has its own bounded resources and its own backpressure signal, so pressure in bulk does not slow critical. The controller computes pressure per topic class."
+    },
+    {
+     "q": "What does a consumer do when the breaker is open?",
+     "a": "Stop fetching by pausing partitions, keep calling poll to stay in the group, do not commit offsets, and wait for half-open. Data stays in Kafka; nothing is lost."
+    },
+    {
+     "q": "Can a circuit breaker make things worse?",
+     "a": "Yes, if thresholds are too sensitive it flaps and halves throughput unnecessarily, or if every instance half-opens simultaneously it causes a herd. Use minimum call counts, jittered cooldowns and limited probes."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Synchronous DB write vs durable log in between",
+   "options": [
+    "Write directly to DB on request path",
+    "Append to Kafka and drain asynchronously"
+   ],
+   "choice": "Kafka in between",
+   "why": "Decouples producer rate from DB rate and absorbs bursts on cheap disk. Cost: eventual consistency (read-your-writes needs extra care) and one more system to run."
+  },
+  {
+   "decision": "Block producers vs reject with 429",
+   "options": [
+    "Block the call until buffer space frees",
+    "Reject immediately with Retry-After"
+   ],
+   "choice": "Reject with Retry-After (short bounded wait of ~50 ms at most)",
+   "why": "Blocking ties up client threads and hides overload, leading to timeouts and cascading failure; explicit rejection is cheap and lets clients decide (spool, back off, degrade)."
+  },
+  {
+   "decision": "Static rate limits vs adaptive (pressure-driven) limits",
+   "options": [
+    "Fixed per-tenant quotas",
+    "Quotas multiplied by live pressure level"
+   ],
+   "choice": "Static guaranteed floor plus adaptive multipliers",
+   "why": "Static limits are predictable and fair but waste capacity or fail to protect under changing conditions; adaptive alone can oscillate. Combining a guaranteed floor with adaptive headroom gives both."
+  },
+  {
+   "decision": "Drop vs spill low-priority data in red",
+   "options": [
+    "Drop and count",
+    "Spill to object storage for backfill"
+   ],
+   "choice": "Spill bulk, drop only debug-level",
+   "why": "Spill preserves data at low cost and lets us backfill off-peak; dropping is reserved for data owners explicitly marked as lossy."
+  },
+  {
+   "decision": "Per-record writes vs batched writes to sink",
+   "options": [
+    "One upsert per event",
+    "Batch 500 events per upsert"
+   ],
+   "choice": "Batching with a max wait of 50 ms",
+   "why": "Batching gives 10-50x more throughput from the same DB, which is the cheapest capacity win; it adds up to 50 ms latency and makes partial failures per batch need handling."
+  },
+  {
+   "decision": "Scale consumers on CPU vs lag",
+   "options": [
+    "CPU-based HPA",
+    "Lag-in-seconds via KEDA"
+   ],
+   "choice": "Lag-based with a ceiling",
+   "why": "Lag reflects backlog directly; CPU may be low while waiting on a slow DB. The ceiling prevents scaling consumers into a DB that is already the bottleneck, which would only add pressure."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Sink DB degraded (compaction storm, primary failover).",
+   "behavior": "AIMD halves concurrency, breaker opens if errors persist, consumers pause, lag grows in Kafka; controller raises pressure, bulk is spilled; on recovery, half-open probes and gradual ramp; lag drains."
+  },
+  {
+   "failure": "Kafka broker loss.",
+   "behavior": "Leaders move to in-sync replicas within seconds; producers retry idempotently; with min ISR 2 writes continue; partitions with ISR < 2 reject with 503 for those keys only."
+  },
+  {
+   "failure": "Entire consumer group crashes (bad deploy).",
+   "behavior": "No data loss: offsets uncommitted, lag accumulates; alert on lag-in-seconds; rollback; consumers resume from last commit and replays are idempotent."
+  },
+  {
+   "failure": "Pressure Controller unavailable.",
+   "behavior": "Gateways keep last-known multipliers for 60 s, then fall back to conservative defaults; local bounded buffers and consumer limiters still protect the system independently."
+  },
+  {
+   "failure": "Retry storm from an old SDK without jitter.",
+   "behavior": "Gateway detects retry header/attempt count and sheds retries first; per-tenant buckets cap the offending tenant; cheap early rejection keeps the gateway healthy; incident playbook forces SDK upgrade."
+  },
+  {
+   "failure": "AZ outage.",
+   "behavior": "Kafka rack-aware replicas across 3 AZs keep data; ingest and consumers in remaining AZs scale up; capacity drops by a third so pressure level rises and bulk is shed until capacity is restored."
+  }
+ ],
+ "metrics": [
+  "Consumer lag in seconds (not just offsets) per topic and partition, with trend.",
+  "Ingest buffer occupancy p50/p99 per pod and 503 buffer-full rate.",
+  "429 rate per tenant and class; shed and spilled event counts.",
+  "Retry ratio (retried requests / total) at gateway; alert at 10%.",
+  "Sink write p99 latency, error rate, AIMD current limit, breaker state changes.",
+  "Kafka broker disk usage, under-replicated partitions, produce request latency.",
+  "End-to-end freshness: now minus event time at sink commit.",
+  "Reconciliation: accepted vs persisted vs DLQ vs shed counts per hour (must balance).",
+  "Pressure level timeline and time spent in each level."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just autoscale the database?",
+   "a": "Databases scale slowly (minutes to hours for resharding or adding nodes, plus rebalancing load), and scaling during a burst often makes it worse by adding rebalancing traffic. We pre-scale before known events, but backpressure is what protects us from the unknown spike and from the cases where the DB is degraded, not just under-sized."
+  },
+  {
+   "q": "How do you guarantee no acknowledged writes are lost?",
+   "a": "We acknowledge only after Kafka has the record on at least 2 of 3 replicas (acks=all, min ISR 2), unclean leader election disabled. Consumers commit after sink write. Reconciliation counters per hour verify accepted equals persisted plus DLQ, and alert on drift."
+  },
+  {
+   "q": "Users want read-your-writes, but you made writes async. How?",
+   "a": "For the critical class, keep the synchronous path small: either write-through for that class (with its own bulkhead), or return the event id and let the client read from a short-lived cache keyed by entity that is populated at ingest. Most analytics-type writes do not need read-your-writes."
+  },
+  {
+   "q": "How do you test this?",
+   "a": "Load tests at 1x, 5x, 10x with realistic key skew; chaos tests that slow the DB (add latency with toxiproxy), kill brokers and consumers; verify pressure levels trip and recover, retry ratio stays under 10%, and reconciliation balances. Game days before each sale."
+  },
+  {
+   "q": "What if a single tenant legitimately needs 3x its quota for the sale?",
+   "a": "Quotas are configurable through the admin API with burst reservations scheduled in advance; capacity planning reserves that headroom. During the event, unused capacity from other tenants can be lent via the adaptive multiplier, but their guaranteed floor is never borrowed."
+  },
+  {
+   "q": "How does this differ for a reactive in-process pipeline, like Akka Streams or Project Reactor?",
+   "a": "In-process, backpressure is demand signalling: downstream requests n elements and upstream emits at most n (Reactive Streams). It is the same principle at a smaller scale; across the network we approximate it with pull-based consumption, bounded buffers and explicit HTTP signals."
+  },
+  {
+   "q": "What would you change at 10x the current scale?",
+   "a": "Shard the pipeline by tenant or region into independent cells, each with its own Kafka and consumers, so pressure is localised; use tiered storage for cheaper backlog; push more shedding to clients via the pressure endpoint so they never send traffic we will reject."
+  }
+ ],
+ "key_points": [
+  "Every pipeline runs at the speed of its slowest stage; design around that stage, usually the sink DB.",
+  "Excess load can only be buffered, slowed or dropped; choose deliberately per priority class.",
+  "Bound every queue, and make every bound emit a signal upstream.",
+  "Use a durable log as the shock absorber; pull-based consumers give natural backpressure.",
+  "Adaptive concurrency (AIMD on p99) protects the DB better than any fixed pool size.",
+  "Acknowledge only after durable append; at-least-once plus idempotent upserts gives effectively-once.",
+  "Retries are the main overload amplifier: one layer only, full jitter, retry budget, Retry-After.",
+  "Shed early, cheaply and by priority; spill rather than drop; hysteresis on recovery.",
+  "Bulkheads per class and circuit breakers per sink keep failures local.",
+  "Alert on lag in seconds and retry ratio, not CPU."
+ ],
+ "quiz": [
+  {
+   "q": "A producer sends 100k events/s, the sink handles 60k/s, and the burst lasts 10 minutes. What is the backlog at the end of the burst?",
+   "options": [
+    "2.4 million events",
+    "24 million events",
+    "60 million events",
+    "6 million events"
+   ],
+   "answer": 1,
+   "why": "Excess 40k/s x 600 s = 24M. The tempting 60M multiplies full sink rate by time, but only the difference between arrival and service rate accumulates."
+  },
+  {
+   "q": "Which design choice most directly turns overload into a signal that can propagate upstream?",
+   "options": [
+    "Increasing JVM heap size on ingest pods",
+    "Adding more consumer replicas",
+    "Bounding every in-memory queue and rejecting when full",
+    "Switching from JSON to Protobuf"
+   ],
+   "answer": 2,
+   "why": "A bounded queue that rejects when full creates an explicit signal (503/429 or a blocked pull). More heap just delays the crash; more consumers do not help if the sink is the bottleneck."
+  },
+  {
+   "q": "p99 ingest latency is fine but sink freshness degrades to 20 minutes during a sale. What is most likely happening?",
+   "options": [
+    "The gateway token bucket is too strict",
+    "Kafka is absorbing the burst and consumers are limited by the sink",
+    "Producers are not retrying",
+    "Kafka replication is failing"
+   ],
+   "answer": 1,
+   "why": "Fast acks with growing freshness lag is exactly the durable-buffer pattern working: the log absorbs and the sink drains slowly. A too-strict gateway would show 429s, not lag."
+  },
+  {
+   "q": "Why should retries happen at only one layer of a call chain?",
+   "options": [
+    "Retries are multiplied across layers, amplifying load under failure",
+    "Retries at lower layers violate ordering",
+    "Only the client knows the idempotency key",
+    "Lower layers cannot implement jitter"
+   ],
+   "answer": 0,
+   "why": "With 3 attempts at each of 3 layers, one request becomes 27 at the bottom, exactly when capacity is lowest. Ordering is not the core issue; amplification is."
+  },
+  {
+   "q": "Using Little's Law, a DB with 50 ms average latency serving 2,000 batch writes per second has how many batches in flight on average?",
+   "options": [
+    "40",
+    "400",
+    "100",
+    "4,000"
+   ],
+   "answer": 2,
+   "why": "L = lambda x W = 2,000 x 0.05 = 100. 40 would be at 20 ms; 4,000 confuses seconds with milliseconds."
+  },
+  {
+   "q": "An AIMD limiter sees p99 spike above target. What does it do?",
+   "options": [
+    "Adds 1 to the limit to probe capacity",
+    "Keeps the limit and opens the circuit breaker",
+    "Resets the limit to the maximum",
+    "Multiplies the limit by roughly 0.5"
+   ],
+   "answer": 3,
+   "why": "Multiplicative decrease reacts fast to congestion. Additive increase is for healthy windows; the breaker is for sustained errors, not a single latency spike."
+  },
+  {
+   "q": "A consumer crashes after writing a batch to the sink but before committing offsets. What happens and what makes it safe?",
+   "options": [
+    "Batch is lost; safe because the producer retries",
+    "Batch is redelivered; safe because sink upserts are idempotent",
+    "Kafka detects the crash and rolls back the sink write",
+    "Batch is moved to DLQ automatically"
+   ],
+   "answer": 1,
+   "why": "Commit-after-process gives at-least-once, so the batch is redelivered; idempotent upserts make it harmless. Kafka cannot roll back an external DB write."
+  },
+  {
+   "q": "Which is the strongest reason to scale consumers on lag rather than CPU?",
+   "options": [
+    "CPU metrics are not available in Kubernetes",
+    "Lag measures the backlog directly while consumers waiting on a slow sink may have low CPU",
+    "Lag-based scaling is always cheaper",
+    "CPU scaling cannot go to zero"
+   ],
+   "answer": 1,
+   "why": "Consumers blocked on I/O show low CPU even with huge backlog. But note the ceiling: if the sink is the bottleneck, more consumers do not help."
+  },
+  {
+   "q": "The DB is the bottleneck and lag is growing. The team proposes doubling consumers. What is the most likely result?",
+   "options": [
+    "Lag drains twice as fast",
+    "No effect at all",
+    "More concurrent writes push the DB past its knee, raising latency and possibly reducing throughput",
+    "Kafka throughput doubles"
+   ],
+   "answer": 2,
+   "why": "Adding consumers adds pressure to the bottleneck. 'Twice as fast' is the tempting answer, but it only holds when consumers, not the sink, are the bottleneck."
+  },
+  {
+   "q": "What does the Kafka idempotent producer guarantee?",
+   "options": [
+    "No duplicates across different producer instances",
+    "Exactly-once delivery to external databases",
+    "Global ordering across partitions",
+    "No duplicates from internal retries within one producer session per partition"
+   ],
+   "answer": 3,
+   "why": "It dedups using producer id and sequence numbers within a session. A client retrying via another pod creates a new producer id, so business idempotency keys are still needed."
+  },
+  {
+   "q": "With RF=3 and min.insync.replicas=2, two replicas of a partition fail. Producers with acks=all will:",
+   "options": [
+    "Write to the single remaining replica and ack",
+    "Receive errors for that partition until ISR is restored",
+    "Silently drop messages",
+    "Automatically redirect to another partition"
+   ],
+   "answer": 1,
+   "why": "Kafka refuses acks=all writes when ISR is below min ISR, choosing durability over availability. Writing to one replica would risk loss."
+  },
+  {
+   "q": "Which rate limiter allows short bursts while enforcing an average rate?",
+   "options": [
+    "Leaky bucket",
+    "Fixed window counter",
+    "Token bucket",
+    "Sliding window log"
+   ],
+   "answer": 2,
+   "why": "Token bucket allows bursts up to bucket size. Leaky bucket smooths output and queues bursts; fixed windows allow boundary spikes but not a controlled burst size."
+  },
+  {
+   "q": "Load has returned to normal but the pipeline stays overloaded for an hour. The most likely cause is:",
+   "options": [
+    "A metastable failure sustained by retries and queues of expired work",
+    "Kafka retention is too short",
+    "Partition count is too high",
+    "The circuit breaker thresholds are too lenient"
+   ],
+   "answer": 0,
+   "why": "Self-sustaining overload after the trigger is gone is the definition of metastable failure, typically retries plus stale queued work. Partition count or retention do not create that loop."
+  },
+  {
+   "q": "Where is load shedding cheapest?",
+   "options": [
+    "In the sink DB via statement timeouts",
+    "At the consumer, after deserialising",
+    "In Kafka, by lowering retention",
+    "At the gateway, before reading the body or doing auth lookups"
+   ],
+   "answer": 3,
+   "why": "Rejecting at the edge consumes almost nothing downstream and gives the client a synchronous signal. Shedding in the DB wastes all upstream work; lowering retention deletes acknowledged data."
+  },
+  {
+   "q": "Roughly how much broker disk write bandwidth is needed for 500 MB/s ingest with replication factor 3?",
+   "options": [
+    "500 MB/s",
+    "1.5 GB/s",
+    "167 MB/s",
+    "4.5 GB/s"
+   ],
+   "answer": 1,
+   "why": "Every byte is written to 3 replicas: 3 x 500 = 1.5 GB/s across the cluster. 167 MB/s divides instead of multiplying."
+  },
+  {
+   "q": "Why use hysteresis when stepping down pressure levels?",
+   "options": [
+    "To keep critical traffic prioritised",
+    "To reduce memory use in the controller",
+    "To avoid flapping between levels as signals oscillate near thresholds",
+    "To comply with Kafka quotas"
+   ],
+   "answer": 2,
+   "why": "Without a hold period, the system would toggle levels each second, creating oscillation in admitted load. Priority is handled by class multipliers, not hysteresis."
+  },
+  {
+   "q": "A webhook partner ignores 429 responses. Best approach?",
+   "options": [
+    "Accept everything on the shared critical topic",
+    "Isolate them in a bulkhead with a hard cap and their own topic",
+    "Block their IP permanently",
+    "Increase the global rate limit"
+   ],
+   "answer": 1,
+   "why": "Uncontrollable producers must be contained so they cannot affect others. Putting them on the critical topic spreads the damage; blocking permanently breaks the integration."
+  },
+  {
+   "q": "Batching 500 rows per upsert mainly helps because:",
+   "options": [
+    "It reduces per-write overhead (round trips, fsync, index work), raising throughput per unit of DB capacity",
+    "It guarantees ordering",
+    "It removes the need for idempotency",
+    "It lowers end-to-end latency"
+   ],
+   "answer": 0,
+   "why": "Batching amortises fixed costs, often 10-50x. It actually adds a little latency (waiting to fill the batch) and does not remove idempotency needs."
+  },
+  {
+   "q": "A client gets 503 with Retry-After: 4. With full jitter its computed backoff is 1.2 s. It should wait:",
+   "options": [
+    "1.2 s",
+    "0 s, then retry",
+    "At least 4 s, plus some jitter",
+    "8 s exactly"
+   ],
+   "answer": 2,
+   "why": "Retry-After is the server's explicit signal and must be honoured; adding jitter avoids synchronised retries. Using only the smaller computed backoff ignores backpressure."
+  },
+  {
+   "q": "The consumer group keeps rebalancing during peaks. The best fix is:",
+   "options": [
+    "Increase partition count",
+    "Lower the AIMD ceiling",
+    "Disable offset commits",
+    "Reduce max.poll.records and keep calling poll() while paused so max.poll.interval is not exceeded"
+   ],
+   "answer": 3,
+   "why": "Rebalances during peaks usually mean processing takes longer than max.poll.interval; smaller polls and pause/resume while polling keep members alive. More partitions add rebalance cost."
+  },
+  {
+   "q": "Which metric is the best early warning of an imminent retry storm?",
+   "options": [
+    "Gateway CPU",
+    "Ratio of retried requests to total requests",
+    "Kafka partition count",
+    "Number of DLQ messages"
+   ],
+   "answer": 1,
+   "why": "A rising retry ratio shows clients beginning to amplify load before saturation. CPU rises later and is ambiguous; DLQ measures bad data, not overload."
+  },
+  {
+   "q": "Why give critical traffic its own topic and consumer pool rather than just a higher priority flag on a shared topic?",
+   "options": [
+    "Kafka has no headers",
+    "A shared partition is FIFO, so critical events wait behind any bulk backlog ahead of them",
+    "Separate topics compress better",
+    "Priority flags break idempotency"
+   ],
+   "answer": 1,
+   "why": "Within a partition, consumption is in order, so a priority flag cannot let critical events jump a bulk backlog. Kafka does support headers; that is not the issue."
+  }
+ ],
+ "references": [
+  {
+   "title": "Backpressure handling in streaming systems (Conduktor glossary)",
+   "url": "https://conduktor.io/glossary/backpressure-handling-in-streaming-systems"
+  },
+  {
+   "title": "Handling backpressure in Kafka consumers and producers (Reintech)",
+   "url": "https://reintech.io/blog/handling-backpressure-in-kafka-consumers-producers"
+  },
+  {
+   "title": "Ingestion pressure control for source-heavy streaming pipelines (AutoMQ)",
+   "url": "https://www.automq.com/blog/ingestion-pressure-control-for-source-heavy-streaming-pipelines"
+  },
+  {
+   "title": "What is backpressure in streaming data systems (DesignGurus)",
+   "url": "https://www.designgurus.io/answers/detail/what-is-backpressure-in-streaming-data-systems-and-how-can-a-system-design-handle-it-to-avoid-being-overwhelmed"
+  }
+ ]
+}

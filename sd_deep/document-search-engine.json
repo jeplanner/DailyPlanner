@@ -1,0 +1,1174 @@
+{
+ "slug": "document-search-engine",
+ "title": "Design a Document Search Engine (full-text search)",
+ "prompt": "Design a basic search engine for documents.",
+ "group": "search",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 120,
+ "summary": "A document search engine turns a pile of documents into an inverted index and answers keyword queries in tens of milliseconds by scatter-gathering over shards and ranking with BM25. The core tension is freshness versus query speed: every write must eventually land in immutable, compressed index segments that are cheap to read but expensive to change, so the design is really about the indexing pipeline, segment merging and the fan-out tail latency of a sharded query.",
+ "framework": {
+  "clarify": [
+   "What is a document here: web pages, internal wiki/PDFs, or support articles? I will assume text documents up to 1 MB (average 20 KB) owned by tenants, e.g. an internal knowledge base.",
+   "Corpus size and growth: assume 1 billion documents total, 5 million new or updated per day.",
+   "Query load: assume 50 million searches per day, about 600 QPS average and 3,000 QPS peak.",
+   "Query features in scope: keyword and phrase queries, boolean AND/OR/NOT, filters on metadata (author, date, type), pagination and snippets with highlighted terms. Is semantic search needed? I will treat vector search as a later extension.",
+   "Freshness: how soon must a new or edited document be searchable? I will assume 'within a few seconds' (near real time), and deletes/permission changes within 1 second for security.",
+   "Access control: do users see only documents they are allowed to read? I will assume yes, per-document ACLs, enforced at query time, never leaking titles or snippets.",
+   "Latency and availability targets: p99 under 300 ms end to end, 99.95% availability for search; indexing may lag during incidents but must never lose a write.",
+   "Languages: assume mostly English plus a few other languages that need language-specific analyzers."
+  ],
+  "design": [
+   "Baseline first: a single node with an inverted index (term -> posting list of doc ids, term frequencies and positions), BM25 scoring and a document store. That works to roughly 10 to 50 million documents on one machine.",
+   "Ingestion path: Document Service writes the source of truth (object store + metadata DB), emits a change event via an outbox to Kafka; indexer workers fetch content, extract text (Tika for PDF/DOCX), run analyzers (tokenize, lowercase, stem, stop words) and write to the index cluster.",
+   "Index cluster: documents are hash-partitioned by doc_id into 256 primary shards (about 4M docs and 40 GB of index each), each with 2 replicas; each shard is a Lucene-style index of immutable segments, refreshed every 1 s for near-real-time visibility.",
+   "Query path: API -> Query Service parses and rewrites the query, adds ACL filter terms, scatters to one copy of every shard, each shard returns its top k (doc_id, score), the coordinator merges with a heap, then fetches titles and snippets only for the final page.",
+   "APIs: POST /documents, DELETE /documents/{id}, GET /search?q=&filters=&page_token=, GET /documents/{id}; search responses carry a page token pinned to a point-in-time snapshot.",
+   "Ranking: BM25 on title and body fields (title boosted 2x) plus static signals (recency, popularity) combined in a second-phase rescoring of the top 200.",
+   "Caching: a query result cache keyed by normalized query + ACL group hash with a 30 s TTL, and shard-level filter caches for common filters."
+  ],
+  "defend": [
+   "Bottleneck: query fan-out. With 256 shards, p99 of the whole query is dominated by the slowest shard; mitigate with replicas, hedged requests after the p95 latency, adaptive replica selection, and timeouts that return partial results flagged as such.",
+   "Scaling reads: add replicas (read QPS scales linearly with copies), cache hot queries, and keep the posting lists in the OS page cache by sizing RAM to the hot portion of the index.",
+   "Scaling writes: bulk indexing in batches of 5 to 15 MB, refresh interval 1 s (30 s during backfills), merge throttling, and more primary shards created up front because resharding requires reindexing or split.",
+   "Failure behaviour: indexer consumes Kafka at least once and writes idempotently with external version = source version, so replays never regress a document; a dead replica is replaced from its peer; if a shard is fully down, return partial results with a banner rather than failing.",
+   "Security: ACL filtering inside the shard query, not after retrieval, so pagination and counts are correct and nothing leaks; permission changes take a fast path that bumps doc version.",
+   "Measure: p50/p95/p99 search latency per shard, indexing lag (event time to searchable), zero-result rate, click-through on top 3, merge backlog, heap and page-cache hit ratios."
+  ],
+  "script": "Let me clarify scope first. I will assume an internal document search: about a billion documents averaging 20 KB, five million changes a day, three thousand QPS at peak, p99 under 300 ms, results visible within a few seconds, and strict per-document permissions. The heart of the design is an inverted index, term to a compressed posting list of doc ids, scored with BM25. Writes go to the document store, an outbox event goes to Kafka, indexers extract and analyze text and write into a sharded index cluster: 256 shards hash-partitioned by document id, two replicas each, with a one second refresh for near-real-time search. Queries are parsed, the ACL filter is added, then we scatter to every shard, gather the top k from each, merge, and fetch snippets only for the ten results we show. To defend it: the bottleneck is fan-out tail latency, so I use replicas, hedged requests and partial results; reads scale with replicas and caching; writes scale with bulk indexing and segment merging; indexing is at-least-once with version checks so replays are safe. I would watch p99 per shard, indexing lag and zero-result rate."
+ },
+ "brd": {
+  "problem": "Employees and customers cannot find information that already exists: documents are spread across wikis, file shares and ticket systems, and the existing database LIKE-query search is slow (several seconds), has no relevance ranking and times out on large tenants. Lost time searching and duplicated work cost real money, and support deflection suffers when articles cannot be found.",
+  "goals": [
+   "Return relevant documents for keyword queries with p99 under 300 ms at 3,000 QPS peak.",
+   "Make new and edited documents searchable within 5 seconds (p95).",
+   "Enforce document permissions so no user ever sees a title or snippet they cannot open.",
+   "Scale to 1 billion documents and 5 million changes a day without redesign.",
+   "Provide relevance tuning hooks (boosts, synonyms) so the search team can improve quality.",
+   "Give product teams a single search API instead of each building their own."
+  ],
+  "non_goals": [
+   "Crawling the public web or ranking web pages by link graph (PageRank).",
+   "Question answering or generative summaries in the first release.",
+   "Real-time collaborative editing of documents.",
+   "Analytics over document contents (BI-style aggregations at scale)."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users (employees, customers)",
+    "needs": "Fast, relevant results, correct permissions, typo tolerance."
+   },
+   {
+    "who": "Content owners",
+    "needs": "Edits visible quickly; deleted or restricted docs disappear immediately."
+   },
+   {
+    "who": "Product teams integrating search",
+    "needs": "A stable API with filters, pagination and SLAs."
+   },
+   {
+    "who": "Security and compliance",
+    "needs": "No permission leaks, audit of queries, right-to-delete honoured."
+   },
+   {
+    "who": "SRE / platform",
+    "needs": "Predictable capacity, safe reindexing, clear runbooks."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Search p99 latency",
+    "target": "< 300 ms at 3,000 QPS"
+   },
+   {
+    "metric": "Indexing lag p95",
+    "target": "< 5 s from write to searchable"
+   },
+   {
+    "metric": "Click-through on top 3 results",
+    "target": "> 45% of searches with a click"
+   },
+   {
+    "metric": "Zero-result rate",
+    "target": "< 8% of queries"
+   },
+   {
+    "metric": "Permission-leak incidents",
+    "target": "0"
+   },
+   {
+    "metric": "Search availability",
+    "target": "99.95% monthly"
+   }
+  ],
+  "constraints": [
+   "Must reuse the existing object store and metadata database as the source of truth.",
+   "Index can be rebuilt from source of truth; the index is never the only copy of data.",
+   "Budget: roughly 150 search nodes in year one.",
+   "Data residency: tenants in India must have their index stored in Indian regions."
+  ],
+  "risks": [
+   {
+    "risk": "Permission leak via cached results or snippets",
+    "mitigation": "ACL filter in shard query, cache key includes ACL hash, security tests in CI."
+   },
+   {
+    "risk": "Bad relevance makes users abandon search",
+    "mitigation": "Offline judgment sets, NDCG tracking, A/B tests before ranking changes."
+   },
+   {
+    "risk": "Reindexing a billion docs takes days",
+    "mitigation": "Parallel backfill from snapshot plus Kafka replay, alias swap, throttled to protect live traffic."
+   },
+   {
+    "risk": "Hot tenant overwhelms shared shards",
+    "mitigation": "Per-tenant rate limits, dedicated index for very large tenants."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Knowledge worker",
+    "needs": "Find the right doc in one query, see a useful snippet, filter by owner/date."
+   },
+   {
+    "name": "Support agent",
+    "needs": "Find articles fast while on a call, phrase search for error messages."
+   },
+   {
+    "name": "Search relevance engineer",
+    "needs": "Tune analyzers, synonyms and boosts; run A/B tests safely."
+   },
+   {
+    "name": "Tenant admin",
+    "needs": "Confidence that restricted docs never appear for the wrong user."
+   }
+  ],
+  "user_stories": [
+   "As a knowledge worker, I want to type a few words and get the most relevant documents first so that I do not open ten files.",
+   "As a support agent, I want exact phrase search with quotes so that I can find an error message verbatim.",
+   "As a user, I want to filter by author, document type and date range so that I can narrow results.",
+   "As a user, I want highlighted snippets so that I can judge relevance without opening the document.",
+   "As a content owner, I want my edit to be searchable within seconds so that colleagues see the latest version.",
+   "As a tenant admin, I want removed access to apply immediately so that confidential docs never surface.",
+   "As a relevance engineer, I want to add synonyms (e.g. 'PO' = 'purchase order') without reindexing everything.",
+   "As a user, I want results tolerant of small typos so that 'recieve' still finds 'receive'."
+  ],
+  "functional": [
+   "Index documents (create, update, delete) via API and via change events.",
+   "Extract text from HTML, PDF, DOCX and plain text; store title, body, metadata fields.",
+   "Keyword search with boolean operators, phrase queries and field boosts (title > body).",
+   "Filters on metadata: author, type, tags, created/updated date ranges; facet counts on type and author.",
+   "Ranking with BM25 plus recency and popularity signals; pluggable second-phase rescoring.",
+   "Snippets with highlighted matching terms; pagination with stable page tokens.",
+   "Per-document ACL enforcement at query time.",
+   "Spelling correction ('did you mean') and fuzzy matching with edit distance up to 2."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "p50 < 80 ms, p99 < 300 ms for search; GET doc p99 < 50 ms"
+   },
+   {
+    "name": "Freshness",
+    "target": "p95 < 5 s from write to searchable; ACL changes < 1 s"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95% for search; indexing may degrade but never lose writes"
+   },
+   {
+    "name": "Durability",
+    "target": "Source of truth 11 nines (object store); index rebuildable"
+   },
+   {
+    "name": "Consistency",
+    "target": "Eventual for content; read-your-writes for the author via refresh-on-write option"
+   },
+   {
+    "name": "Throughput",
+    "target": "3,000 search QPS peak, 300 index ops/s peak (bursts 2,000/s)"
+   },
+   {
+    "name": "Security",
+    "target": "Zero ACL leaks; TLS everywhere; tenant isolation in queries"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "1 billion documents, average 20 KB raw text after extraction (larger files in object store).",
+    "5 million creates/updates per day, 50 million searches per day.",
+    "Peak-to-average ratio 5x for search, 7x for indexing during business hours.",
+    "Inverted index with positions is about 30% to 50% of raw text size after compression.",
+    "Each shard is a primary plus 2 replicas (3 copies total)."
+   ],
+   "math": [
+    "Raw text: 1e9 docs x 20 KB = 20 TB.",
+    "Index (positions, stored fields for snippets, doc values): about 0.5 x raw = 10 TB per copy; 3 copies = 30 TB.",
+    "Shards: common guidance is 30 to 50 GB per shard; 10 TB / 40 GB = 250, so choose 256 primary shards (power of two allows later splits), about 4M docs each.",
+    "Search QPS: 50e6 / 86,400 = about 580 QPS average, x5 = about 3,000 QPS peak.",
+    "Fan-out: 3,000 QPS x 256 shards = 768,000 shard-queries/s; spread over 3 copies = 256,000 per copy-set; at about 2,000 shard-queries/s per node, need roughly 130 to 150 nodes.",
+    "Indexing: 5e6 / 86,400 = 58 docs/s average, about 400/s peak, 20 KB each = 8 MB/s; trivial bandwidth, but merges amplify writes about 5x to 10x.",
+    "Memory: keep term dictionaries and hot postings in page cache; 64 GB RAM nodes with 31 GB heap and the rest for OS cache."
+   ],
+   "summary": "About 20 TB of text becomes 10 TB of index per copy, 30 TB with replicas, split across 256 shards on roughly 150 nodes. Search is read-heavy (3,000 QPS fanning out to 768K shard-queries/s) while indexing is light (hundreds of docs/s) but write-amplified by segment merges."
+  },
+  "out_of_scope": [
+   "Web crawling and link-based ranking.",
+   "Semantic/vector retrieval (planned phase 2 as a hybrid retriever).",
+   "OCR for scanned images beyond what text extraction already provides.",
+   "Cross-tenant search."
+  ]
+ },
+ "hld": {
+  "overview": "Two paths share one index cluster. The write path is asynchronous: the Document Service persists the document and an outbox row in one transaction, a relay publishes to Kafka, and indexer workers extract text, analyze it and bulk-write to the right shard. The read path is synchronous: the Query Service parses the query, injects tenant and ACL filters, fans out to one copy of each shard, merges top-k, then fetches snippets for the final page. An alias layer lets us build a new index version in the background and swap atomically.",
+  "diagram": "  Clients\n    |\n    v\n [API Gateway] --auth--> [Identity/ACL Service] (user -> groups)\n    |                \\\n    | search          \\ write\n    v                  v\n [Query Service]    [Document Service] --tx--> [Metadata DB + Outbox]\n  | parse, rewrite         |                         |\n  | ACL filter             v                         v\n  | result cache    [Object Store: raw files]  [Outbox Relay] -> [Kafka: doc-changes]\n  v                                                                  |\n [Coordinator] --scatter--> +--------+ +--------+     +--------+     v\n  merge top-k                | Shard 0| | Shard 1| ... |Shard255| <-[Indexer workers]\n  fetch snippets            | P + 2R | | P + 2R |     | P + 2R |   extract, analyze,\n                            +--------+ +--------+     +--------+   bulk index\n                                  ^\n                     [Cluster manager: shard map, health, alias]\n  [Click logs] -> [Analytics / relevance training] -> ranking config",
+  "components": [
+   {
+    "name": "API Gateway",
+    "responsibility": "TLS, authentication, per-tenant rate limiting, routing to query or document services."
+   },
+   {
+    "name": "Document Service",
+    "responsibility": "CRUD for documents; writes metadata and outbox row in one transaction; stores raw file in object store."
+   },
+   {
+    "name": "Outbox Relay + Kafka",
+    "responsibility": "Publishes change events in order per doc_id (key = doc_id) with at-least-once delivery; 7-day retention enables replay."
+   },
+   {
+    "name": "Indexer workers",
+    "responsibility": "Consume events, fetch content, extract text, run analyzers, bulk index with external versioning; DLQ for poison docs."
+   },
+   {
+    "name": "Index cluster (shards)",
+    "responsibility": "Lucene-style segments per shard: term dictionary, posting lists, positions, doc values, stored fields; replication primary->replicas."
+   },
+   {
+    "name": "Cluster manager",
+    "responsibility": "Elected master (quorum of 3) holding shard map, allocations, index aliases; rebalances on node loss."
+   },
+   {
+    "name": "Query Service / Coordinator",
+    "responsibility": "Parse, spell-correct, expand synonyms, add ACL filter, scatter-gather with timeouts and hedging, merge, rescore, highlight."
+   },
+   {
+    "name": "Identity/ACL Service",
+    "responsibility": "Resolves user to group ids (cached 60 s) so the query can filter on acl_principals."
+   },
+   {
+    "name": "Result cache",
+    "responsibility": "Redis cache of first-page results keyed by normalized query + filters + ACL hash, TTL 30 s."
+   },
+   {
+    "name": "Analytics pipeline",
+    "responsibility": "Logs queries and clicks for relevance metrics, zero-result tracking and learning-to-rank training."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Index a new document",
+    "steps": [
+     "Client POSTs document; Document Service stores file in object store, writes metadata row (version=1) and outbox row in one DB transaction.",
+     "Relay reads outbox, publishes {doc_id, version, op=upsert} to Kafka partition hash(doc_id).",
+     "Indexer consumes, fetches file, extracts text, analyzes fields, builds the index document including acl_principals.",
+     "Indexer sends bulk request to primary shard hash(doc_id) mod 256 with version_type=external, version=1.",
+     "Primary writes to in-memory buffer and translog (fsync per request or every 5 s), replicates to 2 replicas, acks.",
+     "Within 1 s, refresh creates a new searchable segment; document is now visible. Indexer commits Kafka offset."
+    ]
+   },
+   {
+    "name": "Search query",
+    "steps": [
+     "Client calls GET /search?q=quarterly revenue report&type=pdf.",
+     "Query Service normalizes, checks result cache (miss), resolves user groups (cached), builds query: must(match title^2/body), filter(tenant, type, acl_principals in groups).",
+     "Coordinator sends query to one copy of each of 256 shards with a 150 ms per-shard timeout; hedges to another replica if no reply by p95 (about 60 ms).",
+     "Each shard walks posting lists using skip pointers and WAND to find its top 20 by BM25, returns (doc_id, score).",
+     "Coordinator merges 256 x 20 candidates with a min-heap, rescores the top 200 with recency and popularity, picks the page of 10.",
+     "Fetch phase: get stored fields and highlights for 10 docs from their shards; respond with results and a page token; populate cache."
+    ]
+   },
+   {
+    "name": "Permission revoke",
+    "steps": [
+     "Admin removes group G from doc D; Document Service bumps version and emits a high-priority ACL event.",
+     "ACL indexer (separate Kafka topic, separate consumer group) partially updates acl_principals and forces refresh on that shard.",
+     "Result cache entries are keyed by ACL hash, and also results are post-checked against a short-lived revocation list for 60 s as defense in depth."
+    ]
+   }
+  ],
+  "data_flow": "Source of truth (metadata DB + object store) -> outbox -> Kafka (keyed by doc_id, ordered per doc) -> indexers (extract, analyze) -> primary shard (buffer + translog) -> replicas -> refresh to segment -> merges into larger segments. Queries flow gateway -> query service -> coordinator -> all shards -> merge -> fetch -> client; clicks flow back to analytics, which produces relevance judgments and ranking config."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/documents",
+    "request": "{tenant_id, title, content_ref|content, mime_type, metadata{author,tags,type}, acl{principals[]}}",
+    "response": "201 {doc_id, version}",
+    "notes": "Idempotency-Key header; content > 5 MB uploaded to object store via presigned URL first."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/documents/{doc_id}",
+    "request": "{title?, content_ref?, metadata?, acl?, if_match_version}",
+    "response": "200 {doc_id, version}",
+    "notes": "Optimistic concurrency; version increments; emits upsert event."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/documents/{doc_id}",
+    "request": "-",
+    "response": "202 {doc_id, version}",
+    "notes": "Soft delete in DB, tombstone event; index delete with external version so a late upsert cannot resurrect it."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/search",
+    "request": "q, filters (type, author, from, to), sort=relevance|date, page_size<=50, page_token",
+    "response": "{results[{doc_id,title,snippet,score,updated_at}], facets{type:{pdf:120}}, total_estimate, next_page_token, partial:false}",
+    "notes": "page_token encodes point-in-time id + search_after values; deep pagination capped at 1,000 results."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/documents/{doc_id}",
+    "request": "-",
+    "response": "{doc_id, title, metadata, download_url}",
+    "notes": "ACL checked again against source of truth."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/admin/synonyms",
+    "request": "{tenant_id, sets:[['po','purchase order']]}",
+    "response": "200",
+    "notes": "Search-time synonym filter reloaded without reindex."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Document metadata",
+    "store": "PostgreSQL (sharded by tenant_id)",
+    "fields": [
+     "doc_id uuid",
+     "tenant_id",
+     "title",
+     "mime_type",
+     "object_key",
+     "version bigint",
+     "acl_principals text[]",
+     "status",
+     "updated_at"
+    ],
+    "keys": "PK (tenant_id, doc_id); index on (tenant_id, updated_at)",
+    "notes": "Source of truth; version used for external versioning in index."
+   },
+   {
+    "entity": "Outbox",
+    "store": "PostgreSQL (same DB)",
+    "fields": [
+     "id bigserial",
+     "doc_id",
+     "version",
+     "op",
+     "priority",
+     "created_at"
+    ],
+    "keys": "PK id; relay reads by id > last_published",
+    "notes": "Same transaction as metadata write; rows deleted after 24 h."
+   },
+   {
+    "entity": "Raw file",
+    "store": "Object store (S3/GCS)",
+    "fields": [
+     "object_key = tenant/doc_id/version",
+     "bytes"
+    ],
+    "keys": "object key",
+    "notes": "Immutable per version, enabling replays to fetch the right content."
+   },
+   {
+    "entity": "Index document",
+    "store": "Search cluster (Elasticsearch/OpenSearch)",
+    "fields": [
+     "doc_id (_id)",
+     "tenant_id keyword",
+     "title text+keyword",
+     "body text (positions)",
+     "author keyword",
+     "type keyword",
+     "updated_at date",
+     "acl_principals keyword[]",
+     "popularity float"
+    ],
+    "keys": "_routing = doc_id hash to 256 shards; alias docs_current -> docs_v7",
+    "notes": "body stored for highlighting; doc values on keyword/date fields for filters and sorts."
+   },
+   {
+    "entity": "Query log",
+    "store": "Kafka -> data lake (Parquet)",
+    "fields": [
+     "query_id",
+     "user_hash",
+     "q_normalized",
+     "filters",
+     "result_ids",
+     "clicked_ids",
+     "latency_ms"
+    ],
+    "keys": "partitioned by date",
+    "notes": "Used for metrics and learning-to-rank; user hashed for privacy."
+   }
+  ],
+  "classes": [
+   {
+    "name": "Analyzer",
+    "responsibility": "Turn text into terms: char filters, tokenizer, token filters (lowercase, stop, stemmer, synonyms).",
+    "methods": [
+     "analyze(field, text) -> List[Token(term, position, offset)]"
+    ]
+   },
+   {
+    "name": "IndexWriter",
+    "responsibility": "Buffer documents in memory, write translog, flush segments, delete via live-docs bitset.",
+    "methods": [
+     "add(doc, version)",
+     "delete(doc_id, version)",
+     "refresh()",
+     "flush()",
+     "maybe_merge()"
+    ]
+   },
+   {
+    "name": "ShardSearcher",
+    "responsibility": "Execute a query over the current segment snapshot and return top-k.",
+    "methods": [
+     "search(query, filter, k) -> TopDocs",
+     "fetch(doc_ids, fields) -> List[Hit]",
+     "highlight(doc, terms)"
+    ]
+   },
+   {
+    "name": "QueryCoordinator",
+    "responsibility": "Scatter to shards with timeouts and hedging, merge, rescore, fetch.",
+    "methods": [
+     "execute(SearchRequest) -> SearchResponse",
+     "scatter(shards, q, k)",
+     "merge(top_docs_list, k)",
+     "rescore(candidates)"
+    ]
+   },
+   {
+    "name": "IndexerWorker",
+    "responsibility": "Consume change events and apply them idempotently.",
+    "methods": [
+     "on_event(evt)",
+     "extract(file) -> text",
+     "bulk_flush()",
+     "send_to_dlq(evt, err)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "BM25 scoring",
+    "explain": "BM25 scores each query term by inverse document frequency times a saturating function of term frequency normalized by document length. k1 (about 1.2) controls saturation, b (0.75) controls length normalization. Rare terms matter more; repeating a word 50 times does not give 50x score.",
+    "pseudocode": "def bm25(query_terms, doc, stats, k1=1.2, b=0.75):\n    score = 0.0\n    for t in query_terms:\n        n_t = stats.doc_freq(t)              # docs containing t\n        idf = log(1 + (stats.N - n_t + 0.5) / (n_t + 0.5))\n        tf = doc.term_freq(t)\n        norm = 1 - b + b * doc.length / stats.avg_len\n        score += idf * tf * (k1 + 1) / (tf + k1 * norm)\n    return score"
+   },
+   {
+    "name": "Posting list intersection with skip pointers (AND query)",
+    "explain": "Posting lists are sorted by doc id. To intersect, advance the shorter list and use skip pointers (every ~128 docs, aligned with compressed blocks) to jump in the longer list, so cost is close to the length of the rarest term rather than the most common.",
+    "pseudocode": "def intersect(lists):\n    lists.sort(key=len)                     # rarest first\n    result, cursors = [], [iter_of(l) for l in lists]\n    for d in cursors[0]:\n        ok = True\n        for c in cursors[1:]:\n            c.advance_to(d)                  # uses skip list / block max\n            if c.doc != d: ok = False; break\n        if ok: result.append(d)\n    return result"
+   },
+   {
+    "name": "Scatter-gather top-k merge with hedging",
+    "explain": "Each shard returns its local top k. The global top k must be within the union of local top k lists, so the coordinator merges with a heap of size k. Hedging sends a duplicate request to another replica if the first has not replied by the p95 latency, cutting tail latency at a cost of a few percent extra load.",
+    "pseudocode": "def search(q, k, shards, timeout=150ms, hedge_after=60ms):\n    futures = {s: send(s.pick_replica(), q, k) for s in shards}\n    at(hedge_after): for s,f in futures: if not f.done: f.add(send(s.other_replica(), q, k))\n    results = wait_all(futures, timeout)      # first reply per shard wins\n    heap = MinHeap(k)\n    for top in results.values():\n        for (doc, score) in top: heap.push_if_better(score, doc)\n    partial = len(results) < len(shards)\n    return heap.sorted_desc(), partial"
+   },
+   {
+    "name": "Idempotent versioned upsert",
+    "explain": "Kafka delivers at least once and events for the same doc can be replayed. Index writes carry external version = source version; the shard rejects any write with version <= current, so duplicates and stale replays are no-ops and deletes cannot be undone by a late upsert.",
+    "pseudocode": "def apply(evt):\n    cur = shard.get_version(evt.doc_id)     # includes tombstone versions\n    if cur is not None and evt.version <= cur:\n        return 'skip-stale'\n    if evt.op == 'delete': shard.tombstone(evt.doc_id, evt.version)\n    else: shard.index(build_doc(evt), evt.version)"
+   }
+  ],
+  "sequence": "Client     QuerySvc      ACL Svc     Coordinator     Shard x256      Cache\n  | GET /search |            |             |               |              |\n  |------------>| get(key)   |             |               |              |\n  |             |--------------------------------------------------------->| miss\n  |             | groups(u)  |             |               |              |\n  |             |----------->|             |               |              |\n  |             |<-----------| [g1,g2]     |               |              |\n  |             | query+ACL filter         |               |              |\n  |             |------------------------->| query phase   |              |\n  |             |            |             |-------------->| top20 each   |\n  |             |            |             |<--------------| (id,score)   |\n  |             |            |             | merge+rescore |              |\n  |             |            |             | fetch phase   |              |\n  |             |            |             |-------------->| fields+hl    |\n  |             |            |             |<--------------|              |\n  |             |<-------------------------| page of 10    |              |\n  |             | put(key, ttl=30s)        |               |              |\n  |             |--------------------------------------------------------->|\n  |<------------| 200 results              |               |              |"
+ },
+ "edge_cases": [
+  {
+   "case": "Late upsert arrives after a delete (replay or reordering)",
+   "handling": "External versioning with tombstones kept for the GC window (e.g. 60 s, longer for replays via versions in DB); stale version rejected so the doc is not resurrected."
+  },
+  {
+   "case": "Very common term query like 'the report'",
+   "handling": "Stop words removed or handled with common-terms logic; block-max WAND skips low-scoring blocks; result cache absorbs repeats."
+  },
+  {
+   "case": "Deep pagination (page 500)",
+   "handling": "Cap at 1,000 results; use search_after with point-in-time instead of offset to avoid each shard returning from+size hits."
+  },
+  {
+   "case": "Permission revoked while results are cached",
+   "handling": "Cache key includes ACL group hash; ACL changes bump group version; fetch-time recheck against source of truth for the 10 shown docs."
+  },
+  {
+   "case": "One shard replica slow due to merge or GC pause",
+   "handling": "Adaptive replica selection and hedged requests; merge throttling; partial results after timeout with partial=true."
+  },
+  {
+   "case": "Huge document (500 MB PDF) or zip bomb",
+   "handling": "Extraction in sandbox with size/time limits (truncate body at 1 MB of text), DLQ on failure; metadata still indexed."
+  },
+  {
+   "case": "Poison event crashes indexer repeatedly",
+   "handling": "Bounded retries with exponential backoff and jitter, then DLQ; offset advances so the partition is not blocked."
+  },
+  {
+   "case": "Hot tenant floods writes during migration",
+   "handling": "Per-tenant quotas at gateway, separate Kafka topic for bulk backfills consumed at lower priority."
+  },
+  {
+   "case": "IDF skew across shards (term rare on one shard, common on another)",
+   "handling": "With random hashing and large shards statistics converge; for small indexes use DFS query-then-fetch to gather global stats."
+  },
+  {
+   "case": "Duplicate documents (same file uploaded twice)",
+   "handling": "Content hash (SHA-256) field; collapse duplicates at query time with field collapsing on content_hash."
+  },
+  {
+   "case": "Query with special characters or injection-like syntax",
+   "handling": "Parse with a safe query-string parser; escape reserved characters; limit clauses (max 1,024) and wildcard expansion."
+  },
+  {
+   "case": "Multi-language content and mixed scripts",
+   "handling": "Language detection at index time; per-language fields (body_en, body_hi) with appropriate analyzers; query against both."
+  },
+  {
+   "case": "Clock skew between writers affecting updated_at sort",
+   "handling": "Use DB-assigned version and server timestamps, never client clocks, for ordering and recency."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Elasticsearch / OpenSearch (Lucene)",
+   "layer": "Search index",
+   "overview": "Distributed search engine built on Lucene: inverted index segments, shards and replicas, query DSL, aggregations.",
+   "why": "Mature inverted index, BM25 by default, near-real-time refresh, scatter-gather built in; huge operational knowledge base.",
+   "alternatives": "Solr (similar Lucene core, more manual cluster ops); Vespa (strong ranking/tensor features, steeper learning curve); custom Lucene service (full control, high cost)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Change stream",
+   "overview": "Partitioned, replicated append-only log with consumer groups and retention.",
+   "why": "Ordered per doc_id via key, replayable for reindex, decouples write spikes from indexing.",
+   "alternatives": "SQS/PubSub (simpler, weaker ordering and replay); Debezium CDC directly from DB (no outbox code, couples to DB schema)."
+  },
+  {
+   "name": "PostgreSQL",
+   "layer": "Metadata source of truth",
+   "overview": "Relational database with transactions and arrays/JSONB.",
+   "why": "Transactional outbox in the same commit; strong consistency for versions and ACLs.",
+   "alternatives": "DynamoDB (scales easily, outbox via streams); MySQL (equivalent)."
+  },
+  {
+   "name": "S3 / GCS object store",
+   "layer": "Raw content",
+   "overview": "Durable blob storage with 11 nines durability.",
+   "why": "Cheap storage for originals; versioned keys make replays deterministic.",
+   "alternatives": "HDFS (self-managed); storing content in DB (bloats DB)."
+  },
+  {
+   "name": "Apache Tika",
+   "layer": "Text extraction",
+   "overview": "Library to detect file types and extract text and metadata from PDF, Office and more.",
+   "why": "Handles hundreds of formats; run in sandboxed workers with limits.",
+   "alternatives": "Format-specific libraries (pdfminer, docx parsers) with more control; cloud document AI for OCR."
+  },
+  {
+   "name": "Redis",
+   "layer": "Result and ACL cache",
+   "overview": "In-memory key-value store with TTLs.",
+   "why": "Sub-millisecond lookups for hot queries and user group membership.",
+   "alternatives": "Memcached (simpler, no data structures); in-process caches (no sharing across pods)."
+  },
+  {
+   "name": "Kubernetes",
+   "layer": "Compute for stateless services",
+   "overview": "Container orchestration with autoscaling.",
+   "why": "Query service and indexers scale horizontally on QPS and Kafka lag.",
+   "alternatives": "VMs with autoscaling groups; serverless for indexers (cold starts, time limits)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Inverted index and posting list compression",
+   "explain": "A forward index maps a document to the words it contains; to answer 'which documents contain word X' you would scan everything. An inverted index flips that: for each term it stores a posting list, the sorted list of document ids that contain the term, often with the term frequency in each document and the positions where it occurs. A query for 'quarterly revenue' becomes: look up both terms in the term dictionary, fetch two posting lists, intersect them. The term dictionary itself is stored compactly, in Lucene as a finite state transducer that maps term bytes to the file offset of its postings and supports prefix and fuzzy lookups. Because posting lists are sorted, they compress very well: store the gaps between successive doc ids (delta encoding), which are small numbers, then pack them with variable-byte or frame-of-reference bit packing in blocks of 128. A common term's list with millions of entries shrinks to a few bits per entry. Skip pointers stored every block let a reader jump ahead without decoding everything, which makes intersection cost proportional to the rarest term. Positions enable phrase queries: 'quarterly revenue' as a phrase matches only when revenue's position is quarterly's position plus one. Lucene writes these structures into immutable segments; updates are a delete marker plus a new copy in a newer segment, and background merges rewrite segments to drop deleted docs. Immutability is what makes the index cache-friendly and lock-free to read.",
+   "in_this_design": "Each of the 256 shards is a Lucene index with title and body inverted with positions, keyword fields (type, author, acl_principals) inverted without positions for filters, and doc values (columnar) for sorting by date and popularity. The roughly 10 TB index per copy relies on delta plus bit-packed compression to fit the hot part in page cache.",
+   "key_points": [
+    "Term -> sorted posting list of doc ids, with frequencies and positions.",
+    "Delta encoding plus block bit packing gives a few bits per posting.",
+    "Skip pointers make AND cost close to the rarest term's list length.",
+    "Positions are needed for phrases; they roughly double index size.",
+    "Segments are immutable; updates are delete plus re-add, merges reclaim space."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use a B-tree index on the body column in Postgres?",
+     "a": "A B-tree indexes whole values or prefixes, so it cannot find a word in the middle of text; LIKE '%x%' scans every row. Postgres full-text (GIN on tsvector) is an inverted index and works for tens of millions of rows, but lacks sharded scatter-gather, BM25 and NRT segment management at a billion docs."
+    },
+    {
+     "q": "How do you support phrase queries and what does it cost?",
+     "a": "Store term positions in the postings; a phrase matcher intersects docs then checks consecutive positions. Positions increase index size by roughly 1.5x to 2x and slow common-term phrases, so we only enable them on title and body, not keyword fields."
+    },
+    {
+     "q": "Why are segments immutable and what is the downside?",
+     "a": "Immutability allows lock-free concurrent reads, aggressive caching and simple compression. The downside is that updates and deletes leave garbage until merges rewrite segments, causing write amplification and periodic IO spikes that we throttle."
+    },
+    {
+     "q": "How is the term dictionary kept small?",
+     "a": "Lucene uses an FST that shares prefixes and suffixes and maps each term to its postings offset, typically small enough to hold in heap or page cache, and it supports prefix and fuzzy (Levenshtein automaton) lookups."
+    }
+   ]
+  },
+  {
+   "name": "Relevance scoring: TF-IDF and BM25",
+   "explain": "Retrieval gives you the documents that match; ranking orders them. The intuition behind TF-IDF is two-fold. Term frequency: a document mentioning 'revenue' ten times is probably more about revenue than one mentioning it once. Inverse document frequency: a word that appears in every document (like 'report' in a reports archive) carries little information, while a rare word ('EBITDA') is a strong signal. Multiply them and sum across query terms. TF-IDF has two problems: raw term frequency grows without bound, so keyword stuffing wins, and long documents naturally contain more term occurrences. BM25 (Okapi Best Matching 25) fixes both. Term frequency saturates: the contribution approaches a ceiling controlled by k1 (typically 1.2), so going from 1 to 3 mentions helps a lot and from 30 to 50 barely helps. Length normalization, controlled by b (typically 0.75), divides by the document's length relative to the average, so a short title match beats the same match in a 300-page manual. IDF uses a smoothed log formula. BM25 is the default similarity in Lucene since version 6 and in Elasticsearch. In practice teams combine BM25 over several fields with boosts (title weighted 2 to 3 times body), then add non-text signals like freshness, popularity and click-through in a second rescoring phase or a learning-to-rank model. Quality is measured offline with judgment sets using NDCG@10 and online with click-through and abandonment.",
+   "in_this_design": "Shards score with BM25 on title (boost 2) and body. The coordinator rescores the top 200 merged results with a function combining BM25, recency decay (half-life 180 days) and log popularity, and the analytics pipeline tracks NDCG and CTR to tune those weights.",
+   "key_points": [
+    "IDF rewards rare terms; TF rewards repetition but BM25 saturates it.",
+    "k1 controls saturation (about 1.2), b controls length normalization (0.75).",
+    "Field boosts and multi-field matching matter as much as the formula.",
+    "Two-phase ranking: cheap BM25 on all matches, expensive model on the top few hundred.",
+    "Measure relevance with NDCG offline and CTR/abandonment online."
+   ],
+   "qa": [
+    {
+     "q": "A user complains that long manuals always rank above short FAQ pages. What do you tune?",
+     "a": "Length normalization b; raising it penalizes long docs more. Also check field boosts so title matches count more, and consider per-type boosts if FAQs are the intended answer."
+    },
+    {
+     "q": "Why compute IDF per shard and when is that a problem?",
+     "a": "Shards score locally for speed, so IDF uses local stats. With hash partitioning and millions of docs per shard stats are nearly identical; with tiny or skewed shards scores become inconsistent and you use DFS query-then-fetch to gather global term stats first."
+    },
+    {
+     "q": "How would you add click data to ranking?",
+     "a": "Log impressions and clicks, correct for position bias, generate features (BM25 per field, recency, popularity, CTR) and train a learning-to-rank model such as LambdaMART, applied as a rescore on the top 200 so latency stays bounded."
+    }
+   ]
+  },
+  {
+   "name": "Sharding and scatter-gather (document partitioning)",
+   "explain": "When an index no longer fits on one machine, you partition it. There are two ways to partition an inverted index. Term partitioning puts each term's whole posting list on one server, so a two-word query touches two servers; but common terms become hot spots and multi-term queries need to ship big lists across the network to intersect. Document partitioning gives each shard a subset of documents with a complete local index for them; every query must visit every shard (scatter), each returns its local top k, and a coordinator merges (gather). Almost every production engine uses document partitioning because it balances load naturally, keeps intersection local and makes adding documents simple. Shard assignment is usually hash(doc_id) mod number_of_shards, which spreads data evenly but makes changing the shard count expensive, so you pick the count up front with headroom, or use split operations that double shards. The cost of document partitioning is fan-out: the query's latency is the maximum of all shard latencies, so tail latency grows with shard count. A query with 256 shards where each has a 1% chance of a 200 ms hiccup will hit at least one hiccup about 92% of the time. Two-phase execution helps bandwidth: the query phase returns only ids and scores, and the fetch phase retrieves fields for just the final page. Routing by a key such as tenant_id can limit fan-out for tenant-scoped queries at the risk of hot shards for big tenants.",
+   "in_this_design": "256 primary shards routed by hash(doc_id), each about 40 GB. Every search scatters to one copy of each shard, retrieves top 20 ids and scores, merges at the coordinator, then fetches fields for 10 results. Very large tenants can get a dedicated index to keep fan-out and noise isolated.",
+   "key_points": [
+    "Document partitioning: every query hits every shard; term partitioning: hot terms and network-heavy intersections.",
+    "Pick shard count up front; resharding means split or reindex.",
+    "Fan-out latency = max of shard latencies; tails amplify with shard count.",
+    "Query-then-fetch keeps network transfer small.",
+    "Custom routing reduces fan-out but risks hot shards."
+   ],
+   "qa": [
+    {
+     "q": "Why not term-partition the index so a query only touches the shards holding its terms?",
+     "a": "Common terms create hot shards, and intersecting a multi-million-entry posting list requires shipping it across the network. Document partitioning keeps all work local and balanced; we pay with fan-out, which replicas and hedging contain."
+    },
+    {
+     "q": "How many shards would you choose and why?",
+     "a": "Size-driven: about 10 TB per copy at 30 to 50 GB per shard gives 200 to 330, so 256 leaves headroom and allows splits by powers of two. Too many tiny shards waste heap and raise fan-out overhead."
+    },
+    {
+     "q": "How do you return accurate top 10 if each shard only returns 20?",
+     "a": "The global top 10 must be in the union of each shard's local top 10, so local k >= global k is sufficient for correctness. We take 20 to leave room for rescoring and collapsing."
+    }
+   ]
+  },
+  {
+   "name": "Near-real-time indexing, segments and merging (LSM-style write path)",
+   "explain": "Search engines borrow the log-structured idea used by LSM trees. New documents are first written to an in-memory buffer and appended to a transaction log (translog) for durability. Periodically a refresh writes the buffer out as a new small immutable segment and opens a new searcher that includes it; in Elasticsearch this happens every 1 second by default, which is why search is called near real time rather than real time. Refresh does not fsync the segment; a separate flush does the expensive Lucene commit to disk and trims the translog, so a crash recovers by replaying the translog. Each refresh creates another segment, and searching many tiny segments is slow, so a merge policy (tiered merging) continuously combines similar-sized segments into bigger ones, purging deleted documents. Merges cost IO and CPU, which is write amplification: a document may be rewritten several times over its life. The trade-off knobs: a shorter refresh interval gives fresher results but more segments and more merge pressure; a longer one (30 s, or disabled during bulk loads) massively increases indexing throughput. Deletes and updates do not modify segments; they mark the doc as deleted in a live-docs bitset and index a new version. A get-by-id can be real time by reading the translog, but search sees only refreshed data.",
+   "in_this_design": "refresh_interval is 1 s for live indexes, giving the less-than-5-second freshness target; during a full reindex into a new index version we set it to 30 s and replicas to 0, then restore. The translog is fsynced per request so acknowledged writes survive a node crash, and merge throttling protects query latency.",
+   "key_points": [
+    "Buffer + translog, refresh to segment (default 1 s), flush to commit.",
+    "Search sees refreshed segments only; that is why it is near real time.",
+    "Merges reclaim deletes and reduce segment count at the cost of IO.",
+    "Bulk loads: longer refresh, zero replicas, then restore.",
+    "Read-your-writes for an author can use refresh=wait_for on that request."
+   ],
+   "qa": [
+    {
+     "q": "An author saves a document and immediately searches but cannot find it. Why, and how do you fix it?",
+     "a": "The write is in the buffer and translog but not refreshed into a segment yet. Either use refresh=wait_for on the author's write (latency up to 1 s), or show the just-saved document from the session on the client, rather than forcing refresh for everyone."
+    },
+    {
+     "q": "Indexing throughput collapses during a backfill. What do you check?",
+     "a": "Refresh interval (too frequent), replica count (each write replicated), merge throttling and segment count, bulk sizes (aim 5 to 15 MB), and whether translog fsync per request is the bottleneck. Backfill into a new index with refresh disabled and replicas 0, then swap alias."
+    },
+    {
+     "q": "Why can deletes make the index bigger temporarily?",
+     "a": "Deleted docs remain in segments flagged in the live-docs bitset until a merge rewrites the segment, so space and some query cost persist until merge."
+    }
+   ]
+  },
+  {
+   "name": "Replication, primary-backup and quorum-based cluster metadata",
+   "explain": "Replication keeps copies of each shard on different machines for availability and read throughput. In primary-backup replication all writes for a shard go to one primary, which applies the change and forwards it to replicas; the write is acknowledged when the in-sync replicas have it. If the primary dies, a replica that is in the in-sync set is promoted, so no acknowledged write is lost. Reads can go to any copy, so adding replicas scales query throughput roughly linearly. Someone must decide which copy is primary and which copies are in sync; that is cluster metadata, and it must be strongly consistent or two nodes could both believe they are primary (split brain). Systems solve this with a small set of master-eligible nodes that elect a leader using a quorum (majority) based protocol, similar in spirit to Raft: with 3 master nodes, any 2 form a quorum, and a partitioned minority cannot elect a leader. Primary terms (epochs) and sequence numbers let replicas reject writes from a deposed primary and replay only missing operations when rejoining. In CAP terms the metadata layer chooses consistency over availability during partitions, while the search path favours availability by serving from any healthy copy, accepting slightly stale results.",
+   "in_this_design": "Each of the 256 shards has 1 primary and 2 replicas spread across 3 availability zones with allocation awareness, so losing a zone loses at most one copy. Three dedicated master nodes manage shard allocation and the alias. Writes wait for the in-sync copies; searches pick the fastest copy using adaptive replica selection.",
+   "key_points": [
+    "Primary-backup: one writer per shard, replicas for HA and read scaling.",
+    "In-sync set guarantees promoted replica has all acked writes.",
+    "Metadata needs a quorum (3 masters, majority 2) to avoid split brain.",
+    "Primary terms fence stale primaries.",
+    "Zone-aware allocation: never put two copies of a shard in one zone."
+   ],
+   "qa": [
+    {
+     "q": "Why three master nodes and not two?",
+     "a": "A quorum needs a majority. With two, losing one leaves one node which is not a majority, so either no leader (unavailable) or risk of split brain. Three tolerate one failure; five tolerate two."
+    },
+    {
+     "q": "How do replicas help both availability and latency?",
+     "a": "Any copy can serve reads, so a dead node is bypassed and load spreads; also hedged requests have a second copy to go to when the first is slow."
+    },
+    {
+     "q": "What happens to writes during a primary failover?",
+     "a": "Writes to that shard briefly fail or are retried by the indexer while a replica is promoted with a new primary term; since the indexer consumes from Kafka at least once and writes are versioned, retries are safe."
+    }
+   ]
+  },
+  {
+   "name": "Transactional outbox, at-least-once delivery and idempotent indexing",
+   "explain": "The dual-write problem: if a service writes to its database and then separately publishes an event, a crash between the two leaves them inconsistent, either a document that is never indexed or an indexed document that was never saved. The transactional outbox pattern fixes it by writing the event into an outbox table in the same database transaction as the business change. A relay process (polling or change-data-capture with a tool like Debezium) reads the outbox and publishes to the broker, marking rows as sent. Because the relay can crash after publishing but before marking, the broker may receive duplicates, so delivery is at least once. Exactly-once end to end is generally not achievable across independent systems; instead consumers are made idempotent so applying the same message twice has the same effect as once. For an index, the natural idempotency key is a monotonically increasing version per document from the source database: apply a write only if its version is greater than what the index already holds. This also handles reordering, since an older version arriving late is ignored. Partitioning the topic by document id keeps events for a document ordered within a partition, and a dead letter queue isolates poison messages after bounded retries so they do not block a partition.",
+   "in_this_design": "Document Service writes metadata plus an outbox row in one Postgres transaction; a relay publishes to Kafka keyed by doc_id; indexers write with version_type=external using the DB version, and commit Kafka offsets only after the bulk request succeeds. Replaying the topic or the full DB rebuilds the index safely.",
+   "key_points": [
+    "Never dual-write; write the event in the same transaction.",
+    "Relay plus broker gives at-least-once; design consumers to be idempotent.",
+    "Use a monotonic source version as the idempotency and ordering guard.",
+    "Key by doc_id for per-document ordering.",
+    "Commit offsets after the side effect; DLQ for poison messages."
+   ],
+   "qa": [
+    {
+     "q": "Why not have the indexer read from the DB directly on a schedule?",
+     "a": "Polling a billion-row table for changes is expensive and adds latency; you would need an updated_at index and still miss deletes. Outbox or CDC gives an ordered, replayable change stream with seconds of lag."
+    },
+    {
+     "q": "Can Kafka exactly-once semantics give us exactly-once indexing?",
+     "a": "Kafka EOS covers read-process-write within Kafka. The index is an external system, so we still need idempotent writes; external versioning gives effectively-once results."
+    },
+    {
+     "q": "How do you rebuild the entire index without downtime?",
+     "a": "Create docs_v8 with new mappings, backfill from a DB snapshot with high parallelism, then replay Kafka from the snapshot's position so v8 catches up, verify counts and sample queries, and atomically switch the alias docs_current to v8."
+    }
+   ]
+  },
+  {
+   "name": "Tail latency control: timeouts, hedged requests and graceful degradation",
+   "explain": "In a fan-out system the user waits for the slowest participant. If a single shard call has a p99 of 100 ms, a request touching 100 shards will see the p99 of the slowest roughly 63% of the time, because 1 - 0.99^100 is about 0.63. Jeff Dean and Luiz Barroso described this in 'The Tail at Scale' and listed remedies. Hedged requests send the same request to a second replica if the first has not responded within, say, the 95th percentile latency, and use whichever returns first; this adds only about 5% load but cuts the tail dramatically. Tied requests enqueue on two servers and cancel the other once one starts. Adaptive replica selection routes to the copy with the shortest queue and best recent latency. Timeouts must be set per hop with a total budget so a stuck shard cannot hold the request; after the timeout you may return partial results and flag them, which is usually better for search than an error. Retries must use exponential backoff with jitter and a retry budget so they do not amplify an outage. Bulkheads isolate thread pools so slow indexing or aggregations cannot starve search, and load shedding rejects excess requests early with 429s rather than letting queues grow until everything times out.",
+   "in_this_design": "The coordinator gives the search 250 ms total, 150 ms per shard, hedges after 60 ms (about the shard p95), returns partial=true if some shards miss the deadline, and separates search and indexing thread pools on data nodes. The query service sheds load with 429 when queue depth exceeds a threshold.",
+   "key_points": [
+    "Fan-out turns rare slowness into common slowness.",
+    "Hedge after p95 for about 5% extra load and much better p99.",
+    "Deadline budgets per hop; partial results beat errors for search.",
+    "Retries with backoff, jitter and a budget.",
+    "Bulkheads between indexing and search; shed load early."
+   ],
+   "qa": [
+    {
+     "q": "p99 jumped from 200 ms to 900 ms after we went from 64 to 256 shards. Why?",
+     "a": "More shards per query means a higher chance one is slow (GC, merge, noisy neighbour). Each shard is smaller, but the max of 256 is worse. Add hedging, adaptive replica selection, or reduce shard count, and check per-shard overhead."
+    },
+    {
+     "q": "When would hedging make things worse?",
+     "a": "When the cluster is overloaded: duplicates add load and deepen queues. Cap hedges with a budget (e.g. at most 5% of requests) and disable them when utilization is high."
+    },
+    {
+     "q": "Is returning partial results acceptable?",
+     "a": "For ranked search usually yes, with a flag and metric, since missing 1 of 256 shards hides about 0.4% of documents. For compliance searches or exports we fail rather than return incomplete data."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Build on Elasticsearch/OpenSearch vs a custom Lucene service",
+   "options": "Managed/OSS ES; custom Lucene; Vespa",
+   "choice": "Elasticsearch/OpenSearch",
+   "why": "Gets sharding, replication, NRT and query DSL for free; custom only pays off at Google scale or with unusual ranking needs."
+  },
+  {
+   "decision": "Document vs term partitioning",
+   "options": "Document-partitioned shards; term-partitioned shards",
+   "choice": "Document partitioning by hash(doc_id)",
+   "why": "Even load and local intersections; fan-out cost managed with replicas and hedging."
+  },
+  {
+   "decision": "ACL enforcement: pre-filter in index vs post-filter after retrieval",
+   "options": "Index acl_principals and filter in query; retrieve then check each doc",
+   "choice": "Pre-filter in the shard query plus fetch-time recheck of shown docs",
+   "why": "Post-filtering breaks pagination and counts and can starve pages; pre-filter is correct and cheap with cached filters."
+  },
+  {
+   "decision": "Refresh interval",
+   "options": "1 s; 30 s; on demand",
+   "choice": "1 s live, 30 s during backfills",
+   "why": "Meets 5 s freshness target while letting bulk loads run fast."
+  },
+  {
+   "decision": "Pagination strategy",
+   "options": "from/size offset; search_after with point in time; scroll",
+   "choice": "search_after + PIT, cap 1,000",
+   "why": "Offset pagination costs each shard from+size hits; search_after is constant cost and stable across refreshes."
+  },
+  {
+   "decision": "Synchronous indexing vs async pipeline",
+   "options": "Index inside the write request; outbox + Kafka",
+   "choice": "Async with outbox",
+   "why": "Write path stays fast and available even if the search cluster is degraded; replay enables rebuilds."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Search data node crashes",
+   "behavior": "Queries route to replicas; master promotes in-sync replica to primary and re-replicates; no acked writes lost thanks to translog and in-sync set."
+  },
+  {
+   "failure": "Whole availability zone lost",
+   "behavior": "Zone-aware allocation means every shard keeps 2 of 3 copies; capacity drops a third, so load shedding and cache keep p99 within target while new replicas build."
+  },
+  {
+   "failure": "Kafka or indexers down",
+   "behavior": "Writes still succeed into DB and outbox; search serves slightly stale results; lag alert fires; on recovery indexers catch up from offsets."
+  },
+  {
+   "failure": "Master quorum lost",
+   "behavior": "No allocation or mapping changes; existing shards keep serving reads and writes to known primaries; restore quorum before any rebalancing."
+  },
+  {
+   "failure": "Bad analyzer or mapping change deployed",
+   "behavior": "Changes only via new index version and alias swap; roll back by pointing alias at previous version, which is kept for 7 days."
+  },
+  {
+   "failure": "Merge storm or long GC pause on a node",
+   "behavior": "Adaptive replica selection and hedging route around it; merge throttling limits IO; partial results if deadlines missed."
+  },
+  {
+   "failure": "Redis cache down",
+   "behavior": "Query service bypasses cache; cluster absorbs extra load; capacity planned with cache hit rate assumed 0 at peak."
+  }
+ ],
+ "metrics": [
+  "Search latency p50/p95/p99 end to end and per shard; partial-result rate.",
+  "Indexing lag: event time to searchable, p95; Kafka consumer lag per partition.",
+  "Zero-result rate, click-through rate on top 3, abandonment, query reformulation rate.",
+  "NDCG@10 on the offline judgment set per ranking release.",
+  "Segment count, merge backlog, heap usage, GC pause time, page-cache hit ratio.",
+  "Rejected requests (429) by thread pool; DLQ size; extraction failure rate.",
+  "ACL audit: sampled results re-verified against source of truth (must be 0 mismatches)."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you add semantic (vector) search?",
+   "a": "Compute embeddings per document chunk, store them in an ANN index (HNSW in OpenSearch/Vespa), run BM25 and vector retrieval in parallel, fuse with reciprocal rank fusion, then rescore. Keep BM25 for exact terms like error codes."
+  },
+  {
+   "q": "How do you handle a tenant with 200 million documents?",
+   "a": "Give it a dedicated index with its own shard count and routing, so its queries do not fan out across other tenants and its load is isolated; small tenants share a multi-tenant index filtered by tenant_id."
+  },
+  {
+   "q": "How do you do autocomplete on titles?",
+   "a": "A separate completion index (edge n-grams or FST suggester) on titles and popular queries, served from memory with p99 under 50 ms, not the main BM25 path."
+  },
+  {
+   "q": "What if we need strict read-after-write for everyone?",
+   "a": "Search engines are NRT; strict consistency would require refresh on every write, which destroys throughput. Offer read-your-writes for the author with refresh=wait_for and keep eventual consistency for others."
+  },
+  {
+   "q": "How do you handle GDPR right-to-delete?",
+   "a": "Delete event with highest version, index tombstone, force-merge or wait for merges to purge within SLA, delete from object store and logs, and verify via audit query; snapshots expire within retention."
+  },
+  {
+   "q": "How do you evaluate a ranking change safely?",
+   "a": "Offline NDCG on judged queries, then interleaving or A/B test on a small traffic slice with guardrails on latency and zero-result rate, then ramp."
+  },
+  {
+   "q": "How do you reduce cost?",
+   "a": "Hot-warm tiers: recent or popular docs on fast SSD nodes, old docs on cheaper nodes; drop positions on rarely-phrase-searched fields; best_compression codec for stored fields."
+  }
+ ],
+ "key_points": [
+  "The core data structure is an inverted index: term to compressed sorted posting list with positions.",
+  "BM25 with field boosts for recall-phase scoring; rescore the top few hundred with richer signals.",
+  "Document-partitioned shards, hash(doc_id), query-then-fetch scatter-gather.",
+  "Near real time: buffer plus translog, 1 s refresh into immutable segments, background merges.",
+  "Write path is async: transactional outbox, Kafka keyed by doc_id, idempotent versioned index writes.",
+  "Index is rebuildable: new index version plus alias swap for mapping or analyzer changes.",
+  "Tail latency is the enemy of fan-out: replicas, hedging, deadlines, partial results.",
+  "ACLs are filters inside the query, never a post-filter; cache keys include the ACL hash.",
+  "Capacity: 20 TB text, about 10 TB index per copy, 256 shards, about 150 nodes for 3,000 QPS.",
+  "Measure relevance (NDCG, CTR, zero-result rate) as seriously as latency."
+ ],
+ "quiz": [
+  {
+   "q": "Why does an inverted index make keyword search fast?",
+   "options": [
+    "It stores documents sorted by length so short ones are scanned first",
+    "It maps each term to the sorted list of documents containing it, so only relevant lists are read",
+    "It caches every query result in memory",
+    "It uses a B-tree over the full document text"
+   ],
+   "answer": 1,
+   "why": "Lookups touch only the posting lists of query terms. A B-tree on full text cannot find words in the middle of a value, which is the tempting but wrong idea."
+  },
+  {
+   "q": "In BM25, what does the k1 parameter control?",
+   "options": [
+    "How quickly term frequency saturates",
+    "Length normalization",
+    "The IDF smoothing constant",
+    "The number of results returned"
+   ],
+   "answer": 0,
+   "why": "k1 caps the benefit of repeated terms. Length normalization is b, the most commonly confused parameter."
+  },
+  {
+   "q": "A shard returns local top 10 to the coordinator for a global top-10 query. Is the global result correct?",
+   "options": [
+    "No, every shard must return all matches",
+    "Only if shards are equal size",
+    "Only with DFS query-then-fetch",
+    "Yes, the global top 10 must lie in the union of each shard's top 10"
+   ],
+   "answer": 3,
+   "why": "Any global top-10 document is also in its own shard's top 10. DFS helps score consistency, not candidate completeness."
+  },
+  {
+   "q": "Search p99 rose sharply after increasing shard count from 64 to 256 with the same hardware. Most likely cause?",
+   "options": [
+    "BM25 is more expensive on smaller shards",
+    "The term dictionary no longer fits in memory",
+    "Fan-out: more shards per query increases the chance one is slow",
+    "Replicas stop serving reads"
+   ],
+   "answer": 2,
+   "why": "Query latency is the max across shards, so tail events compound. Smaller shards actually make dictionaries smaller, so that option is wrong."
+  },
+  {
+   "q": "Why is Elasticsearch called near real time?",
+   "options": [
+    "Writes are asynchronously replicated",
+    "Documents become searchable only after a refresh creates a new segment, every 1 s by default",
+    "The translog is fsynced every 5 s",
+    "Merges run in the background"
+   ],
+   "answer": 1,
+   "why": "Visibility depends on refresh. Translog fsync is about durability, not visibility, a common confusion."
+  },
+  {
+   "q": "What is the main reason to use the transactional outbox pattern here?",
+   "options": [
+    "To avoid losing or inventing index events when a crash happens between the DB write and the publish",
+    "To make Kafka exactly once",
+    "To reduce indexing latency",
+    "To compress events"
+   ],
+   "answer": 0,
+   "why": "The outbox removes the dual-write gap. It does not give exactly-once delivery, consumers still need idempotency."
+  },
+  {
+   "q": "A late upsert for a document arrives after its delete. What prevents resurrection?",
+   "options": [
+    "Kafka ordering across all partitions",
+    "Refresh interval of 1 s",
+    "Replica promotion",
+    "External versioning: the index rejects writes with version <= the tombstone version"
+   ],
+   "answer": 3,
+   "why": "Versions make writes idempotent and order-aware. Kafka orders only within a partition, and replays can still re-deliver old events."
+  },
+  {
+   "q": "Roughly how much search QPS is 50 million searches per day at 5x peak?",
+   "options": [
+    "About 600",
+    "About 30,000",
+    "About 3,000",
+    "About 300"
+   ],
+   "answer": 2,
+   "why": "50e6 / 86,400 is about 580 average; times 5 is about 2,900. 600 is the average, the tempting wrong answer."
+  },
+  {
+   "q": "Where should per-document ACLs be enforced?",
+   "options": [
+    "After retrieval, by checking each result in the application",
+    "As a filter inside the shard query, with a recheck of displayed docs",
+    "Only in the UI",
+    "Only at index time by excluding restricted docs"
+   ],
+   "answer": 1,
+   "why": "Pre-filtering keeps pagination and counts correct and avoids leaks. Post-filtering is tempting but can empty pages and still leak via counts or facets."
+  },
+  {
+   "q": "Which is the best way to paginate to result 5,000?",
+   "options": [
+    "search_after with a point-in-time, or cap deep pagination",
+    "from=5000,size=10 on every shard",
+    "Increase shard count",
+    "Use a larger result cache"
+   ],
+   "answer": 0,
+   "why": "Offset pagination forces each shard to collect from+size hits. search_after keeps per-page cost constant."
+  },
+  {
+   "q": "Why use document partitioning rather than term partitioning?",
+   "options": [
+    "Term partitioning cannot support BM25",
+    "Document partitioning avoids fan-out",
+    "Term partitioning needs more replicas",
+    "Document partitioning balances load and keeps posting list intersection local"
+   ],
+   "answer": 3,
+   "why": "Document partitioning does fan out to all shards, so the third option is wrong; its benefit is balanced, local work."
+  },
+  {
+   "q": "A hedged request is sent when?",
+   "options": [
+    "Immediately to all replicas",
+    "After the first replica fails",
+    "If the first replica has not responded by about the p95 latency",
+    "Only on write requests"
+   ],
+   "answer": 2,
+   "why": "Hedging after p95 adds about 5% load. Sending to all replicas immediately doubles or triples load."
+  },
+  {
+   "q": "Bulk reindexing into a new index is slow. Which change helps most?",
+   "options": [
+    "Lower refresh interval to 100 ms",
+    "Set refresh to 30 s or disabled and replicas to 0 during the load, then restore",
+    "Add more master nodes",
+    "Increase result cache TTL"
+   ],
+   "answer": 1,
+   "why": "Fewer refreshes and no replication remove most indexing overhead. Lower refresh makes it worse."
+  },
+  {
+   "q": "What does a merge do in a segment-based index?",
+   "options": [
+    "Combines smaller immutable segments into larger ones and purges deleted docs",
+    "Copies the primary to replicas",
+    "Rebuilds the term dictionary from scratch every hour",
+    "Moves shards between nodes"
+   ],
+   "answer": 0,
+   "why": "Merges reduce segment count and reclaim deletes. Shard movement is relocation, not merging."
+  },
+  {
+   "q": "Why three dedicated master-eligible nodes?",
+   "options": [
+    "To store three copies of every shard",
+    "To triple query throughput",
+    "Because Lucene requires it",
+    "To form a majority quorum that tolerates one failure without split brain"
+   ],
+   "answer": 3,
+   "why": "Masters coordinate metadata via quorum. Shard copies are a separate replica setting."
+  },
+  {
+   "q": "What is the most cost-effective way to handle IDF inconsistency on tiny shards?",
+   "options": [
+    "Disable IDF",
+    "Add replicas",
+    "Use DFS query-then-fetch or fewer, larger shards",
+    "Increase k1"
+   ],
+   "answer": 2,
+   "why": "DFS gathers global stats; fewer larger shards make local stats representative. Replicas copy the same skewed stats."
+  },
+  {
+   "q": "The indexer crashes after a bulk write succeeds but before committing the Kafka offset. What happens?",
+   "options": [
+    "The document is lost",
+    "The event is redelivered and the versioned write is a no-op",
+    "Kafka deduplicates automatically",
+    "The shard becomes corrupted"
+   ],
+   "answer": 1,
+   "why": "At-least-once plus idempotent writes give effectively-once results. Kafka does not dedupe across an external sink."
+  },
+  {
+   "q": "What mainly determines the size increase when enabling positions on the body field?",
+   "options": [
+    "Storing every term occurrence's position for phrase queries",
+    "Number of shards",
+    "Replica count",
+    "Refresh interval"
+   ],
+   "answer": 0,
+   "why": "Positions record each occurrence, often adding 50 to 100% to index size. Replicas multiply total size but not the per-copy increase."
+  },
+  {
+   "q": "You must change the stemmer for English. What is the safe rollout?",
+   "options": [
+    "Update the analyzer in place on the live index",
+    "Restart all nodes",
+    "Change it only at query time",
+    "Build a new index version with the new analyzer, backfill, replay, then swap the alias"
+   ],
+   "answer": 3,
+   "why": "Indexed terms were produced by the old analyzer; changing only query time creates mismatches. A new index plus alias swap is safe and reversible."
+  },
+  {
+   "q": "Which metric best reveals relevance problems quickly?",
+   "options": [
+    "CPU utilization",
+    "Segment count",
+    "Zero-result rate and top-3 click-through",
+    "Kafka lag"
+   ],
+   "answer": 2,
+   "why": "These capture user-visible quality. Kafka lag measures freshness, which matters but is a different problem."
+  },
+  {
+   "q": "Redis result cache fails during peak. What should the design do?",
+   "options": [
+    "Fail all searches",
+    "Bypass the cache and serve from the cluster, which is sized for zero hit rate at peak, with load shedding as backstop",
+    "Switch to stale index",
+    "Disable ACL filtering to save time"
+   ],
+   "answer": 1,
+   "why": "The cache is an optimization, never a dependency. Disabling ACLs is never acceptable."
+  },
+  {
+   "q": "Why should the query phase return only ids and scores?",
+   "options": [
+    "To minimize network transfer; fields are fetched only for the final page",
+    "Stored fields are not available on replicas",
+    "Because BM25 needs it",
+    "To bypass ACLs"
+   ],
+   "answer": 0,
+   "why": "Query-then-fetch avoids shipping 256 x 20 full documents. Replicas do hold stored fields, so the first option is wrong."
+  }
+ ],
+ "references": [
+  {
+   "title": "Elasticsearch Reference: Near real-time search",
+   "url": "https://www.elastic.co/guide/en/elasticsearch/reference/8.17/near-real-time.html"
+  },
+  {
+   "title": "Elastic docs: Near real-time search",
+   "url": "https://www.elastic.co/docs/manage-data/data-store/near-real-time-search"
+  },
+  {
+   "title": "System Design Interview: Design a Distributed Search Engine",
+   "url": "https://techinterview.org/system-design-distributed-search/"
+  },
+  {
+   "title": "System Design: Elasticsearch and Full-Text Search",
+   "url": "https://www.techinterview.org/post/3233474152/system-design-elasticsearch-full-text-search-inverted-index-analyzers-relevance-scoring-sharding-near-real-time-search/"
+  },
+  {
+   "title": "How to design a distributed search engine for large datasets (DesignGurus)",
+   "url": "https://www.designgurus.io/answers/detail/how-to-design-a-distributed-search-engine-for-large-datasets"
+  }
+ ]
+}

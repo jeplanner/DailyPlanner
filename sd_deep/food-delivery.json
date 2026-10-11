@@ -1,0 +1,1162 @@
+{
+ "slug": "food-delivery",
+ "title": "Design Swiggy / DoorDash-style food delivery ordering",
+ "prompt": "Design a food delivery ordering system.",
+ "group": "classic",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "Food delivery is a three-sided marketplace (customer, restaurant, rider) coordinated in real time around a perishable product. The hard parts are a correct, idempotent order lifecycle that spans payments and partners who may not respond, and a dispatch engine that matches thousands of orders to moving riders every few seconds under dinner peaks that are 5-10x the daily average.",
+ "framework": {
+  "clarify": [
+   "Scope: browse nearby restaurants, build a cart, place and pay for an order, restaurant accepts, rider is assigned, live tracking, delivery. Groceries/quick-commerce out of scope.",
+   "Scale: 3M orders/day in India, dinner peak 8-9 pm carries ~20% of daily orders, i.e. ~170 orders/s peak; 300k active riders sending GPS every 4 s.",
+   "Latency: restaurant listing p99 < 300 ms; order placement p99 < 1 s excluding PSP redirect; rider assignment within 60 s p90 of restaurant acceptance.",
+   "Consistency: an order must never be double-charged or double-assigned; restaurant menus and availability can be eventually consistent within ~30 s.",
+   "Payments: UPI, cards, wallets and cash on delivery; authorise at order, capture on delivery or on restaurant acceptance.",
+   "Delivery radius ~ 5-7 km; ETA promise shown before checkout and must be accurate within +/- 5 min for 80% of orders.",
+   "Should we batch multiple orders per rider? Assume yes, up to 2 orders when pickups are close and food is not delayed.",
+   "Multi-city: each city is mostly independent, which suggests city-level partitioning of dispatch."
+  ],
+  "design": [
+   "Baseline: Discovery service queries an Elasticsearch index of restaurants with geo_point plus a live availability cache; ETA service annotates each with predicted delivery time.",
+   "Order Service owns an explicit state machine (CREATED -> PAYMENT_AUTHORIZED -> PLACED -> ACCEPTED -> RIDER_ASSIGNED -> PICKED_UP -> DELIVERED, plus CANCELLED/FAILED) in sharded Postgres, with optimistic concurrency and an outbox.",
+   "Order placement is a saga orchestrated by Order Service: authorise payment, notify restaurant, wait for accept with timeout, trigger dispatch, capture payment on delivery; compensations refund/void and cancel.",
+   "Dispatch runs per city in micro-batches every 5-10 s: candidate riders from H3 k-rings around the restaurant, a cost matrix (pickup ETA, food ready time, batching, fairness), solved by an assignment algorithm; offers sent to riders with a 30 s accept window.",
+   "Location ingest: riders send GPS every 4 s over a persistent connection; latest position stored in Redis keyed by H3 cell and rider; stream to Kafka for tracking, ETA and analytics. Customers get updates over WebSocket.",
+   "APIs: GET /v1/restaurants?lat&lng, POST /v1/carts, POST /v1/orders (Idempotency-Key), POST /v1/restaurant/orders/{id}/accept, POST /v1/rider/location, POST /v1/rider/offers/{id}/accept, WS /v1/orders/{id}/track."
+  ],
+  "defend": [
+   "Bottleneck: dinner peak dispatch and location writes, not order writes. 300k riders / 4 s = 75k location updates/s; dispatch must recompute assignments for thousands of open orders per city every few seconds.",
+   "Scale reads: restaurant listing cached per H3 cell (resolution 8, ~0.7 km2) for 30 s; menus cached with versioned keys; ETA precomputed per (restaurant, destination cell).",
+   "Scale writes: orders sharded by order_id (with city in the id), location kept only as latest in Redis plus a Kafka stream; dispatch partitioned by city/zone so each runs on its own workers.",
+   "Failure: restaurant does not respond in 3 min -> auto-call via IVR then cancel and void auth; PSP timeout -> query status before retry (idempotency key); dispatch worker crash -> another takes the zone lease; degrade by widening ETA promises and pausing far-away restaurants when riders are scarce.",
+   "Measure: order success rate, time to accept, time to assign, ETA error, rider utilisation and idle time, payment success by method, cancellation reasons, double-assignment count (should be 0)."
+  ],
+  "script": "Let me clarify scope first. I will design a Swiggy-like system: browse nearby restaurants, order and pay, the restaurant accepts, a rider is assigned and the customer tracks delivery live, at about 3 million orders a day with a dinner peak near 170 orders a second and 300 thousand riders pinging GPS every 4 seconds. The non-negotiables are no double charge and no double assignment; menus can lag a little. For the design, discovery is a geo search with live availability and ETAs. The order is an explicit state machine in a sharded database and placement runs as a saga: authorise payment, notify the restaurant, wait for acceptance with a timeout, dispatch, and capture on delivery, with compensations if anything fails. Dispatch runs per city every few seconds, pulling candidate riders from H3 cells around the restaurant and solving an assignment problem that also batches orders. Defending it, the hot path is location ingest at about 75 thousand writes a second and dispatch compute at peak, so I partition by city, keep only latest positions in Redis, and degrade by widening ETAs before failing orders. I would watch time to assign, ETA error and payment success."
+ },
+ "brd": {
+  "problem": "Hungry customers want to discover restaurants that can deliver quickly and get hot food reliably; restaurants want more orders without operational chaos; riders want steady, fair earnings. The platform must orchestrate all three in real time, keep unit economics positive (delivery cost per order below fees plus commission) and handle sharp meal-time peaks and Indian network and payment realities.",
+  "goals": [
+   "Reliable ordering: >= 99% of placed orders delivered or cleanly cancelled with automatic refund.",
+   "Fast fulfilment: median delivery under 30 min with ETA accuracy +/- 5 min for 80% of orders.",
+   "Efficient dispatch: rider utilisation > 60% at peak, batching where it does not hurt food quality.",
+   "Payment correctness: zero double charges; refunds initiated automatically within minutes of cancellation.",
+   "Scale to 5x festival peaks (e.g. New Year's Eve, IPL finals) without manual intervention.",
+   "Give restaurants a simple accept/ready workflow with prep-time control."
+  ],
+  "non_goals": [
+   "Quick-commerce dark-store inventory (Instamart-style).",
+   "Restaurant POS/kitchen management beyond order acceptance and ready signal.",
+   "Rider payroll and incentive computation details.",
+   "Building ML models for ETA; we consume an ETA service."
+  ],
+  "stakeholders": [
+   {
+    "who": "Customers",
+    "needs": "Accurate ETAs, correct orders, easy payments, live tracking, quick refunds."
+   },
+   {
+    "who": "Restaurant partners",
+    "needs": "Clear order notifications, prep-time control, accurate payouts, ability to pause when busy."
+   },
+   {
+    "who": "Riders",
+    "needs": "Nearby, fair offers; clear navigation; quick payouts; safety."
+   },
+   {
+    "who": "Operations / city teams",
+    "needs": "Real-time zone health, ability to surge, pause zones, handle rain events."
+   },
+   {
+    "who": "Finance and compliance",
+    "needs": "Reconciliation with PSPs, GST invoices, RBI-compliant refunds and data handling."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Order completion rate",
+    "target": ">= 97% of placed orders delivered"
+   },
+   {
+    "metric": "Time from restaurant accept to rider assigned",
+    "target": "p90 < 60 s"
+   },
+   {
+    "metric": "ETA error",
+    "target": "|actual - promised| <= 5 min for 80% of orders"
+   },
+   {
+    "metric": "Order placement API latency",
+    "target": "p99 < 1 s (excluding PSP UI)"
+   },
+   {
+    "metric": "Double charges / double assignments",
+    "target": "0 per month"
+   },
+   {
+    "metric": "Rider utilisation at peak",
+    "target": "> 60% of logged-in time on an order"
+   }
+  ],
+  "constraints": [
+   "Variable mobile connectivity for riders and customers; apps must tolerate offline gaps and reconnects.",
+   "Indian payments: UPI collect/intent flows are asynchronous with webhooks and can take tens of seconds; COD still significant.",
+   "Restaurants use a mix of tablets, POS integrations and phone calls; acceptance latency varies.",
+   "Data residency and RBI rules for payment data; PCI scope minimised by tokenisation."
+  ],
+  "risks": [
+   {
+    "risk": "Rain or festival demand spike exceeds rider supply",
+    "mitigation": "Surge fees, widen ETAs, shrink serviceable radius per zone, rider incentives, throttle new orders per zone."
+   },
+   {
+    "risk": "Payment gateway outage",
+    "mitigation": "Multiple PSPs with health-based routing, fall back to COD where allowed, status reconciliation jobs."
+   },
+   {
+    "risk": "Restaurants accept then fail to prepare",
+    "mitigation": "Ready signal with timers, restaurant quality scores, auto-pause on repeated delays."
+   },
+   {
+    "risk": "GPS spoofing / rider fraud",
+    "mitigation": "Speed and jump checks, device integrity attestation, pickup/delivery OTPs."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Ananya, office worker ordering dinner in Chennai",
+    "needs": "Reliable ETA, UPI payment, live tracking, easy refunds."
+   },
+   {
+    "name": "Ravi, cloud-kitchen manager",
+    "needs": "Instant order alerts, adjust prep time, mark items out of stock."
+   },
+   {
+    "name": "Suresh, delivery rider",
+    "needs": "Nearby offers, batch orders on the same route, quick acceptance flow, low data usage."
+   }
+  ],
+  "user_stories": [
+   "As a customer, I want to see restaurants that can deliver to me with an ETA so that I can choose quickly.",
+   "As a customer, I want to pay by UPI and get a confirmation within seconds so that I trust the order is placed.",
+   "As a customer, I want live tracking of my rider so that I know when to expect food.",
+   "As a customer, I want an automatic refund if my order is cancelled so that I am not out of pocket.",
+   "As a restaurant, I want to accept or reject an order and set prep time so that riders arrive when food is ready.",
+   "As a restaurant, I want to mark items out of stock so that customers cannot order them.",
+   "As a rider, I want offers near my location with clear earnings so that I can decide quickly.",
+   "As a rider, I want to be offered a second order on my route so that I earn more per trip.",
+   "As ops, I want to pause a zone during heavy rain so that we do not promise impossible ETAs."
+  ],
+  "functional": [
+   "Serviceability and listing: restaurants within delivery radius, open, accepting orders, with ETA and delivery fee.",
+   "Menu with item availability, variants and add-ons; cart with pricing, taxes, promo validation.",
+   "Order placement with idempotency, payment authorisation (UPI, cards, wallets) or COD.",
+   "Restaurant workflow: notify, accept/reject with prep time, mark ready; auto-escalation if no response.",
+   "Dispatch: assign riders with offers and accept windows, batching up to 2 orders, reassignment on reject/timeout.",
+   "Live tracking over WebSocket with rider position and updated ETA.",
+   "Pickup and delivery verification (OTP / geofence), proof of delivery.",
+   "Cancellation and refund flows with policy by state; partial refunds for missing items.",
+   "Notifications via push/SMS for each state change.",
+   "Ops console: zone health, surge, pause zones, manual reassign."
+  ],
+  "non_functional": [
+   {
+    "name": "Availability",
+    "target": "99.95% for ordering path; 99.9% for tracking"
+   },
+   {
+    "name": "Order placement latency",
+    "target": "p99 < 1 s server side"
+   },
+   {
+    "name": "Listing latency",
+    "target": "p99 < 300 ms"
+   },
+   {
+    "name": "Consistency",
+    "target": "Order state and payments strongly consistent per order; menus/availability eventual within 30 s"
+   },
+   {
+    "name": "Durability",
+    "target": "No acknowledged order lost (synchronous replication, RPO 0 within region)"
+   },
+   {
+    "name": "Location freshness",
+    "target": "Rider position on customer map < 10 s old p95"
+   },
+   {
+    "name": "Scalability",
+    "target": "Handle 5x normal dinner peak via horizontal scaling per city partition"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "3M orders/day; 20% in the 1-hour dinner peak; festival peak 5x normal peak.",
+    "Each order: ~8 state transitions, ~10 notifications, ~25 tracking views.",
+    "300k riders online at peak, GPS ping every 4 s, ~200 bytes per ping.",
+    "15M DAU browsing, ~6 listing/menu calls per session.",
+    "200k restaurants, average menu 150 items."
+   ],
+   "math": [
+    "Peak orders: 3M x 0.2 / 3600 = ~170 orders/s; festival 5x = ~850 orders/s.",
+    "Order state writes: 170 x 8 = ~1.4k writes/s peak; trivial for a sharded Postgres fleet.",
+    "Listing/menu reads: 15M x 6 = 90M/day, peak ~5k/s, festival ~25k/s; served mostly from cache.",
+    "Location ingest: 300k / 4 s = 75k updates/s; 75k x 200 B = 15 MB/s, ~1.3 TB/day raw if all stored.",
+    "Tracking fan-out: active orders at peak ~170/s x 30 min = ~300k concurrent tracked orders, each pushed every 4-5 s = ~70k WS messages/s.",
+    "Dispatch: per large city ~5k open orders and ~30k riders at peak; with k-ring filtering each order has ~50 candidates, cost matrix ~250k entries per 10 s batch per city.",
+    "Order storage: 3M x 5 KB (order + items + events) = 15 GB/day, ~5.5 TB/year."
+   ],
+   "summary": "Order writes are modest (~1.4k/s peak); the heavy paths are location ingest (~75k/s), tracking pushes (~70k/s) and per-city dispatch computation every few seconds. Reads for listing are cache-friendly at ~5-25k/s. Storage is small; real-time compute and fan-out dominate."
+  },
+  "out_of_scope": [
+   "Restaurant onboarding, KYC and payouts.",
+   "Rider payroll and incentive engine internals.",
+   "Recommendation and personalisation of listings.",
+   "Customer support chat tooling."
+  ]
+ },
+ "hld": {
+  "overview": "Services are split by bounded context: Discovery (geo search + ETA), Cart/Pricing, Order (state machine and saga orchestrator), Payment (PSP adapters), Restaurant gateway, Dispatch (matching and batching), Location (ingest and geo index), Tracking/Notification. The Order service is the source of truth for order state; every transition is persisted with an outbox event on Kafka, which drives dispatch, notifications, tracking and analytics. Dispatch and location are partitioned by city and zone so the real-time hot paths scale independently of the transactional core.",
+  "diagram": "\n Customer app        Restaurant tablet/POS        Rider app\n     |                       |                        |  GPS every 4 s\n     v                       v                        v\n +-------------------------------------------------------------+\n | API Gateway (auth, rate limit)  +  WebSocket / push gateway |\n +-------------------------------------------------------------+\n   |            |              |                |           |\n   v            v              v                v           v\n +--------+ +---------+ +--------------+ +-------------+ +-------------+\n |Discovery| | Cart /  | | Order Service| | Dispatch    | | Location    |\n |& Search | | Pricing | | (state mach.,| | (batching,  | | Ingest      |\n |(geo, ETA)| | Promo  | |  saga orch.) | |  matching)  | | (H3 cells)  |\n +--------+ +---------+ +--------------+ +-------------+ +-------------+\n   |   |                    |    |   |          ^   |          |\n   |   v                    |    |   |          |   v          v\n   | +--------+   +---------+    |   |   +------------+  +-------------+\n   | |Menu/   |   |Payment Svc|  |   |   | ETA / ML   |  | Redis GEO + |\n   | |Avail.  |   |(PSP: UPI, |  |   |   | service    |  | rider state |\n   | |cache   |   | cards)    |  |   |   +------------+  +-------------+\n   | +--------+   +-----------+  |   |\n   v                             v   v\n +--------------+   +-----------------+   +-------------------------+\n | Elasticsearch|   | Orders DB       |   | Kafka: order.*, rider.*,|\n | (restaurants,|   | (sharded Postgres|-->| location.* -> analytics,|\n |  geo_point)  |   |  + outbox)      |   | notifications, ETA      |\n +--------------+   +-----------------+   +-------------------------+\n",
+  "components": [
+   {
+    "name": "API Gateway + WebSocket gateway",
+    "responsibility": "Auth, rate limits, routing; persistent connections for riders, restaurants and tracking customers."
+   },
+   {
+    "name": "Discovery service",
+    "responsibility": "Geo query of restaurants in radius from Elasticsearch, filter open/accepting, attach ETA and fee; cached per H3 cell."
+   },
+   {
+    "name": "Menu and availability service",
+    "responsibility": "Menus with versioning, item out-of-stock toggles, restaurant open/pause state; cached in Redis."
+   },
+   {
+    "name": "Cart and pricing service",
+    "responsibility": "Cart persistence, price computation, taxes, delivery fee, surge and promo validation; returns a signed price quote."
+   },
+   {
+    "name": "Order service (orchestrator)",
+    "responsibility": "Order state machine, saga steps and timeouts, idempotency, outbox events."
+   },
+   {
+    "name": "Payment service",
+    "responsibility": "PSP adapters (UPI, cards, wallets), authorise/capture/void/refund with idempotency keys, webhook handling and reconciliation."
+   },
+   {
+    "name": "Restaurant gateway",
+    "responsibility": "Pushes orders to tablets/POS, collects accept/reject/ready, escalates via IVR call on no response."
+   },
+   {
+    "name": "Location service",
+    "responsibility": "Ingests rider GPS, validates (speed/jump checks), stores latest position per rider in Redis and per H3 cell index, publishes to Kafka."
+   },
+   {
+    "name": "Dispatch service",
+    "responsibility": "Per-zone micro-batch matching of orders to riders with batching, offers with accept timeout, reassignment."
+   },
+   {
+    "name": "ETA service",
+    "responsibility": "Predicts prep, pickup travel and drop travel times using ML models and live traffic; used in listing, checkout and tracking."
+   },
+   {
+    "name": "Tracking and notification service",
+    "responsibility": "Consumes order and location events, pushes WS updates and push/SMS notifications."
+   },
+   {
+    "name": "Data platform",
+    "responsibility": "Kafka -> stream processing (Flink) for real-time zone metrics; data lake for model training and reconciliation."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Place order (saga)",
+    "steps": [
+     "Client POST /v1/orders with cart_id, price_quote_id, payment method, Idempotency-Key.",
+     "Order service validates quote signature and expiry (5 min), revalidates item availability, inserts order CREATED + outbox in one transaction.",
+     "Payment service authorises amount with the PSP using order_id as idempotency key; UPI may return PENDING and complete via webhook.",
+     "On AUTHORIZED, order -> PLACED; restaurant gateway pushes the order; a 3 min acceptance timer starts (durable timer).",
+     "Restaurant ACCEPTs with prep time -> order ACCEPTED, event order.accepted; on REJECT or timeout -> CANCELLED and payment voided (compensation).",
+     "On DELIVERED, payment captured; on failure after pickup, policy-based refund and incident record."
+    ]
+   },
+   {
+    "name": "Dispatch and assignment",
+    "steps": [
+     "Dispatch consumes order.accepted into the zone's open-order pool with food ready time = accept time + prep time.",
+     "Every 5-10 s per zone: for each open order, fetch idle or near-finishing riders from H3 k-ring (k=2-3) around the restaurant.",
+     "Build cost matrix: rider-to-restaurant ETA vs food ready time, batching compatibility, rider fairness, distance limits.",
+     "Solve assignment (Hungarian / min-cost flow or greedy with improvements), send offers; rider has 30 s to accept.",
+     "On accept, Order service applies RIDER_ASSIGNED via compare-and-set on order version and rider state; on reject/timeout, order returns to the pool."
+    ]
+   },
+   {
+    "name": "Live tracking",
+    "steps": [
+     "Rider app sends GPS every 4 s (every 10 s when idle) over a persistent connection; Location service validates and updates Redis.",
+     "Location events published to Kafka partitioned by rider_id.",
+     "Tracking service maps rider -> active order -> subscribed customer sockets and pushes position and refreshed ETA every ~5 s.",
+     "If the WebSocket drops, the client falls back to polling GET /v1/orders/{id}/track every 10 s."
+    ]
+   }
+  ],
+  "data_flow": "Transactional writes (orders, payments) go to sharded Postgres with outbox events into Kafka. High-rate ephemeral data (rider positions, rider state) lives in Redis per city with a Kafka stream for consumers. Read models (restaurant search, menus, listings per cell) are built from change events into Elasticsearch and Redis caches. Analytics and ML training consume the same Kafka topics into the data lake."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/restaurants?lat=13.04&lng=80.23&cursor=",
+    "request": "-",
+    "response": "{restaurants:[{id, name, eta_min, fee, rating, is_open}], next_cursor}",
+    "notes": "Cached by (H3 res-8 cell, time bucket 30 s); personalised ranking applied after."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/carts/{id}/quote",
+    "request": "{items:[{item_id, qty, addons}], address_id, promo_code}",
+    "response": "{quote_id, total, breakdown, eta_min, expires_at, signature}",
+    "notes": "Quote valid 5 min; signature prevents price tampering."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/orders",
+    "request": "Idempotency-Key; {quote_id, address_id, payment:{method:'UPI', vpa}}",
+    "response": "201 {order_id, status:'PAYMENT_PENDING'|'PLACED', payment_action}",
+    "notes": "Same key returns same order; 409 if quote expired."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/restaurant/orders/{id}/accept",
+    "request": "{prep_time_min: 15}",
+    "response": "200 {status:'ACCEPTED'}",
+    "notes": "Idempotent; rejected if order already CANCELLED (409)."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/rider/location",
+    "request": "{rider_id, lat, lng, accuracy_m, speed, ts, seq}",
+    "response": "204",
+    "notes": "Usually over a persistent socket; batched when offline and replayed in order by seq."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/rider/offers/{offer_id}/accept",
+    "request": "-",
+    "response": "200 {order_ids, pickup, drop} | 410 expired",
+    "notes": "Offer carries version; accept after expiry or after reassignment returns 410."
+   },
+   {
+    "method": "WS",
+    "path": "/v1/orders/{id}/track",
+    "request": "subscribe",
+    "response": "stream {status, rider_lat, rider_lng, eta_min}",
+    "notes": "Server pushes every ~5 s; polling fallback."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/orders/{id}/cancel",
+    "request": "{reason}",
+    "response": "200 {refund_amount, status}",
+    "notes": "Policy depends on state; after pickup only partial or none."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "orders",
+    "store": "Sharded Postgres (by order_id hash; order_id embeds city and time)",
+    "fields": [
+     "order_id",
+     "customer_id",
+     "restaurant_id",
+     "rider_id",
+     "city_id",
+     "status",
+     "version",
+     "items jsonb",
+     "amounts",
+     "payment_id",
+     "eta_promised",
+     "created_at",
+     "updated_at"
+    ],
+    "keys": "PK order_id; secondary indexes (customer_id, created_at desc) via a customer_orders lookup table",
+    "notes": "version used for optimistic concurrency on every transition."
+   },
+   {
+    "entity": "order_events",
+    "store": "Same shard as order (append-only)",
+    "fields": [
+     "order_id",
+     "seq",
+     "from_status",
+     "to_status",
+     "actor",
+     "payload",
+     "ts"
+    ],
+    "keys": "PK (order_id, seq)",
+    "notes": "Audit trail and source for disputes; also the outbox for Kafka."
+   },
+   {
+    "entity": "payments",
+    "store": "Payments Postgres (separate, strict access)",
+    "fields": [
+     "payment_id",
+     "order_id",
+     "psp",
+     "psp_ref",
+     "idempotency_key",
+     "state AUTH_PENDING|AUTHORIZED|CAPTURED|VOIDED|REFUNDED|FAILED",
+     "amount",
+     "updated_at"
+    ],
+    "keys": "PK payment_id; unique (idempotency_key); unique (psp, psp_ref)",
+    "notes": "Reconciled daily against PSP settlement files."
+   },
+   {
+    "entity": "rider_state",
+    "store": "Redis (per city cluster)",
+    "fields": [
+     "rider:{id} -> {status IDLE|OFFERED|ON_TRIP, lat, lng, h3_r9, last_ts, active_orders, version}",
+     "cell:{h3_r9} -> SET rider_ids"
+    ],
+    "keys": "rider_id; H3 cell id",
+    "notes": "TTL 60 s on position so stale riders drop out of matching."
+   },
+   {
+    "entity": "restaurants (search)",
+    "store": "Elasticsearch",
+    "fields": [
+     "restaurant_id",
+     "location geo_point",
+     "cuisines",
+     "rating",
+     "is_open",
+     "avg_prep_min",
+     "serviceable_polygon"
+    ],
+    "keys": "_id restaurant_id; index per region",
+    "notes": "Updated from change events; is_open also checked in Redis for freshness."
+   }
+  ],
+  "classes": [
+   {
+    "name": "OrderStateMachine",
+    "responsibility": "Validates and applies transitions with optimistic locking and emits events.",
+    "methods": [
+     "transition(orderId, expectedVersion, toStatus, actor)",
+     "allowed(from, to)",
+     "onTimeout(orderId, timerType)"
+    ]
+   },
+   {
+    "name": "PlaceOrderSaga",
+    "responsibility": "Coordinates payment, restaurant acceptance, dispatch and capture with compensations.",
+    "methods": [
+     "start(order)",
+     "onPaymentResult(evt)",
+     "onRestaurantResponse(evt)",
+     "compensate(order, step)"
+    ]
+   },
+   {
+    "name": "DispatchEngine",
+    "responsibility": "Per-zone matching loop.",
+    "methods": [
+     "collectOpenOrders(zone)",
+     "candidates(order, k)",
+     "buildCostMatrix(orders, riders)",
+     "solve(matrix)",
+     "sendOffers(assignments)"
+    ]
+   },
+   {
+    "name": "LocationIngestor",
+    "responsibility": "Validates and indexes rider pings.",
+    "methods": [
+     "onPing(ping)",
+     "isPlausible(prev, ping)",
+     "updateCell(riderId, oldCell, newCell)"
+    ]
+   },
+   {
+    "name": "PaymentClient",
+    "responsibility": "Idempotent calls to PSPs with status checks.",
+    "methods": [
+     "authorize(orderId, amount, method)",
+     "capture(paymentId)",
+     "void(paymentId)",
+     "refund(paymentId, amount)",
+     "status(paymentId)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Order transition with optimistic concurrency",
+    "explain": "Every transition reads the order's version, checks the move is legal, and updates with WHERE version = expected. If zero rows change, someone else moved the order first (e.g. customer cancel racing restaurant accept); the caller re-reads and decides. The event row is inserted in the same transaction so the outbox relay publishes it.",
+    "pseudocode": "ALLOWED = {\n  'CREATED': {'PAYMENT_PENDING', 'PLACED', 'FAILED'},\n  'PAYMENT_PENDING': {'PLACED', 'FAILED'},\n  'PLACED': {'ACCEPTED', 'CANCELLED'},\n  'ACCEPTED': {'RIDER_ASSIGNED', 'CANCELLED'},\n  'RIDER_ASSIGNED': {'PICKED_UP', 'ACCEPTED', 'CANCELLED'},   # ACCEPTED = unassign\n  'PICKED_UP': {'DELIVERED', 'UNDELIVERABLE'},\n}\ndef transition(order_id, expected_version, to, actor, payload):\n    with db.tx() as tx:\n        o = tx.get(order_id)\n        if o.version != expected_version: raise Conflict(o)\n        if to not in ALLOWED.get(o.status, ()): raise IllegalTransition(o.status, to)\n        n = tx.exec(\"UPDATE orders SET status=%s, version=version+1 \"\n                    \"WHERE order_id=%s AND version=%s\", to, order_id, expected_version)\n        if n == 0: raise Conflict(tx.get(order_id))\n        tx.insert('order_events', order_id, o.version + 1, o.status, to, actor, payload)\n    return o.version + 1"
+   },
+   {
+    "name": "Micro-batch dispatch with batching",
+    "explain": "Every 5-10 s per zone, gather open orders and candidate riders from H3 k-rings. Cost for (rider, order) = max(arrival time at restaurant, food ready time) + drop time, plus penalties for waiting riders, food waiting, and unfairness. Pairs of orders from nearby restaurants to nearby drops are considered as a combined job if the added delay to the first order is under 8 min. Solve a min-cost assignment; leftovers wait for the next batch, where their priority rises.",
+    "pseudocode": "def dispatch_tick(zone):\n    orders = open_orders(zone)                      # ACCEPTED, not assigned\n    jobs = orders + candidate_pairs(orders, max_extra_delay=8*MIN)\n    riders = set()\n    for o in orders:\n        for cell in h3.k_ring(h3.cell(o.restaurant, res=9), k=3):\n            riders |= redis.smembers(f\"cell:{cell}\")\n    riders = [r for r in riders if state(r) == 'IDLE' or finishing_soon(r)]\n    cost = {}\n    for r in riders:\n        for j in jobs:\n            t_pick = eta(r.pos, j.pickup)\n            wait_food = max(0, j.ready_at - (now + t_pick))\n            wait_rider = max(0, (now + t_pick) - j.ready_at)\n            cost[r, j] = t_pick + j.drop_time + 0.5*wait_food + 1.0*wait_rider                          - age_bonus(j) + fairness_penalty(r)\n    plan = min_cost_assignment(cost, each_order_once=True)\n    for r, j in plan:\n        send_offer(r, j, expires_in=30*SEC, version=state_version(r))"
+   },
+   {
+    "name": "GPS plausibility filter",
+    "explain": "Drop or flag pings that imply impossible speed (> 80 km/h in city for two-wheelers), large jumps after short intervals, or out-of-order sequence numbers. Smooth with a simple Kalman or map-matching step before computing ETAs.",
+    "pseudocode": "def on_ping(p):\n    prev = redis.hgetall(f\"rider:{p.rider_id}\")\n    if prev and p.seq <= int(prev['seq']): return          # stale / duplicate\n    if prev:\n        dt = max(1, p.ts - int(prev['ts']))\n        v = haversine(prev, p) / dt * 3.6                  # km/h\n        if v > 80: flag_suspect(p.rider_id); return\n    cell = h3.cell(p, res=9)\n    if prev and prev['h3'] != cell:\n        redis.srem(f\"cell:{prev['h3']}\", p.rider_id); redis.sadd(f\"cell:{cell}\", p.rider_id)\n    redis.hset(f\"rider:{p.rider_id}\", lat=p.lat, lng=p.lng, ts=p.ts, seq=p.seq, h3=cell)\n    redis.expire(f\"rider:{p.rider_id}\", 60)\n    kafka.send('rider.location', key=p.rider_id, value=p)"
+   }
+  ],
+  "sequence": "\nCustomer   OrderSvc        PaymentSvc     Restaurant     Dispatch        Rider       Kafka\n  | POST /orders (Idem-Key)   |              |              |              |           |\n  |---------->| validate cart, price, create order=CREATED + outbox -------------------->|\n  |           |-- authorize(amount, idem) -->|              |              |           |\n  |           |<-- AUTHORIZED ---------------|              |              |           |\n  |<-- 201 {order_id, status PLACED}         |              |              |           |\n  |           |-- notify new order (WS/push) --------------->|              |           |\n  |           |<-- ACCEPT {prep_time 15m} ---------------------|              |           |\n  |           |-- order.accepted --------------------------------------------------------->|\n  |           |                              |              |<-- consume ---------------|\n  |           |                              |              | find riders in k-ring     |\n  |           |                              |              |-- offer (30 s) --------->|  |\n  |           |                              |              |<-- accept ---------------|  |\n  |           |<-- RIDER_ASSIGNED (CAS on version) ---------|              |           |\n  |<-- WS: rider assigned, ETA 28 min                       |              |           |\n  |           |                              |    ...pickup (OTP)...       |           |\n  |           |<-- PICKED_UP / DELIVERED ---------------------------------|           |\n  |           |-- capture(amount) ---------->|              |              |           |\n  |<-- WS: delivered, receipt                |              |              |           |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Customer taps Place Order twice or retries after a timeout.",
+   "handling": "Idempotency-Key on POST /orders stored with a unique constraint; second call returns the first order; payment authorise uses order_id as PSP idempotency key."
+  },
+  {
+   "case": "UPI payment stays PENDING for minutes.",
+   "handling": "Order stays PAYMENT_PENDING with a 10 min timer; webhook or status poll moves it on; on timeout mark FAILED and if the debit later succeeds, auto-refund via reconciliation."
+  },
+  {
+   "case": "PSP times out on authorise: did it succeed?",
+   "handling": "Never blind-retry; call status API with the same idempotency key; retry only if PSP confirms not found; exponential backoff with jitter."
+  },
+  {
+   "case": "Customer cancels at the same moment restaurant accepts.",
+   "handling": "Both transitions use optimistic concurrency on version; the loser gets a conflict and re-reads; policy decides (if accepted first, cancellation may incur fee)."
+  },
+  {
+   "case": "Two dispatch workers assign the same order to different riders.",
+   "handling": "Zone ownership via lease (one worker per zone); RIDER_ASSIGNED applied by CAS on order version and rider state version, so the second write fails and its offer is withdrawn."
+  },
+  {
+   "case": "Rider accepts an offer after it expired.",
+   "handling": "Offer has version and expiry; accept returns 410 and the app shows the next offer."
+  },
+  {
+   "case": "Restaurant never responds.",
+   "handling": "Durable timer: after 90 s re-notify plus automated IVR call; after 3 min cancel, void payment, notify customer, and dock restaurant reliability score."
+  },
+  {
+   "case": "Item goes out of stock after the order is placed.",
+   "handling": "Restaurant can mark items unavailable on acceptance; customer gets substitution or partial refund prompt with a 2 min window, else auto-partial refund."
+  },
+  {
+   "case": "Rider's phone goes offline mid-delivery.",
+   "handling": "Rider app buffers pings with seq numbers and replays; tracking shows last known position with 'updating' state; ops alerted if silent for > 5 min while ON_TRIP."
+  },
+  {
+   "case": "GPS spoofing to appear near restaurants.",
+   "handling": "Speed/jump checks, mock-location detection, device attestation, pickup OTP and geofence at restaurant before PICKED_UP."
+  },
+  {
+   "case": "Price changed between viewing the cart and placing the order.",
+   "handling": "Signed quote with 5 min expiry; order uses quoted price; expired quote returns 409 with a fresh quote for confirmation."
+  },
+  {
+   "case": "Heavy rain: demand doubles and riders drop.",
+   "handling": "Zone health metrics trigger surge fee, longer ETAs, reduced radius, and throttle on new orders per zone rather than accepting orders that will fail."
+  },
+  {
+   "case": "Duplicate Kafka events (order.accepted delivered twice).",
+   "handling": "Dispatch deduplicates by (order_id, event seq); adding an already-open order to the pool is a no-op."
+  },
+  {
+   "case": "Restaurant on a zone boundary.",
+   "handling": "Candidate riders come from H3 k-rings, not zone membership, so riders across the boundary are considered; zone ownership is by restaurant cell."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "PostgreSQL (sharded) for orders and payments",
+   "layer": "Transactional store",
+   "overview": "Relational DB with ACID transactions and row-level locking.",
+   "why": "Order state and payments need atomic transitions and an outbox in the same transaction; write volume (~1.4k/s peak) fits a sharded fleet easily.",
+   "alternatives": "DynamoDB/Cassandra scale writes more but make multi-row atomicity and ad hoc queries harder; CockroachDB/Spanner remove manual sharding at higher latency/cost."
+  },
+  {
+   "name": "Redis (per-city clusters)",
+   "layer": "Real-time state",
+   "overview": "In-memory store with hashes, sets and GEO commands.",
+   "why": "75k rider pings/s, latest-position semantics, TTLs to expire stale riders, sub-ms reads for dispatch.",
+   "alternatives": "Tile38 or an in-memory geo service offers richer geofencing; Aerospike for larger-than-RAM data."
+  },
+  {
+   "name": "Uber H3",
+   "layer": "Geospatial index",
+   "overview": "Hierarchical hexagonal grid; each point maps to a cell id at a chosen resolution.",
+   "why": "Uniform neighbour distances make k-ring candidate search and per-cell aggregation (supply/demand, caching) simple.",
+   "alternatives": "Geohash is simpler but has rectangle distortion and edge effects; S2 (Google) uses squares on a cube with good hierarchy."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Event backbone",
+   "overview": "Partitioned durable log.",
+   "why": "Order and location events feed dispatch, tracking, notifications and analytics independently, with replay.",
+   "alternatives": "RabbitMQ for task queues with less retention; Pulsar for geo-replication and tiered storage."
+  },
+  {
+   "name": "Temporal / durable timers (or DB-backed scheduler)",
+   "layer": "Saga orchestration",
+   "overview": "Durable workflow engine with timers and retries.",
+   "why": "Order sagas have waits (UPI pending, restaurant 3 min timeout) that must survive restarts.",
+   "alternatives": "Hand-rolled timers in Redis sorted sets are lighter but need careful recovery; choreography via events only avoids an orchestrator but obscures flow."
+  },
+  {
+   "name": "Elasticsearch / OpenSearch",
+   "layer": "Discovery search",
+   "overview": "Distributed search with geo_point and geo_shape queries.",
+   "why": "Radius + polygon serviceability + text + filters in one query.",
+   "alternatives": "PostGIS is accurate but harder to scale for high read QPS with text search; a custom per-cell index is fastest but less flexible."
+  },
+  {
+   "name": "WebSocket gateway (or MQTT for riders)",
+   "layer": "Real-time connections",
+   "overview": "Persistent bidirectional connections.",
+   "why": "Push offers to riders and tracking to customers without polling; MQTT is efficient on flaky mobile networks.",
+   "alternatives": "Long polling is simpler but costlier at scale; server-sent events are one-way only."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Saga pattern (orchestration) for distributed transactions",
+   "explain": "When one business operation spans several services with their own databases, a single ACID transaction is not available, and two-phase commit couples services tightly and blocks on coordinator failure. A saga splits the operation into a sequence of local transactions, each with a compensating action that semantically undoes it: authorise payment is compensated by void, reserve stock by release, and so on. If step k fails, the saga runs compensations for steps k-1 down to 1. In choreography, each service reacts to events from the previous one; it is decoupled but the overall flow is hard to see and change. In orchestration, a coordinator (often a durable workflow engine) tells each participant what to do and records progress, which makes timeouts, retries and visibility explicit. Sagas give atomicity in the eventual sense but not isolation: intermediate states are visible, so designs use semantic locks (state flags like PAYMENT_PENDING), commutative updates, and re-reading before acting. Every step must be idempotent because the orchestrator will retry after crashes.",
+   "in_this_design": "PlaceOrderSaga runs in Order service on a durable workflow engine: authorise payment -> notify restaurant and wait up to 3 min -> dispatch -> capture on delivery. Compensations: void authorisation, cancel order, notify parties, refund after capture. Each step is idempotent by order_id.",
+   "key_points": [
+    "Saga = local transactions + compensations, not 2PC.",
+    "Orchestration makes timeouts and visibility explicit; choreography decouples but hides flow.",
+    "No isolation: expose intermediate states deliberately.",
+    "Every step and compensation must be idempotent and retryable."
+   ],
+   "qa": [
+    {
+     "q": "Why not 2PC across order, payment and restaurant services?",
+     "a": "PSPs and restaurant tablets cannot participate in 2PC, it blocks resources during waits of minutes, and coordinator failure leaves participants in doubt. A saga tolerates long waits and partial failures."
+    },
+    {
+     "q": "What happens if the void (compensation) itself fails?",
+     "a": "Retry with backoff indefinitely via the workflow engine; if the PSP is down for long, the authorisation expires on its own (typically days for cards) and reconciliation confirms; alert finance on stuck compensations."
+    },
+    {
+     "q": "Orchestration or choreography here?",
+     "a": "Orchestration: the flow has timers, human partners and many failure branches; a single owner gives visibility and easier change. Downstream side effects (notifications, analytics) still subscribe to events."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency keys and exactly-once effects for payments",
+   "explain": "Networks fail ambiguously: when a request times out, the client cannot know whether the server processed it. Retrying a non-idempotent operation like 'charge Rs 450' risks double charging. Idempotency makes retries safe: the client sends a unique key with the request, the server stores the key together with the result in the same transaction as the side effect, and any retry with the same key returns the stored result instead of acting again. Keys should be scoped (per user or merchant), stored with a TTL long enough to cover retries (often 24 h), and requests with the same key but different parameters should be rejected. Concurrency matters: two simultaneous requests with the same key must be serialised with a unique constraint or lock so only one executes. Across service boundaries the same principle chains: the order service uses order_id as the key to the payment service, which uses its payment_id as the key to the PSP. Delivery systems are at-least-once, so exactly-once effects are achieved as at-least-once delivery plus idempotent processing, and when a call outcome is unknown, query status before retrying.",
+   "in_this_design": "POST /orders requires an Idempotency-Key (unique per customer). Payment authorise/capture/refund calls to PSPs carry payment_id as their idempotency key. On PSP timeout the Payment service queries status before any retry. Kafka consumers dedupe by event seq.",
+   "key_points": [
+    "Timeouts are ambiguous; idempotency makes retries safe.",
+    "Store key + result atomically with the side effect; unique constraint for concurrency.",
+    "Chain keys across hops: client -> order -> payment -> PSP.",
+    "On unknown outcome, check status before retrying."
+   ],
+   "qa": [
+    {
+     "q": "The client retries POST /orders with the same key but a different address. What do you do?",
+     "a": "Reject with 422: an idempotency key must map to identical parameters; the client must use a new key for a new intent."
+    },
+    {
+     "q": "Where do you store idempotency keys?",
+     "a": "In the same database and transaction as the order row (unique index on customer_id, key) so the record and side effect cannot diverge; a Redis-only store risks loss."
+    },
+    {
+     "q": "Is Kafka exactly-once enough for payments?",
+     "a": "No. Kafka transactions cover Kafka reads and writes; PSP calls are external, so idempotency keys and reconciliation are required."
+    }
+   ]
+  },
+  {
+   "name": "Geospatial indexing (H3 / geohash / quadtree)",
+   "explain": "Answering 'which riders are within 3 km of this restaurant' by scanning every rider is too slow at tens of thousands of riders per city updating every few seconds. Geospatial indexes map 2D coordinates to keys that preserve locality so nearby points share or neighbour keys. Geohash interleaves latitude and longitude bits into a base-32 string; a prefix denotes a rectangle, and neighbours are found by computing adjacent cells, though cell sizes vary with latitude and adjacent points can have very different prefixes at boundaries. Quadtrees recursively split space into four children where density is high, adapting to dense cities, but are in-memory structures that need rebalancing. Google S2 projects the sphere onto a cube and uses a Hilbert curve for cell ids. Uber's H3 tiles the globe with hexagons at 16 resolutions; hexagons have six equidistant neighbours, so 'k-ring' (all cells within k steps) approximates a circle evenly, which is ideal for proximity search and for aggregating supply and demand per cell. A typical query converts the restaurant location to a cell, expands to a k-ring, unions the riders indexed in those cells, then filters by exact distance or road ETA.",
+   "in_this_design": "Riders are indexed in Redis sets per H3 resolution-9 cell (~0.1 km2); dispatch takes a k=3 ring around the restaurant. Listings are cached per resolution-8 cell. Supply-demand ratios per res-7 cell drive surge and ETA inflation.",
+   "key_points": [
+    "Map 2D points to locality-preserving cell ids.",
+    "H3 hexagons give uniform neighbour distance and clean k-rings.",
+    "Pick resolution to balance candidates per cell vs number of cells queried.",
+    "Index for candidates, then refine by exact distance or road ETA."
+   ],
+   "qa": [
+    {
+     "q": "Why H3 instead of geohash?",
+     "a": "Geohash cells are rectangles with uneven neighbour distances and boundary discontinuities; H3 hexagons have equidistant neighbours, making radius queries and per-cell aggregates more uniform."
+    },
+    {
+     "q": "How do you choose resolution?",
+     "a": "Small enough that a cell holds a manageable number of riders, large enough that a k-ring of 2-3 covers the pickup radius; res 9 (~170 m edge) with k=3 covers roughly 1 km+ which can expand if too few candidates."
+    },
+    {
+     "q": "How do you keep the index fresh as riders move?",
+     "a": "On each ping, if the cell changed, remove from old cell set and add to new one; TTL on rider hash removes riders who stop pinging."
+    }
+   ]
+  },
+  {
+   "name": "State machines with optimistic concurrency control",
+   "explain": "Modelling an entity's lifecycle as an explicit finite state machine lists every legal state and transition, so illegal moves (delivering a cancelled order) are rejected in one place, and every transition can emit a well-defined event. Concurrency arises when several actors try to move the same entity at once: customer cancels, restaurant accepts, dispatch assigns. Pessimistic locking (SELECT ... FOR UPDATE) serialises them but holds locks across network calls and can deadlock. Optimistic concurrency control instead stores a version number on the row; a writer reads the version, computes the new state, and updates with WHERE version = old_version. If another writer got there first, zero rows are updated, and the loser re-reads and decides whether its action still makes sense. This keeps transactions short, works well when conflicts are rare, and maps naturally to compare-and-set in caches and key-value stores. Combined with an append-only event table, it also yields a full audit trail that is invaluable for disputes and debugging.",
+   "in_this_design": "orders.version guards every transition. Customer cancel vs restaurant accept, and dispatch assign vs reassignment, are resolved by CAS; losers re-read. Rider state in Redis uses a version field with a Lua compare-and-set when an offer is accepted.",
+   "key_points": [
+    "Explicit states and allowed transitions prevent illegal moves.",
+    "Version column + conditional update = optimistic locking.",
+    "Short transactions, no locks held across network calls.",
+    "Event table per transition gives audit and replay."
+   ],
+   "qa": [
+    {
+     "q": "When would you prefer pessimistic locking?",
+     "a": "When conflicts are frequent and retries are expensive, e.g. a hot inventory counter; for orders, conflicts are rare so optimistic is better."
+    },
+    {
+     "q": "How do you prevent a rider being assigned two conflicting orders?",
+     "a": "Rider state transitions IDLE -> OFFERED -> ON_TRIP via CAS on the rider's version in Redis; offer acceptance checks both order and rider versions."
+    },
+    {
+     "q": "Why also keep an events table if the order row has the status?",
+     "a": "Status is the current snapshot; events record who changed what and when, needed for disputes, SLA metrics and rebuilding read models."
+    }
+   ]
+  },
+  {
+   "name": "Transactional outbox and change data capture",
+   "explain": "A service that updates its database and publishes an event faces the dual-write problem: if it writes the DB and crashes before publishing, consumers never learn of the change; if it publishes first and the DB write fails, consumers act on something that never happened. The transactional outbox pattern writes the event into an outbox table in the same local transaction as the state change. A separate relay then reads the outbox, either by polling for unpublished rows or by tailing the database's write-ahead log with change data capture (Debezium on Postgres logical replication), and publishes to the broker, marking rows as sent. Publication is at-least-once, so consumers must deduplicate, typically by an event id or (aggregate id, sequence). Ordering per aggregate is preserved by publishing with the aggregate id as the partition key. The pattern turns the database into the single source of truth while still enabling an event-driven architecture, and it underpins sagas, CQRS read models and analytics feeds.",
+   "in_this_design": "Every order transition inserts into order_events in the same transaction; Debezium streams it to Kafka topic order.events keyed by order_id. Dispatch, tracking, notifications and analytics consume it and dedupe by (order_id, seq).",
+   "key_points": [
+    "Dual writes to DB and broker are unsafe.",
+    "Write the event in the same transaction; relay publishes later.",
+    "CDC from the WAL avoids polling load.",
+    "Key by aggregate id for per-entity ordering; consumers dedupe."
+   ],
+   "qa": [
+    {
+     "q": "What latency does the outbox add?",
+     "a": "With CDC typically tens to a few hundred milliseconds; acceptable for dispatch and notifications. Polling relays add their poll interval."
+    },
+    {
+     "q": "How do consumers handle duplicates?",
+     "a": "Store the last processed seq per order_id or use idempotent upserts; ignore events with seq <= last seen."
+    },
+    {
+     "q": "Could you just use Kafka as the source of truth (event sourcing)?",
+     "a": "Possible, but querying current order state and enforcing transitions is simpler in Postgres; the outbox keeps strong per-order consistency while feeding events."
+    }
+   ]
+  },
+  {
+   "name": "Real-time location streaming and push fan-out",
+   "explain": "Live tracking requires moving small, frequent messages from many producers (riders) to specific subscribers (the customers of their orders) with low latency. Producers should hold persistent connections (WebSocket or MQTT) to avoid TCP and TLS handshakes per ping, which matter on mobile networks; MQTT adds lightweight framing and QoS levels suited to flaky links. Ingest servers are stateless except for connections, and they forward pings to a log such as Kafka partitioned by rider id, which preserves per-rider ordering. Latest state is kept in a fast key-value store because consumers only need the current position, not history. For the push side, a connection registry maps subscription keys (order id) to the gateway node holding the subscriber's socket, and tracking workers route updates there, often via a pub/sub channel per gateway. Throttling and coalescing are essential: there is no point pushing every 4 s ping if the map animates smoothly with updates every 5 s, and backpressure should drop intermediate positions rather than queue them. Clients need reconnect with backoff and a snapshot on reconnect.",
+   "in_this_design": "Riders connect via MQTT/WebSocket; pings go to Location service, Redis (latest) and Kafka (rider.location keyed by rider_id). Tracking service joins rider -> active order -> subscriber gateway and pushes coalesced updates every ~5 s; on reconnect the client gets a snapshot.",
+   "key_points": [
+    "Persistent connections avoid handshake cost per ping on mobile.",
+    "Partition by rider id for ordering; store only latest position for reads.",
+    "Coalesce and drop stale positions instead of queuing (backpressure).",
+    "Connection registry routes pushes to the right gateway node."
+   ],
+   "qa": [
+    {
+     "q": "How many WebSocket connections per gateway node?",
+     "a": "Typically 50k-100k idle-ish connections per well-tuned node; 300k tracking customers plus 300k riders means about 10-15 nodes with headroom, sharded by consistent hashing on user id."
+    },
+    {
+     "q": "A gateway node dies. What happens?",
+     "a": "Clients reconnect with jittered backoff to another node, re-subscribe, and receive a snapshot of current order state and rider position; the registry entry is updated."
+    },
+    {
+     "q": "Why not store every ping in Postgres?",
+     "a": "75k writes/s of data whose value decays in seconds; latest in Redis and history in Kafka -> object storage is far cheaper and sufficient for disputes and ML."
+    }
+   ]
+  },
+  {
+   "name": "Leases and partitioned ownership for dispatch",
+   "explain": "Some work must be done by exactly one worker at a time per partition, such as running the matching loop for a delivery zone, otherwise two workers might assign the same order or rider. A lease is a time-limited lock: a worker acquires ownership of a partition in a coordination store (ZooKeeper, etcd, or a database row) for, say, 10 seconds and must renew before expiry. If it crashes or is partitioned away, the lease expires and another worker takes over. Leases alone are not perfectly safe because a paused process (GC pause, network stall) may still believe it holds an expired lease; fencing tokens fix this: every lease grant increments a token, and downstream writes include it so the store rejects writes from stale holders. In practice, a combination of leases for liveness and compare-and-set on the data for safety is common. Partitioning work by geography also keeps each matching problem small and lets capacity scale with the number of zones.",
+   "in_this_design": "Each zone (cluster of H3 res-7 cells) is owned by one dispatch worker holding an etcd lease with 10 s TTL renewed every 3 s. Assignments carry the lease's fencing token and are applied by CAS on order and rider versions, so a stale owner cannot double-assign.",
+   "key_points": [
+    "Leases give single ownership with automatic takeover on failure.",
+    "Leases can be violated by pauses; fence downstream writes.",
+    "CAS on order and rider versions is the final safety net.",
+    "Partition by zone to keep matching problems small and parallel."
+   ],
+   "qa": [
+    {
+     "q": "What if a worker pauses for 15 s and then sends offers?",
+     "a": "Its lease expired and a new owner has a higher fencing token; the assignment write with the old token or stale version fails, and the offer is withdrawn."
+    },
+    {
+     "q": "How large should a zone be?",
+     "a": "Large enough that most pickups and their candidate riders fall inside (with k-ring overlap allowed), small enough that the cost matrix solves in well under the batch interval, e.g. a few thousand orders x riders."
+    },
+    {
+     "q": "Why not a single global dispatcher?",
+     "a": "It becomes a bottleneck and single point of failure; cities are independent markets, so partitioning is natural."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Saga style",
+   "options": "Choreography via events vs orchestration via workflow engine",
+   "choice": "Orchestration for the order flow",
+   "why": "Long waits, timers and many compensation branches need a single owner and visibility; side effects still subscribe to events."
+  },
+  {
+   "decision": "Dispatch strategy",
+   "options": "Greedy nearest rider on accept vs micro-batch global assignment",
+   "choice": "Micro-batch every 5-10 s per zone",
+   "why": "Batch optimisation reduces total travel and enables order batching; greedy is simpler and faster but worse at peak. Use greedy as fallback if the solver is slow."
+  },
+  {
+   "decision": "When to dispatch",
+   "options": "At order placement vs at restaurant acceptance vs timed to food ready",
+   "choice": "Pool at acceptance, assign so rider arrives near ready time",
+   "why": "Early assignment wastes rider time waiting; late assignment makes food wait. Timing to prep time balances both."
+  },
+  {
+   "decision": "Payment capture",
+   "options": "Capture at order vs authorise then capture on delivery",
+   "choice": "Authorise at order, capture on delivery (UPI: debit at order with auto-refund)",
+   "why": "Avoids refunds for cancellations on cards; UPI lacks auth-capture in many flows so we debit and refund automatically."
+  },
+  {
+   "decision": "Rider location storage",
+   "options": "Postgres/PostGIS vs Redis latest + Kafka history",
+   "choice": "Redis + Kafka",
+   "why": "75k writes/s of ephemeral data; only latest needed in real time; history goes to cheap storage."
+  },
+  {
+   "decision": "Geo index",
+   "options": "Geohash vs H3 vs quadtree",
+   "choice": "H3",
+   "why": "Uniform neighbours for k-ring searches and clean per-cell aggregation for surge and ETA."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Primary PSP degraded (UPI success rate drops)",
+   "behavior": "Payment router shifts traffic to secondary PSP based on rolling success rate; pending payments resolved via webhooks and status polling; UI suggests alternate methods."
+  },
+  {
+   "failure": "Dispatch worker for a zone crashes",
+   "behavior": "Lease expires in 10 s, another worker takes the zone and rebuilds state from Redis and open orders; at most one batch delayed."
+  },
+  {
+   "failure": "Redis location cluster for a city fails",
+   "behavior": "Replica promotes; if lost, riders' next pings within 4 s repopulate; dispatch pauses one or two ticks; tracking shows 'updating'."
+  },
+  {
+   "failure": "Orders DB shard failover",
+   "behavior": "Synchronous replica promoted in ~30 s; order writes for that shard return 503 with retry-after; clients retry with same idempotency key."
+  },
+  {
+   "failure": "Kafka consumer lag on order events",
+   "behavior": "Dispatch also polls Order service for ACCEPTED orders older than 30 s as a safety net; notifications delayed but order flow continues."
+  },
+  {
+   "failure": "ETA service down",
+   "behavior": "Fall back to distance-based heuristic ETAs with a conservative buffer; listing still works; alert because ETA accuracy SLO will burn."
+  }
+ ],
+ "metrics": [
+  "Orders placed/s, completion rate, cancellation rate by reason and actor",
+  "Time to restaurant accept, time to rider assign, time to pickup, total delivery time",
+  "ETA error distribution (promised vs actual)",
+  "Payment success rate by method and PSP; pending UPI age; refund latency",
+  "Dispatch batch solve time, unassigned order age, rider utilisation, offers rejected rate",
+  "Location ingest rate, ping freshness, suspected spoofing rate",
+  "WebSocket connections, push latency, reconnect rate",
+  "Zone supply-demand ratio and surge activation"
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you compute a reliable ETA?",
+   "a": "Decompose into restaurant prep (ML on restaurant, items, time, current load), rider to restaurant travel, and drop travel (road-network routing with live traffic); calibrate against actuals and add a buffer tuned for the 80% within +/-5 min target; update during the trip."
+  },
+  {
+   "q": "How would you scale for New Year's Eve at 5x peak?",
+   "a": "Pre-scale stateless services and Redis/WS gateways, raise Kafka partitions ahead, load test the dispatch solver at 5x, enable surge and order throttling per zone, cache listings more aggressively, and freeze deploys."
+  },
+  {
+   "q": "How do you batch orders without hurting food quality?",
+   "a": "Only pair orders whose pickups are within ~1 km and whose combined route adds < 8 min to the first order's drop; cap at 2; account for food type (ice cream vs biryani) in penalties."
+  },
+  {
+   "q": "How do you handle cash on delivery risk?",
+   "a": "COD limits per user based on history, rider cash-in-hand caps that block new COD offers until deposit, and OTP at delivery."
+  },
+  {
+   "q": "How do you prevent restaurants from being overloaded?",
+   "a": "Track open orders and recent prep delays per restaurant; dynamically increase prep estimates and temporarily hide or throttle the restaurant in listings when its queue exceeds capacity."
+  },
+  {
+   "q": "How would you support scheduled orders for later?",
+   "a": "Store as SCHEDULED with a durable timer that starts the normal saga at (slot - prep - travel); hold payment authorisation, and re-check restaurant open state before triggering."
+  },
+  {
+   "q": "How would you go multi-region?",
+   "a": "Cities are natural partitions: home each city in one region with a warm standby; global services (identity, catalog) replicated; failover a city by promoting its standby DB and redirecting its dispatch zones."
+  }
+ ],
+ "key_points": [
+  "Three-sided real-time marketplace; correctness on money and assignment, eventual consistency on menus.",
+  "Order is an explicit state machine with optimistic concurrency and an event table.",
+  "Placement is an orchestrated saga: authorise, restaurant accept with timeout, dispatch, capture; compensations void/refund.",
+  "Idempotency keys chained end to end; on unknown PSP outcome query status before retry.",
+  "Hot paths are location ingest (~75k/s) and dispatch compute, not order writes (~1.4k/s).",
+  "H3 cells for candidate riders and per-cell supply/demand; Redis for latest position with TTL.",
+  "Dispatch is per-zone micro-batch assignment with batching, owned via leases and protected by CAS.",
+  "Outbox + CDC feeds dispatch, tracking and analytics from the order DB.",
+  "Degrade gracefully: surge, wider ETAs, smaller radius, PSP failover, heuristic ETAs."
+ ],
+ "quiz": [
+  {
+   "q": "3M orders/day with 20% in a one-hour dinner peak gives roughly what peak order rate?",
+   "options": [
+    "17 orders/s",
+    "170 orders/s",
+    "1,700 orders/s",
+    "35 orders/s"
+   ],
+   "answer": 1,
+   "why": "600k / 3600 s = ~167/s. 35/s is the daily average, which badly under-provisions the peak."
+  },
+  {
+   "q": "300k riders send GPS every 4 s. What is the ingest rate?",
+   "options": [
+    "75k/s",
+    "7.5k/s",
+    "750k/s",
+    "1.2M/s"
+   ],
+   "answer": 0,
+   "why": "300,000 / 4 = 75,000/s. 1.2M/s would be multiplying by 4 instead of dividing."
+  },
+  {
+   "q": "Why use a saga instead of two-phase commit for placing an order?",
+   "options": [
+    "Sagas provide full isolation between steps",
+    "2PC is not supported by Postgres",
+    "Sagas guarantee no failures",
+    "Participants like PSPs and restaurants cannot join 2PC and waits are minutes long; sagas use local transactions with compensations"
+   ],
+   "answer": 3,
+   "why": "Sagas fit long, cross-organisation flows. They explicitly do not provide isolation, the most tempting misconception."
+  },
+  {
+   "q": "The PSP authorise call times out. What should the payment service do first?",
+   "options": [
+    "Retry immediately with a new idempotency key",
+    "Mark the order failed and ask the customer to pay again",
+    "Query the PSP's status using the same idempotency key before deciding to retry",
+    "Capture the payment"
+   ],
+   "answer": 2,
+   "why": "A timeout is ambiguous; status check with the same key avoids double charges. A new key on retry is exactly how double charges happen."
+  },
+  {
+   "q": "Customer cancel and restaurant accept arrive at the same moment. What prevents an inconsistent state?",
+   "options": [
+    "Kafka ordering",
+    "A conditional update on the order's version so only one transition wins",
+    "Client-side debouncing",
+    "Retrying both until one succeeds"
+   ],
+   "answer": 1,
+   "why": "Optimistic concurrency resolves the race in the database. Kafka ordering is downstream of the write and cannot arbitrate it."
+  },
+  {
+   "q": "Why does H3 suit rider candidate search better than geohash?",
+   "options": [
+    "Hexagons have six equidistant neighbours, so k-rings approximate circles evenly and avoid rectangle edge effects",
+    "H3 cells are smaller",
+    "Geohash cannot represent India",
+    "H3 is stored natively in Postgres"
+   ],
+   "answer": 0,
+   "why": "Uniform neighbour distance is the key property. Both systems offer many resolutions, so 'smaller cells' is not the reason."
+  },
+  {
+   "q": "What problem does the transactional outbox solve?",
+   "options": [
+    "Slow Kafka consumers",
+    "Payment fraud",
+    "GPS spoofing",
+    "The dual write between the database and the message broker"
+   ],
+   "answer": 3,
+   "why": "Writing the event in the same DB transaction removes the dual-write gap. It does not speed up consumers."
+  },
+  {
+   "q": "Two dispatch workers briefly both think they own a zone after a GC pause. What prevents double assignment?",
+   "options": [
+    "Longer lease TTL",
+    "Running dispatch less often",
+    "Fencing tokens and CAS on order/rider versions reject the stale owner's writes",
+    "Using a bigger zone"
+   ],
+   "answer": 2,
+   "why": "Leases give liveness; fencing and CAS give safety. A longer TTL just makes takeover slower without fixing the race."
+  },
+  {
+   "q": "Dispatch assigns riders at order placement rather than at acceptance timed to prep. What is the main downside?",
+   "options": [
+    "Payments fail more",
+    "Riders wait idle at restaurants, lowering utilisation at peak",
+    "Customers cannot track orders",
+    "Menus become stale"
+   ],
+   "answer": 1,
+   "why": "Early assignment burns rider time. Payment success is unrelated to dispatch timing."
+  },
+  {
+   "q": "UPI payments sometimes complete minutes after the order timed out as FAILED. Correct handling?",
+   "options": [
+    "Reconciliation detects the late debit and triggers an automatic refund (or revives the order if still possible)",
+    "Ignore the late success",
+    "Ask the customer to email support",
+    "Retry the payment again"
+   ],
+   "answer": 0,
+   "why": "Late success must be reconciled to avoid keeping money for a failed order. Retrying would compound the problem with a second debit."
+  },
+  {
+   "q": "Which store fits latest rider positions at 75k updates/s?",
+   "options": [
+    "Postgres with a row update per ping",
+    "Elasticsearch with refresh every ping",
+    "S3 objects per rider",
+    "Redis hashes with TTL plus a Kafka stream for history"
+   ],
+   "answer": 3,
+   "why": "Only the latest value matters in real time, and Redis handles this rate cheaply. Postgres could, with effort, but wastes durable write capacity on ephemeral data."
+  },
+  {
+   "q": "Time-to-assign p90 jumps from 45 s to 4 min only in one city during rain. Best first action?",
+   "options": [
+    "Scale the orders database",
+    "Increase Kafka retention",
+    "Check zone supply/demand: activate surge, widen ETAs and throttle new orders in affected zones",
+    "Disable order batching globally"
+   ],
+   "answer": 2,
+   "why": "A localized assignment delay during rain is a supply problem, not a database problem. Disabling batching globally would reduce capacity everywhere."
+  },
+  {
+   "q": "A Kafka order.accepted event is delivered twice to dispatch. What should happen?",
+   "options": [
+    "Two riders get assigned",
+    "Dispatch dedupes by (order_id, seq) and the second is a no-op",
+    "Kafka prevents duplicates by default",
+    "The order is cancelled"
+   ],
+   "answer": 1,
+   "why": "At-least-once delivery means consumers must dedupe. Kafka does not guarantee no duplicates to consumers by default."
+  },
+  {
+   "q": "Why does the cart return a signed price quote with a 5 min expiry?",
+   "options": [
+    "So the order uses an agreed, tamper-proof price and stale prices are re-confirmed",
+    "To speed up search",
+    "To reduce GPS usage",
+    "To avoid needing idempotency keys"
+   ],
+   "answer": 0,
+   "why": "The quote fixes price and prevents tampering. It is unrelated to idempotency, which handles retries."
+  },
+  {
+   "q": "In the micro-batch dispatch cost, why penalise rider waiting more than food waiting (or vice versa) explicitly?",
+   "options": [
+    "It has no effect on outcomes",
+    "It is required by the Hungarian algorithm",
+    "It reduces database load",
+    "It encodes the business trade-off between rider utilisation and food freshness into the optimisation"
+   ],
+   "answer": 3,
+   "why": "Weights express priorities. The algorithm works with any costs; the weights are a business choice."
+  },
+  {
+   "q": "Which statement about sagas is correct?",
+   "options": [
+    "Intermediate states are invisible to other transactions",
+    "Sagas require a distributed lock manager",
+    "Each step needs a compensating action and must be idempotent because the orchestrator retries",
+    "Compensations restore the exact previous bytes in each DB"
+   ],
+   "answer": 2,
+   "why": "Compensations are semantic undos and steps are retried. Sagas lack isolation, so intermediate states are visible."
+  },
+  {
+   "q": "About how many concurrent tracked orders exist at peak (170 orders/s, 30 min average active)?",
+   "options": [
+    "30k",
+    "300k",
+    "3M",
+    "5k"
+   ],
+   "answer": 1,
+   "why": "170 x 1800 s = ~306k. 30k drops a factor of ten and would undersize the WebSocket fleet."
+  },
+  {
+   "q": "A rider's phone goes offline for 2 minutes and then reconnects. What should the location pipeline do with buffered pings?",
+   "options": [
+    "Accept them in seq order, update latest only if newer, and keep history for disputes",
+    "Discard them all",
+    "Treat each as a new rider",
+    "Re-run dispatch for all orders"
+   ],
+   "answer": 0,
+   "why": "Sequence numbers keep order; latest-only updates prevent rewinding the map. Discarding loses delivery evidence."
+  },
+  {
+   "q": "Why partition dispatch by city/zone?",
+   "options": [
+    "Payments differ by city",
+    "Kafka requires it",
+    "It removes the need for leases",
+    "Matching problems are local, so partitions keep each cost matrix small, parallel and isolated from other cities' failures"
+   ],
+   "answer": 3,
+   "why": "Locality makes partitioning natural and scalable. Leases are still needed to ensure one owner per partition."
+  },
+  {
+   "q": "Restaurant does not respond to a new order for 3 minutes. Best behaviour?",
+   "options": [
+    "Wait indefinitely",
+    "Assign a rider anyway",
+    "Escalate (re-notify, IVR call) then cancel, void payment and notify customer via saga compensation",
+    "Charge the customer and refund later"
+   ],
+   "answer": 2,
+   "why": "A durable timeout with compensation keeps the customer informed and money safe. Assigning a rider wastes supply on an order that may never be cooked."
+  }
+ ],
+ "references": [
+  {
+   "title": "A brief introduction to Engineering challenges at Swiggy",
+   "url": "https://bytes.swiggy.com/engineering-challenges-at-swiggy-430dea6c86a3"
+  },
+  {
+   "title": "DoorDash engineering blog: dispatch optimisation",
+   "url": "https://careersatdoordash.com/?p=5342"
+  },
+  {
+   "title": "How DoorDash uses ML optimisation models (TechAhead)",
+   "url": "https://www.techaheadcorp.com/blog/this-is-how-doordash-uses-machine-learning-optimization-models-for-delighting-their-customers/"
+  },
+  {
+   "title": "How to build an app like Swiggy: architecture and what makes it hard (RaftLabs)",
+   "url": "https://raftlabs.com/blog/how-to-build-app-like-swiggy"
+  },
+  {
+   "title": "Food delivery: order/rider assignment optimization algorithms (Rapyd community)",
+   "url": "https://community.rapyd.net/t/food-delivery-order-rider-assignment-optimization-algorithms/54983"
+  }
+ ]
+}

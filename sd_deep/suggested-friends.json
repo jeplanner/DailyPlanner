@@ -1,0 +1,1065 @@
+{
+ "slug": "suggested-friends",
+ "title": "Design \"suggested friends\" (People You May Know)",
+ "prompt": "Design \"suggested friends\" recommendations.",
+ "group": "feeds",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 100,
+ "summary": "Suggested friends is a link-prediction problem on a graph of billions of nodes: find people a user is likely to know and connect with. The core tension is that the best signals (mutual friends, multi-hop proximity) are expensive graph computations, so they must be precomputed offline and patched with nearline deltas, while privacy and safety rules constrain which signals can be used and shown. Interviewers probe two-hop cost, hub skew, cold start, freshness after new friendships, and how you avoid creepy or unsafe suggestions.",
+ "framework": {
+  "clarify": [
+   "Symmetric friendships (Facebook style) or directed follows (Twitter style)? Assume symmetric friend requests.",
+   "Scale: 2B users, 1B MAU, average 300 friends, 50k QPS peak for suggestions.",
+   "Surfaces: a dedicated page, a feed module, and post-signup onboarding; latency p99 < 200ms.",
+   "Objective: maximise accepted requests, not sent requests.",
+   "Which signals are allowed: graph, profile (school, company, city), contact uploads (opt-in), interactions?",
+   "Freshness: after adding a friend, how quickly should suggestions update? Assume under a minute.",
+   "Safety constraints: minors, blocked users, discovery opt-outs, regional consent law.",
+   "Do we need explanations like 'N mutual friends'? Assume yes."
+  ],
+  "design": [
+   "Baseline: online friends-of-friends count for each request; show top 20 non-friends. Then show why it does not scale.",
+   "Offline: daily Spark self-join for mutual counts and Adamic-Adar, weekly PPR walks, profile/org matches; top 500 per user bulk-loaded into a versioned KV.",
+   "Nearline: Flink on friend_added and signup events writes 2-hop deltas and contact matches to a Redis delta store.",
+   "Online: Suggestion service merges batch and delta candidates, filters (friends, pending, dismissed, blocks, policy), ranks with a p(send and accept) model, diversifies, caps impressions.",
+   "APIs: GET /v1/suggestions, POST /v1/suggestions/{id}/dismiss, POST /v1/friend-requests, POST /v1/contacts/upload.",
+   "Feedback: impressions, sends, accepts and dismissals logged for training and impression caps."
+  ],
+  "defend": [
+   "Bottleneck: two-hop computation and hub skew; solved offline with salted joins and hub sampling.",
+   "Scale reads: one KV read for the candidate list per request, one-hop online lookups only, response cached 10 minutes per user.",
+   "Scale writes: batch bulk loads with atomic swap; nearline deltas small with 48h TTL.",
+   "Failure: if ranker times out, order by Adamic-Adar; if candidate KV is down, serve delta and org-based candidates; filters fail closed (if block list unavailable, return nothing rather than risk unsafe suggestions).",
+   "Measure: accepted requests per impression, recall@k offline, dismiss and report rates, p99 latency, freshness after new edges."
+  ],
+  "script": "This is link prediction on a huge graph, so I will start by clarifying: symmetric friendships, about 2 billion users with 300 friends on average, a suggestions page and feed module at around 50k QPS with p99 under 200 milliseconds, optimising for accepted requests, and strict privacy and safety rules. The naive design counts friends of friends per request, which is 90,000 edge reads for a typical user and millions for well-connected ones, so instead I precompute candidates offline: a daily Spark self-join for mutual friends weighted by Adamic-Adar, weekly personalised PageRank walks, and profile matches, bulk-loaded as a versioned dataset. A streaming job adds two-hop deltas the moment someone adds a friend so the page feels fresh. Online, the service merges candidates, applies hard filters, ranks with a model predicting send and accept, diversifies and caps impressions. To defend: hubs are sampled, online traversal is one hop only, filters fail closed, and I would track acceptance per impression, dismiss rate and freshness."
+ },
+ "brd": {
+  "problem": "Users with few connections engage less and churn more; helping them find people they actually know grows the graph and retention. But bad suggestions feel creepy or unsafe, so the system must be accurate, fresh after life changes, and privacy-preserving.",
+  "goals": [
+   "Increase accepted friend requests per week per MAU.",
+   "Help new users reach 10 friends within their first week.",
+   "Keep suggestions fresh within a minute of a new friendship.",
+   "Never surface blocked users or unsafe adult-minor suggestions.",
+   "Serve suggestions with p99 under 200ms."
+  ],
+  "non_goals": [
+   "Recommending pages, groups or content.",
+   "Follow suggestions for creators (different objective).",
+   "Building the contact-upload client UX.",
+   "Spam account detection (consumed as a signal)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Users",
+    "needs": "Relevant suggestions of people they know, nothing creepy."
+   },
+   {
+    "who": "Growth team",
+    "needs": "Higher connection rates, especially for new users."
+   },
+   {
+    "who": "Privacy and legal",
+    "needs": "Consent, explainability and regional compliance."
+   },
+   {
+    "who": "Trust and safety",
+    "needs": "Protection for minors and blocked users; spam control."
+   },
+   {
+    "who": "Data/ML platform",
+    "needs": "Batch and streaming pipelines, feature store, training data."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Accepted requests per 1000 impressions",
+    "target": "+10 percent vs baseline"
+   },
+   {
+    "metric": "New users with >= 10 friends in 7 days",
+    "target": "+5 percentage points"
+   },
+   {
+    "metric": "Dismiss and report rate",
+    "target": "No regression"
+   },
+   {
+    "metric": "Freshness after new friendship",
+    "target": "< 60 s"
+   },
+   {
+    "metric": "Suggestions p99 latency",
+    "target": "< 200 ms"
+   }
+  ],
+  "constraints": [
+   "Graph is too large for online multi-hop traversal.",
+   "Contact data requires explicit consent and deletion support.",
+   "Regional data laws (GDPR, DPDP) restrict signal use by country.",
+   "Batch compute window of a few hours per day."
+  ],
+  "risks": [
+   {
+    "risk": "Creepy suggestions reveal private relationships.",
+    "mitigation": "Restricted reasons, sensitive-source suppression, privacy review of new signals."
+   },
+   {
+    "risk": "Spammers exploit suggestions to reach many users.",
+    "mitigation": "Exclude low-reputation accounts; request rate limits; acceptance-based label."
+   },
+   {
+    "risk": "Batch job failure serves stale or empty suggestions.",
+    "mitigation": "Validation before swap, versioned rollback, nearline fallback."
+   },
+   {
+    "risk": "Hub skew makes batch jobs miss their window.",
+    "mitigation": "Hub sampling and salted joins; job SLAs with alerting."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "New user",
+    "needs": "Find people they know quickly after signup."
+   },
+   {
+    "name": "Established user",
+    "needs": "Occasional relevant suggestions after life changes (new job, new city)."
+   },
+   {
+    "name": "Privacy-conscious user",
+    "needs": "Control over discovery and contact use."
+   },
+   {
+    "name": "Teen user",
+    "needs": "Safe suggestions limited to plausible peers."
+   }
+  ],
+  "user_stories": [
+   "As a new user, I want suggestions from my contacts and school so that I can connect quickly.",
+   "As a user, I want to see why someone is suggested so that I can decide confidently.",
+   "As a user, I want to dismiss a suggestion so that I never see that person again here.",
+   "As a user who just joined a company, I want colleagues suggested so that I can connect with them.",
+   "As a user, I want to opt out of being suggested to others so that I control my discoverability.",
+   "As a parent of a teen, I want adults not to be suggested to my child so that they stay safe.",
+   "As a user who added a friend, I want their friends suggested soon so that I can build my network."
+  ],
+  "functional": [
+   "Return up to 20 ranked suggestions with a reason string.",
+   "Exclude existing friends, pending requests, dismissed, blocked and opted-out users.",
+   "Support dismiss with permanent suppression for that pair.",
+   "Opt-in contact upload with matching and deletion.",
+   "Update candidates within a minute after friend_added and signup events.",
+   "Cap impressions per candidate and rotate suggestions.",
+   "Log impressions and outcomes for training and analytics."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "p99 < 200ms, p50 < 60ms"
+   },
+   {
+    "name": "Availability",
+    "target": "99.9 percent; failure degrades to fewer suggestions, never unsafe ones"
+   },
+   {
+    "name": "Freshness",
+    "target": "Batch daily; nearline deltas < 60s"
+   },
+   {
+    "name": "Privacy",
+    "target": "Contact data hashed, deletable within 30 days, consent logged"
+   },
+   {
+    "name": "Consistency",
+    "target": "Blocks and dismissals effective immediately (read-time checks)"
+   },
+   {
+    "name": "Batch SLA",
+    "target": "Daily pipeline completes within 6 hours"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "2B users, 1B MAU, 300 average friends, 500 candidates stored per user.",
+    "50k QPS peak suggestion requests; 20 results each.",
+    "Two-hop pairs before pruning: sum over middle nodes of degree squared.",
+    "100M new friendships per day."
+   ],
+   "math": [
+    "Edges: 2B x 300 / 2 = 300B undirected edges; ~2.4TB per direction at 8 bytes.",
+    "Two-hop pairs for average node: 300^2 = 90k per middle node; 2B x 90k = 1.8e14 pairs before pruning, which is why hubs are sampled and candidates pruned to top 500 per user.",
+    "Candidate store: 2B x 500 x 20B = 20TB.",
+    "Online reads: 50k QPS x (1 candidate read + ~3 one-hop lookups + 1 batched feature read) = ~250k KV ops/s.",
+    "Ranker: 50k QPS x ~700 candidates = 35M scores/s; GBDT on CPU at ~1M scores/s per core = ~35-50 cores per region with headroom, more like a few hundred cores across regions.",
+    "Nearline: 100M friendships/day = ~1.2k/s avg; each emits up to 300 deltas = ~350k delta writes/s."
+   ],
+   "summary": "Batch two-hop is the heavy part (hundreds of trillions of raw pairs, tamed by hub sampling and top-k pruning), the candidate store is about 20TB, and online serving is modest: ~250k KV ops/s and tens of millions of cheap GBDT scores per second."
+  },
+  "out_of_scope": [
+   "Group and page recommendations.",
+   "Messaging and notifications for suggestions.",
+   "Spam classifier internals.",
+   "Client UI design."
+  ]
+ },
+ "hld": {
+  "overview": "Three layers. Offline batch jobs compute high-quality candidates and features from a daily graph snapshot (mutual friends with Adamic-Adar, PPR walks, org/school/location matches) and bulk-load them as a versioned dataset. A nearline stream processor reacts to new friendships, signups and contact uploads, writing short-lived deltas. The online suggestion service merges both sources, applies hard filters using live one-hop lookups, ranks with a p(send and accept) model, diversifies and caps impressions, and logs everything for training.",
+  "diagram": "\n                         OFFLINE (daily / hourly)\n +-------------+   +------------------+   +-------------------+   +------------------+\n | Graph       |-->| Spark/Graph jobs |-->| Candidate tables  |-->| Bulk load to     |\n | snapshot    |   |  - FoF counts    |   |  (user -> 500     |   | candidate KV     |\n | (edges, ts) |   |  - PPR walks     |   |   cands + feats)  |   | (RocksDB/Venice) |\n +-------------+   |  - embeddings    |   +-------------------+   +--------+---------+\n | Contacts,   |-->|  - org/school    |                                    |\n | profile,    |   +------------------+                                    |\n | events      |                                                           |\n +-------------+                                                           |\n                         NEARLINE (seconds)                                 |\n friend_added -> Kafka -> Flink: 2-hop delta candidates -> Delta KV ---+    |\n                                                                      |    |\n                         ONLINE (request, p99 < 200ms)                v    v\n Client --> API GW --> +-----------------------------+   +---------------------------+\n                       | Suggestion Service          |-->| Candidate merge + filter  |\n                       |  - fetch cands (KV, delta)  |   | (existing friends, sent,  |\n                       |  - online graph lookups     |   |  blocked, dismissed,      |\n                       |  - features                 |   |  privacy, minors)         |\n                       +--------------+--------------+   +-------------+-------------+\n                                      |                                |\n                                      v                                v\n                       +-----------------------------+   +---------------------------+\n                       | Ranker (GBDT/DNN p(accept)) |-->| Diversify + impression    |\n                       +-----------------------------+   | caps -> response          |\n                                                         +---------------------------+\n Impressions/requests/accepts --> Kafka --> training data + counters\n",
+  "components": [
+   {
+    "name": "Graph service (TAO-like)",
+    "responsibility": "One-hop adjacency: friends, pending, blocks; sharded by user_id with caching."
+   },
+   {
+    "name": "Batch candidate pipeline (Spark)",
+    "responsibility": "FoF self-join, Adamic-Adar, PPR walks, profile matches; top 500 per user."
+   },
+   {
+    "name": "Candidate KV (read-only, versioned)",
+    "responsibility": "Serve batch candidates with features; atomic version swap and rollback."
+   },
+   {
+    "name": "Nearline delta processor (Flink)",
+    "responsibility": "On friend_added/signup/contact upload, emit fresh candidates to delta store."
+   },
+   {
+    "name": "Delta store (Redis)",
+    "responsibility": "Recent candidates with 48h TTL."
+   },
+   {
+    "name": "Contact matching service",
+    "responsibility": "Hashed contact index, consented matching, deletion."
+   },
+   {
+    "name": "Suggestion service",
+    "responsibility": "Merge, filter, rank, diversify, explain, cap impressions."
+   },
+   {
+    "name": "Ranker",
+    "responsibility": "GBDT predicting p(send and accept) on ~150 features."
+   },
+   {
+    "name": "Event logging (Kafka)",
+    "responsibility": "Impressions, sends, accepts, dismissals for training and caps."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Serve suggestions",
+    "steps": [
+     "GET /v1/suggestions; check per-user response cache (10 min).",
+     "Read batch candidates (one KV get) and delta candidates in parallel.",
+     "Fetch friends, pending, blocks, dismissed sets; filter candidates.",
+     "Fetch features and rank with GBDT; on timeout fall back to Adamic-Adar order.",
+     "Apply policy filters (minors, opt-outs), diversify by source, apply impression caps.",
+     "Return 20 with reasons; log impressions."
+    ]
+   },
+   {
+    "name": "New friendship freshness",
+    "steps": [
+     "A accepts B's request; friend_added event to Kafka.",
+     "Flink reads B's friends (one hop) and emits them as candidates for A with mutual=1 (and symmetric for B).",
+     "Delta store updated; A's response cache invalidated.",
+     "Next request shows B's friends ranked with fresh features."
+    ]
+   },
+   {
+    "name": "Daily batch refresh",
+    "steps": [
+     "Snapshot edges and profiles at 00:00.",
+     "Run FoF join with hub sampling, compute features, take top 500.",
+     "Validate (row counts, score distributions vs previous).",
+     "Bulk-load new version and atomically swap; delta store entries older than snapshot expire."
+    ]
+   }
+  ],
+  "data_flow": "Graph edges, profiles and consented contacts are snapshotted into the data lake. Spark computes candidate tables that are bulk-loaded into the read-only candidate KV. Live graph events flow through Kafka to Flink, which writes deltas to Redis. Requests read both stores plus one-hop graph lookups, produce ranked suggestions, and log impressions and outcomes back to Kafka, which feeds training data and impression caps."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/suggestions",
+    "request": "surface=page|feed|onboarding, limit=20",
+    "response": "{items:[{user_id, name, photo, reason, mutual_count}], request_id}",
+    "notes": "request_id ties impressions to outcomes."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/suggestions/{user_id}/dismiss",
+    "request": "{request_id}",
+    "response": "204",
+    "notes": "Writes permanent suppression for the pair."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/friend-requests",
+    "request": "{to_user_id, source=suggestion, request_id}",
+    "response": "{request_id, status}",
+    "notes": "Idempotent per pair; rate-limited."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/contacts/upload",
+    "request": "{consent_version, hashed_contacts:[...]}",
+    "response": "202",
+    "notes": "Hashed client side with keyed hash; async matching."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/settings/discoverability",
+    "request": "{suggest_me: bool}",
+    "response": "204",
+    "notes": "Removes user from others' candidates at read time."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Friendship edge",
+    "store": "MySQL + TAO-like cache",
+    "fields": [
+     "user_id",
+     "friend_id",
+     "created_at",
+     "state"
+    ],
+    "keys": "Shard by user_id; edge stored both directions",
+    "notes": "Source of truth for filters."
+   },
+   {
+    "entity": "CandidateList",
+    "store": "Read-only KV (Venice/RocksDB)",
+    "fields": [
+     "user_id",
+     "list of {cand_id, mutual, adamic_adar, ppr, sources}"
+    ],
+    "keys": "user_id; versioned dataset",
+    "notes": "Top 500; ~10KB per user."
+   },
+   {
+    "entity": "DeltaCandidates",
+    "store": "Redis hash",
+    "fields": [
+     "cand_id -> {mutual_delta, source, ts}"
+    ],
+    "keys": "dc:{user_id}",
+    "notes": "TTL 48h."
+   },
+   {
+    "entity": "Suppression",
+    "store": "Cassandra",
+    "fields": [
+     "user_id",
+     "cand_id",
+     "reason (dismissed|cap)",
+     "until"
+    ],
+    "keys": "Partition user_id",
+    "notes": "Read per request; small."
+   },
+   {
+    "entity": "ContactIndex",
+    "store": "Sharded KV",
+    "fields": [
+     "hmac(contact)",
+     "user_ids who own it",
+     "uploader set"
+    ],
+    "keys": "hmac(contact)",
+    "notes": "Deletion purges uploader."
+   }
+  ],
+  "classes": [
+   {
+    "name": "SuggestionService",
+    "responsibility": "End-to-end request handling.",
+    "methods": [
+     "getSuggestions(userId, surface)",
+     "mergeCandidates(batch, delta)",
+     "applyFilters(u, cands)",
+     "explain(c)"
+    ]
+   },
+   {
+    "name": "PolicyFilter",
+    "responsibility": "Hard safety/privacy rules; fail closed.",
+    "methods": [
+     "isAllowed(viewer, cand)",
+     "minorRule(viewer, cand)",
+     "optOut(cand)"
+    ]
+   },
+   {
+    "name": "CandidateRanker",
+    "responsibility": "Feature assembly and scoring.",
+    "methods": [
+     "features(u, cands)",
+     "score(batch)",
+     "fallbackOrder(cands)"
+    ]
+   },
+   {
+    "name": "DeltaProcessor",
+    "responsibility": "Nearline candidate updates.",
+    "methods": [
+     "onFriendAdded(a, b)",
+     "onSignup(u)",
+     "onContactsMatched(u, matches)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Batch FoF with Adamic-Adar and hub sampling",
+    "explain": "Self-join edges on the middle node, weight by inverse log degree, prune to top 500.",
+    "pseudocode": "edges(u, m)  # u friend of m\nfor m in nodes:\n  F = friends(m)\n  if deg(m) > 5000: F = sample(F, 5000)\n  w = 1 / log(deg(m))\n  for a in F: for b in F: if a != b and not friends(a, b):\n      emit((a, b), (1, w))\nreduceByKey -> mutual = sum(1), aa = sum(w)\nper a: topK(500, by aa) -> candidate table"
+   },
+   {
+    "name": "Online merge, filter, rank",
+    "explain": "Combine sources, enforce rules, score, diversify.",
+    "pseudocode": "cands = batch[u] U delta[u]\ncands -= friends(u) U pending(u) U suppressed(u) U blocked_either(u)\ncands = [c for c in cands if policy.isAllowed(u, c)]   # fail closed\ntry within 40ms: s = ranker.score(u, cands)\nexcept Timeout: s = aa(cands)\nout = diversify(sortDesc(cands, s), max_source_share=0.6)[:20]\nlog_impressions(u, out)"
+   },
+   {
+    "name": "Monte Carlo PPR",
+    "explain": "Approximate personalised PageRank with short random walks.",
+    "pseudocode": "visits = Counter()\nfor i in 1..2000:\n  v = u\n  for step in 1..3:\n    if rand() < 0.3: v = u; continue\n    v = randomNeighbor(v, weighted=True)\n    if v != u and not friends(u, v): visits[v] += 1\nreturn top(visits, 200)"
+   }
+  ],
+  "sequence": "\nClient     SuggSvc      CandKV     DeltaKV     GraphSvc    FeatStore   Ranker     EventBus\n  | GET      |            |           |            |           |          |           |\n  |--------->| get(u)     |           |            |           |          |           |\n  |          |----------->| 500 cands |            |           |          |           |\n  |          |---------------------- >| 40 fresh   |           |          |           |\n  |          |<-----------|<----------|            |           |          |           |\n  |          | friends(u), blocks(u), dismissed(u)->|           |          |           |\n  |          |<------------------------------------|           |          |           |\n  |          | filter + dedupe                     |           |          |           |\n  |          | features(u, cands)------------------------------>|          |           |\n  |          |<-------------------------------------------------|          |           |\n  |          | score(batch)-------------------------------------------->|           |\n  |          |<--------------------------------------------------------|           |\n  |          | diversify, cap per-candidate impressions                            |\n  |<---------| 20 suggestions + reasons (\"12 mutual friends\")                      |\n  |          | log impressions ------------------------------------------------------>|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Celebrity or hub user with 5M friends/followers in the join.",
+   "handling": "Sample hub edges, weight by 1/log(degree); prevents quadratic blow-up and weak signals."
+  },
+  {
+   "case": "User blocks a suggested person after the response was cached.",
+   "handling": "Block invalidates response cache; read-time block check on every request."
+  },
+  {
+   "case": "Two users send requests to each other simultaneously.",
+   "handling": "Idempotent per unordered pair; second request auto-accepts or merges into one friendship."
+  },
+  {
+   "case": "User deletes their contact upload.",
+   "handling": "Purge from contact index, remove contact-sourced deltas, next batch excludes them; complete within 30 days."
+  },
+  {
+   "case": "Teen account and adult with many mutuals.",
+   "handling": "Policy filter excludes adult-to-minor suggestions unless already connected through approved signals."
+  },
+  {
+   "case": "Deactivated or deleted candidate in stale batch list.",
+   "handling": "Hydration checks account state; drop silently."
+  },
+  {
+   "case": "Spammer sends requests to every suggestion.",
+   "handling": "Rate limit requests, low acceptance rate lowers sender reputation, excluded from others' suggestions."
+  },
+  {
+   "case": "Shared phone number (family or business line) in many contact books.",
+   "handling": "Ignore contacts appearing in more than N books as a matching key; avoid sensitive leakage."
+  },
+  {
+   "case": "User relocates to a new city.",
+   "handling": "Location feature updates nearline; batch picks it up next day."
+  },
+  {
+   "case": "Batch job misses its window.",
+   "handling": "Serve previous version (still valid) plus deltas; alert on staleness > 36h."
+  },
+  {
+   "case": "Same person has two accounts.",
+   "handling": "Duplicate account detection suppresses suggesting a user's own other account and duplicates of the same person."
+  },
+  {
+   "case": "Region-specific consent: contact matching not permitted in one market.",
+   "handling": "Policy flags per region disable that source in candidate merge and batch."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Spark",
+   "layer": "Batch compute",
+   "overview": "Distributed data processing with shuffles and joins.",
+   "why": "Self-join over hundreds of billions of edges with salting and aggregation.",
+   "alternatives": "GraphX/GraphFrames (graph APIs, slower at this scale), custom C++ graph engines, Pregel-style Giraph."
+  },
+  {
+   "name": "Flink",
+   "layer": "Nearline",
+   "overview": "Stateful stream processor.",
+   "why": "React to friendship events within seconds with keyed state.",
+   "alternatives": "Kafka Streams (lighter), Samza (LinkedIn's choice historically)."
+  },
+  {
+   "name": "Venice / RocksDB read-only KV",
+   "layer": "Candidate serving",
+   "overview": "Store optimised for bulk-loaded versioned datasets.",
+   "why": "Atomic version swap, rollback, high read throughput for batch outputs.",
+   "alternatives": "Cassandra (row writes stress cluster), DynamoDB with bulk import, HBase bulk load."
+  },
+  {
+   "name": "TAO-like graph cache over MySQL",
+   "layer": "Online graph",
+   "overview": "Read-through cache for objects and associations.",
+   "why": "Fast one-hop lookups for filters with strong source of truth.",
+   "alternatives": "Neo4j (multi-hop, harder to scale), Cassandra adjacency lists."
+  },
+  {
+   "name": "Redis",
+   "layer": "Delta store and response cache",
+   "overview": "In-memory KV with TTL.",
+   "why": "Small, short-lived deltas and caches with expiry.",
+   "alternatives": "Memcached (no hashes), Aerospike."
+  },
+  {
+   "name": "XGBoost/LightGBM",
+   "layer": "Ranker",
+   "overview": "Gradient boosted decision trees.",
+   "why": "Strong on tabular graph features, cheap CPU inference, interpretable.",
+   "alternatives": "DNN with embeddings (better with rich signals, costlier), logistic regression (simpler, weaker)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Event bus",
+   "overview": "Durable log.",
+   "why": "Graph events to nearline; impression logs to training.",
+   "alternatives": "Pulsar, Kinesis."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Friends-of-friends (triadic closure) and two-hop candidate generation",
+   "explain": "Triadic closure is the observation that if A is friends with B and B is friends with C, A and C are much more likely to become friends than two random people. The number of mutual friends is the single strongest signal for friend suggestions in most social networks. Computing it means a two-hop traversal: for user A, take every friend B, take every friend C of B, and count how many times each C appears, excluding A and A's existing friends. The cost is the sum over A's friends of their degree, which for a user with 300 friends each having 300 friends is 90,000 edge visits, and for users connected to hubs can be millions. Doing this online per request at scale is expensive, so production systems precompute it in batch (a self-join of the edge table in Spark, which is a MapReduce over edges keyed by the middle node), cap hub contributions (ignore middle nodes above a degree threshold, or sample their edges), and refresh incrementally when new edges are added. Weighting matters: a mutual friend with 5000 friends says less than one with 50, which is the idea behind Adamic-Adar, where each common neighbour contributes 1 / log(degree).",
+   "in_this_design": "A daily Spark job self-joins the edge table on the middle node, skipping middle nodes with degree above 5000 (sampled instead), computes mutual-friend counts and Adamic-Adar scores, and keeps the top 500 candidates per user. A Flink job handles fresh edges: when A friends B, it emits B's friends as new candidates for A (and vice versa) into a delta store, so suggestions improve within seconds after a new friendship.",
+   "key_points": [
+    "Mutual friends is the strongest single signal (triadic closure).",
+    "Two-hop cost is the sum of friends' degrees; hubs explode it.",
+    "Precompute in batch as a join keyed by the middle node.",
+    "Adamic-Adar down-weights mutuals who are hubs.",
+    "Incremental two-hop deltas keep suggestions fresh after new edges."
+   ],
+   "qa": [
+    {
+     "q": "Why not compute mutual friends online per request?",
+     "a": "Two hops can be 100k to millions of edge reads for well-connected users; at tens of thousands of QPS that is billions of reads per second. Batch precompute plus incremental deltas gives the same answer for a fraction of the cost."
+    },
+    {
+     "q": "How do you handle hub nodes in the self-join?",
+     "a": "Skip or sample middle nodes with very high degree; they create quadratic pairs (a 1M-degree hub yields 10^12 pairs) and contribute little signal per pair. Adamic-Adar also down-weights them."
+    },
+    {
+     "q": "What does Adamic-Adar add over raw mutual count?",
+     "a": "It weights each common neighbour by 1/log(degree), so a mutual friend with few friends counts more than a celebrity both follow, which better predicts real-world closeness."
+    }
+   ]
+  },
+  {
+   "name": "Random walks and Personalized PageRank for candidate retrieval",
+   "explain": "Mutual friends only reaches two hops. Random-walk methods reach further while staying focused on a user's neighbourhood. Personalized PageRank (PPR) from a source user simulates a walker that at each step follows a random edge with probability alpha, or teleports back to the source with probability 1 minus alpha. The stationary probability of landing on each node measures its proximity to the source, combining many paths of different lengths, and naturally discounts hubs because their probability mass is spread thin. Exact PPR is expensive, but Monte Carlo approximations run a few thousand short walks per user and count visits, which parallelises well in batch. Twitter's Who To Follow used a variant (circle of trust from PPR plus SALSA on a bipartite graph), and Pinterest's Pixie runs random walks in memory over a graph of billions of edges for real-time recommendations. Walk-based candidates complement mutual counts: they surface people connected through several weaker paths, like someone in your extended community, while mutual counts surface the obvious close ties.",
+   "in_this_design": "A weekly job runs 2000 Monte Carlo walks of length up to 3 per active user with restart probability 0.3 over the friend graph plus weighted interaction edges (messages, profile views), keeping the top 200 visited non-friends as a second candidate source with their visit scores as features.",
+   "key_points": [
+    "PPR measures proximity via many paths, not just two hops.",
+    "Restart probability keeps walks local to the user.",
+    "Monte Carlo walks approximate PPR cheaply and in parallel.",
+    "Hubs are discounted naturally.",
+    "Use as a complementary source, not a replacement for mutual counts."
+   ],
+   "qa": [
+    {
+     "q": "What does the restart probability control?",
+     "a": "Locality. Higher restart keeps the walker close to the source (more like 2-hop), lower lets it wander into global popularity."
+    },
+    {
+     "q": "Why combine PPR with mutual friends?",
+     "a": "Mutual counts are precise and explainable for close ties; PPR finds plausible ties with few direct mutuals. Different sources raise recall for the ranker."
+    },
+    {
+     "q": "How would you make walks real time?",
+     "a": "Hold a compact in-memory adjacency graph (as Pixie does) on large-memory machines and run a few thousand short walks per request in tens of milliseconds."
+    }
+   ]
+  },
+  {
+   "name": "Candidate generation and ranking funnel for recommendations",
+   "explain": "Recommendation systems separate recall from precision. Candidate generation uses several cheap sources to assemble a few hundred to a few thousand plausible items, aiming not to miss good ones. Ranking then applies an expensive model that predicts the target outcome for each candidate, here the probability that a request is sent and accepted. The ranker uses features that are too costly to compute for every user pair: mutual count and Adamic-Adar, shared school or company, location proximity, contact-book match, embedding similarity, how recently the mutual friendships formed, both users' activity levels, and historical acceptance rates. The objective matters: optimising for requests sent alone rewards spammy suggestions, so the label is usually sent-and-accepted, sometimes with a penalty for ignored or reported requests. A final stage applies business logic: remove existing friends, pending requests, dismissed suggestions and blocked users; enforce privacy and safety rules; diversify sources; and cap how often a candidate is shown before being retired. Explanations such as '12 mutual friends' come from the features and improve acceptance.",
+   "in_this_design": "Sources: precomputed FoF (500), PPR (200), contact-book matches, same org/school, and recent-joiner boosts. A GBDT ranker with about 150 features predicts p(send and accept); the top 20 are diversified so no single source exceeds 60 percent, and a candidate shown 5 times without action is suppressed for 30 days.",
+   "key_points": [
+    "Several sources for recall, one model for precision.",
+    "Label = sent and accepted, not just clicked.",
+    "Filters for friends, pending, dismissed, blocked, privacy.",
+    "Impression caps prevent nagging.",
+    "Reasons ('N mutual friends') raise trust and acceptance."
+   ],
+   "qa": [
+    {
+     "q": "Why not optimise for requests sent?",
+     "a": "It encourages suggesting people who will not accept, creating spam and unpleasant experiences for recipients. Optimising sent-and-accepted aligns both sides."
+    },
+    {
+     "q": "How do you evaluate offline?",
+     "a": "Time-split: build candidates from a graph snapshot at T and measure recall@k of edges formed between T and T+14 days, plus ranker AUC on logged impressions."
+    },
+    {
+     "q": "Why impression caps?",
+     "a": "Repeatedly showing someone the user ignores wastes slots and annoys them; after N impressions, acceptance probability is near zero."
+    }
+   ]
+  },
+  {
+   "name": "Graph partitioning and sharding a social graph",
+   "explain": "A social graph with billions of users and hundreds of billions of edges does not fit on one machine, so it must be partitioned. The simplest partitioning hashes the user id, putting each user's adjacency list on one shard. This balances load but scatters neighbours, so a two-hop query fans out to many shards: for 300 friends the first hop touches up to 300 shards. Locality-aware partitioning (for example, using community detection or balanced label propagation, as Facebook did with Social Hash) places users who are connected on the same shard, so most neighbour lookups stay local and cross-shard calls drop sharply. The trade-off is rebalancing complexity and potential load skew. Another approach replicates the graph: since friend graphs fit in a few terabytes as compressed adjacency lists, several full replicas on large-memory machines can serve traversals without cross-machine hops. For batch jobs, partitioning by the join key in Spark determines shuffle cost; skewed keys (hubs) need salting or special handling to avoid a single straggler task.",
+   "in_this_design": "The online graph service shards adjacency lists by hash(user_id) across 512 shards in a TAO-like cache over MySQL, used only for one-hop lookups (friends, blocks) at request time. Two-hop work happens offline in Spark with salted keys for hubs, so the online path never fans out across hundreds of shards.",
+   "key_points": [
+    "Hash partitioning balances load but scatters neighbours.",
+    "Locality-aware partitioning cuts cross-shard hops.",
+    "Keep online traversal to one hop; push multi-hop offline.",
+    "Salt skewed keys in batch joins.",
+    "Compressed full-graph replicas are viable for in-memory walks."
+   ],
+   "qa": [
+    {
+     "q": "Why avoid two-hop traversal online with hash sharding?",
+     "a": "Each hop multiplies shards contacted; tail latency is the max of hundreds of calls, so p99 explodes."
+    },
+    {
+     "q": "What is salting in a Spark join?",
+     "a": "Appending a random suffix to hot keys so their rows split across many tasks, then aggregating results, preventing one straggler from holding the whole job."
+    },
+    {
+     "q": "How large is the graph in memory?",
+     "a": "2B users x 300 edges x ~4-8 bytes compressed is about 2.4-4.8TB per direction, which needs a cluster but is feasible for in-memory walk services."
+    }
+   ]
+  },
+  {
+   "name": "Lambda-style batch plus nearline freshness",
+   "explain": "Many recommendation systems combine a batch layer that recomputes complete, high-quality results periodically with a speed layer that patches them with recent changes. The batch layer can run heavy algorithms over the full dataset but is hours stale. The speed layer processes events as they arrive and produces deltas that are merged at read time. The serving layer reads both and combines them, with the delta taking precedence where they conflict. For friend suggestions, freshness matters most right after onboarding and right after a new friendship: a new user has no batch candidates at all, and a user who just added a friend expects to see that friend's friends. A clean design keeps the delta small and short-lived: it only holds changes since the last batch snapshot, and each batch run supersedes it. Batch outputs are bulk-loaded as immutable versioned datasets so the serving store can swap atomically and roll back if a bad job produces garbage, which is how LinkedIn's Voldemort and later Venice read-only stores were used.",
+   "in_this_design": "Batch candidates are bulk-loaded daily into a versioned read-only KV with atomic version swap and one-click rollback. A Flink job consumes friend_added and user_signup events and writes 2-hop deltas and contact matches into a Redis delta store with 48h TTL. The service merges both, preferring delta features where newer.",
+   "key_points": [
+    "Batch for quality, nearline for freshness, merge at read.",
+    "Delta store only holds changes since the last snapshot.",
+    "Versioned bulk loads give atomic swap and rollback.",
+    "Cold start is the main reason freshness matters here.",
+    "Validate batch output before swapping (row counts, score distributions)."
+   ],
+   "qa": [
+    {
+     "q": "Why not compute everything in streaming?",
+     "a": "Full two-hop and walk computations over the whole graph are batch-shaped; streaming handles incremental changes well but would need huge state to maintain all two-hop counts."
+    },
+    {
+     "q": "A bad batch job produced empty candidates. What protects users?",
+     "a": "Pre-swap validation (row counts and score histograms versus previous version) blocks the swap, and versioned stores allow immediate rollback."
+    },
+    {
+     "q": "How do new users get suggestions?",
+     "a": "Nearline contact-book matching, same school/company from profile, location-based and onboarding choices produce candidates within seconds of signup."
+    }
+   ]
+  },
+  {
+   "name": "Privacy, consent and safety constraints in recommendations",
+   "explain": "Friend suggestions can leak sensitive information: suggesting a therapist's other patients to each other because they share the therapist's phone number in their contacts, or revealing that two people have communicated. Privacy-aware design treats some signals as usable only for ranking but never as an explanation, and some as unusable without consent. Contact-book upload requires explicit opt-in, should store hashed and normalised phone numbers or emails, and must allow deletion. Asymmetric signals, such as A viewing B's profile, must not cause B to see A as a suggestion with a revealing reason. Safety rules matter too: adults should not be suggested to minors who are not already connected, blocked users must never appear, and users who opted out of discovery should be excluded. These are hard filters applied after ranking and audited, because a model cannot be trusted to enforce policy. Regional regulation, such as consent requirements under GDPR or India's DPDP Act, can also limit which data can be used in which countries.",
+   "in_this_design": "Contact uploads are opt-in, stored as salted hashes of E.164 phone numbers and normalised emails, and deletable. Hard filters run after ranking: blocked either way, discovery opt-out, minor protections, and sensitive-source suppression (no suggestions sourced only from contacts of a business number). Explanations only reveal mutual friends and public shared attributes.",
+   "key_points": [
+    "Some signals rank but must never explain.",
+    "Contact matching is opt-in, hashed, and deletable.",
+    "Policy filters run after the model, as hard rules.",
+    "Minors and blocks are absolute constraints.",
+    "Audit suggestion sources for sensitive leakage."
+   ],
+   "qa": [
+    {
+     "q": "Why not let the model learn to avoid sensitive suggestions?",
+     "a": "Models optimise acceptance and can learn the opposite. Policy needs deterministic, auditable rules that cannot be overridden by a score."
+    },
+    {
+     "q": "How do you store contact books safely?",
+     "a": "Normalise and hash with a keyed hash (HMAC), store only what is needed for matching, honour deletion, and never expose who uploaded whom."
+    },
+    {
+     "q": "What reasons are safe to show?",
+     "a": "Mutual friends the viewer can see, public shared school or workplace. Never profile views, contact uploads, or location history."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Online vs offline two-hop",
+   "options": "Online traversal per request vs batch precompute plus deltas",
+   "choice": "Batch plus nearline deltas",
+   "why": "Online two-hop is too expensive and slow; deltas cover freshness."
+  },
+  {
+   "decision": "Ranking label",
+   "options": "Click, send, send-and-accept",
+   "choice": "Send-and-accept",
+   "why": "Aligns sender and recipient; reduces spam."
+  },
+  {
+   "decision": "Candidate store",
+   "options": "Online DB row writes vs versioned bulk load",
+   "choice": "Versioned bulk load",
+   "why": "Protects online DB, atomic swap, rollback."
+  },
+  {
+   "decision": "Hub handling",
+   "options": "Include fully, exclude, sample and weight",
+   "choice": "Sample and weight",
+   "why": "Keeps some signal while avoiding quadratic cost."
+  },
+  {
+   "decision": "Policy enforcement",
+   "options": "Model features vs hard filters",
+   "choice": "Hard filters, fail closed",
+   "why": "Deterministic, auditable safety."
+  },
+  {
+   "decision": "Model type",
+   "options": "GBDT vs deep model",
+   "choice": "GBDT now, DNN with embeddings later",
+   "why": "Cheap, strong baseline on graph features; upgrade when embedding signals justify cost."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Candidate KV unavailable",
+   "behavior": "Serve delta, org/school and contact candidates; fewer suggestions, alert."
+  },
+  {
+   "failure": "Ranker timeout",
+   "behavior": "Order by Adamic-Adar score; flag degraded."
+  },
+  {
+   "failure": "Block/policy lookup failure",
+   "behavior": "Fail closed: return empty suggestions rather than risk unsafe results."
+  },
+  {
+   "failure": "Bad batch output",
+   "behavior": "Validation blocks swap; or rollback to previous version within minutes."
+  },
+  {
+   "failure": "Flink lag",
+   "behavior": "Freshness degrades to batch cadence; correctness unaffected."
+  },
+  {
+   "failure": "Contact index corruption",
+   "behavior": "Disable contact source via flag; rebuild from consented uploads."
+  }
+ ],
+ "metrics": [
+  "Accepted requests per 1000 impressions by surface and source.",
+  "Send rate, accept rate, dismiss rate, report rate.",
+  "Offline recall@20 and ranker AUC on time-split data.",
+  "New-user time to 10 friends.",
+  "p50/p99 latency; degraded and fail-closed response rates.",
+  "Batch pipeline duration and data freshness age.",
+  "Nearline delta latency from friend_added to visible."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you use embeddings?",
+   "a": "Train graph embeddings (node2vec or a GNN like GraphSAGE) on the friendship and interaction graph, index in ANN for an additional candidate source, and use dot-product similarity as a ranker feature."
+  },
+  {
+   "q": "How do you avoid suggesting an ex-partner someone unfriended?",
+   "a": "Unfriend creates a long suppression for the pair in both directions; never resurface past connections removed by either user."
+  },
+  {
+   "q": "How would you handle directed follow graphs instead?",
+   "a": "Use SALSA or PPR on the bipartite follow graph, add popularity and topical similarity sources, and the label becomes follow plus retained follow after 7 days."
+  },
+  {
+   "q": "How do you measure long-term impact?",
+   "a": "Holdout groups without the feature or with older models, tracking friend count growth, retention and messages between suggested connections over months."
+  },
+  {
+   "q": "What if the model favours already-popular users?",
+   "a": "Add degree as a feature with calibration, cap per-candidate impressions globally, and track exposure distribution so popular users are not flooded with requests."
+  },
+  {
+   "q": "How would you make this work for 100M new users in a market launch?",
+   "a": "Lean on contacts (with consent), location, onboarding interests and invite graphs; precompute region-local popular-but-relevant candidates."
+  }
+ ],
+ "key_points": [
+  "Frame it as link prediction; mutual friends (triadic closure) is the strongest signal.",
+  "Two-hop is too expensive online: precompute in batch, patch with nearline deltas.",
+  "Adamic-Adar and hub sampling tame celebrity skew.",
+  "Multiple candidate sources (FoF, PPR walks, contacts, org) feed one ranker.",
+  "Optimise sent-and-accepted, not clicks or sends.",
+  "Hard policy filters fail closed; reasons never reveal private signals.",
+  "Versioned bulk loads with validation and rollback protect against bad batches.",
+  "Measure acceptance per impression, dismiss/report rate, recall@k and freshness."
+ ],
+ "quiz": [
+  {
+   "q": "Which single signal usually predicts a new friendship best?",
+   "options": [
+    "Same city",
+    "Similar age",
+    "Number of mutual friends",
+    "Profile photo similarity"
+   ],
+   "answer": 2,
+   "why": "Triadic closure makes mutual friends dominant. Same city is a useful but much weaker feature."
+  },
+  {
+   "q": "User has 300 friends each with 300 friends. Edge visits for a naive two-hop count?",
+   "options": [
+    "About 600",
+    "About 9,000",
+    "About 90,000",
+    "About 9 million"
+   ],
+   "answer": 2,
+   "why": "300 x 300 = 90,000. That is per request, which is why it is precomputed."
+  },
+  {
+   "q": "Adamic-Adar weights each common neighbour by?",
+   "options": [
+    "1 / log(degree of the common neighbour)",
+    "Degree of the common neighbour",
+    "1 / number of mutuals",
+    "Age of the friendship"
+   ],
+   "answer": 0,
+   "why": "Low-degree mutuals are stronger evidence. Weighting by degree would favour hubs, the opposite."
+  },
+  {
+   "q": "In Personalized PageRank, raising the restart probability does what?",
+   "options": [
+    "Finds more globally popular people",
+    "Keeps results closer to the source user's neighbourhood",
+    "Makes walks longer",
+    "Removes hub bias entirely"
+   ],
+   "answer": 1,
+   "why": "Frequent restarts keep walks local. Lower restart drifts toward global popularity."
+  },
+  {
+   "q": "Best training label for the ranker?",
+   "options": [
+    "Suggestion clicked",
+    "Profile viewed",
+    "Request sent",
+    "Request sent and accepted"
+   ],
+   "answer": 3,
+   "why": "Aligns both sides' interests. 'Request sent' rewards spammy suggestions that recipients reject."
+  },
+  {
+   "q": "A user just added a friend and expects that friend's friends to appear. What delivers this?",
+   "options": [
+    "Nightly batch rebuild",
+    "A nearline job emitting two-hop deltas on friend_added",
+    "Increasing cache TTL",
+    "Retraining the model"
+   ],
+   "answer": 1,
+   "why": "Nearline deltas give seconds-level freshness. Batch is hours stale."
+  },
+  {
+   "q": "In a Spark self-join for mutual friends, one celebrity node causes a straggler task. Fix?",
+   "options": [
+    "Salt or sample hub keys",
+    "Add more executors",
+    "Use a bigger driver",
+    "Broadcast the whole edge table"
+   ],
+   "answer": 0,
+   "why": "Skew needs key splitting; more executors do not help a single hot task. Broadcasting hundreds of billions of edges is infeasible."
+  },
+  {
+   "q": "Why keep online graph traversal to one hop?",
+   "options": [
+    "Two hops are logically wrong",
+    "Privacy rules forbid two hops",
+    "With hash sharding, two hops fan out to hundreds of shards and blow p99",
+    "One hop is more accurate"
+   ],
+   "answer": 2,
+   "why": "Tail latency is the max of many calls. Accuracy is not the issue."
+  },
+  {
+   "q": "Where should the 'never suggest adults to minors' rule live?",
+   "options": [
+    "As a model feature",
+    "In candidate generation only",
+    "In the client app",
+    "As a hard post-ranking filter, audited"
+   ],
+   "answer": 3,
+   "why": "Policy must be deterministic and enforced at the end. Candidate-only filtering misses sources added later; client-side can be bypassed."
+  },
+  {
+   "q": "Which explanation is unsafe to show?",
+   "options": [
+    "12 mutual friends",
+    "You both studied at IIT Madras",
+    "They viewed your profile",
+    "You both work at the same company"
+   ],
+   "answer": 2,
+   "why": "Reveals private behaviour. Shared public attributes and visible mutuals are acceptable."
+  },
+  {
+   "q": "A daily batch job writes empty candidate lists due to a bug. Best protection?",
+   "options": [
+    "Pre-swap validation and versioned rollback",
+    "Faster batch jobs",
+    "Larger cache",
+    "More replicas"
+   ],
+   "answer": 0,
+   "why": "Validation blocks bad versions and rollback restores the previous. Replicas faithfully copy bad data."
+  },
+  {
+   "q": "Storage for 2B users x 500 candidates x ~20 bytes (id + small features)?",
+   "options": [
+    "2TB",
+    "20TB",
+    "200GB",
+    "200TB"
+   ],
+   "answer": 1,
+   "why": "2e9 x 500 x 20 = 2e13 bytes = 20TB. Feasible in a sharded read-only KV."
+  },
+  {
+   "q": "How should contact-book phone numbers be stored for matching?",
+   "options": [
+    "Plain text for speed",
+    "Encrypted with the user's password",
+    "Normalised to E.164 and keyed-hashed (HMAC)",
+    "Only the last four digits"
+   ],
+   "answer": 2,
+   "why": "Normalisation enables matching; keyed hash protects raw numbers. Last four digits collide constantly."
+  },
+  {
+   "q": "A candidate has been shown 5 times and ignored. What do you do?",
+   "options": [
+    "Keep showing; it is top-ranked",
+    "Suppress for a cooldown period",
+    "Delete the candidate's account",
+    "Send a notification instead"
+   ],
+   "answer": 1,
+   "why": "Impression fatigue drives acceptance near zero. Escalating to notifications is more annoying."
+  },
+  {
+   "q": "Offline evaluation of candidate generation is best done by?",
+   "options": [
+    "Random split of edges",
+    "Measuring click-through",
+    "Counting candidates per user",
+    "Time split: snapshot at T, recall@k on edges formed after T"
+   ],
+   "answer": 3,
+   "why": "Time split avoids leakage of future edges. Random splits leak because the graph structure already encodes later edges."
+  },
+  {
+   "q": "Why combine multiple candidate sources (FoF, PPR, contacts, org)?",
+   "options": [
+    "To improve recall across different kinds of ties",
+    "To reduce ranker cost",
+    "Because one source is always wrong",
+    "To satisfy privacy"
+   ],
+   "answer": 0,
+   "why": "Each source captures different relationship types. More sources increase ranker cost, not decrease."
+  },
+  {
+   "q": "Suggestions endpoint at 50k QPS with 20 KV reads each. Total KV reads/s?",
+   "options": [
+    "50k",
+    "100k",
+    "1M",
+    "10M"
+   ],
+   "answer": 2,
+   "why": "50k x 20 = 1M reads/s. Batch candidate lists into one read per user to cut this sharply."
+  },
+  {
+   "q": "Why bulk-load batch outputs into a read-only store rather than writing row by row into the online DB?",
+   "options": [
+    "Row writes are more accurate",
+    "Bulk-load avoids hammering the online DB and allows atomic version swap",
+    "Read-only stores are faster to write",
+    "Online DBs cannot hold candidates"
+   ],
+   "answer": 1,
+   "why": "Billions of row writes would degrade online traffic; versioned swap gives atomicity and rollback."
+  },
+  {
+   "q": "Two users block each other after a suggestion was cached. Correct behaviour?",
+   "options": [
+    "Show until cache expires",
+    "Show with a warning",
+    "Hide only for the blocker",
+    "Filter at request time against live block lists"
+   ],
+   "answer": 3,
+   "why": "Blocks are absolute and bidirectional. Waiting for cache expiry violates user safety."
+  },
+  {
+   "q": "New user with no friends and no contact upload. Best candidates?",
+   "options": [
+    "Nothing until they add friends",
+    "Random users",
+    "Same school/company/location from profile plus popular local accounts and onboarding prompts",
+    "Their phone's call log"
+   ],
+   "answer": 2,
+   "why": "Profile and context sources solve cold start. Call logs require consent and are sensitive."
+  },
+  {
+   "q": "Why might a mutual friend who has 5000 friends be weak evidence?",
+   "options": [
+    "Their friendships are fake",
+    "Being friends with a hub says little about closeness between two people",
+    "They are inactive",
+    "They have privacy settings"
+   ],
+   "answer": 1,
+   "why": "Hubs connect many unrelated people. That is exactly what Adamic-Adar corrects."
+  },
+  {
+   "q": "Recommendation acceptance drops after a model launch while CTR on suggestions rose. Likely cause?",
+   "options": [
+    "Objective drift toward clickable but unlikely-to-accept candidates",
+    "Cache misses",
+    "Kafka lag",
+    "Too many candidates"
+   ],
+   "answer": 0,
+   "why": "Optimising or selecting for clicks diverges from acceptance. Infrastructure issues would not raise CTR."
+  }
+ ],
+ "references": [
+  {
+   "title": "People You May Know (LinkedIn Engineering)",
+   "url": "https://engineering.linkedin.com/teams/data/artificial-intelligence/people-you-may-know"
+  },
+  {
+   "title": "How LIquid Connects Everything So Our Members Can Do Anything (LinkedIn)",
+   "url": "https://engineering.linkedin.com/blog/2023/how-liquid-connects-everything-so-our-members-can-do-anything"
+  },
+  {
+   "title": "Facebook People You May Know AI system (Meta Transparency)",
+   "url": "https://transparency.meta.com/features/explaining-ranking/fb-people-you-may-know/"
+  },
+  {
+   "title": "System Design Interview: Social Graph and Friend Recommendations",
+   "url": "https://techinterview.org/system-design-social-graph/"
+  }
+ ]
+}

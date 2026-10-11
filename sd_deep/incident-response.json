@@ -1,0 +1,1226 @@
+{
+ "slug": "incident-response",
+ "title": "Design an incident response workflow with runbooks",
+ "prompt": "Design an incident response workflow with runbooks.",
+ "group": "reliability",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "This is half system and half socio-technical process: detect, declare, mobilise the right people, mitigate fast, communicate, and learn. The system must be more available than anything it manages, keep an exact timeline under chaos, and make runbook actions safe to execute under stress. The core tension is speed of mitigation versus safety and coordination, and automation versus human judgement.",
+ "framework": {
+  "clarify": [
+   "Scope: is this the people process, the tooling, or both? I will assume both: a workflow (roles, severities, comms, postmortems) and a platform that runs it, with runbooks including automated actions.",
+   "Scale: assume ~300 services, ~80 teams, ~5,000 alerts/day collapsing to ~40 incidents/week, of which 2-3 are SEV1/SEV2; peaks 10x during sale events.",
+   "Severity definitions: do we have them? Assume SEV1 = customer-facing outage or data loss on a tier-0 service, SEV2 = significant degradation, SEV3 = minor/internal.",
+   "Targets: page ack within 5 minutes, incident commander assigned within 10 minutes for SEV1, MTTR target under 60 minutes for SEV1.",
+   "Who can execute runbook actions in production, and what approvals do we need (two-person rule for destructive actions)?",
+   "External comms: is there a public status page and are there regulatory notification windows (e.g. reporting certain incidents to a regulator within hours)?",
+   "Existing tools: assume a pager vendor, Slack, Jira and a monitoring stack already exist; we integrate rather than replace.",
+   "Must the platform work when our main cloud region or SSO is down? Assume yes: it is the tool you need on the worst day."
+  ],
+  "design": [
+   "Baseline workflow: Detect -> Triage -> Declare (severity) -> Mobilise (IC, ops lead, comms lead, SMEs) -> Mitigate -> Resolve -> Postmortem -> Action items tracked to done.",
+   "Ingestion: alerts, probes, support escalations and manual declarations hit an idempotent ingest API keyed by dedup_key, stored in an append-only event log.",
+   "Incident engine: a per-incident state machine with correlation (same service or dependency within 10 minutes joins one incident), service catalog lookup for owner and tier, and severity rules.",
+   "Mobilisation: on-call resolution from schedules, escalation policy (primary 5 min -> secondary 5 min -> manager), automatic war room channel, bridge, and roles assigned in the tool.",
+   "Runbooks as code: versioned per alert/service with diagnosis steps and parameterised actions (rollback, failover, scale, feature flag off) executed through an audited action executor with guardrails.",
+   "Communication: templated status updates on a cadence (SEV1 every 30 min), stakeholder subscriptions, status page integration.",
+   "Learning: blameless postmortem template auto-filled with timeline and metrics, review meeting, action items with SLAs in the tracker, and trend reports (MTTD, MTTR, repeat incidents)."
+  ],
+  "defend": [
+   "Bottleneck is humans, not throughput: the platform's job is to reduce cognitive load (correlation, context, one-click safe actions) so the IC can decide quickly.",
+   "Availability: the incident platform is tier-0, deployed active-active in 2 regions plus a third-party pager; degraded mode is a static runbook mirror and a phone tree if everything else fails.",
+   "Alert storms (scaling writes): ingest absorbs 10k events/min via Kafka, dedup by key, and correlation collapses them so humans see one incident, not 500 pages.",
+   "Safety of automation: actions are idempotent, rate limited, scoped, require approval for destructive operations, and have dry-run and automatic verification; a global kill switch disables automation.",
+   "Failure behaviour: if the war room tool or SSO is down, the bridge falls back to phone; if the pager vendor fails, a second vendor; timeline events are buffered client-side and replayed idempotently.",
+   "What I would measure: MTTA, MTTD, time to IC assigned, MTTR (mitigate) by severity, runbook automation rate, repeat incident rate, postmortem completion within SLA, action-item closure rate, on-call load per person."
+  ],
+  "script": "I want to treat this as both a process and a system. I will assume around 300 services, 5,000 alerts a day collapsing into about 40 incidents a week, with SEV1 meaning a customer-facing outage on a tier-0 service, and targets of 5-minute ack and under an hour to mitigate SEV1. The workflow is detect, triage, declare, mobilise, mitigate, resolve, then learn. On the system side, signals come into an idempotent ingest API with dedup keys, an incident engine correlates them into one incident using the service catalog, resolves the on-call through escalation policies, and opens a war room with roles: incident commander, ops lead, comms lead. Runbooks are code, versioned per alert, and their actions such as rollback or failover run through an audited executor with guardrails and approvals. Comms go out on a fixed cadence, and everything lands on an append-only timeline that seeds a blameless postmortem with tracked action items. In defending it, I will argue the bottleneck is human coordination, the platform must be more available than what it manages, and automation must be safe by construction."
+ },
+ "brd": {
+  "problem": "Incidents today are handled ad hoc: responders are found by asking around in chat, several people mitigate in parallel without coordination, stakeholders ping engineers for updates, and runbooks are stale wiki pages. SEV1 mitigation averages around 2 hours, the same failures repeat because postmortem actions are not tracked, and on-call burnout is rising. During big sale events every minute of checkout downtime costs significant revenue and customer trust.",
+  "goals": [
+   "Cut SEV1 mean time to mitigate from about 2 hours to under 45 minutes.",
+   "Page the right owner within 1 minute of detection and get acknowledgement within 5 minutes.",
+   "Give every incident a clear incident commander and role structure within 10 minutes for SEV1.",
+   "Make runbooks executable, current and linked from every paging alert; automate the top 20 mitigations.",
+   "Provide predictable, templated communication to stakeholders and customers.",
+   "Turn every SEV1/SEV2 into a blameless postmortem with tracked action items and reduce repeat incidents by 50%."
+  ],
+  "non_goals": [
+   "Replacing the monitoring and alerting stack (it is an input).",
+   "Fully autonomous remediation without human oversight for high-risk actions.",
+   "Security incident forensics and legal workflows (separate SIRT process, though it can reuse the platform).",
+   "General IT helpdesk ticketing."
+  ],
+  "stakeholders": [
+   {
+    "who": "On-call engineers and SREs",
+    "needs": "Clear pages, fast context, safe one-click mitigations, fair rotation load."
+   },
+   {
+    "who": "Incident commanders (senior engineers/managers)",
+    "needs": "One view of state, roles, timeline and open tasks; tools to delegate and communicate."
+   },
+   {
+    "who": "Customer support and business teams",
+    "needs": "Timely, plain-language updates and ETA; a single place to check status."
+   },
+   {
+    "who": "Leadership",
+    "needs": "Severity-based escalation, impact estimates, and trend metrics for reliability investment."
+   },
+   {
+    "who": "Compliance / legal",
+    "needs": "Complete audit trail and timely regulatory notifications where required."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "SEV1 mean time to mitigate",
+    "target": "under 45 minutes"
+   },
+   {
+    "metric": "Mean time to acknowledge (MTTA)",
+    "target": "under 5 minutes for pages, P95 under 10"
+   },
+   {
+    "metric": "Postmortems completed within 5 business days",
+    "target": "over 90% for SEV1/SEV2"
+   },
+   {
+    "metric": "Action items closed by due date",
+    "target": "over 80%"
+   },
+   {
+    "metric": "Repeat incidents (same root cause within 90 days)",
+    "target": "reduce by 50% year over year"
+   },
+   {
+    "metric": "Paging alerts with a linked, reviewed runbook",
+    "target": "100%"
+   }
+  ],
+  "constraints": [
+   "Must remain usable when the primary region, SSO or chat tool is down.",
+   "All production actions must be audited and attributable to a person.",
+   "Integrate with existing pager vendor, Slack and Jira.",
+   "Follow-the-sun is not available for all teams; many rotations are single-region 24x7."
+  ],
+  "risks": [
+   {
+    "risk": "Automation makes an outage worse (e.g. mass rollback or failover loop)",
+    "mitigation": "Blast-radius limits, rate limits, approvals for destructive actions, verification step, global automation kill switch."
+   },
+   {
+    "risk": "Process seen as bureaucracy and bypassed",
+    "mitigation": "Keep it lightweight for SEV3, auto-create artefacts, measure and show time saved, leadership modelling."
+   },
+   {
+    "risk": "Blame culture suppresses honest postmortems",
+    "mitigation": "Blameless template, focus on systemic contributing factors, leadership training, no postmortem used in performance reviews."
+   },
+   {
+    "risk": "Incident tool shares fate with production",
+    "mitigation": "Separate accounts and regions, external pager, offline runbook mirror, phone bridge fallback."
+   },
+   {
+    "risk": "On-call burnout",
+    "mitigation": "Pages per shift budget, follow-up time off after night pages, alert quality reviews, rotation size at least 6."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Ravi, on-call backend engineer",
+    "needs": "Know quickly whether a page is his, what is broken and what to do first."
+   },
+   {
+    "name": "Anita, incident commander",
+    "needs": "Coordinate 10 people, keep the timeline, decide on mitigations and escalate without doing hands-on work."
+   },
+   {
+    "name": "Kiran, comms lead / support manager",
+    "needs": "Draft and publish updates to internal stakeholders and the status page on schedule."
+   },
+   {
+    "name": "Sunil, engineering director",
+    "needs": "Weekly view of incidents, MTTR trends, overdue action items by team."
+   }
+  ],
+  "user_stories": [
+   "As an on-call engineer, I want alerts for the same problem grouped into one incident so that I am not paged 50 times.",
+   "As an on-call engineer, I want the runbook and recent deploys shown in the page so that I can start mitigation in minutes.",
+   "As an incident commander, I want to assign roles and tasks in the war room so that people do not duplicate work.",
+   "As an incident commander, I want to escalate severity and page additional teams with one command so that help arrives fast.",
+   "As a responder, I want to run a rollback from the runbook with approval so that I avoid typing risky commands under stress.",
+   "As a comms lead, I want templated updates with a reminder cadence so that stakeholders hear from us before they ask.",
+   "As a support manager, I want a single status page so that agents can tell customers what is happening.",
+   "As a service owner, I want a postmortem draft prefilled with the timeline so that writing it takes an hour, not a day.",
+   "As a director, I want overdue postmortem action items visible by team so that systemic fixes actually happen.",
+   "As an SRE, I want to run game days that exercise the same workflow so that we practise before real incidents."
+  ],
+  "functional": [
+   "Ingest events from alerting, probes, support and manual declaration; deduplicate by dedup_key; correlate into incidents.",
+   "Classify severity using rules (service tier, impact, scope) with human override and audit.",
+   "Resolve on-call via schedules and escalation policies; page via push, SMS and voice with escalation on no-ack.",
+   "Create war room channel, conference bridge and incident record automatically for SEV1/SEV2; assign IC, ops lead, comms lead, scribe.",
+   "Serve versioned runbooks per alert and service with steps, decision points and parameterised actions.",
+   "Execute runbook actions through an action executor with RBAC, approvals, dry-run, rate limits, verification and audit.",
+   "Maintain an append-only timeline of every event, message, role change and action.",
+   "Send templated status updates on a cadence and publish to a status page and subscriber lists.",
+   "Generate postmortem drafts, schedule reviews and sync action items to the issue tracker with due dates by severity.",
+   "Report MTTA, MTTD, MTTR, incident counts, repeat causes and on-call load."
+  ],
+  "non_functional": [
+   {
+    "name": "Availability",
+    "target": "99.99% for paging and incident creation, independent of production regions"
+   },
+   {
+    "name": "Page latency",
+    "target": "event received to first notification p99 under 30 seconds"
+   },
+   {
+    "name": "Ingest throughput",
+    "target": "10k events/minute sustained during alert storms without loss"
+   },
+   {
+    "name": "Timeline durability",
+    "target": "no loss of acknowledged events (RPO 0 within region, under 5 s cross-region)"
+   },
+   {
+    "name": "Action safety",
+    "target": "100% of production actions audited; destructive actions require a second approver"
+   },
+   {
+    "name": "UI responsiveness",
+    "target": "incident page loads under 1.5 s on a mobile connection"
+   },
+   {
+    "name": "Retention",
+    "target": "incident records and timelines kept 3 years for audit"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "300 services, 80 teams, 120 on-call rotations, ~1,500 engineers.",
+    "5,000 alert events/day normally; storms up to 10k events/minute for 15 minutes.",
+    "About 40 incidents/week; SEV1/SEV2 average 25 participants, 600 timeline events each.",
+    "Runbook actions: ~200/day including diagnostics, ~20 production-changing."
+   ],
+   "math": [
+    "Normal ingest: 5,000/day = ~0.06 events/s; storm: 10k/min = ~170 events/s; size 2 KB each = 340 KB/s, trivial for Kafka.",
+    "Dedup and correlation reduce a 10k-event storm to typically 1-5 incidents, i.e. a >1,000x reduction in human-facing items.",
+    "Timeline storage: 40 incidents/week x average 200 events x 1 KB = 8 MB/week; SEV1 heavy tail 600 events; with chat transcripts ~50 MB/week, ~2.6 GB/year: fits a single replicated Postgres.",
+    "Notifications: a SEV1 pages ~10 people across 3 channels = 30 sends; storm worst case 100 pages/minute, within pager vendor limits.",
+    "On-call load: 40 incidents/week across 120 rotations is ~0.33/rotation/week on average, but tier-0 rotations see 3-5; budget 2 pages per shift and act when exceeded."
+   ],
+   "summary": "Throughput is tiny; the system is about correctness, availability and human factors. The scaling challenge is the burst during alert storms and the coordination load per incident, not storage or QPS."
+  },
+  "out_of_scope": [
+   "Root cause analysis automation using ML (future).",
+   "Customer-facing compensation workflows.",
+   "Vendor contract management for third-party outages.",
+   "Physical data center incident procedures."
+  ]
+ },
+ "hld": {
+  "overview": "Signals enter through an idempotent ingest API into a durable event log. An incident engine deduplicates and correlates them into incidents using the service catalog, assigns severity, resolves on-call through schedules and escalation policies, and drives a state machine. Mobilisation creates a war room, a bridge and role assignments. Runbooks are versioned code whose actions run through a guarded executor. A comms service sends updates on a cadence. Everything is appended to a timeline that seeds the postmortem. The platform runs active-active across two regions with external paging and offline fallbacks.",
+  "diagram": "\n Signals                       Incident platform (multi-region, active-active)\n +-----------------+  events  +-------------------+   +------------------+\n | Alertmanager    |--------->| Ingest API        |-->| Event log (Kafka)|\n | Synthetic probes|          | (idempotent,      |   | partition by     |\n | Support tickets |          |  dedup_key)       |   | service          |\n | Manual declare  |          +-------------------+   +--------+---------+\n +-----------------+                                           |\n                                                               v\n +-------------------+  correlate/   +--------------------------------------+\n | Service catalog   |<--- lookup ---| Incident engine (state machine)      |\n | owners, deps, tier|               |  triage -> declared -> mitigating -> |\n +-------------------+               |  resolved -> postmortem -> closed    |\n +-------------------+               +---+-----------+----------+-----------+\n | On-call schedules |<-- who? ---------+           |          |\n | escalation policy |                              |          |\n +---------+---------+                              v          v\n           |                              +-------------+  +-----------------+\n           v                              | Runbook svc |  | Comms service   |\n +-------------------+                    | steps, auto |  | Slack war room, |\n | Notifier          |  push/SMS/voice    | actions w/  |  | bridge, status  |\n | (2 vendors)       |------------------->| approval    |  | page, stakehold.|\n +-------------------+     responders     +------+------+  +-----------------+\n                                                 |\n                                                 v\n                                    +--------------------------+\n                                    | Action executor (rollback,|\n                                    | failover, scale, flags)   |\n                                    | audit log, rate limits    |\n                                    +--------------------------+\n Timeline store (append-only)  <-- every event, message, action, state change\n Postmortem service --> action items --> issue tracker (SLA by severity)\n",
+  "components": [
+   {
+    "name": "Ingest API",
+    "responsibility": "Accept events from Alertmanager, probes, support tools and humans; validate, dedupe by dedup_key, write to the event log; return quickly."
+   },
+   {
+    "name": "Event log (Kafka)",
+    "responsibility": "Durable, ordered per-service stream that decouples bursts from processing; replayable for recovery."
+   },
+   {
+    "name": "Incident engine",
+    "responsibility": "Correlate events into incidents, apply severity rules, run the incident state machine, trigger escalation timers."
+   },
+   {
+    "name": "Service catalog",
+    "responsibility": "Source of truth for service owners, tier, dependencies, runbook links and on-call rotation mapping."
+   },
+   {
+    "name": "Scheduler and escalation service",
+    "responsibility": "Compute who is on-call now (including overrides) and run escalation chains with timers."
+   },
+   {
+    "name": "Notifier",
+    "responsibility": "Deliver push, SMS, voice and chat through two vendors with retries and delivery receipts."
+   },
+   {
+    "name": "War room orchestrator",
+    "responsibility": "Create chat channel and bridge, invite responders, pin incident summary, provide slash commands (/sev, /ic, /task, /update)."
+   },
+   {
+    "name": "Runbook service",
+    "responsibility": "Store runbooks as versioned code (Markdown-like steps plus YAML actions), render them, track step progress per incident."
+   },
+   {
+    "name": "Action executor",
+    "responsibility": "Run parameterised actions (rollback, failover, scale, flag toggle, cache flush) with RBAC, approvals, dry-run, rate limits, verification and audit."
+   },
+   {
+    "name": "Comms service and status page",
+    "responsibility": "Templated updates, cadence reminders, stakeholder subscriptions, public status page publishing."
+   },
+   {
+    "name": "Timeline store",
+    "responsibility": "Append-only record of all events, messages, decisions and actions with timestamps and actors."
+   },
+   {
+    "name": "Postmortem and analytics service",
+    "responsibility": "Prefill postmortems, schedule reviews, sync action items to Jira, compute MTTx and trend reports."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Alert to mobilised SEV1",
+    "steps": [
+     "Checkout burn-rate alert fires with dedup_key checkout-availability; Alertmanager posts to ingest.",
+     "Ingest writes the event; engine finds no open incident for checkout or its dependencies in the last 10 minutes and opens one with tentative SEV2 (tier-0, error rate 4%).",
+     "Scheduler resolves checkout primary on-call; notifier pushes and calls; escalation timer set at 5 minutes.",
+     "Ravi acks in 2 minutes, sees runbook and last deploy (13:58) on the incident page, and upgrades to SEV1 because orders per minute are down 40%.",
+     "SEV1 triggers: war room channel, bridge, page the IC rotation and comms lead, status page draft, leadership notification.",
+     "Anita takes IC with /ic; assigns Ravi as ops lead; scribe role auto-assigned to the bot plus a human."
+    ]
+   },
+   {
+    "name": "Runbook-driven mitigation",
+    "steps": [
+     "Ravi opens the checkout-availability runbook; step 1 checks recent deploys and diffs error rates by version.",
+     "Diagnostic action shows the new version at 9% errors versus 0.1% for the old.",
+     "Ravi triggers the rollback action; because it is a production change on a tier-0 service, the IC approves in the war room.",
+     "Executor checks preconditions (previous version healthy, no other rollback in progress), runs the rollback, and verifies error rate drops below 0.5% within 5 minutes.",
+     "Timeline records request, approval, execution and verification; state moves to mitigated at 14:21."
+    ]
+   },
+   {
+    "name": "Communication cadence",
+    "steps": [
+     "On SEV1 declaration, comms lead gets a template: impact, scope, start time, current action, next update time.",
+     "First internal update within 15 minutes, then every 30 minutes; reminders fire if an update is late.",
+     "Status page shows degraded checkout; resolved notice posted after 30 minutes of stability."
+    ]
+   },
+   {
+    "name": "Postmortem and learning",
+    "steps": [
+     "On resolve, the service creates a postmortem doc with timeline, metrics graphs, participants and impact estimate.",
+     "Owner fills contributing factors and lessons within 5 business days; review meeting scheduled automatically.",
+     "Action items go to Jira with priority by severity (SEV1 P1 items due in 30 days); overdue items surface in weekly reports."
+    ]
+   }
+  ],
+  "data_flow": "Signals flow into the ingest API and Kafka, then to the incident engine which writes incident state to Postgres and appends events to the timeline. The engine calls the scheduler to find responders and the notifier to reach them. Human actions in chat or the UI come back through the API as events, so the timeline stays the single source of truth. Runbook actions are requested via the API, approved, executed by the executor against production control planes, and their results appended. On resolution the postmortem service reads the timeline and metrics, and action items flow to the issue tracker; analytics jobs aggregate incidents for reports."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/events",
+    "request": "{source, dedup_key, service, severity_hint, summary, labels{}, links[], occurred_at, status: trigger|resolve}",
+    "response": "202 {event_id, incident_id?}",
+    "notes": "Idempotent on (source, dedup_key, status, occurred_at bucket); resolve events close alerts but never auto-close SEV1/SEV2 incidents."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/incidents",
+    "request": "{title, service, severity, declared_by, description}",
+    "response": "201 {incident_id, war_room_url, bridge}",
+    "notes": "Manual declaration; anyone can declare; Idempotency-Key header to avoid duplicates from double clicks."
+   },
+   {
+    "method": "PATCH",
+    "path": "/v1/incidents/{id}",
+    "request": "{severity?, state?, roles?{ic, ops, comms}, expected_version}",
+    "response": "200 {incident, version}",
+    "notes": "Optimistic concurrency via version; state transitions validated by the state machine."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/incidents/{id}/timeline",
+    "request": "{type: note|decision|task|update, actor, text, client_event_id, at}",
+    "response": "201 {seq}",
+    "notes": "Dedupe by client_event_id so offline mobile clients can retry; server assigns monotonic seq per incident."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/runbooks/{rb}/actions/{action}/runs",
+    "request": "{incident_id, params{}, dry_run, requested_by}",
+    "response": "202 {run_id, status: pending_approval|running}",
+    "notes": "Policy decides approval need; run_id is the idempotency key for the executor."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/action-runs/{run_id}/approve",
+    "request": "{approver, comment}",
+    "response": "200 {status: running}",
+    "notes": "Approver must differ from requester for destructive actions; approval expires in 10 minutes."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/incidents/{id}/updates",
+    "request": "{audience: internal|status_page, template, fields{}}",
+    "response": "201 {update_id, next_due_at}",
+    "notes": "Resets the cadence timer; status page publishing requires comms role."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "incident",
+    "store": "Postgres (primary + sync replica, async cross-region)",
+    "fields": [
+     "id",
+     "title",
+     "service_id",
+     "severity",
+     "state",
+     "ic_user",
+     "ops_user",
+     "comms_user",
+     "started_at",
+     "detected_at",
+     "acked_at",
+     "mitigated_at",
+     "resolved_at",
+     "version",
+     "dedup_keys[]"
+    ],
+    "keys": "PK id; index (service_id, state); unique open incident per correlation_key",
+    "notes": "Timestamps power MTTD/MTTA/MTTR; version for optimistic locking."
+   },
+   {
+    "entity": "timeline_event",
+    "store": "Postgres append-only table (partitioned by month) + Kafka",
+    "fields": [
+     "incident_id",
+     "seq",
+     "type",
+     "actor",
+     "payload jsonb",
+     "client_event_id",
+     "at",
+     "recorded_at"
+    ],
+    "keys": "PK (incident_id, seq); unique (incident_id, client_event_id)",
+    "notes": "Never updated or deleted; corrections are new events."
+   },
+   {
+    "entity": "runbook",
+    "store": "Git repo, rendered into the runbook service cache",
+    "fields": [
+     "id",
+     "version (commit sha)",
+     "service",
+     "alerts[]",
+     "owner",
+     "last_reviewed",
+     "steps[]",
+     "actions[] {name, params schema, risk: low|high, preconditions, verify}"
+    ],
+    "keys": "id + version",
+    "notes": "CI validates schema, links and action names; staleness alert after 180 days."
+   },
+   {
+    "entity": "action_run",
+    "store": "Postgres",
+    "fields": [
+     "run_id",
+     "incident_id",
+     "runbook_version",
+     "action",
+     "params",
+     "requested_by",
+     "approved_by",
+     "state",
+     "started_at",
+     "finished_at",
+     "result",
+     "verify_result"
+    ],
+    "keys": "PK run_id; index incident_id",
+    "notes": "State machine pending_approval -> running -> verifying -> succeeded|failed|rolled_back."
+   },
+   {
+    "entity": "schedule / escalation_policy",
+    "store": "Postgres + cached in scheduler (and synced to pager vendor)",
+    "fields": [
+     "rotation_id",
+     "layers",
+     "handoff_time",
+     "overrides[]",
+     "policy steps [{targets, delay_min}]"
+    ],
+    "keys": "rotation_id; policy_id",
+    "notes": "Computed on-call is cached per minute; vendor is the backup source of truth."
+   }
+  ],
+  "classes": [
+   {
+    "name": "IncidentStateMachine",
+    "responsibility": "Validate and apply transitions triage -> declared -> mitigating -> mitigated -> resolved -> postmortem -> closed, with side effects.",
+    "methods": [
+     "transition(incident, to, actor)",
+     "on_enter_declared()",
+     "on_enter_resolved()",
+     "can_transition(from, to)"
+    ]
+   },
+   {
+    "name": "Correlator",
+    "responsibility": "Map incoming events to an existing open incident or create a new one using dedup_key, service, dependency graph and time window.",
+    "methods": [
+     "correlation_key(event)",
+     "find_open(service, deps, window)",
+     "attach(event, incident)"
+    ]
+   },
+   {
+    "name": "SeverityClassifier",
+    "responsibility": "Suggest severity from service tier, impact metrics and scope; record overrides.",
+    "methods": [
+     "suggest(event, catalog)",
+     "override(incident, sev, actor, reason)"
+    ]
+   },
+   {
+    "name": "EscalationEngine",
+    "responsibility": "Run escalation timers and page next targets until ack.",
+    "methods": [
+     "start(incident, policy)",
+     "on_ack(incident, user)",
+     "tick()",
+     "escalate(step)"
+    ]
+   },
+   {
+    "name": "ActionExecutor",
+    "responsibility": "Safely run runbook actions with guardrails and verification.",
+    "methods": [
+     "request(run)",
+     "check_policy(run)",
+     "approve(run, user)",
+     "execute(run)",
+     "verify(run)",
+     "abort(run)"
+    ]
+   },
+   {
+    "name": "CommsScheduler",
+    "responsibility": "Track update cadence by severity and nudge comms lead; publish to channels.",
+    "methods": [
+     "next_due(incident)",
+     "remind()",
+     "publish(update)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Event correlation and dedup",
+    "explain": "Exact dedup by dedup_key prevents duplicate alerts; correlation groups distinct alerts that share a likely cause: same service, or a dependency or dependent of a service with an open incident, within a 10-minute window. Topology from the service catalog avoids opening separate incidents for checkout, payments and the shared database when the database is the root.",
+    "pseudocode": "def handle(event):\n  if seen(event.source, event.dedup_key, event.status): return  # idempotent\n  inc = open_incident_by_key(event.dedup_key)\n  if not inc:\n    related = catalog.neighbors(event.service, depth=2) | {event.service}\n    inc = open_incident_where(service in related, opened_at > now-10m)\n  if inc: attach(event, inc); maybe_raise_severity(inc, event)\n  elif event.status == 'trigger':\n    inc = create(event, sev=classifier.suggest(event))\n    escalation.start(inc, policy_for(event.service))\n  timeline.append(inc, event)"
+   },
+   {
+    "name": "Escalation with timers",
+    "explain": "Each policy is a list of steps with targets and delays. A durable timer (stored in DB, not just memory) fires if no ack; ack cancels pending steps. Timers survive restarts because they are rows scanned by a leader-elected ticker.",
+    "pseudocode": "start(inc, policy):\n  for i, step in enumerate(policy.steps):\n    timers.insert(inc.id, step_idx=i, fire_at=now + sum(delays[:i]))\ntick():  # every 10s on leader\n  for t in timers.due(now):\n    if incident(t.inc).acked: timers.delete(t); continue\n    notifier.page(step.targets, inc, channels=[push, sms, voice])\n    timers.mark_fired(t)"
+   },
+   {
+    "name": "Guarded action execution",
+    "explain": "Actions are idempotent by run_id, checked against policy (risk level, service tier, change freeze), rate limited (e.g. at most 1 rollback per service per 10 minutes, at most 3 concurrent failovers globally), executed, then verified against a metric; if verification fails the executor reports and optionally reverts.",
+    "pseudocode": "execute(run):\n  if runs.state(run.id) in (running, succeeded): return  # idempotent\n  assert preconditions(run) and not kill_switch()\n  if risk(run) == high and not approved_by_other(run): return pending\n  acquire_lock(run.service, ttl=15m) or reject('another action in flight')\n  with rate_limit(run.action, run.service):\n    result = controlplane.call(run.action, run.params, idem=run.id)\n  ok = wait_for(lambda: metric(run.verify.query) < run.verify.threshold, 5m)\n  record(run, result, ok); release_lock(run.service)"
+   }
+  ],
+  "sequence": "\nAlert      Ingest     Engine      Pager      IC(on-call)  Runbook    Executor   Comms\n  |--fire--->|          |           |            |           |          |         |\n  |          |-dedup--->|           |            |           |          |         |\n  |          |          |-new inc-->|            |           |          |         |\n  |          |          | SEV2 tent.|--page----->|           |          |         |\n  |          |          |           |  (5m ack)  |           |          |         |\n  |          |          |<----------+----ack-----|           |          |         |\n  |          |          |-open room/bridge-------+-----------+----------+-------->|\n  |          |          |           |            |-open rb-->|          |         |\n  |          |          |           |            |<-steps----|          |         |\n  |          |          |           |            |-rollback (approve)-->|         |\n  |          |          |<----------+------------+-----------+--result--|         |\n  |          |          |-status update every 30m (SEV1) / 60m (SEV2)------------>|\n  |          |          |<--mitigated / resolved-|           |          |         |\n  |          |          |-create postmortem, due 5 business days                   |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Alert storm: a core database failover triggers 2,000 alerts across 60 services in 3 minutes.",
+   "handling": "Kafka absorbs the burst; dedup by key; topology-aware correlation attaches dependents to the database incident; only the DB owner and IC are paged, others are notified as FYI."
+  },
+  {
+   "case": "Two engineers declare separate incidents for the same problem.",
+   "handling": "Correlator suggests merge; IC can merge incidents, timelines are combined by timestamp, duplicate war rooms archived with a pointer."
+  },
+  {
+   "case": "Primary on-call does not ack (asleep, phone dead).",
+   "handling": "Escalate to secondary after 5 minutes, then to the engineering manager after another 5; voice call on second attempt; record missed page for rotation health review."
+  },
+  {
+   "case": "The incident tool itself is down or the outage is in its region.",
+   "handling": "Active-active second region; pager vendor pages independently from alerting; offline runbook mirror (static site plus PDF) and a phone bridge number on every on-call card."
+  },
+  {
+   "case": "SSO is down so nobody can log in to production tools.",
+   "handling": "Break-glass accounts with hardware keys stored securely, use audited and alerted; runbooks list the break-glass procedure."
+  },
+  {
+   "case": "Two responders trigger conflicting actions (rollback and scale-out) at the same time.",
+   "handling": "Per-service action lock with TTL, IC as the single decision maker for production changes, executor rejects concurrent actions on the same service."
+  },
+  {
+   "case": "Duplicate execution of a rollback due to client retry or network timeout.",
+   "handling": "run_id idempotency at API and control plane; executor checks run state before executing."
+  },
+  {
+   "case": "A resolve event arrives before the trigger (out of order delivery).",
+   "handling": "Use occurred_at and per-dedup_key state with last-writer-by-event-time; a resolve without trigger is stored and suppresses a late trigger with an older timestamp."
+  },
+  {
+   "case": "Clock skew between sources makes the timeline order wrong.",
+   "handling": "Store both source time and server recorded_at; order by server seq; show source time for display; NTP on all hosts."
+  },
+  {
+   "case": "Runbook is stale and a step references a removed command.",
+   "handling": "Runbooks in Git with CI that validates action names against the executor registry; staleness alerts after 180 days; responders can flag a step, which creates a ticket."
+  },
+  {
+   "case": "Incident spans a shift handoff at 2am.",
+   "handling": "Explicit handoff command that transfers IC/ops roles with a summary note on the timeline; outgoing IC stays until incoming acknowledges."
+  },
+  {
+   "case": "Severity disagreement between teams.",
+   "handling": "Rule of thumb: when in doubt, declare higher; IC has final say; downgrade is cheap, upgrade late is expensive. Overrides recorded."
+  },
+  {
+   "case": "Third-party outage (payment gateway) we cannot fix.",
+   "handling": "Runbook switches traffic to the backup gateway or degrades gracefully (hide payment option); comms states dependency; incident stays open until vendor recovers."
+  },
+  {
+   "case": "Long-running incident over 12 hours.",
+   "handling": "Rotate IC and ops roles every 4 hours to avoid fatigue, keep a running summary pinned, separate workstreams with their own leads."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "PagerDuty / Opsgenie",
+   "layer": "Paging and on-call",
+   "overview": "SaaS for schedules, escalation policies and reliable multi-channel notification.",
+   "why": "Delivery reliability to phones and an independent failure domain from our infra are hard to build.",
+   "alternatives": "Grafana OnCall or self-built on telecom APIs (cheaper, less proven delivery); incident.io/FireHydrant bundle paging with workflow."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Event log",
+   "overview": "Distributed, replicated, partitioned commit log.",
+   "why": "Absorbs alert storms, preserves per-service order, replay for recovery and analytics.",
+   "alternatives": "SQS/PubSub (simpler, no replay ordering); writing directly to Postgres (simpler but couples burst to DB)."
+  },
+  {
+   "name": "PostgreSQL",
+   "layer": "Incident state, timeline, action runs",
+   "overview": "Relational database with strong consistency, transactions, JSONB.",
+   "why": "Small data volume, needs transactions for state machine and optimistic locking, easy audit queries.",
+   "alternatives": "DynamoDB (managed multi-region, weaker ad hoc queries); event-sourced store only (more complex reads)."
+  },
+  {
+   "name": "Slack (or Teams) with a bot",
+   "layer": "War room",
+   "overview": "Chat platform where responders already work; bot exposes slash commands.",
+   "why": "Meets people where they are; bot mirrors messages to timeline.",
+   "alternatives": "Built-in chat in the incident tool (works when Slack is down, adoption lower); Zoom/phone bridge for voice."
+  },
+  {
+   "name": "Git + CI for runbooks",
+   "layer": "Runbook authoring",
+   "overview": "Runbooks stored as code next to service code with review and validation.",
+   "why": "Versioning, review, ownership, link and action validation, easy to mirror offline.",
+   "alternatives": "Wiki/Confluence (easy editing, rots); Rundeck/StackStorm jobs (strong automation, separate from docs)."
+  },
+  {
+   "name": "Rundeck / StackStorm / Temporal",
+   "layer": "Action execution and workflows",
+   "overview": "Automation runners with RBAC and audit, or a durable workflow engine for multi-step remediations.",
+   "why": "Durable, retryable, audited execution with approval gates.",
+   "alternatives": "Ad hoc scripts on a bastion (fast, unsafe); Kubernetes operators for specific actions."
+  },
+  {
+   "name": "Statuspage-style service",
+   "layer": "External communication",
+   "overview": "Hosted status page with subscriber notifications.",
+   "why": "Hosted outside our infra so it stays up when we are down.",
+   "alternatives": "Self-hosted static page on a different cloud/CDN."
+  },
+  {
+   "name": "Jira",
+   "layer": "Postmortem action tracking",
+   "overview": "Issue tracker with workflows and SLAs.",
+   "why": "Teams already plan from it; action items get owners and due dates.",
+   "alternatives": "Linear, GitHub issues."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Incident Command System (roles and single point of command)",
+   "explain": "The Incident Command System came from firefighting in the 1970s and was adapted by Google SRE and others for software. Its core insight is that chaos in an emergency comes less from the emergency itself than from unclear authority and duplicated effort. ICS separates roles. The incident commander (IC) holds the high-level state, makes decisions, assigns work and does not touch production themselves. The operations lead (and only the ops team) changes production, so two people never apply conflicting fixes. The communications lead sends updates to stakeholders on a schedule, shielding responders from interruptions. A planning or scribe role keeps the timeline, tracks follow-ups and handles logistics such as handoffs. Roles are assigned explicitly and visibly, and when the incident grows the IC can delegate further, creating workstream leads with a limited span of control (typically 3-7 people per lead). A single, recognised command post, such as a war room channel and bridge, keeps everyone working from the same picture. Clear, live documentation lets anyone join and catch up. Handoffs are explicit: the outgoing IC states the current status and the incoming IC says I am now IC. Practising this structure on small incidents makes it automatic on large ones.",
+   "in_this_design": "The platform makes roles first-class: /ic, /ops, /comms commands set them on the incident, show them pinned in the war room, and restrict production actions to the ops role. Handoff is a command that writes to the timeline.",
+   "key_points": [
+    "IC coordinates, does not fix.",
+    "Only the ops lead changes production.",
+    "Comms lead shields responders and keeps cadence.",
+    "Explicit role assignment and explicit handoffs.",
+    "Span of control 3-7; delegate workstreams as it grows."
+   ],
+   "qa": [
+    {
+     "q": "Why should the IC not debug?",
+     "a": "Because heads-down debugging loses the big picture: who is doing what, whether to escalate, when to update stakeholders. The most senior engineer often should be a responder, not the IC."
+    },
+    {
+     "q": "What do you do when an executive joins the bridge and starts directing?",
+     "a": "The IC politely restates that they are IC, offers the comms lead's update channel, and if the executive has information, takes it; authority stays with the IC to avoid conflicting orders."
+    },
+    {
+     "q": "How do you handle a 12-hour incident?",
+     "a": "Rotate IC and ops every 4 hours with explicit handoffs, keep a living summary, split into workstreams with leads, and schedule rest."
+    }
+   ]
+  },
+  {
+   "name": "Severity levels and escalation policies",
+   "explain": "Severity is a shared language that maps impact to response. A good scheme has 3-5 levels defined by user and business impact, not by how hard the problem is technically. For example SEV1: tier-0 customer-facing outage or data loss or security breach, all hands and leadership informed; SEV2: significant degradation or a tier-0 feature unavailable for a subset; SEV3: minor impact or internal-only, handled in business hours. Each level defines who is paged, whether an IC is required, the communication cadence, and postmortem requirement. The guiding rule is to declare early and high: downgrading costs little, while a late upgrade costs minutes of uncoordinated response. Escalation policies decide who gets notified and when: a chain of steps such as primary on-call, then secondary after 5 minutes without acknowledgement, then the manager after another 5. Functional escalation (bring in the database team) differs from hierarchical escalation (inform leadership). Policies must be durable and timer-driven so they keep working if a responder ignores a page. Rotation health matters as much: a rotation needs enough people (six or more for 24x7 one-week shifts) so that each person is on call no more than about one week in six, and page load per shift should be tracked against a budget.",
+   "in_this_design": "SeverityClassifier suggests a level from service tier and impact; humans override with a reason. Escalation timers are durable rows ticked by a leader; SEV1 auto-pages IC and comms rotations and notifies leadership.",
+   "key_points": [
+    "Severity by impact, not by technical difficulty.",
+    "When in doubt, declare higher; downgrade later.",
+    "Each severity defines paging, roles, cadence, postmortem.",
+    "Escalation timers must be durable and independent of human attention.",
+    "Rotation size and page budget prevent burnout."
+   ],
+   "qa": [
+    {
+     "q": "How do you stop teams from under-declaring to avoid scrutiny?",
+     "a": "Make declaring cheap and blameless, auto-suggest severity from impact metrics, review mismatches in weekly incident review, and celebrate early declaration."
+    },
+    {
+     "q": "Hierarchical vs functional escalation?",
+     "a": "Functional pulls in expertise (DB team, network); hierarchical informs or engages management for decisions like customer comms or business trade-offs. Both are triggered by the IC."
+    },
+    {
+     "q": "What if an incident's impact changes mid-way?",
+     "a": "IC re-evaluates severity at each update; the tool allows change with reason, and upgrading triggers the higher level's mobilisation automatically."
+    }
+   ]
+  },
+  {
+   "name": "Runbooks as code and safe automation (toil reduction)",
+   "explain": "A runbook (or playbook) is the documented procedure for responding to a specific alert or failure: how to confirm it, diagnose it, mitigate it and escalate. Runbooks lower time to mitigate because the responder does not reinvent the procedure at 3am, and Google's SRE experience reports noticeably faster recovery with prepared playbooks. Plain wiki runbooks rot, though: commands change, links break, nobody owns them. Treating runbooks as code fixes much of this: store them in version control near the service, require review, attach an owner and last-reviewed date, validate links and referenced actions in CI, and render them in the incident tool. The next step is executable runbooks: steps that call parameterised, pre-approved actions (roll back to previous version, fail over region, scale to N, disable feature flag, drain node) instead of free-typed shell. That turns toil into automation gradually: first document, then make steps one-click with a human deciding, then for well-understood cases let the system act automatically with human notification. Safe automation needs guardrails: idempotency, preconditions, blast-radius limits, rate limits, approvals for high-risk actions, verification after the action and a kill switch, because automation that is wrong acts fast and at scale.",
+   "in_this_design": "Runbooks live in Git with schema validation; actions are typed with risk levels, preconditions and verification queries. The executor enforces approvals for high-risk actions on tier-0 services and per-service locks, and a global kill switch disables all automated actions.",
+   "key_points": [
+    "Every paging alert links a reviewed runbook.",
+    "Version, review and test runbooks like code.",
+    "Progress: document -> one-click with human -> automatic with notification.",
+    "Guardrails: idempotency, preconditions, locks, rate limits, approval, verify, kill switch.",
+    "Automation amplifies mistakes; scope it."
+   ],
+   "qa": [
+    {
+     "q": "Which runbook actions would you automate first?",
+     "a": "The most frequent, best understood, low-risk and easily reversible ones: rollback of the last deploy, restart of a stuck consumer, scale-out within limits, toggling a well-tested kill-switch flag."
+    },
+    {
+     "q": "How do you prevent automation from making an outage worse?",
+     "a": "Limits on blast radius (one service, one region), rate limits (one rollback per 10 minutes), locks against concurrent actions, verification with automatic stop, and a global kill switch for the executor."
+    },
+    {
+     "q": "How do you keep runbooks current?",
+     "a": "Ownership and review dates, CI validation, a flag-this-step button that creates a ticket, and updating runbooks as a standard postmortem action item; staleness alerts after 180 days."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and deduplication in event ingestion",
+   "explain": "Monitoring systems deliver events at least once: Alertmanager resends firing alerts every evaluation cycle, network timeouts cause retries, and redundant sources report the same condition. If the receiving system is not idempotent, the result is duplicate incidents and duplicate pages, which in an incident tool directly erode trust. Idempotency means applying the same request multiple times has the same effect as once. The standard approach is an idempotency key: the client supplies a key (for alerts, a dedup_key derived from the alert's identity such as service and alertname; for human actions, a client-generated UUID), and the server stores processed keys with their result, returning the original result on repeat. Deduplication windows bound storage; for alerts, the key stays associated with the open incident until it resolves. Ordering matters too: a resolve can arrive before a trigger, so state transitions use event time and per-key state. For side effects outside the database, such as calling a control plane to roll back, the same run_id should be passed downstream so the external system can also dedupe, or the executor must check state before acting. Combined with at-least-once delivery from Kafka, idempotent consumers give effectively-once processing, which is what users experience as exactly once.",
+   "in_this_design": "The ingest API dedupes on (source, dedup_key, status); timeline writes dedupe on client_event_id so mobile clients can retry; action runs use run_id end to end, including the control plane call.",
+   "key_points": [
+    "Assume at-least-once delivery everywhere.",
+    "Idempotency key plus stored result returns the same answer on retry.",
+    "Pass the key downstream for external side effects.",
+    "Use event time and per-key state for out-of-order events.",
+    "At-least-once delivery + idempotent consumer = effectively once."
+   ],
+   "qa": [
+    {
+     "q": "Why not rely on Kafka exactly-once semantics?",
+     "a": "Kafka's transactions cover Kafka-to-Kafka processing; pages, chat messages and control plane calls are external side effects, so you still need idempotent handlers."
+    },
+    {
+     "q": "How long do you keep dedup keys?",
+     "a": "For alerts, while the incident is open plus a grace window (e.g. 24 h) so late retries do not reopen; for API idempotency keys, 24-72 hours is typical."
+    },
+    {
+     "q": "A resolve event arrives first. What happens?",
+     "a": "Store per-key state with the event time; when the older trigger arrives later it is ignored because a newer resolve exists for that key."
+    }
+   ]
+  },
+  {
+   "name": "Durable timers and leader election for escalation",
+   "explain": "Escalation is a time-based promise: if nobody acknowledges within 5 minutes, page the next person. Implementing this with in-memory sleeps fails on restart or deployment and silently drops escalations, the worst possible failure for an incident system. Durable timers store each pending timer as a row or message with a fire_at time; a ticker periodically scans due timers and acts, deleting or marking them when done. To avoid two tickers firing the same timer, either one instance is elected leader (via a lease in etcd, ZooKeeper, or a database advisory lock with a TTL), or every instance competes with row-level locking (SELECT ... FOR UPDATE SKIP LOCKED) so each due timer is claimed by exactly one worker. Leases have a subtlety: a paused old leader may wake up still believing it holds the lease; fencing tokens (a monotonically increasing number checked by the downstream store) or idempotent actions make this safe. Delayed queues in message brokers and workflow engines such as Temporal implement the same durable timer concept with retries and history. The cost of an extra page from a race is small; the cost of a missed escalation is large, so the design leans towards at-least-once firing with idempotent paging by (incident, step).",
+   "in_this_design": "Escalation steps are rows in Postgres; workers claim due rows with SKIP LOCKED every 10 s; a notification for (incident_id, step) is idempotent so a double claim after a crash yields at most a duplicate notification, not a missed one.",
+   "key_points": [
+    "Never keep escalation timers only in memory.",
+    "Claim due timers with a lease or SKIP LOCKED.",
+    "Fencing tokens or idempotency protect against zombie leaders.",
+    "Prefer duplicate notifications to missed escalations.",
+    "Workflow engines give durable timers out of the box."
+   ],
+   "qa": [
+    {
+     "q": "What happens if the scheduler crashes mid-escalation?",
+     "a": "Timers are persisted; another worker picks up due rows on the next tick; the notification idempotency key prevents double pages for the same step."
+    },
+    {
+     "q": "Why is a lease alone insufficient?",
+     "a": "A leader can pause (GC, network) past lease expiry while a new leader acts; when the old one resumes it may act too. Fencing tokens or idempotent side effects close that gap."
+    },
+    {
+     "q": "Why also configure escalation in the pager vendor?",
+     "a": "Defence in depth: if our platform is down, the vendor's own escalation still fires from the alerting system's direct integration."
+    }
+   ]
+  },
+  {
+   "name": "Blameless postmortems and the learning loop",
+   "explain": "A postmortem is a written record of an incident: impact, timeline, root cause and contributing factors, what went well, what went poorly, where we got lucky, and action items. Blameless means the analysis assumes people acted reasonably given the information, tools and pressures they had, and asks why the system made the error easy, rather than who made it. This is not about avoiding accountability; it is about getting honest information. If engineers fear punishment they hide details, and the organisation loses the very data needed to prevent recurrence. Modern practice also moves away from a single root cause towards multiple contributing factors, since complex systems usually fail through combinations: a risky change, a missing test, an alert that did not fire, and a runbook that was stale. Good action items are specific, owned, prioritised and tracked, and they include detection and mitigation improvements, not only prevention. The learning loop closes only if actions are completed: track closure rates, review overdue items in leadership forums, and look across incidents for themes such as config changes causing 40% of SEV1s, which justify platform investments. Sharing postmortems widely and running game days built from past incidents spreads the learning.",
+   "in_this_design": "Postmortems are required for SEV1/SEV2 within 5 business days, prefilled from the timeline and metrics; action items sync to Jira with due dates by severity, and weekly reports show overdue items and repeat causes by team.",
+   "key_points": [
+    "Blameless means systemic, not consequence-free.",
+    "Contributing factors over a single root cause.",
+    "Actions cover prevention, detection and mitigation.",
+    "Track action closure; unclosed actions mean repeat incidents.",
+    "Aggregate themes across incidents to drive investment."
+   ],
+   "qa": [
+    {
+     "q": "How do you run a blameless review when an engineer ran the wrong command?",
+     "a": "Ask what made the wrong command easy: no confirmation, ambiguous tooling, missing guardrails, fatigue. Actions target the tooling, e.g. move the step into an executor action with preconditions."
+    },
+    {
+     "q": "How do you make sure action items get done?",
+     "a": "Owners and due dates in the team's tracker, priority by severity, weekly overdue report to directors, and treating overdue SEV1 items as release blockers for that service."
+    },
+    {
+     "q": "Should every incident get a postmortem?",
+     "a": "Required for SEV1/SEV2, data loss, or anything where on-call needed to intervene unusually; optional lightweight review for SEV3, plus a monthly look at clusters of minor incidents."
+    }
+   ]
+  },
+  {
+   "name": "Designing for the worst day (failure-domain independence)",
+   "explain": "Systems used during outages have a special requirement: they must be available precisely when everything else is not. Many companies have discovered mid-incident that their status page, chat, runbooks or deployment tools were hosted on the same infrastructure that failed, or depended on SSO or DNS that was down. A failure domain is the set of things that fail together: a region, a cloud account, an identity provider, a DNS provider, a network. Independence means placing the incident tooling in different failure domains from what it manages: a different region or cloud, external SaaS for paging and status pages, credentials that do not depend on the same SSO (break-glass accounts), and offline fallbacks such as printed or cached runbooks and a phone bridge number. Circular dependencies are the subtle trap: the deployment system needs the service discovery that is down; the incident tool authenticates through the identity service that is in the incident. Mapping dependencies explicitly and testing in game days, for instance by disabling SSO or a region and running an incident, reveals them. The guiding principle is that the tool you need on the worst day should have the fewest dependencies of anything you run, and should degrade to something simple rather than fail.",
+   "in_this_design": "The platform runs active-active in two regions in a separate account; paging and status pages are external SaaS; break-glass accounts exist; runbooks are mirrored to a static site and offline copies; a phone bridge is always listed. Game days test SSO and region loss.",
+   "key_points": [
+    "Incident tools must not share fate with production.",
+    "Find circular dependencies (SSO, DNS, deploy tooling) before the outage does.",
+    "External paging and status page; break-glass access.",
+    "Degrade to simple: static runbooks, phone bridge.",
+    "Prove it with game days."
+   ],
+   "qa": [
+    {
+     "q": "Your chat tool is down during a SEV1. What now?",
+     "a": "Fall back to the phone bridge listed on every on-call profile, keep the timeline in the incident tool or a shared doc, and the comms lead uses the status page and email for stakeholders."
+    },
+    {
+     "q": "How do you discover hidden dependencies of incident tooling?",
+     "a": "Dependency mapping from the service catalog and network flow logs, then game days that disable SSO, DNS or a region and attempt a full incident drill."
+    },
+    {
+     "q": "Is active-active needed for an internal tool with low traffic?",
+     "a": "For this tool yes, or at least warm standby with tested failover under 5 minutes, because its demand peaks exactly during infrastructure failures."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Build vs buy incident platform",
+   "options": "Buy incident.io/FireHydrant/PagerDuty workflows vs build in-house",
+   "choice": "Buy paging, build thin workflow and executor integrations",
+   "why": "Paging reliability is a commodity best bought and gives failure-domain independence; runbook actions and catalog integration are company-specific."
+  },
+  {
+   "decision": "Automatic vs human-approved remediation",
+   "options": "Full auto-remediation vs one-click with approval vs manual",
+   "choice": "Automatic only for low-risk reversible actions; approval for high-risk on tier-0",
+   "why": "Speed matters, but automation errors spread fast; approval adds about a minute and prevents compounding outages."
+  },
+  {
+   "decision": "Correlation strategy",
+   "options": "Exact dedup only vs time-window grouping vs topology-aware correlation",
+   "choice": "Dedup plus topology-aware time window",
+   "why": "Reduces storms to the root incident; risk of over-merging handled by IC split/merge commands."
+  },
+  {
+   "decision": "Runbook format",
+   "options": "Wiki pages vs runbooks as code vs fully automated workflows",
+   "choice": "Runbooks as code with executable steps",
+   "why": "Gets review, versioning and validation, while keeping human judgement in the loop; workflows reserved for well-understood sequences."
+  },
+  {
+   "decision": "Severity scheme granularity",
+   "options": "3 levels vs 5 levels",
+   "choice": "4 levels (SEV1-SEV3 plus SEV0 for company-wide)",
+   "why": "Enough distinction for response differences without arguments over borderline cases."
+  },
+  {
+   "decision": "Timeline storage",
+   "options": "Chat transcript as record vs append-only event store",
+   "choice": "Append-only event store with chat mirrored in",
+   "why": "Chat is lossy and unstructured; event store gives ordering, audit and postmortem prefill, and survives chat outages."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Incident platform region outage",
+   "behavior": "Other region serves traffic (active-active); Postgres promotes the cross-region replica with RPO under 5 s; paging continues via vendor regardless."
+  },
+  {
+   "failure": "Pager vendor outage",
+   "behavior": "Notifier routes via second vendor and SMS gateway; war room bot posts to chat; vendor status monitored."
+  },
+  {
+   "failure": "Chat platform down",
+   "behavior": "Incident UI has built-in timeline and notes; phone bridge used for voice; bot buffers messages and replays when chat returns."
+  },
+  {
+   "failure": "Action executor misbehaves (bug causes repeated rollbacks)",
+   "behavior": "Rate limits and per-service locks cap damage; anomaly on action rate trips the global kill switch; actions fall back to manual."
+  },
+  {
+   "failure": "Kafka ingest lag during an alert storm",
+   "behavior": "Ingest API still accepts (acks after Kafka write); engine scales consumers; vendor's direct alert integration provides a parallel paging path for tier-0 alerts."
+  },
+  {
+   "failure": "SSO outage blocks responders",
+   "behavior": "Break-glass accounts with hardware keys; every use alerts security and is reviewed post-incident."
+  }
+ ],
+ "metrics": [
+  "MTTD (start to detection), MTTA (page to ack), time to IC assigned, MTTM (to mitigation), MTTR (to resolution) by severity",
+  "Incidents per week by severity, service and cause category",
+  "Pages per on-call shift and night pages per person",
+  "Escalation rate (percent of pages reaching secondary)",
+  "Runbook coverage and automation rate; action success and verification failure rate",
+  "Postmortem completion within 5 days; action item closure on time",
+  "Repeat incident rate within 90 days",
+  "Platform health: ingest latency, notification delivery p99, executor errors"
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you handle an incident that spans five teams?",
+   "a": "One IC, one incident, separate workstreams each with a lead who reports to the IC; one war room plus sub-channels per workstream; comms lead aggregates updates. Avoid five parallel incidents."
+  },
+  {
+   "q": "What would you automate first and how would you prove it is safe?",
+   "a": "Rollback of the last deploy, gated by canary metrics, as it fixes the largest share of incidents (often half are change-induced). Prove safety with dry runs, game days, approval mode for a quarter, and tracked verification success before allowing auto mode."
+  },
+  {
+   "q": "How do you measure whether the process is working?",
+   "a": "Trend MTTA, time-to-IC, MTTM per severity, repeat incident rate, action closure, and on-call health surveys. Also qualitative review: sample incidents monthly to check roles were assigned and comms cadence met."
+  },
+  {
+   "q": "How do you scale on-call to 80 teams fairly?",
+   "a": "Tier services: tier-0 teams have dedicated 24x7 rotations of 6+; lower tiers share follow-the-sun or business-hours rotations; central SRE IC rotation for SEV1; page budget per shift and compensation or time off."
+  },
+  {
+   "q": "How does this integrate with deploys and change management?",
+   "a": "Change events (deploys, config, flags) flow into the timeline and incident page so responders see what changed; a change freeze can be toggled by IC; the executor respects freezes."
+  },
+  {
+   "q": "How would you use LLMs here?",
+   "a": "As assistants: summarise the timeline for late joiners and status updates, draft postmortems, suggest relevant runbooks from similar past incidents. Keep humans approving actions, and never let the model execute production changes."
+  },
+  {
+   "q": "How do you handle a security incident with this workflow?",
+   "a": "Reuse the platform with a restricted visibility mode, a security IC rotation, legal and privacy roles, evidence preservation steps in the runbook, and regulatory notification timers."
+  }
+ ],
+ "key_points": [
+  "Workflow: detect, triage, declare, mobilise, mitigate, resolve, learn.",
+  "Mitigate first, root-cause later; rollback is the default first move for change-induced incidents.",
+  "ICS roles: IC coordinates, ops changes production, comms shields responders.",
+  "Severity by impact; declare early and high.",
+  "Idempotent ingest with dedup keys and topology-aware correlation tames alert storms.",
+  "Durable escalation timers; prefer a duplicate page to a missed escalation.",
+  "Runbooks as code with guarded, audited, idempotent actions and a kill switch.",
+  "The incident platform must be more available than what it manages: separate failure domain, external pager, offline fallbacks.",
+  "Blameless postmortems with tracked actions close the loop; measure repeat incidents.",
+  "Measure MTTA, time to IC, MTTM and on-call load, not just incident counts."
+ ],
+ "quiz": [
+  {
+   "q": "During a SEV1, who should be the only person (or team) executing changes to production?",
+   "options": [
+    "The incident commander",
+    "The operations lead and their team",
+    "Whoever first finds the fix",
+    "The comms lead after approval"
+   ],
+   "answer": 1,
+   "why": "ICS separates coordination from execution; the ops lead owns production changes. IC making changes is tempting because they are senior, but it loses the overall picture."
+  },
+  {
+   "q": "An alert resends every 30 seconds while firing. What prevents a new incident each time?",
+   "options": [
+    "Deduplication on dedup_key at ingest",
+    "Kafka exactly-once semantics",
+    "Rate limiting the alerting system",
+    "The pager vendor ignoring repeats"
+   ],
+   "answer": 0,
+   "why": "Idempotent ingest keyed by dedup_key attaches repeats to the open incident. Kafka EOS does not cover external side effects like incident creation and paging."
+  },
+  {
+   "q": "A database failover causes 2,000 alerts across 60 services. Best handling?",
+   "options": [
+    "Page all 60 service owners",
+    "Drop alerts above a rate threshold",
+    "Disable alerting for 15 minutes",
+    "Correlate by topology into the database incident and page only its owner plus IC"
+   ],
+   "answer": 3,
+   "why": "Topology-aware correlation collapses symptoms into the root incident. Dropping alerts above a threshold risks losing an unrelated real problem."
+  },
+  {
+   "q": "Primary on-call has not acknowledged a page after 5 minutes. What should happen?",
+   "options": [
+    "Wait for the next alert",
+    "Close the incident",
+    "Escalate automatically to the secondary via a durable timer",
+    "Send an email"
+   ],
+   "answer": 2,
+   "why": "Durable escalation timers guarantee a human gets engaged. Email is not an urgent channel."
+  },
+  {
+   "q": "Why should escalation timers be persisted rather than held in memory?",
+   "options": [
+    "Memory is too small",
+    "A restart or deploy would silently drop pending escalations",
+    "Databases are faster than memory",
+    "Pager vendors require it"
+   ],
+   "answer": 1,
+   "why": "The risk is a silent missed escalation on restart. Speed and size are not the concern."
+  },
+  {
+   "q": "Which runbook action is the best first candidate for automation?",
+   "options": [
+    "Rolling back the most recent deploy of a service",
+    "Deleting and restoring a production database",
+    "Changing DNS for the main domain",
+    "Rotating all credentials"
+   ],
+   "answer": 0,
+   "why": "Frequent, well-understood, low-risk and reversible. Database restore and DNS changes are high risk with large blast radius."
+  },
+  {
+   "q": "Two responders trigger a rollback and a scale-out on the same service simultaneously. What design element prevents conflict?",
+   "options": [
+    "Optimistic UI updates",
+    "Chat moderation",
+    "Larger pods",
+    "A per-service action lock with TTL in the executor"
+   ],
+   "answer": 3,
+   "why": "The executor serialises production changes per service. Optimistic UI does nothing for control plane conflicts."
+  },
+  {
+   "q": "When in doubt about severity, the recommended rule is:",
+   "options": [
+    "Declare lower to avoid alarm",
+    "Wait 30 minutes to see",
+    "Declare higher; downgrade later",
+    "Let the business decide"
+   ],
+   "answer": 2,
+   "why": "Over-declaring is cheap to undo; under-declaring delays mobilisation. Waiting is the most common real-world failure."
+  },
+  {
+   "q": "What is the main purpose of a blameless postmortem?",
+   "options": [
+    "Avoid any accountability",
+    "Get honest, complete information to fix systemic contributing factors",
+    "Satisfy auditors",
+    "Assign a single root cause quickly"
+   ],
+   "answer": 1,
+   "why": "Blamelessness enables honesty; it is not lack of accountability. Single root cause is the tempting but outdated framing."
+  },
+  {
+   "q": "Your incident tool authenticates via the company SSO, which is down. Best preparation?",
+   "options": [
+    "Break-glass accounts with hardware keys, audited and alerted",
+    "Nothing; SSO is highly available",
+    "Disable authentication during incidents",
+    "Share a common password"
+   ],
+   "answer": 0,
+   "why": "Break-glass gives controlled access in a different failure domain. Disabling auth or shared passwords are security incidents waiting to happen."
+  },
+  {
+   "q": "A resolve event arrives before its trigger due to retries. What should the engine do?",
+   "options": [
+    "Create an incident when the trigger arrives anyway",
+    "Drop both",
+    "Page the on-call to decide",
+    "Use event time and per-key state so the older trigger is ignored"
+   ],
+   "answer": 3,
+   "why": "Per-key state by event time handles reordering. Creating an incident from a stale trigger makes a phantom incident."
+  },
+  {
+   "q": "Roughly what span of control is recommended for a workstream lead?",
+   "options": [
+    "1-2 people",
+    "15-20 people",
+    "3-7 people",
+    "Unlimited"
+   ],
+   "answer": 2,
+   "why": "ICS guidance is a small span so the lead can track everyone; 15-20 overwhelms coordination."
+  },
+  {
+   "q": "Which metric best indicates the postmortem process actually reduces risk?",
+   "options": [
+    "Number of postmortems written",
+    "Repeat incident rate and action item closure on time",
+    "Postmortem word count",
+    "Attendance at reviews"
+   ],
+   "answer": 1,
+   "why": "Outcomes matter: fewer repeats, actions done. Count of postmortems is an activity metric that can grow while nothing changes."
+  },
+  {
+   "q": "Why host the status page with an external provider?",
+   "options": [
+    "So it stays up when your own infrastructure is down",
+    "Better fonts",
+    "It is required by law",
+    "To hide incidents"
+   ],
+   "answer": 0,
+   "why": "Failure-domain independence. Legal requirement is not generally the reason."
+  },
+  {
+   "q": "The executor runs a rollback but the network times out before a response; the client retries. What prevents a double rollback?",
+   "options": [
+    "Longer timeouts",
+    "Human double-check",
+    "Kafka ordering",
+    "Idempotency via run_id checked by executor and control plane"
+   ],
+   "answer": 3,
+   "why": "Idempotency keys make retries safe. Longer timeouts reduce but do not eliminate the window."
+  },
+  {
+   "q": "About how many people should a 24x7 rotation with one-week shifts have to avoid burnout?",
+   "options": [
+    "2",
+    "3",
+    "At least 6",
+    "20 or more"
+   ],
+   "answer": 2,
+   "why": "Six or more keeps each person on call about one week in six. Two or three people means on call every other or third week."
+  },
+  {
+   "q": "An executive joins the bridge and starts assigning tasks. What should the IC do?",
+   "options": [
+    "Hand IC to the executive",
+    "Restate who is IC, route their input through the IC and point them to comms updates",
+    "Mute them",
+    "End the bridge"
+   ],
+   "answer": 1,
+   "why": "Single command avoids conflicting orders; respectfully redirect. Handing over IC to someone without context harms the response."
+  },
+  {
+   "q": "What is the main reason to mirror chat messages into an append-only timeline?",
+   "options": [
+    "Ordered, durable, auditable record that survives chat outages and seeds the postmortem",
+    "To save chat storage",
+    "To speed up chat",
+    "Chat cannot be exported"
+   ],
+   "answer": 0,
+   "why": "Structured timeline is the source of truth. Exporting chat is possible, but it is lossy and unordered relative to system events."
+  },
+  {
+   "q": "At 2am an incident spans a shift handoff. Best practice?",
+   "options": [
+    "Outgoing IC leaves at shift end",
+    "Both act as IC",
+    "Pause the incident",
+    "Explicit handoff with summary on the timeline; outgoing stays until incoming acknowledges"
+   ],
+   "answer": 3,
+   "why": "Explicit handoff avoids gaps and dual command. Two ICs is the tempting compromise that causes conflicting decisions."
+  },
+  {
+   "q": "A leader-elected ticker pauses for GC beyond its lease and then resumes. What protects against double action?",
+   "options": [
+    "Longer leases",
+    "Faster GC",
+    "Fencing tokens or idempotent side effects",
+    "More replicas"
+   ],
+   "answer": 2,
+   "why": "Fencing tokens or idempotency make zombie leaders harmless. Longer leases slow failover without removing the race."
+  },
+  {
+   "q": "Which is the best first move for a SEV1 that started 3 minutes after a deploy?",
+   "options": [
+    "Find the root cause in the code",
+    "Roll back the deploy, then investigate",
+    "Scale up the service",
+    "Wait for more data"
+   ],
+   "answer": 1,
+   "why": "Mitigate first; rollback is fast and reversible. Root-causing first prolongs impact."
+  },
+  {
+   "q": "Why prefer a duplicate notification to a missed escalation?",
+   "options": [
+    "The cost asymmetry: a duplicate is annoying, a missed page can extend an outage by hours",
+    "Duplicates are free",
+    "Pager vendors charge per page",
+    "Duplicates help with metrics"
+   ],
+   "answer": 0,
+   "why": "Asymmetric costs drive at-least-once design for paging. Duplicates are not free; they cost attention, but far less."
+  }
+ ],
+ "references": [
+  {
+   "title": "Google SRE Book, Chapter 14: Managing Incidents",
+   "url": "https://sre.google/sre-book/incident-response/"
+  },
+  {
+   "title": "Google SRE Workbook, Chapter 9: Incident Response",
+   "url": "https://sre.google/workbook/incident-response/"
+  },
+  {
+   "title": "Google: Incident Management Guide",
+   "url": "https://sre.google/resources/practices-and-processes/incident-management-guide/"
+  },
+  {
+   "title": "ClickHouse: Incident response process",
+   "url": "https://clickhouse.com/resources/engineering/incident-response-process"
+  },
+  {
+   "title": "Incident response documentation and runbooks",
+   "url": "https://gethaiku.ai/blog/incident-response-documentation-runbooks"
+  }
+ ]
+}

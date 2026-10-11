@@ -1,0 +1,1224 @@
+{
+ "slug": "file-storage",
+ "title": "Design a file storage and sharing system (Dropbox / Google Drive)",
+ "prompt": "Design a file storage and sharing system.",
+ "group": "classic",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "Users expect to drop a file on one device and see it everywhere, share it with a link, and never lose it. The design splits cleanly into a metadata plane (a namespace tree, versions, permissions and a per-user change journal that must be strongly consistent) and a data plane (immutable content-addressed blocks stored with erasure coding at exabyte scale). The core tensions are sync correctness across many offline devices with conflicting edits, bandwidth efficiency through chunking and deduplication, and enforcing sharing permissions on every byte without slowing downloads.",
+ "framework": {
+  "clarify": [
+   "Scope: upload, download, folder hierarchy, multi-device sync with a desktop client, sharing with users and links, version history. Real-time co-editing of document contents is out of scope.",
+   "Scale: assume 500M registered users, 100M DAU, average 10GB stored per user (5 EB logical), 1 billion files changed per day.",
+   "File sizes: typical files are small (median about 100KB) but must support up to 50GB per file with resumable upload.",
+   "Sync latency: a change on one device visible on another within 5-10 seconds when both are online.",
+   "Durability: eleven nines (99.999999999%) annual durability for stored content; availability 99.9%+ for metadata and downloads.",
+   "Consistency: metadata (namespace, permissions) strongly consistent; a successful upload is immediately visible to its author and visible to others after commit.",
+   "Sharing model: owner, editor, viewer roles on files and folders, inherited down the tree; public links with optional expiry and password.",
+   "Cost: storage cost dominates; dedup, compression and erasure coding are first-class requirements."
+  ],
+  "design": [
+   "Baseline: upload whole file to an app server, store it in object storage, record a row in a files table. Then evolve: split files into blocks, upload blocks directly to the block store, commit metadata separately, sync via a change journal.",
+   "Components: client sync engine (watcher, chunker, local state DB), API gateway, Metadata service (namespaces, file versions, journal) on a sharded strongly consistent DB, Block service (presigned upload/download, content-addressed blocks), Block storage (erasure-coded, multi-zone), Notification service (long-poll/WebSocket to clients), Sharing and ACL service, CDN for downloads, async pipelines (thumbnails, virus scan, search index).",
+   "Chunking and dedup: split files into 4MB blocks (or content-defined chunks), hash each with SHA-256; the client asks which hashes the server lacks and uploads only those. Commit = an atomic metadata write of the ordered block list for a new file version.",
+   "APIs: POST /files/upload_session (returns needed blocks and presigned URLs), PUT block to block store, POST /files/commit {path, parentRev, blockList}, GET /delta?cursor, GET /files/{id}/download, POST /shares.",
+   "Critical path for sync: device A commits version v2; metadata service appends to the namespace journal; notification service wakes device B's long-poll; B calls /delta with its cursor, gets the new block list, fetches only missing blocks, assembles and writes the file atomically."
+  ],
+  "defend": [
+   "Bottleneck: metadata, not bytes. Every sync, list and permission check hits it. Shard by namespace (user root or shared folder) so a namespace's journal is on one shard; cache hot listings.",
+   "Scale reads: downloads go straight from block storage via CDN with signed, short-lived URLs; listing and delta reads served from replicas with cursor-based consistency.",
+   "Scale writes: block uploads bypass app servers and go directly to the block store with presigned URLs; dedup cuts upload volume (often 30%+ for common content); metadata writes are small and sharded.",
+   "Failure: idempotent block PUTs (content-addressed, so re-upload is harmless), resumable upload sessions, conditional commit with parentRev to detect conflicts, retries with exponential backoff and jitter, and garbage collection of orphaned blocks only after a safety window.",
+   "Durability: erasure coding (for example 6+3 Reed-Solomon) across zones gives about 1.5x overhead with tolerance for 3 lost fragments; background scrubbing verifies checksums and repairs.",
+   "Measure: sync latency (commit to visible on other device), upload/download throughput, dedup ratio, metadata p99, conflict rate, block repair backlog, durability incidents (must be zero)."
+  ],
+  "script": "Let me clarify the scope: a Dropbox or Google Drive style system with upload, download, folders, desktop and mobile sync, sharing with people and links, and version history, at roughly 100 million daily users and exabytes of data, with eleven nines durability and changes visible on other devices within seconds. Real-time co-editing of contents is out of scope. The key insight is to split the system into two planes. The metadata plane holds the namespace tree, file versions, permissions and a per-namespace change journal, in a sharded, strongly consistent database. The data plane holds immutable, content-addressed 4 megabyte blocks in an erasure-coded block store. Clients chunk and hash files, upload only blocks the server does not have, then commit a new version as an ordered list of block hashes with a parent revision for conflict detection. Other devices learn about changes through a long-poll notification and pull a delta from their cursor. I will then defend metadata as the real bottleneck, dedup and erasure coding for cost, conflict handling for offline edits, and how permissions are enforced on downloads through signed URLs."
+ },
+ "brd": {
+  "problem": "People and teams store work and personal files across laptops, phones and email attachments, lose them when devices fail, and struggle to share large files securely. The business needs a service that keeps files safe and identical across devices, makes sharing a link or a folder trivial, and does so at a storage cost low enough to offer generous free tiers and profitable paid plans.",
+  "goals": [
+   "Never lose a user's committed file (eleven nines durability).",
+   "Seamless multi-device sync within seconds, including offline edits.",
+   "Simple, secure sharing with people, groups and links, with role-based access.",
+   "Efficient bandwidth: upload only changed parts of files; resume interrupted transfers.",
+   "Low storage cost per GB through dedup, compression and erasure coding.",
+   "Version history and recovery from deletion or ransomware for 30-180 days."
+  ],
+  "non_goals": [
+   "Real-time collaborative editing inside documents.",
+   "General-purpose object storage API for developers (S3 competitor).",
+   "Media streaming with adaptive bitrate transcoding (only previews).",
+   "Backup of entire machines including OS files."
+  ],
+  "stakeholders": [
+   {
+    "who": "Consumers",
+    "needs": "Photos and documents safe, available on every device, easy sharing."
+   },
+   {
+    "who": "Business teams",
+    "needs": "Shared team folders, admin controls, audit logs, external sharing policy."
+   },
+   {
+    "who": "Compliance and security",
+    "needs": "Encryption at rest and in transit, legal hold, data residency, malware scanning."
+   },
+   {
+    "who": "Finance",
+    "needs": "Storage cost per GB and bandwidth cost under control."
+   },
+   {
+    "who": "Infrastructure / SRE",
+    "needs": "Durability guarantees, capacity planning for exabytes, disk failure handling."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Annual durability",
+    "target": "99.999999999% (no committed data loss)"
+   },
+   {
+    "metric": "Sync latency (commit to visible on other online device)",
+    "target": "p95 under 10s"
+   },
+   {
+    "metric": "Metadata API availability",
+    "target": "99.95%"
+   },
+   {
+    "metric": "Storage overhead factor",
+    "target": "under 1.6x raw per logical byte after erasure coding"
+   },
+   {
+    "metric": "Dedup savings",
+    "target": "track; 20-40% for typical consumer content"
+   },
+   {
+    "metric": "Upload success rate on mobile",
+    "target": "over 99.5% with resumable uploads"
+   }
+  ],
+  "constraints": [
+   "Desktop clients run on Windows, macOS and Linux with differing filesystem semantics (case sensitivity, path length, forbidden characters).",
+   "Mobile networks are slow and flaky; uploads must be resumable.",
+   "Regulatory data residency for some business tenants (EU, India).",
+   "Storage hardware economics: HDDs with high density, slow rebuilds; must tolerate frequent disk failures."
+  ],
+  "risks": [
+   {
+    "risk": "Sync bug deletes or corrupts files across all of a user's devices.",
+    "mitigation": "Version history and trash retention, extensive deterministic simulation testing of the sync engine, kill switches that pause sync."
+   },
+   {
+    "risk": "Shared link leaks sensitive data.",
+    "mitigation": "Link expiry, passwords, org policies limiting public links, access logs, revocation."
+   },
+   {
+    "risk": "Ransomware encrypts files and syncs them up.",
+    "mitigation": "Detect mass-modification patterns, keep versions, offer bulk restore to a point in time."
+   },
+   {
+    "risk": "Cross-user dedup leaks existence of files.",
+    "mitigation": "Dedup within a user or tenant scope for sensitive tiers, or require proof of ownership by uploading."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Freelancer",
+    "needs": "Works across laptop and phone, shares deliverables with clients via links."
+   },
+   {
+    "name": "Team member",
+    "needs": "Shared team folders that stay in sync for everyone."
+   },
+   {
+    "name": "Photographer",
+    "needs": "Uploads tens of GB of RAW files reliably over hotel Wi-Fi."
+   },
+   {
+    "name": "IT admin",
+    "needs": "Controls external sharing, audits access, recovers deleted data."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want files saved into my synced folder to appear on my other devices within seconds.",
+   "As a user, I want to upload a 20GB video and resume if my connection drops.",
+   "As a user, I want to share a folder with teammates as editors so we all see the same files.",
+   "As a user, I want to send a view-only link that expires in 7 days.",
+   "As a user, I want to restore a previous version of a file or recover a deleted file.",
+   "As a user editing offline on two devices, I want neither edit to be lost when they reconnect.",
+   "As an admin, I want to see who accessed a sensitive file and revoke external access.",
+   "As a mobile user, I want to browse my files without downloading them all."
+  ],
+  "functional": [
+   "Upload and download files of up to 50GB with resumable, chunked transfers.",
+   "Folder hierarchy operations: create, rename, move, delete (to trash), restore.",
+   "Desktop sync client with local change detection and incremental delta sync.",
+   "Mobile and web browsing with thumbnails and previews; selective sync and on-demand files.",
+   "Sharing with users and groups (viewer, editor, owner) on files and folders with inheritance.",
+   "Shared links with role, expiry, password and download disable options.",
+   "Version history per file and trash with configurable retention.",
+   "Conflict handling: conflicting copies created rather than silent overwrite."
+  ],
+  "non_functional": [
+   {
+    "name": "Durability",
+    "target": "11 nines annually; checksums end to end"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95% metadata, 99.9% upload/download"
+   },
+   {
+    "name": "Sync latency",
+    "target": "p95 under 10s between online devices"
+   },
+   {
+    "name": "Metadata latency",
+    "target": "list folder p95 under 200ms; commit p95 under 300ms"
+   },
+   {
+    "name": "Throughput",
+    "target": "single client upload saturates 100 Mbps with parallel block uploads"
+   },
+   {
+    "name": "Consistency",
+    "target": "linearizable commits per namespace; read-your-writes for the author"
+   },
+   {
+    "name": "Security",
+    "target": "TLS in transit, AES-256 at rest with per-block keys wrapped by KMS, ACL checked on every metadata and download authorisation"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "500M users, 100M DAU; average stored 10GB per user, so about 5 EB logical.",
+    "1B file changes per day; average changed file 1MB, of which on average 40% of blocks are new after dedup and delta.",
+    "Each DAU's devices perform about 20 delta/list calls per hour while active 8 hours.",
+    "Block size 4MB; metadata per file version about 500 bytes plus 32 bytes per block hash.",
+    "Download volume about 3x upload volume.",
+    "Erasure coding 6+3 for warm data, 3x replication for the hottest recent blocks."
+   ],
+   "math": [
+    "Uploads: 1B x 1MB x 0.4 = 400 TB/day of new block data ~= 4.6 GB/s average, ~15 GB/s peak.",
+    "Downloads: about 3x -> ~14 GB/s average, ~45 GB/s peak, mostly served via CDN edge and block storage directly.",
+    "Commits: 1B / 86,400 ~= 11.6k metadata commits/s average, ~40k/s peak.",
+    "Delta/list reads: 100M x 20 x 8 / 86,400 ~= 185k reads/s average; long-poll means most are notifications, not polls.",
+    "Physical storage: 5 EB logical x (1 - 0.25 dedup) x 1.5 erasure overhead ~= 5.6 EB raw; with 20TB drives ~= 280k drives plus spare capacity.",
+    "Metadata size: assume 200 files per user x 500M = 100B file entries x ~1KB with versions ~= 100 TB, sharded across hundreds of database shards.",
+    "Block index: 5 EB / 4MB ~= 1.25 trillion block entries before dedup; at ~100 bytes per entry ~= 100+ TB of block index, kept in a sharded key-value store."
+   ],
+   "summary": "The data plane must hold several exabytes of raw disk and move ~15 GB/s up and ~45 GB/s down at peak, which demands direct-to-storage transfers, dedup and erasure coding; the metadata plane is far smaller (around 100 TB) but takes ~40k commits/s and ~200k reads/s and must be strongly consistent, so it is the component to shard carefully."
+  },
+  "out_of_scope": [
+   "Real-time co-editing of document content.",
+   "Developer-facing S3-compatible API.",
+   "Video transcoding and streaming.",
+   "Full-machine backup and restore."
+  ]
+ },
+ "hld": {
+  "overview": "Clients talk to two planes. The metadata plane (API gateway, Metadata service, Sharing/ACL service, Notification service) stores the namespace tree, file versions as ordered lists of block hashes, permissions, and an append-only journal per namespace that devices consume with cursors. The data plane (Block service plus Block storage) stores immutable blocks addressed by their SHA-256 hash, erasure-coded across zones; clients upload and download blocks directly with short-lived signed URLs, and downloads of shared content go through a CDN. Asynchronous workers generate thumbnails, scan for malware, index for search, and garbage-collect unreferenced blocks.",
+  "diagram": "\n  Desktop sync client / Mobile / Web\n   | (1) metadata: list, commit, delta        | (2) blocks: PUT/GET signed URL\n   v                                          v\n +--------------+                    +-----------------+      +---------+\n | API Gateway  |                    | Block Service   |<---->|  CDN    |\n | auth, quotas |                    | (sign URLs,     |      +---------+\n +--+-----+-----+                    | verify hashes)  |\n    |     |                          +--------+--------+\n    |     v                                   |\n    |  +---------------+                      v\n    |  | Sharing / ACL |          +--------------------------+\n    |  +---------------+          | Block Storage            |\n    v                             | content-addressed,       |\n +---------------------+          | erasure coded 6+3 across |\n | Metadata Service    |          | 3 zones, scrubbing       |\n | namespaces, versions|          +--------------------------+\n | journal per ns      |               ^\n +----+----------+-----+               | block index (hash -> location,\n      |          |                     | refcount) in sharded KV\n      v          v\n +----------+ +--------------+     +------------------------------+\n | Metadata | | Notification |     | Async: thumbnails, AV scan,  |\n | DB (MySQL| | (long-poll / |     | search index, GC of orphans  |\n | shards / | | WebSocket)   |     +------------------------------+\n | Spanner) | +--------------+\n +----------+\n",
+  "components": [
+   {
+    "name": "Client sync engine",
+    "responsibility": "Watches the local filesystem, chunks and hashes changed files, keeps a local SQLite of synced state (path, rev, block list), uploads missing blocks in parallel, commits, pulls deltas, writes files atomically via temp file plus rename, creates conflicted copies."
+   },
+   {
+    "name": "API Gateway",
+    "responsibility": "Authentication (OAuth tokens), rate limiting per user and app, quota checks, routing to metadata and sharing services."
+   },
+   {
+    "name": "Metadata Service",
+    "responsibility": "Namespace tree (files, folders, mounts of shared folders), file versions as block lists, conditional commits with parent revision, per-namespace journal with monotonically increasing sequence numbers, delta API with cursors."
+   },
+   {
+    "name": "Block Service",
+    "responsibility": "Answers 'which of these hashes are missing', issues signed upload/download URLs, verifies uploaded block hash matches its name, maintains block index and reference counts."
+   },
+   {
+    "name": "Block Storage",
+    "responsibility": "Stores immutable blocks with erasure coding across zones, background scrubbing and repair, hot tier with replication and cold tier with wider codes."
+   },
+   {
+    "name": "Sharing and ACL Service",
+    "responsibility": "Grants on files and folders, inheritance resolution, shared links with expiry and password, group membership expansion, audit events."
+   },
+   {
+    "name": "Notification Service",
+    "responsibility": "Holds long-poll or WebSocket connections per device, wakes them when a subscribed namespace's journal advances."
+   },
+   {
+    "name": "CDN",
+    "responsibility": "Caches popular shared-link downloads and previews at the edge with signed URL validation."
+   },
+   {
+    "name": "Async workers",
+    "responsibility": "Thumbnail and preview generation, malware scanning, search indexing, orphan-block garbage collection, ransomware pattern detection."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Upload a modified file (critical write path)",
+    "steps": [
+     "Client detects /Docs/plan.pptx changed; splits into 4MB blocks and computes SHA-256 per block (12 blocks).",
+     "Client calls POST /upload_session {namespaceId, path, size, blockHashes}; Block service checks the block index and replies that only 2 hashes are missing, with signed PUT URLs valid for 15 minutes.",
+     "Client uploads the 2 blocks in parallel directly to block storage; storage verifies each block's hash equals its key and stores fragments with erasure coding, acknowledging after durable write in multiple zones.",
+     "Client calls POST /commit {namespaceId, path, parentRev: 41, blockList}; Metadata service verifies all blocks exist and that the current rev is still 41.",
+     "In one transaction it writes file version 42, increments block reference counts (or records references), and appends a journal entry with the namespace's next sequence number.",
+     "Response returns rev 42 to the client; notification service wakes other devices subscribed to the namespace."
+    ]
+   },
+   {
+    "name": "Sync a change to another device",
+    "steps": [
+     "Device B holds a long-poll on /longpoll_delta {cursor: ns123@seq9001}; it returns 'changes=true' when seq advances.",
+     "B calls GET /delta {cursor}; Metadata service returns journal entries 9002..9010 with paths, revs and block lists, plus a new cursor.",
+     "For each changed file, B compares block lists with its local block cache and downloads only missing blocks via signed GET URLs.",
+     "B reconstructs the file into a temp file, verifies hashes, then atomically renames it into place and updates its local state DB.",
+     "If B had a local unsynced edit to the same file, B keeps both: the server version takes the path and B's version is saved as 'plan (B's conflicted copy 2026-10-11).pptx' and uploaded."
+    ]
+   },
+   {
+    "name": "Share a folder and open via link",
+    "steps": [
+     "Owner calls POST /shares {folderId, grantee: bob@x.com, role: editor}; Sharing service writes the grant and mounts the shared namespace into Bob's root.",
+     "Bob's devices receive a journal entry for the new mount and sync its contents.",
+     "Owner creates a link {role: viewer, expiresAt: +7d, password}; the link token maps to the folder and role.",
+     "Anonymous visitor opens the link; gateway validates token, expiry and password, then Block service issues short-lived signed download URLs; the CDN caches popular blocks keyed by hash."
+    ]
+   },
+   {
+    "name": "Garbage collect unreferenced blocks",
+    "steps": [
+     "Version retention expires old versions daily; their block references are decremented.",
+     "Blocks with zero references are marked as candidates with a timestamp.",
+     "After a safety window (for example 7 days, longer than any upload session plus clock and replication lag), a sweeper re-verifies the block is still unreferenced and deletes it.",
+     "A block re-referenced during the window (an in-flight upload that deduped against it) is simply unmarked."
+    ]
+   }
+  ],
+  "data_flow": "Bytes flow client to block storage directly (and back via CDN), never through the metadata servers. Metadata flows client to Metadata service: commits are small (paths and hash lists). Each commit appends to a namespace journal, which drives notifications to other devices and feeds async consumers (search, thumbnails, audit) through a change stream. The block index ties hashes to physical locations and reference counts; GC reconciles it with metadata."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/upload_session",
+    "request": "{namespaceId, path, size, blockHashes:[sha256...], idempotencyKey}",
+    "response": "{sessionId, missing:[{hash, putUrl}], expiresAt}",
+    "notes": "Dedup check happens here; sessions resumable for 48h."
+   },
+   {
+    "method": "PUT",
+    "path": "{signed block URL}",
+    "request": "raw block bytes (<= 4MB), header x-content-sha256",
+    "response": "200 {hash}",
+    "notes": "Idempotent; storage verifies hash before accepting."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/files/commit",
+    "request": "{sessionId, namespaceId, path, parentRev | null for new, blockList, clientModified, mode: update|add}",
+    "response": "200 {fileId, rev, seq} | 409 {conflict, currentRev}",
+    "notes": "Conditional on parentRev; 'add' mode auto-renames on conflict."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/delta",
+    "request": "?cursor=ns123@9001&limit=2000",
+    "response": "{entries:[{path, fileId, rev, deleted, blockList, size}], cursor, hasMore}",
+    "notes": "Cursor encodes namespace and journal sequence; reset response if cursor too old."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/longpoll_delta",
+    "request": "{cursors:[...], timeout: 90}",
+    "response": "{changes: bool, backoff?: seconds}",
+    "notes": "Served by Notification service; no metadata DB hit while idle."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/files/{fileId}/download",
+    "request": "?rev=",
+    "response": "{blocks:[{hash, getUrl}], size}",
+    "notes": "ACL check here; URLs expire in 5 minutes."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/shares",
+    "request": "{itemId, grantee | link:{role, expiresAt, password}}",
+    "response": "{shareId, linkUrl?}",
+    "notes": "Folder shares create a mount in the grantee's namespace."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/files/{fileId}/restore",
+    "request": "{rev}",
+    "response": "{newRev}",
+    "notes": "Creates a new version pointing at old block list; no data copy."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Namespace",
+    "store": "MySQL (sharded, e.g. Vitess) or Spanner",
+    "fields": [
+     "namespaceId",
+     "type (user_root|shared_folder|team)",
+     "ownerId",
+     "journalSeq",
+     "quotaBytes",
+     "usedBytes",
+     "region"
+    ],
+    "keys": "PK namespaceId; shard key namespaceId",
+    "notes": "Unit of sharding and of journal ordering."
+   },
+   {
+    "entity": "FileEntry",
+    "store": "Same shard as namespace",
+    "fields": [
+     "namespaceId",
+     "fileId",
+     "parentFolderId",
+     "name",
+     "nameLower",
+     "isFolder",
+     "currentRev",
+     "size",
+     "deleted",
+     "updatedAt"
+    ],
+    "keys": "PK (namespaceId, fileId); unique (namespaceId, parentFolderId, nameLower) where not deleted",
+    "notes": "Unique constraint prevents duplicate names in a folder (case-insensitive)."
+   },
+   {
+    "entity": "FileVersion",
+    "store": "Same shard",
+    "fields": [
+     "namespaceId",
+     "fileId",
+     "rev",
+     "blockList (array of sha256)",
+     "size",
+     "contentHash",
+     "author",
+     "clientModified",
+     "serverModified"
+    ],
+    "keys": "PK (namespaceId, fileId, rev)",
+    "notes": "Immutable; restore creates a new rev pointing at an old block list."
+   },
+   {
+    "entity": "JournalEntry",
+    "store": "Same shard",
+    "fields": [
+     "namespaceId",
+     "seq",
+     "fileId",
+     "path",
+     "rev",
+     "op (add|modify|delete|move)"
+    ],
+    "keys": "PK (namespaceId, seq) with seq strictly increasing",
+    "notes": "Delta API reads ranges of seq; compacted after 90 days (old cursors get reset)."
+   },
+   {
+    "entity": "BlockIndex",
+    "store": "Sharded KV (e.g. RocksDB-based or DynamoDB)",
+    "fields": [
+     "hash (sha256)",
+     "size",
+     "storageLocator (volume, extent)",
+     "refCount",
+     "zeroRefSince",
+     "encryptionKeyId"
+    ],
+    "keys": "PK hash; sharded by hash prefix (uniform)",
+    "notes": "Dedup scope can be per tenant by keying (tenantId, hash)."
+   },
+   {
+    "entity": "Grant / Link",
+    "store": "MySQL / Spanner",
+    "fields": [
+     "itemId",
+     "namespaceId",
+     "principal (user|group|link)",
+     "role",
+     "expiresAt",
+     "passwordHash",
+     "createdBy"
+    ],
+    "keys": "PK (itemId, principal); index principal for 'shared with me'",
+    "notes": "Inheritance resolved by walking ancestors, cached per folder."
+   }
+  ],
+  "classes": [
+   {
+    "name": "Chunker",
+    "responsibility": "Splits a file stream into blocks and hashes them.",
+    "methods": [
+     "chunk(stream) -> [Block]",
+     "hash(block) -> sha256",
+     "rabinBoundaries(stream) (optional CDC)"
+    ]
+   },
+   {
+    "name": "SyncEngine (client)",
+    "responsibility": "Reconciles three trees: local filesystem, last synced state, and remote.",
+    "methods": [
+     "onLocalChange(path)",
+     "planOperations() -> [Op]",
+     "applyRemote(deltaEntries)",
+     "createConflictCopy(path)",
+     "commit(path)"
+    ]
+   },
+   {
+    "name": "MetadataService",
+    "responsibility": "Transactional commits and journaled deltas per namespace.",
+    "methods": [
+     "commit(ns, path, parentRev, blockList)",
+     "delta(cursor, limit)",
+     "move(ns, src, dst)",
+     "list(ns, folderId, pageToken)"
+    ]
+   },
+   {
+    "name": "BlockService",
+    "responsibility": "Dedup, signed URLs and block index.",
+    "methods": [
+     "missing(hashes) -> [hash]",
+     "signPut(hash)",
+     "signGet(hash, principal)",
+     "incRef(hashes)",
+     "decRef(hashes)"
+    ]
+   },
+   {
+    "name": "GarbageCollector",
+    "responsibility": "Safely deletes unreferenced blocks.",
+    "methods": [
+     "markCandidates()",
+     "sweep(olderThan)",
+     "verifyUnreferenced(hash)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Content-defined chunking with a rolling hash",
+    "explain": "Fixed 4MB chunks are simple, but inserting one byte at the start of a file shifts every boundary so every block hash changes. Content-defined chunking places boundaries where a rolling hash of the last 48 bytes matches a pattern, so boundaries move with the content and an insertion changes only nearby blocks. Bound chunk size between min and max to avoid tiny or huge chunks.",
+    "pseudocode": "def cdc_chunks(data, avg=4<<20, min_sz=1<<20, max_sz=8<<20):\n    mask = avg - 1           # boundary when low bits are zero\n    start, h = 0, 0\n    for i, b in enumerate(data):\n        h = rolling_update(h, b, window=48)   # Rabin / Gear hash\n        size = i - start + 1\n        if (size >= min_sz and (h & mask) == 0) or size >= max_sz:\n            yield data[start:i+1]; start = i + 1\n    if start < len(data): yield data[start:]"
+   },
+   {
+    "name": "Conditional commit with conflict detection",
+    "explain": "The client says which revision it edited (parentRev). The server commits only if the file's current rev still equals parentRev; otherwise it reports a conflict and the client keeps both versions. All writes and the journal append happen in one transaction on the namespace's shard.",
+    "pseudocode": "def commit(ns, path, parent_rev, block_list):\n    with txn(shard_of(ns)):\n        f = select_for_update(FileEntry, ns, path)\n        cur = f.current_rev if f else None\n        if cur != parent_rev:\n            return Conflict(current_rev=cur)\n        assert block_index.all_exist(block_list)\n        rev = (cur or 0) + 1\n        insert FileVersion(ns, f.id, rev, block_list)\n        f.current_rev = rev\n        seq = ns_row.journal_seq = ns_row.journal_seq + 1\n        insert JournalEntry(ns, seq, f.id, path, rev, 'modify')\n    block_index.inc_ref(block_list)     # or via outbox, idempotent\n    notify(ns, seq)\n    return Ok(rev, seq)"
+   },
+   {
+    "name": "Client three-tree reconciliation",
+    "explain": "Dropbox's Nucleus models sync as three trees: Remote (server state), Local (disk), and Synced (last state both agreed on). Comparing Local to Synced tells you local changes; Remote to Synced tells you remote changes; if both changed the same node, it is a conflict. This makes decisions deterministic and testable.",
+    "pseudocode": "for node in union(remote, local, synced):\n    lc = local[node] != synced[node]\n    rc = remote[node] != synced[node]\n    if lc and not rc: plan.upload(node)\n    elif rc and not lc: plan.download(node)\n    elif lc and rc and local[node] != remote[node]:\n        plan.conflict_copy(node)    # keep both, never silently overwrite\n    # after each op succeeds: synced[node] = new agreed state"
+   },
+   {
+    "name": "Erasure coding placement (Reed-Solomon 6+3)",
+    "explain": "Split a block into 6 data fragments and compute 3 parity fragments; any 6 of the 9 reconstruct the block. Place fragments on 9 different disks across 3 zones (3 per zone) so losing a whole zone loses 3 fragments and data survives. Overhead 9/6 = 1.5x versus 3x for triple replication.",
+    "pseudocode": "def put_block(hash, data):\n    frags = rs_encode(data, k=6, m=3)            # 9 fragments\n    disks = placement.pick(hash, n=9, per_zone=3, distinct_hosts=True)\n    write_all(frags, disks, require_acks=9, timeout=2s)  # or >=7 then repair\n    block_index.put(hash, locator(disks))\ndef get_block(hash):\n    frags = read_any(block_index.locator(hash), need=6)  # fastest 6 of 9\n    return rs_decode(frags)"
+   }
+  ],
+  "sequence": "\nDeviceA        Gateway      BlockSvc       BlockStore      MetadataSvc     Notify      DeviceB\n  | chunk+hash    |             |               |               |              |           |\n  |--upload_session(hashes)---->|               |               |              |           |\n  |<--missing [h3,h9] + URLs----|               |               |              |           |\n  |--PUT h3, h9 (parallel)--------------------->| verify hash,  |              |           |\n  |<--200---------------------------------------| EC 6+3 store  |              |           |\n  |--commit(parentRev 41, blockList)--------------------------->|              |           |\n  |               |             |               |  txn: rev 42, |              |           |\n  |               |             |               |  journal 9002 |              |           |\n  |<--rev 42, seq 9002------------------------------------------|--seq 9002--->|           |\n  |               |             |               |               |              |--wake---->|\n  |               |             |               |               |<--delta(cursor 9001)-----|\n  |               |             |               |               |--entries, cursor 9002--->|\n  |               |             |               |<--GET missing blocks (signed URLs)-------|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Same file edited offline on two devices.",
+   "handling": "Second commit fails parentRev check; client keeps the server version at the path and saves its own as a conflicted copy, then uploads it. No silent overwrite."
+  },
+  {
+   "case": "Upload interrupted at 70% of a 20GB file on mobile.",
+   "handling": "Upload session lists completed block hashes; on resume the client asks again which blocks are missing and continues. Session lives 48h."
+  },
+  {
+   "case": "One byte inserted at the start of a large file.",
+   "handling": "With fixed-size chunks every block changes; content-defined chunking keeps most boundaries so only one or two blocks re-upload."
+  },
+  {
+   "case": "Rename or move of a folder with 100,000 files.",
+   "handling": "Model folder move as a single metadata operation on the folder entry (children reference parentId), producing one journal entry, not 100,000; clients apply as a local rename."
+  },
+  {
+   "case": "Case-only rename (Report.pdf to report.pdf) on case-insensitive filesystems.",
+   "handling": "Store nameLower for uniqueness; clients on macOS/Windows perform a two-step rename via a temp name."
+  },
+  {
+   "case": "Illegal characters or path too long on Windows for a file created on Linux.",
+   "handling": "Client maps to a safe local name and keeps a mapping, or marks the file as not syncable locally with a warning; never rename on the server silently."
+  },
+  {
+   "case": "Block uploaded but commit never happens (client crash).",
+   "handling": "Block has zero references; GC deletes it after the safety window. Upload sessions expire."
+  },
+  {
+   "case": "GC races with an upload that dedups against a block about to be deleted.",
+   "handling": "Commit verifies blocks exist and increments references transactionally; sweeper re-checks refCount and a grace window longer than session lifetime before deletion."
+  },
+  {
+   "case": "Shared folder member removed while their device is offline.",
+   "handling": "On reconnect the journal shows an unmount; client stops syncing and removes the folder locally (optionally keeping a local copy per policy); server rejects their requests immediately."
+  },
+  {
+   "case": "Hot shared link (a viral file downloaded by 1M people).",
+   "handling": "CDN caches blocks by immutable hash; signed URLs validated at the edge; per-link bandwidth limits and abuse detection."
+  },
+  {
+   "case": "Ransomware encrypts thousands of files and they sync up.",
+   "handling": "Detect high-entropy mass modifications, alert the user, and offer point-in-time restore of the namespace using version history."
+  },
+  {
+   "case": "Clock skew between device and server affects 'modified' times.",
+   "handling": "Ordering uses server revisions and journal sequence numbers; client mtime is metadata only."
+  },
+  {
+   "case": "Silent disk corruption (bit rot) on a storage node.",
+   "handling": "Each fragment has a checksum; background scrubbing reads and verifies, and reconstructs bad fragments from the others."
+  },
+  {
+   "case": "Quota exceeded mid-upload.",
+   "handling": "Check quota at upload_session (reserving the size) and at commit; reject commit with a clear error, uploaded blocks get GC'd."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "MySQL with Vitess (or Spanner / CockroachDB)",
+   "layer": "Metadata store",
+   "overview": "Relational database sharded horizontally by a key, with transactions within a shard; Spanner offers distributed transactions with external consistency.",
+   "why": "Commits need transactions across file entry, version and journal rows of one namespace; sharding by namespaceId keeps them on one shard. Dropbox ran its metadata on sharded MySQL for years.",
+   "alternatives": "Spanner (cross-shard transactions for moves between namespaces, higher cost); Cassandra (scales writes but lacks transactions needed for conditional commits)."
+  },
+  {
+   "name": "Custom erasure-coded block store (Magic Pocket style) or S3",
+   "layer": "Block storage",
+   "overview": "An immutable blob store optimised for large volumes of fixed-size blocks, with erasure coding across zones and background repair.",
+   "why": "At exabyte scale, owning the storage layer cuts cost significantly versus public cloud; Dropbox moved most data off S3 to Magic Pocket for this reason.",
+   "alternatives": "Amazon S3 / GCS (eleven nines, zero ops, higher per-GB cost and egress); Ceph or MinIO (self-hosted, operational burden)."
+  },
+  {
+   "name": "RocksDB-backed sharded KV / DynamoDB",
+   "layer": "Block index",
+   "overview": "Key-value store for hash to location and refcount, at trillions of keys.",
+   "why": "Point lookups by hash, uniform distribution by hash prefix, huge cardinality.",
+   "alternatives": "Keep block lists only in metadata and use storage's own index (simpler, but harder dedup and GC)."
+  },
+  {
+   "name": "CDN (CloudFront / Akamai / own edge)",
+   "layer": "Download delivery",
+   "overview": "Edge caches close to users.",
+   "why": "Immutable, content-addressed blocks are perfectly cacheable; reduces egress from origin and latency for shared links.",
+   "alternatives": "Serve all downloads from origin (simple, expensive, slow far from region)."
+  },
+  {
+   "name": "Long-poll / WebSocket notification tier",
+   "layer": "Change notification",
+   "overview": "Holds millions of idle connections and wakes them on change.",
+   "why": "Devices learn of changes in seconds without polling the metadata DB; Dropbox used long-poll for years.",
+   "alternatives": "Periodic polling (simple, wasteful, slow); push via APNs/FCM for mobile background wake-ups."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Async change stream",
+   "overview": "Partitioned durable log.",
+   "why": "Feeds thumbnails, search indexing, audit and ransomware detection from commits without slowing the commit path.",
+   "alternatives": "Database outbox polled by workers; cloud pub/sub."
+  },
+  {
+   "name": "KMS with envelope encryption",
+   "layer": "Security",
+   "overview": "Key management service that wraps per-block or per-tenant data keys with master keys.",
+   "why": "Encryption at rest, key rotation without rewriting data, customer-managed keys for enterprises.",
+   "alternatives": "Disk-level encryption only (simpler, no per-tenant control); client-side end-to-end encryption (breaks dedup and previews)."
+  },
+  {
+   "name": "SQLite (client)",
+   "layer": "Client local state",
+   "overview": "Embedded transactional database.",
+   "why": "Durable local record of the synced tree, pending ops and block cache so the client survives crashes without rescanning.",
+   "alternatives": "Flat files (fragile under crashes); LevelDB."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Separating the metadata plane from the data plane",
+   "explain": "Storage systems handle two very different kinds of data. Metadata is small (names, sizes, permissions, version pointers), changes often, is queried in rich ways (list a folder, what changed since cursor X, who can access this) and must be strongly consistent because it defines what the user sees. Data is large, immutable once written, accessed by key, and dominates storage and bandwidth cost. Putting both through the same servers creates a system where large byte transfers starve small latency-sensitive metadata calls, and where scaling one forces scaling the other. The classic pattern, seen in GFS/HDFS (master plus chunkservers), Dropbox (metadata servers plus Magic Pocket), and S3-style systems, is to split them. Clients ask the metadata plane what to read or write and receive pointers (block hashes) plus short-lived capabilities (signed URLs), then talk to the data plane directly. Each plane gets the storage technology that suits it: a transactional database for metadata, an append-only erasure-coded blob store for data. The metadata plane becomes the coordination bottleneck, so it must be sharded and cached carefully, while the data plane scales almost linearly by adding storage nodes.",
+   "in_this_design": "Metadata service and its sharded MySQL/Spanner store hold namespaces, versions, journals and ACLs. Bytes go directly between clients and block storage via signed URLs; the metadata service never proxies file contents.",
+   "key_points": [
+    "Metadata is small, hot, strongly consistent; data is big, immutable, cheap.",
+    "Clients get pointers and signed URLs from metadata, then move bytes directly.",
+    "Each plane scales and fails independently.",
+    "The metadata plane is the real bottleneck to shard."
+   ],
+   "qa": [
+    {
+     "q": "Why not stream uploads through the API servers?",
+     "a": "It would make app servers bandwidth bound (15 GB/s at peak), add a hop, and couple CPU-light metadata scaling to bandwidth-heavy transfers. Signed URLs let clients go straight to storage while the metadata service keeps control of authorisation."
+    },
+    {
+     "q": "How do you enforce permissions if clients talk to storage directly?",
+     "a": "The metadata service checks the ACL and then issues a signed URL scoped to one block, one operation and a few minutes. Storage only verifies the signature and expiry. Revocation takes effect for new URLs immediately; existing ones expire quickly."
+    },
+    {
+     "q": "Which plane would you expect to page you at 3am?",
+     "a": "Usually metadata: hot shards, slow queries, journal growth. The data plane fails more often at the hardware level, but erasure coding and automated repair absorb those failures without user impact."
+    }
+   ]
+  },
+  {
+   "name": "Content-addressable storage, chunking and deduplication",
+   "explain": "In content-addressable storage, the key of a stored object is a cryptographic hash of its content, such as SHA-256. This has powerful consequences. Identical content always has the same key, so storing it twice is automatically avoided (deduplication). Objects are immutable by construction: changing content changes the key, so caches and CDNs can keep them forever without invalidation. Integrity is verifiable end to end: anyone can rehash the bytes and compare with the key. Writes are idempotent: uploading the same block twice is harmless. To get these benefits for large files, systems split files into chunks and treat each chunk as an object, with the file represented as an ordered list of chunk hashes. Fixed-size chunking (say 4MB) is simple and fast, but an insertion near the start shifts all subsequent boundaries. Content-defined chunking uses a rolling hash to choose boundaries based on the data itself, so local edits affect only local chunks; this is the technique behind rsync-like delta transfer and backup tools. Dedup scope is a privacy decision: cross-user dedup saves the most but can leak whether a file exists elsewhere, so many services scope dedup per user or per tenant.",
+   "in_this_design": "Files are 4MB (or CDC) blocks keyed by SHA-256. The client asks which hashes are missing and uploads only those; versions are block lists; restore and copy are metadata-only operations; CDN caches blocks by hash forever.",
+   "key_points": [
+    "Key = hash(content): dedup, immutability and integrity for free.",
+    "A file is an ordered list of block hashes.",
+    "CDC keeps chunk boundaries stable under insertions.",
+    "Content-addressed writes are idempotent.",
+    "Choose dedup scope carefully for privacy."
+   ],
+   "qa": [
+    {
+     "q": "What is the privacy risk of global dedup?",
+     "a": "If uploading a file completes instantly because the server already has its blocks, an attacker can test whether anyone has a particular file. Mitigate by scoping dedup per user or tenant, or by always requiring the bytes to prove possession for small sensitive files."
+    },
+    {
+     "q": "Why 4MB blocks rather than 64KB or 64MB?",
+     "a": "Smaller blocks dedup better and re-upload less after small edits, but create far more index entries and requests (5 EB / 64KB would be ~80 trillion entries). Larger blocks reduce overhead but waste bandwidth on small changes. 4MB balances index size, request overhead and delta efficiency."
+    },
+    {
+     "q": "What if two different blocks have the same SHA-256?",
+     "a": "The collision probability is astronomically small (around 2^-128 for the birthday bound at practical scale) and far below hardware failure rates. Systems still verify size and can add a secondary check for paranoia."
+    }
+   ]
+  },
+  {
+   "name": "Erasure coding versus replication for durability",
+   "explain": "Durability means not losing data even as disks, machines and whole data centres fail. The simplest approach is replication: keep three full copies on different machines or zones, which costs 3x the raw storage and tolerates the loss of two copies. Erasure coding gets similar or better durability at lower cost. Reed-Solomon coding splits an object into k data fragments and computes m parity fragments, such that any k of the k+m fragments can reconstruct the original. A 6+3 scheme stores 9 fragments for 1.5x overhead and tolerates any 3 lost fragments; a 10+4 scheme costs 1.4x and tolerates 4. The costs are CPU for encoding and decoding, higher latency for reads that need reconstruction, and expensive repair: rebuilding one lost fragment requires reading k other fragments across the network. Locally repairable codes reduce that repair traffic. Placement matters as much as the code: fragments must be spread across failure domains (disks, hosts, racks, zones) so a single correlated failure cannot take out more than m fragments. Durability numbers like eleven nines come from modelling disk failure rates against repair time; faster detection and repair raise durability more than adding parity. Hot, recently written data is often replicated first for fast reads and then erasure coded once it cools.",
+   "in_this_design": "Block storage uses 6+3 Reed-Solomon across 3 zones with 3 fragments per zone so a whole-zone loss is survivable; new hot blocks may be 3x replicated, then converted. Continuous scrubbing finds bit rot and triggers repair.",
+   "key_points": [
+    "Replication 3x: simple, fast reads, 3x cost.",
+    "RS k+m: any k fragments rebuild; overhead (k+m)/k.",
+    "Spread fragments across failure domains.",
+    "Repair speed drives durability as much as parity count.",
+    "Scrub continuously to catch silent corruption."
+   ],
+   "qa": [
+    {
+     "q": "Why not erasure code everything immediately?",
+     "a": "Encoding adds write latency and reads of fresh data may need reconstruction if a fragment is slow. Many systems write hot data replicated, then erasure code in the background once access drops, getting fast recent access and cheap long-term storage."
+    },
+    {
+     "q": "How does 6+3 across 3 zones survive a zone outage?",
+     "a": "Each zone holds 3 of the 9 fragments; losing a zone leaves 6, exactly enough to reconstruct. Reads continue (with decode cost) and repair rebuilds the missing fragments elsewhere."
+    },
+    {
+     "q": "What actually threatens eleven nines?",
+     "a": "Correlated failures (a bad firmware batch, a whole rack power event), slow repair after failures, silent corruption, and software bugs that delete data. Hence diverse hardware batches, fast automated repair, checksums and scrubbing, and soft deletion with GC safety windows."
+    }
+   ]
+  },
+  {
+   "name": "Sync protocols: journals, cursors and long-polling",
+   "explain": "A sync client needs to answer one question efficiently and correctly: what changed since I last looked? Scanning the whole server tree each time is too expensive. The standard solution is a change journal: every mutation in a namespace appends an entry with a strictly increasing sequence number. A client stores a cursor (namespace plus last sequence it has applied) and asks for entries after it; the server returns a page and a new cursor. Because the journal is ordered per namespace and appended in the same transaction as the change, a client that applies entries in order converges to the server state. Cursors are opaque to clients so the server can change their encoding, and very old cursors can be invalidated after journal compaction, forcing a full resync. To avoid polling, the client parks a long-poll request (or WebSocket) on a notification service that holds the connection open, often for 60 to 90 seconds, and returns as soon as the namespace's sequence passes the client's cursor; the client then fetches the delta. Notification servers only track 'latest sequence per namespace' in memory, so they can hold millions of idle connections cheaply. Shared folders appear as separate namespaces mounted into a user's tree, so a client tracks several cursors.",
+   "in_this_design": "JournalEntry rows per namespace with seq; /delta takes cursor ns@seq; Notification service holds long-polls and wakes clients when seq advances; shared folders are mounted namespaces with their own cursors.",
+   "key_points": [
+    "Per-namespace journal with monotonic sequence numbers.",
+    "Clients keep opaque cursors; delta returns entries after it.",
+    "Append the journal in the same transaction as the change.",
+    "Long-poll avoids polling load; notification tier is cheap.",
+    "Old cursors reset to a full sync after compaction."
+   ],
+   "qa": [
+    {
+     "q": "Why journal per namespace and not one global journal?",
+     "a": "A global sequence would be a single serialisation point for 40k commits/s and would force every client to filter others' changes. Per-namespace journals live on the namespace's shard and scale with sharding."
+    },
+    {
+     "q": "What if the notification is lost?",
+     "a": "Notifications are hints, not data. Long-polls time out after 90s and the client re-checks its cursor, so a lost wake-up costs at most a delay, never a missed change."
+    },
+    {
+     "q": "How does a client handle a folder move in the journal?",
+     "a": "The journal has one move entry for the folder; the client renames the local folder atomically and updates its synced tree, instead of deleting and re-downloading every child."
+    }
+   ]
+  },
+  {
+   "name": "Optimistic concurrency and conflict resolution for offline edits",
+   "explain": "When multiple devices can edit the same file, possibly while offline, the system must decide what happens when two edits collide. Pessimistic locking (check out a file before editing) does not work offline and annoys users. Optimistic concurrency instead lets everyone edit and detects conflicts at commit time: each edit records the version it was based on (parent revision), and the server accepts a commit only if the current version still matches, a compare-and-set. If it does not, there is a conflict. For opaque binary files the system cannot merge content automatically, so the safe resolution is to keep both: one version stays at the original path, the other is saved as a conflicted copy with the device name and date, and the user decides. Last-writer-wins by timestamp is tempting but silently destroys work and is vulnerable to clock skew. Vector clocks or version vectors can track causality across many replicas without a central server, but with a central metadata service a simple per-file revision counter suffices. Directory-level operations (concurrent moves, delete versus edit) need explicit rules too: an edit beats a delete (the file is resurrected), and cycles from concurrent folder moves must be prevented by the server.",
+   "in_this_design": "Commit carries parentRev; mismatch returns 409 and the client creates a conflicted copy. Delete versus edit resolves in favour of keeping the edited file. Server rejects moves that would create cycles.",
+   "key_points": [
+    "Detect conflicts with parent revision compare-and-set.",
+    "Binary files cannot be merged: keep both copies.",
+    "Never use last-writer-wins by client clock for user files.",
+    "Edit beats delete; server prevents move cycles.",
+    "Central server lets a simple revision counter replace vector clocks."
+   ],
+   "qa": [
+    {
+     "q": "Why not last-writer-wins?",
+     "a": "It silently discards one user's work, and the 'last' is decided by clocks that can be skewed by minutes on devices. Conflicted copies are slightly annoying but never lose data."
+    },
+    {
+     "q": "When would you need version vectors?",
+     "a": "If devices synced peer to peer (LAN sync without the server) or across multiple masters, a single counter could not capture concurrency; version vectors per device would detect concurrent edits."
+    },
+    {
+     "q": "Device A deletes a folder while device B adds a file inside it offline. Outcome?",
+     "a": "When B commits, the parent no longer exists. Policy: recreate the folder path for the new file (edit beats delete) so B's work is preserved, and journal the recreation so A sees it."
+    }
+   ]
+  },
+  {
+   "name": "Sharding the metadata store and hot partitions",
+   "explain": "Sharding splits a dataset across many database instances by a shard key so each holds a fraction of the data and load. The choice of key decides everything: operations that touch a single key's data are cheap and transactional on one shard, while operations spanning shards need distributed transactions or careful sagas. Good keys spread load evenly and align with the transaction boundary of the most common operations. Hash-based assignment (hash(key) mod N, or consistent hashing, or a directory that maps key ranges to shards) spreads keys uniformly; a lookup directory allows moving individual hot keys. Hot partitions arise when one key gets disproportionate traffic, such as a company-wide shared folder edited by 50,000 employees. Remedies include splitting the key (sub-namespaces per top-level folder), caching reads aggressively, rate limiting abusive clients, and moving the hot key to a dedicated shard. Resharding live systems is a major operational task: you need dual-writes or log-based copying, verification, and an atomic cutover of the routing directory.",
+   "in_this_design": "Metadata is sharded by namespaceId: a user's root, each shared folder and each team space is a namespace, so commits and journal appends are single-shard transactions. A directory service maps namespaces to shards so hot team namespaces can be moved. Cross-namespace moves are rare and handled as a two-step saga (copy references then delete) with idempotent steps.",
+   "key_points": [
+    "Pick the shard key to match the transaction boundary: namespace.",
+    "Directory-based routing lets you move hot keys.",
+    "Cross-shard operations become sagas.",
+    "Watch for giant team namespaces; split or isolate them.",
+    "Resharding needs copy, verify, cutover."
+   ],
+   "qa": [
+    {
+     "q": "Why namespaceId instead of userId as the shard key?",
+     "a": "Shared folders belong to many users; if sharded by user, a commit to a shared folder would touch many shards. Making the shared folder its own namespace keeps each commit and its journal on one shard."
+    },
+    {
+     "q": "How do you handle moving a file from my folder into a shared folder on another shard?",
+     "a": "As a saga: add the file entry (pointing at the same immutable block list) in the target namespace, then remove it from the source, each step idempotent with an operation id; the journal on each side records its part. Blocks are not copied because they are content addressed."
+    },
+    {
+     "q": "A company namespace with 2M files and 50k users is melting its shard. What do you do?",
+     "a": "Move it to a dedicated shard via the directory, cache listings, rate limit heavy clients, and longer term split it into sub-namespaces per top-level folder so load spreads."
+    }
+   ]
+  },
+  {
+   "name": "Garbage collection with reference counting and safety windows",
+   "explain": "Systems that share immutable objects among many owners (deduped blocks, versions, snapshots) need a way to delete objects nobody references any more. Reference counting increments a counter when a new reference is created and decrements it when one is removed; at zero the object may be deleted. The danger is races between deletion and new references: a client may be about to commit a file that dedups against a block whose count just reached zero. Deleting immediately would leave the new file pointing at missing data, which is data loss. Defences: never delete at the moment of zero, instead mark the object with a timestamp and delete only after a safety window longer than any in-flight operation (upload sessions, replication lag, cache TTLs); re-check the count right before deletion; make the commit path verify existence and take its reference inside the same transaction. An alternative is mark-and-sweep: periodically compute the set of reachable objects from all metadata and delete what is unreachable and older than the window. Mark-and-sweep is robust to counting bugs (counts drift over years) but expensive at trillions of objects, so large systems combine both: refcounts for fast reclamation and periodic sweeps to correct drift.",
+   "in_this_design": "BlockIndex keeps refCount and zeroRefSince; the sweeper deletes only blocks at zero for more than 7 days after re-verification; a monthly reachability audit reconciles counts against FileVersion block lists.",
+   "key_points": [
+    "Never delete at the instant a refcount hits zero.",
+    "Safety window longer than any in-flight operation.",
+    "Commit verifies blocks and takes references transactionally.",
+    "Periodic mark-and-sweep corrects refcount drift.",
+    "GC bugs are the most common cause of data loss in storage systems."
+   ],
+   "qa": [
+    {
+     "q": "Why is GC considered one of the riskiest parts of a storage system?",
+     "a": "Everything else can be retried, but deletion is irreversible. A bug in reference tracking or a race with dedup silently destroys data that other files depend on, so GC gets conservative windows, audits and kill switches."
+    },
+    {
+     "q": "How long should the safety window be?",
+     "a": "Longer than the maximum upload session lifetime (48h here) plus replication and cache lags, with margin; 7 days is a common choice. Storage cost of keeping orphans a week is small."
+    },
+    {
+     "q": "Refcount vs mark-and-sweep?",
+     "a": "Refcount reclaims quickly and incrementally but drifts with bugs and partial failures. Mark-and-sweep is self-correcting but heavy. Use refcounts day to day and periodic sweeps to reconcile."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Chunking strategy",
+   "options": "Whole file; fixed 4MB blocks; content-defined chunking",
+   "choice": "Fixed 4MB for most files, CDC for large frequently edited files",
+   "why": "Fixed blocks are simple and fast; CDC improves delta efficiency where insertions are common."
+  },
+  {
+   "decision": "Durability scheme",
+   "options": "3x replication; erasure coding 6+3; hybrid hot-replicated then EC",
+   "choice": "Hybrid",
+   "why": "Fast access for fresh data, 1.5x overhead for the long tail; saves roughly half the disks versus 3x."
+  },
+  {
+   "decision": "Metadata store",
+   "options": "Sharded MySQL; Spanner; Cassandra",
+   "choice": "Sharded MySQL (Vitess) by namespace, Spanner if cross-namespace transactions are common",
+   "why": "Single-shard transactions cover commits; proven at Dropbox; Cassandra lacks needed transactional CAS semantics across rows."
+  },
+  {
+   "decision": "Conflict policy",
+   "options": "Last-writer-wins; lock files; conflicted copies",
+   "choice": "Conflicted copies",
+   "why": "Never loses data; works offline."
+  },
+  {
+   "decision": "Change notification",
+   "options": "Polling; long-poll; WebSocket; mobile push",
+   "choice": "Long-poll or WebSocket for desktop, push for mobile",
+   "why": "Seconds-level latency with low server cost; mobile OS restricts background sockets."
+  },
+  {
+   "decision": "Dedup scope",
+   "options": "Global; per tenant; per user",
+   "choice": "Per tenant for business, global for public popular content only with proof-of-possession",
+   "why": "Balances savings with privacy leakage risk."
+  },
+  {
+   "decision": "Storage platform",
+   "options": "Public cloud object storage; own block store",
+   "choice": "Start on S3; own block store once at exabyte scale",
+   "why": "Cloud is cheaper to start; at exabytes owning hardware saves large sums, as Dropbox found with Magic Pocket."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Storage node or disk failure",
+   "behavior": "Reads reconstruct from remaining fragments; repair process rebuilds lost fragments onto other disks within hours; no user impact."
+  },
+  {
+   "failure": "Whole zone outage",
+   "behavior": "6 of 9 fragments remain in two zones; reads continue with decode cost; uploads use temporary placement in remaining zones and rebalance later; metadata fails over to replicas in another zone."
+  },
+  {
+   "failure": "Metadata shard primary failure",
+   "behavior": "Promote a semi-synchronous replica in about 30s; commits to that shard fail with retryable errors meanwhile; clients back off with jitter and retry; uploads of blocks continue."
+  },
+  {
+   "failure": "Notification tier overloaded or down",
+   "behavior": "Clients fall back to polling delta every 60s with jitter; sync latency degrades but correctness is unaffected."
+  },
+  {
+   "failure": "Client sync bug mass-deletes files",
+   "behavior": "Server-side anomaly detection pauses sync for affected clients; deletes go to trash and versions remain restorable; remote kill switch disables the client version."
+  },
+  {
+   "failure": "CDN or signed URL service outage",
+   "behavior": "Fall back to origin downloads with rate limits; shared links may degrade; uploads unaffected."
+  }
+ ],
+ "metrics": [
+  "Sync latency: commit to visible on another online device, p50/p95.",
+  "Upload and download throughput and success rate per platform and network type.",
+  "Metadata commit and list latency p99 per shard; hottest namespaces.",
+  "Dedup ratio (bytes not uploaded / bytes requested) and storage overhead factor.",
+  "Conflict copy rate per 1,000 commits.",
+  "Durability signals: under-replicated fragment count, repair backlog and time to repair, scrubber checksum failures.",
+  "GC candidates, deletions per day and reachability audit mismatches.",
+  "Long-poll connection count and wake-to-delta latency."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you support files larger than 50GB, say 1TB?",
+   "a": "The block model already handles it: 250,000 blocks of 4MB. Make the block list itself chunked (a tree of hash lists) so the version record is not huge, raise upload session lifetime, and parallelise uploads with a per-client concurrency limit."
+  },
+  {
+   "q": "How do you show a folder with 100,000 files quickly on mobile?",
+   "a": "Paginated list API ordered by name with a page token, server-side sorting on an index (namespaceId, parentFolderId, nameLower), thumbnails generated asynchronously and fetched lazily, and client caching with delta updates."
+  },
+  {
+   "q": "How would you implement LAN sync between two laptops on the same network?",
+   "a": "Clients discover peers via local broadcast and fetch missing blocks from a peer that has them, still verifying hashes against the server's block list. Metadata stays server-authoritative; only bytes move peer to peer."
+  },
+  {
+   "q": "How do you enforce a revoked share for someone who already has signed URLs?",
+   "a": "Signed URLs expire in minutes, so access ends quickly. For immediate cut-off, include a key version in the signature and bump it on revocation, or route sensitive downloads through a token check at the edge."
+  },
+  {
+   "q": "How would you support end-to-end encrypted folders?",
+   "a": "Client encrypts blocks with keys the server never sees. You lose server-side dedup across users, previews, search and virus scanning for those folders, and key sharing becomes a client-side protocol. Offer it as an opt-in tier."
+  },
+  {
+   "q": "What changes for data residency?",
+   "a": "Namespace has a region; its metadata shard and its blocks' placement policy pin to that region. Shared links to residents' files still serve from in-region storage; the CDN can be configured to avoid caching outside allowed regions."
+  },
+  {
+   "q": "How do you test a sync engine that runs on millions of machines?",
+   "a": "Deterministic simulation: model the filesystem, network and server, run randomised interleavings of local and remote edits with fault injection, and assert invariants (no data loss, convergence). Dropbox did this for its Nucleus rewrite."
+  }
+ ],
+ "key_points": [
+  "Split metadata plane (strongly consistent, sharded by namespace) from data plane (immutable blocks).",
+  "Files are lists of SHA-256 block hashes: dedup, integrity and idempotent uploads come free.",
+  "Clients upload only missing blocks directly to storage via signed URLs.",
+  "Commit is a conditional write on parentRev; conflicts become conflicted copies, never silent loss.",
+  "Per-namespace journal plus cursors plus long-poll gives seconds-level sync.",
+  "Erasure coding 6+3 across 3 zones: 1.5x overhead, survives a zone loss.",
+  "Garbage collection is the riskiest component: refcounts, safety windows, periodic audits.",
+  "Metadata, not bytes, is the bottleneck; shard and cache it carefully.",
+  "Permissions enforced at metadata time, carried to storage as short-lived signed URLs.",
+  "Version history and trash are your defence against client bugs and ransomware."
+ ],
+ "quiz": [
+  {
+   "q": "Why do clients upload blocks directly to storage rather than through API servers?",
+   "options": [
+    "To keep bandwidth-heavy transfers off the metadata path and scale them independently",
+    "API servers cannot authenticate users",
+    "Because block storage does not support HTTPS",
+    "To avoid needing a CDN"
+   ],
+   "answer": 0,
+   "why": "Separating planes keeps metadata latency low and lets data scale on its own. Authentication (B) still happens, via signed URLs issued by the metadata service."
+  },
+  {
+   "q": "A one-byte insertion at the start of a 1GB file causes all 256 blocks to re-upload. What fixes this?",
+   "options": [
+    "Larger fixed blocks",
+    "Compressing each block",
+    "Content-defined chunking with a rolling hash",
+    "Uploading the whole file instead"
+   ],
+   "answer": 2,
+   "why": "CDC sets boundaries from content so they shift with the insertion. Larger fixed blocks (A) still all shift."
+  },
+  {
+   "q": "What overhead and fault tolerance does Reed-Solomon 6+3 give?",
+   "options": [
+    "3x overhead, tolerates 2 losses",
+    "2x overhead, tolerates 3 losses",
+    "1.33x overhead, tolerates 1 loss",
+    "1.5x overhead, tolerates any 3 lost fragments"
+   ],
+   "answer": 3,
+   "why": "9 fragments / 6 data = 1.5x and any 6 rebuild. 3x/2 losses (A) describes triple replication."
+  },
+  {
+   "q": "Two devices edit the same file offline and both commit. What should happen?",
+   "options": [
+    "Last writer by device clock wins",
+    "The second commit fails parentRev check and a conflicted copy is created",
+    "Both versions are merged byte by byte",
+    "The server rejects both and asks the user"
+   ],
+   "answer": 1,
+   "why": "Optimistic concurrency detects the conflict and keeps both. Last-writer-wins (A) silently loses work and suffers clock skew."
+  },
+  {
+   "q": "Why is metadata sharded by namespaceId instead of userId?",
+   "options": [
+    "So a commit to a shared folder and its journal append are a single-shard transaction",
+    "Namespaces are smaller than users",
+    "Because userId is not unique",
+    "To enable global dedup"
+   ],
+   "answer": 0,
+   "why": "Shared folders belong to many users; making them namespaces aligns shards with transactions."
+  },
+  {
+   "q": "A block's refcount hits zero. When should it be deleted?",
+   "options": [
+    "Immediately to save space",
+    "Never",
+    "After a safety window, re-verifying it is still unreferenced",
+    "When the next disk fails"
+   ],
+   "answer": 2,
+   "why": "Immediate deletion races with in-flight uploads that dedup against it. Never deleting (B) wastes storage indefinitely."
+  },
+  {
+   "q": "Roughly how much new block data is uploaded per day for 1B changes x 1MB with 40% new after dedup?",
+   "options": [
+    "40 TB",
+    "40 GB",
+    "4 PB",
+    "400 TB"
+   ],
+   "answer": 3,
+   "why": "1B x 1MB = 1 PB, times 0.4 = 400 TB per day, about 4.6 GB/s."
+  },
+  {
+   "q": "Sync latency degrades from 5s to 60s but no data is lost. Most likely failing component?",
+   "options": [
+    "Block storage",
+    "Notification (long-poll) tier, with clients falling back to polling",
+    "Metadata DB primary",
+    "KMS"
+   ],
+   "answer": 1,
+   "why": "Notifications are hints; losing them slows sync but keeps correctness. A metadata outage (C) would cause commit errors."
+  },
+  {
+   "q": "What is the main privacy risk of global cross-user dedup?",
+   "options": [
+    "An attacker can infer whether a specific file exists on the service",
+    "Higher storage cost",
+    "Blocks become mutable",
+    "It breaks erasure coding"
+   ],
+   "answer": 0,
+   "why": "Instant upload reveals existence. Storage cost (B) actually goes down with dedup."
+  },
+  {
+   "q": "A shared folder with 50k members overloads its metadata shard. Best long-term fix?",
+   "options": [
+    "Add more block storage",
+    "Switch to last-writer-wins",
+    "Move it to a dedicated shard and split into sub-namespaces, with listing caches",
+    "Disable the journal"
+   ],
+   "answer": 2,
+   "why": "Hot keys need isolation and splitting. Block storage (A) is not the bottleneck."
+  },
+  {
+   "q": "Why can CDNs cache file blocks indefinitely?",
+   "options": [
+    "Blocks are small",
+    "Files are never modified",
+    "CDNs ignore cache headers",
+    "Blocks are content-addressed and therefore immutable"
+   ],
+   "answer": 3,
+   "why": "Changing content changes the key, so a cached block is never stale. Files are modified (B), but that creates new blocks."
+  },
+  {
+   "q": "How does the system enforce sharing permissions on direct-to-storage downloads?",
+   "options": [
+    "Storage nodes query the ACL service per request",
+    "Metadata checks ACL and issues a short-lived signed URL scoped to the block",
+    "Downloads are public",
+    "Clients self-enforce"
+   ],
+   "answer": 1,
+   "why": "Capabilities via signed URLs keep storage simple. Per-request ACL queries from storage (A) would couple planes and add latency."
+  },
+  {
+   "q": "Which is the strongest reason journals are per namespace, not global?",
+   "options": [
+    "A global sequence would serialise all commits and force clients to filter unrelated changes",
+    "Clients prefer smaller cursors",
+    "Kafka cannot hold a global journal",
+    "Per-namespace journals are encrypted"
+   ],
+   "answer": 0,
+   "why": "Per-namespace ordering scales with sharding."
+  },
+  {
+   "q": "A folder with 100,000 files is moved. Best metadata representation?",
+   "options": [
+    "100,000 journal entries, one per file",
+    "Delete and re-upload all files",
+    "One move entry on the folder; children reference parentId",
+    "A new namespace"
+   ],
+   "answer": 2,
+   "why": "Tree-structured metadata makes moves O(1). Per-file entries (A) would flood every device."
+  },
+  {
+   "q": "Which failure most threatens eleven-nines durability?",
+   "options": [
+    "A single disk failure",
+    "Client clock skew",
+    "A slow CDN",
+    "Correlated failures or a GC bug deleting referenced blocks"
+   ],
+   "answer": 3,
+   "why": "Single failures are routine and absorbed; correlated loss and deletion bugs defeat redundancy."
+  },
+  {
+   "q": "Approximately how many raw disks of 20TB are needed for ~5.6 EB raw?",
+   "options": [
+    "About 2,800",
+    "About 280,000",
+    "About 28,000",
+    "About 2.8M"
+   ],
+   "answer": 1,
+   "why": "5.6 EB / 20 TB = 280,000. Off-by-10x is easy when converting EB to TB (1 EB = 1,000,000 TB)."
+  },
+  {
+   "q": "Why should a mobile upload use an upload session listing which blocks are already stored?",
+   "options": [
+    "So interrupted uploads resume by sending only missing blocks",
+    "To compress better",
+    "To bypass quota",
+    "Because HTTP cannot send large files"
+   ],
+   "answer": 0,
+   "why": "Resumability matters on flaky networks. HTTP can send large files (D), but a dropped connection would restart from zero."
+  },
+  {
+   "q": "Device A deletes folder F; offline device B adds a file in F, then reconnects. Best policy?",
+   "options": [
+    "Silently drop B's new file",
+    "Restore all of F's old contents",
+    "Recreate F for B's file (edit beats delete) and journal it",
+    "Fail B's sync permanently"
+   ],
+   "answer": 2,
+   "why": "Preserving user work is the priority. Restoring everything (B) undoes A's intent unnecessarily."
+  },
+  {
+   "q": "Which metadata store property is essential for the commit operation?",
+   "options": [
+    "Eventual consistency with high write throughput",
+    "Time-series compression",
+    "Global secondary indexes",
+    "Transactional compare-and-set across file entry, version and journal rows of a namespace"
+   ],
+   "answer": 3,
+   "why": "Commit must atomically check parentRev and append the journal; Cassandra-style eventual stores lack that."
+  },
+  {
+   "q": "Notifications are lost for a client. What guarantees it still sees changes?",
+   "options": [
+    "Clients re-download everything hourly",
+    "Long-polls time out and the client checks its cursor against the journal",
+    "The server retries notifications forever",
+    "Nothing; changes are lost"
+   ],
+   "answer": 1,
+   "why": "Notifications are hints; the journal and cursor are the source of truth."
+  },
+  {
+   "q": "Which is the best reason to start on S3 and later build an own block store?",
+   "options": [
+    "Owning storage only pays off at very large scale where per-GB cost dominates",
+    "S3 lacks durability",
+    "S3 cannot store 4MB objects",
+    "Erasure coding is impossible on S3"
+   ],
+   "answer": 0,
+   "why": "Dropbox's Magic Pocket was justified by exabyte economics. S3 durability (B) is excellent."
+  },
+  {
+   "q": "Which conflict policy is wrong for opaque binary files?",
+   "options": [
+    "Conflicted copy",
+    "Version history retention",
+    "Byte-level automatic merge",
+    "parentRev conditional commit"
+   ],
+   "answer": 2,
+   "why": "Binary formats cannot be merged by bytes without corrupting them; the other three are standard safeguards."
+  }
+ ],
+ "references": [
+  {
+   "title": "Magic Pocket infrastructure (Dropbox Tech Blog)",
+   "url": "https://dropbox.tech/infrastructure/magic-pocket-infrastructure"
+  },
+  {
+   "title": "Rewriting the heart of our sync engine (Dropbox Tech Blog)",
+   "url": "https://dropbox.tech/infrastructure/rewriting-the-heart-of-our-sync-engine"
+  },
+  {
+   "title": "Testing sync at Dropbox (Dropbox Tech Blog)",
+   "url": "https://dropbox.tech/infrastructure/-testing-our-new-sync-engine"
+  },
+  {
+   "title": "Broccoli: Syncing faster by syncing less (Dropbox Tech Blog)",
+   "url": "https://dropbox.tech/infrastructure/-broccoli--syncing-faster-by-syncing-less"
+  },
+  {
+   "title": "Zanzibar: Google's Consistent, Global Authorization System (USENIX ATC 2019)",
+   "url": "https://www.usenix.org/conference/atc19/presentation/pang"
+  }
+ ]
+}

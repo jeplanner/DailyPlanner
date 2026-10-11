@@ -1,0 +1,1141 @@
+{
+ "slug": "ranked-timeline",
+ "title": "Design a ranked home timeline (ranking and freshness)",
+ "prompt": "Design a timeline with ranking and freshness.",
+ "group": "feeds",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "A ranked home timeline must merge posts from hundreds of followed accounts plus discovered content, score them with an ML model, and return the first page in a few hundred milliseconds. The core tension is relevance versus freshness versus cost: precompute enough to make reads cheap (fanout), keep content fresh (decay and fanout lag), and spend expensive model compute only on a pruned candidate set. Celebrity fanout, stable pagination under changing scores, and graceful degradation when ranking is slow are where the interview is won.",
+ "framework": {
+  "clarify": [
+   "Scale: assume 200M DAU, 500M posts per day, average user follows 200 accounts, p50 followers 100, top accounts 50M+.",
+   "Is the feed purely followed accounts or also recommended (out-of-network) content? Assume both, about 50/50 candidates.",
+   "Freshness requirement: how fast must a new post be eligible in followers' feeds? Assume p99 under 5 seconds.",
+   "Latency target for first page: assume p99 under 400ms server side, page size 20.",
+   "What signals does ranking optimise: engagement (likes, replies, dwell) with penalties for hides and reports.",
+   "Pagination and refresh semantics: infinite scroll with stable order, pull-to-refresh shows new posts.",
+   "Do we need a chronological 'Latest' mode? Assume yes as a toggle, served from the same candidate store.",
+   "Ads, safety filtering, and blocked/muted users are in scope as constraints on the final list."
+  ],
+  "design": [
+   "Baseline: chronological fanout-on-write into Redis per-user lists, read the top 20. Then evolve to ranking.",
+   "Write path: Post service persists to the post store, emits to Kafka; fanout workers push post ids to active followers' lists (hybrid: celebrities pulled).",
+   "Read path: Timeline Mixer gathers ~1500 candidates (in-network list, celebrity pulls, out-of-network ANN), hydrates, fetches features, light-ranks to 500, heavy-ranks on GPU, mixes, caches the ranked list for the session.",
+   "APIs: GET /v1/timeline?cursor&mode=ranked|latest, POST /v1/posts, POST /v1/events (impressions, engagements), GET /v1/timeline/new-count.",
+   "Engagement loop: client events to Kafka, Flink updates real-time counters and features, logged feature vectors feed daily training.",
+   "Freshness: half-life decay on score, session-frozen order, new-posts banner on fresh arrivals."
+  ],
+  "defend": [
+   "Bottleneck: heavy ranker GPU compute and celebrity fanout. Funnel candidates and pull celebrities.",
+   "Scale reads: candidate lists in Redis Cluster, hydration via post cache multi-get, ranked-page cache so pagination does not re-rank.",
+   "Scale writes: Kafka partitions by author, horizontally scaled fanout workers, skip inactive followers, priority by recent activity.",
+   "Failure: per-stage deadlines (candidates 50ms, features 30ms, ranker 120ms); fall back to light ranker or chronological; retries with jitter only on idempotent reads; bulkhead GPU pool from CPU path.",
+   "Measure: p99 timeline latency, fanout lag, ranker timeout rate, degraded-mode rate, engagement per session, hide/report rate."
+  ],
+  "script": "Let me clarify scope first: a home timeline for about 200 million daily users, mixing followed accounts and recommended posts, ranked by a model, with new posts visible within about 5 seconds and the first page under 400 milliseconds. I will start with a simple baseline, chronological push into per-user Redis lists, then add ranking. On write, posts go to Kafka and fanout workers push ids to active followers, except for celebrity accounts, which we pull at read time to avoid 50-million-way writes. On read, a mixer gathers around 1500 candidates, hydrates them, fetches features, prunes with a cheap ranker, scores 500 with a neural ranker, applies diversity and freshness decay, and caches the ordered list for the session so pagination is stable. To defend it: the bottlenecks are GPU ranking and celebrity fanout, every stage has a deadline with a fallback down to chronological, and I would watch fanout lag, p99 latency, degraded-mode rate and engagement guardrails."
+ },
+ "brd": {
+  "problem": "A chronological feed buries the most relevant posts for users who follow hundreds of accounts and offers nothing to users who follow few, so engagement and retention plateau. The business needs a feed that surfaces what each user cares about most, stays fresh enough to feel live, and does so at a compute cost that scales with traffic.",
+  "goals": [
+   "Increase time spent per DAU by 5-10 percent versus chronological.",
+   "Keep the feed feeling live: new posts eligible within 5 seconds.",
+   "Serve the first page with p99 under 400ms worldwide.",
+   "Give new and small creators a fair chance of distribution.",
+   "Keep ranking compute cost per 1000 timeline loads within budget."
+  ],
+  "non_goals": [
+   "Building the content moderation classifier itself (consumed as labels).",
+   "Ads auction and pricing (we only reserve slots).",
+   "Direct messages and notifications delivery.",
+   "Search ranking."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users",
+    "needs": "Relevant, fresh, non-repetitive feed that loads instantly."
+   },
+   {
+    "who": "Creators",
+    "needs": "Reach to followers and fair discovery for new accounts."
+   },
+   {
+    "who": "Ads team",
+    "needs": "Predictable slots and impression logging."
+   },
+   {
+    "who": "Trust and safety",
+    "needs": "Ability to demote or filter content instantly."
+   },
+   {
+    "who": "ML/ranking team",
+    "needs": "Feature store, logging, and an experiment platform."
+   },
+   {
+    "who": "Infra/finance",
+    "needs": "Bounded GPU and cache cost per request."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Time spent per DAU",
+    "target": "+5 percent vs chronological in A/B"
+   },
+   {
+    "metric": "Fanout lag p99",
+    "target": "< 5 seconds"
+   },
+   {
+    "metric": "Timeline p99 latency (server)",
+    "target": "< 400 ms"
+   },
+   {
+    "metric": "Hide/report rate per 1000 impressions",
+    "target": "No regression"
+   },
+   {
+    "metric": "Degraded-mode response rate",
+    "target": "< 0.5 percent"
+   }
+  ],
+  "constraints": [
+   "GPU capacity is finite and expensive; ranking must be budgeted.",
+   "Mobile clients on flaky networks; payloads must be small and resumable.",
+   "Safety demotions must take effect within a minute.",
+   "Regional data residency for some markets."
+  ],
+  "risks": [
+   {
+    "risk": "Engagement-optimised ranking amplifies outrage or clickbait.",
+    "mitigation": "Negative-feedback penalties, integrity labels, guardrail metrics on every launch."
+   },
+   {
+    "risk": "Celebrity post overwhelms fanout and delays everyone.",
+    "mitigation": "Hybrid pull for large accounts, priority queues."
+   },
+   {
+    "risk": "Ranking outage blanks the feed.",
+    "mitigation": "Chronological fallback path with no ML dependency."
+   },
+   {
+    "risk": "Filter bubble reduces long-term retention.",
+    "mitigation": "Exploration budget and diversity constraints."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Heavy follower (follows 1000+)",
+    "needs": "Signal over noise; best posts first."
+   },
+   {
+    "name": "New user (follows < 10)",
+    "needs": "A non-empty, interesting feed from day one via recommendations."
+   },
+   {
+    "name": "Creator",
+    "needs": "Posts reach followers quickly and reliably."
+   },
+   {
+    "name": "Returning lapsed user",
+    "needs": "Catch-up on the best of what was missed."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want the most relevant posts at the top so that I do not miss what matters to me.",
+   "As a user, I want new posts from people I follow to appear within seconds so that the feed feels live.",
+   "As a user, I want to scroll without seeing the same post twice so that browsing feels smooth.",
+   "As a user, I want a 'Latest' toggle so that I can see a purely chronological view.",
+   "As a creator, I want my post to appear in my own feed instantly so that I trust it was published.",
+   "As a user, I want to tell the app 'show less like this' so that the feed adapts.",
+   "As a new user, I want recommended posts so that my feed is not empty.",
+   "As a trust and safety analyst, I want to demote a post globally so that harmful content stops spreading."
+  ],
+  "functional": [
+   "Return a ranked page of 20 posts with an opaque cursor for the next page.",
+   "Support ranked and latest modes from the same candidate store.",
+   "Include in-network and out-of-network candidates with source attribution.",
+   "Show a 'N new posts' indicator via a lightweight count endpoint.",
+   "Exclude blocked, muted, deleted, and safety-filtered posts at serve time.",
+   "Enforce author diversity and ad slot placement.",
+   "Record impressions and engagements for training and counters.",
+   "Accept negative feedback (hide, show less) and apply it within the session."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "First page p99 < 400ms server side; next pages p99 < 100ms from page cache"
+   },
+   {
+    "name": "Freshness",
+    "target": "Post eligible in followers' candidates p99 < 5s"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95 percent for timeline reads (with degraded modes counted as available)"
+   },
+   {
+    "name": "Consistency",
+    "target": "Eventual for followers; read-your-own-writes for author"
+   },
+   {
+    "name": "Durability",
+    "target": "Posts never lost (RF=3); timeline caches are rebuildable"
+   },
+   {
+    "name": "Cost",
+    "target": "Heavy ranker <= 500 items per request"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "200M DAU, each opens the timeline 15 times a day with ~2 pages per open.",
+    "500M posts per day; average 200 followers per post after excluding inactive and celebrity pull.",
+    "1500 candidates per first-page request, 500 heavy-ranked.",
+    "800 post ids cached per active user, 8 bytes each."
+   ],
+   "math": [
+    "Timeline first-page loads: 200M x 15 = 3B/day, about 35k QPS average, ~100k QPS peak.",
+    "Page fetches including scroll: ~6B/day, ~70k avg, ~200k peak QPS.",
+    "Post writes: 500M/day = ~6k QPS avg, ~20k peak.",
+    "Fanout inserts: 500M x 200 = 100B/day, ~1.2M inserts/s average, ~4M/s peak.",
+    "Heavy ranker: 100k peak QPS x 500 items = 50M item-scores/s; at ~50k items/s per GPU that is ~1000 GPUs at peak.",
+    "Candidate cache: 200M x 800 x 8B = 1.3TB raw, ~3TB with overhead and one replica.",
+    "Post store: 500M x 1KB = 500GB/day, ~180TB/year before replication."
+   ],
+   "summary": "About 100k QPS peak first-page loads, 1-4M fanout inserts per second, ~3TB of Redis for candidates, and on the order of a thousand GPUs for heavy ranking; ranking compute and fanout write amplification are the dominant costs."
+  },
+  "out_of_scope": [
+   "Model architecture details and training infrastructure.",
+   "Ads auction.",
+   "Notifications and push.",
+   "Media transcoding and CDN."
+  ]
+ },
+ "hld": {
+  "overview": "Writes are decoupled from reads through Kafka. A hybrid fanout keeps per-user candidate lists in Redis for normal authors while celebrity posts are pulled at read time. A Timeline Mixer orchestrates the read: candidate retrieval from several sources, hydration, feature fetch, a two-stage ranking funnel on CPU and GPU, then a re-rank/mixing stage for diversity, ads and safety. The ranked list is cached per session to make pagination stable, and every stage has a deadline with fallback to a simpler order. Engagement events flow back through Kafka and Flink into counters, features and training logs.",
+  "diagram": "\n Client (app/web)\n     |  GET /timeline?cursor=\n     v\n +-----------+     +----------------------+     +-------------------------+\n | API GW /  |---->| Timeline Mixer       |---->| Candidate Sources       |\n | Edge LB   |     | (orchestrator, 1.5s  |     |  - In-network cache     |\n +-----------+     |  budget, deadlines)  |     |    (Redis sorted lists) |\n                   +----------+-----------+     |  - Out-of-network ANN   |\n                              |                 |  - Celebrity pull store |\n                              |                 +-------------------------+\n                              v\n            +-----------------+------------------+\n            | Hydration (post store, author,     |\n            | counters, safety labels)           |\n            +-----------------+------------------+\n                              v\n     +------------+    +--------------+    +----------------+\n     | Light      |--->| Heavy Ranker |--->| Heuristics /   |\n     | ranker     |    | (GPU model   |    | mixing: author |\n     | (top 1500) |    |  service)    |    | diversity, ads |\n     +------------+    +------+-------+    +--------+-------+\n                              ^                     |\n                   +----------+---------+           v\n                   | Feature Store      |    +----------------+\n                   | (online, Redis/    |    | Served-page    |\n                   |  Aerospike)        |    | cache + cursor |\n                   +----------+---------+    +----------------+\n                              ^\n Post write path:  Post Svc --> Kafka(posts) --> Fanout workers --> In-network cache\n Engagement path:  Client events --> Kafka(engagements) --> Flink --> Feature store / counters\n",
+  "components": [
+   {
+    "name": "API gateway",
+    "responsibility": "Auth, rate limiting, routing, request deadlines."
+   },
+   {
+    "name": "Post service + post store",
+    "responsibility": "Persist posts (Manhattan/Cassandra style KV keyed by post_id), emit post-created events."
+   },
+   {
+    "name": "Fanout workers",
+    "responsibility": "Consume posts topic, page through followers, push ids into active followers' candidate lists; skip celebrities and dormant users."
+   },
+   {
+    "name": "Social graph service",
+    "responsibility": "Followers/followees lookups, celebrity flags, blocks and mutes."
+   },
+   {
+    "name": "Candidate cache (Redis Cluster)",
+    "responsibility": "Per-user sorted lists of recent in-network post ids, trimmed to 800."
+   },
+   {
+    "name": "Out-of-network retrieval",
+    "responsibility": "Embedding ANN (HNSW) and graph-based candidates for discovery."
+   },
+   {
+    "name": "Timeline Mixer",
+    "responsibility": "Orchestrates candidate fetch, hydration, features, ranking, mixing; enforces deadlines and fallbacks."
+   },
+   {
+    "name": "Feature store",
+    "responsibility": "Online user/author/post features; batch and streaming writers."
+   },
+   {
+    "name": "Ranking service (light + heavy)",
+    "responsibility": "GBDT pruning on CPU and multi-task neural scoring on GPU."
+   },
+   {
+    "name": "Ranked page cache",
+    "responsibility": "Session-scoped ordered id list with cursor, 15 minute TTL."
+   },
+   {
+    "name": "Event pipeline (Kafka + Flink)",
+    "responsibility": "Impressions/engagements to counters, features and training logs."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Publish a post",
+    "steps": [
+     "Client POST /v1/posts with idempotency key.",
+     "Post service writes to post store (RF=3) and to author's own list for read-your-writes.",
+     "Emit post_created to Kafka keyed by author_id.",
+     "Fanout worker checks author follower count; if celebrity, append only to author recent store.",
+     "Otherwise page through followers (5000 per page), filter to active in 30 days, ZADD post_id with timestamp score, ZREMRANGEBYRANK to keep 800.",
+     "Commit offset; fanout lag metric emitted."
+    ]
+   },
+   {
+    "name": "Load first page (ranked)",
+    "steps": [
+     "Client GET /v1/timeline (no cursor).",
+     "Mixer reads candidate list (800), pulls recent posts from followed celebrities, and requests ~700 OON candidates in parallel (50ms budget).",
+     "Dedupe, remove seen ids (bloom filter of last 2000 impressions), hydrate via post cache multi-get, drop deleted/blocked/unsafe.",
+     "Fetch features (30ms), light ranker to 500, heavy ranker on GPU (120ms).",
+     "Apply decay, diversity, ad slots, exploration; write ordered list to page cache; return 20 items and cursor."
+    ]
+   },
+   {
+    "name": "Scroll and refresh",
+    "steps": [
+     "GET with cursor reads next 20 ids from page cache and hydrates; no re-rank.",
+     "Client polls /new-count every 60s; server counts list entries newer than session start.",
+     "Pull-to-refresh triggers a fresh rank excluding already-seen ids."
+    ]
+   }
+  ],
+  "data_flow": "Posts flow from the post service into Kafka, then into Redis candidate lists via fanout workers. Reads assemble candidates from Redis, celebrity stores and ANN, enrich them from the post cache and feature store, and pass them through the ranking funnel into a session page cache. Impressions and engagements flow from clients into Kafka, then Flink updates counters and features within seconds and writes logged feature vectors to the data lake for daily model training, closing the loop."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/timeline",
+    "request": "cursor (opt), mode=ranked|latest, limit=20",
+    "response": "{items:[{post_id, author, text, media, counts, reason}], next_cursor, degraded:bool}",
+    "notes": "Cursor encodes session_id and offset; signed to prevent tampering."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/posts",
+    "request": "{text, media_ids, idempotency_key}",
+    "response": "{post_id, created_at}",
+    "notes": "Idempotent on key for 24h; returns before fanout."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/timeline/new-count",
+    "request": "since_session=..",
+    "response": "{count}",
+    "notes": "Cheap ZCOUNT on candidate list; cached 30s."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/events",
+    "request": "{events:[{type, post_id, ts, position, event_id}]}",
+    "response": "202",
+    "notes": "Batched, at-least-once; dedupe by event_id."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/feedback",
+    "request": "{post_id, kind: hide|show_less|not_interested}",
+    "response": "204",
+    "notes": "Applied to session immediately and to features async."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Post",
+    "store": "Wide-column KV (Cassandra/Manhattan)",
+    "fields": [
+     "post_id (snowflake)",
+     "author_id",
+     "text",
+     "media_refs",
+     "created_at",
+     "deleted",
+     "safety_labels"
+    ],
+    "keys": "Partition key post_id; secondary author_id+created_at table for author timelines.",
+    "notes": "Snowflake ids are time-sortable."
+   },
+   {
+    "entity": "CandidateList",
+    "store": "Redis Cluster sorted set",
+    "fields": [
+     "member=post_id",
+     "score=created_at_ms"
+    ],
+    "keys": "tl:{user_id}; hash slot by user_id",
+    "notes": "Trimmed to 800, TTL 30 days since last read."
+   },
+   {
+    "entity": "AuthorRecent",
+    "store": "Redis",
+    "fields": [
+     "post_ids for celebrity author"
+    ],
+    "keys": "ar:{author_id}",
+    "notes": "Last 100 posts; heavily replicated read replicas."
+   },
+   {
+    "entity": "Features",
+    "store": "Aerospike/Redis online feature store",
+    "fields": [
+     "user embedding",
+     "engagement rates",
+     "author affinity map",
+     "post counters 1h/24h"
+    ],
+    "keys": "u:{user_id}, a:{author_id}, p:{post_id}",
+    "notes": "Streaming writers update counters within seconds."
+   },
+   {
+    "entity": "RankedPage",
+    "store": "Redis",
+    "fields": [
+     "ordered post_ids",
+     "scores",
+     "created_at"
+    ],
+    "keys": "rp:{session_id}",
+    "notes": "TTL 15 min."
+   },
+   {
+    "entity": "ImpressionLog",
+    "store": "Kafka -> data lake (Parquet)",
+    "fields": [
+     "user_id",
+     "post_id",
+     "position",
+     "feature_vector",
+     "scores",
+     "ts"
+    ],
+    "keys": "Partitioned by date/hour",
+    "notes": "Training source; avoids skew."
+   }
+  ],
+  "classes": [
+   {
+    "name": "TimelineMixer",
+    "responsibility": "Orchestrates the read pipeline with deadlines.",
+    "methods": [
+     "getTimeline(userId, cursor, mode)",
+     "gatherCandidates(userId, deadline)",
+     "rankAndMix(cands, ctx)",
+     "fallbackChronological(cands)"
+    ]
+   },
+   {
+    "name": "FanoutWorker",
+    "responsibility": "Consumes posts and writes candidate lists.",
+    "methods": [
+     "onPost(event)",
+     "pushToFollowers(postId, authorId)",
+     "isCelebrity(authorId)"
+    ]
+   },
+   {
+    "name": "RankingClient",
+    "responsibility": "Batches and calls light and heavy rankers.",
+    "methods": [
+     "lightRank(cands, feats, k)",
+     "heavyRank(cands, feats, timeout)"
+    ]
+   },
+   {
+    "name": "Mixer/ReRanker",
+    "responsibility": "List-level rules.",
+    "methods": [
+     "applyDecay(items)",
+     "enforceDiversity(items, maxRun)",
+     "insertAds(items, every)",
+     "explore(items, rate)"
+    ]
+   },
+   {
+    "name": "SeenFilter",
+    "responsibility": "Bloom filter of recent impressions per user.",
+    "methods": [
+     "mightHaveSeen(userId, postId)",
+     "record(userId, postIds)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Hybrid fanout",
+    "explain": "Push for normal authors to active followers; pull for celebrities.",
+    "pseudocode": "onPost(p):\n  if followers(p.author) > 100_000:\n      ZADD ar:{p.author} p.ts p.id; LTRIM to 100; return\n  for page in followers(p.author, page=5000):\n      for f in page:\n          if lastActive(f) > now-30d:\n              pipeline ZADD tl:{f} p.ts p.id\n              pipeline ZREMRANGEBYRANK tl:{f} 0 -801\n      pipeline.exec()\n  commit offset"
+   },
+   {
+    "name": "Score with decay and diversity",
+    "explain": "Combine multi-task predictions, apply half-life decay, then greedy diversity pass.",
+    "pseudocode": "for c in cands:\n  m = 1.0*p_like + 13*p_reply + 0.5*p_dwell - 74*p_report\n  hl = 8h if c.in_network else 4h\n  c.score = m * 2 ** (-(now - c.ts)/hl)\nsorted = sortDesc(cands, score)\nout, run = [], {}\nfor c in sorted:\n  if last2Authors(out) == [c.author, c.author]: defer(c); continue\n  out.append(c)\nreinsert deferred at next legal slot"
+   },
+   {
+    "name": "Deadline-based degradation",
+    "explain": "Each stage has a budget; on timeout fall back to the previous stage's order.",
+    "pseudocode": "order = chronological(cands)\ntry within 30ms: feats = fetchFeatures()\ntry within 20ms: order = lightRank(order, feats)[:500]\ntry within 120ms: order = heavyRank(order, feats)\nexcept Timeout: degraded = True\nreturn mix(order)"
+   }
+  ],
+  "sequence": "\nClient      Mixer        CandSrc       Hydrate      FeatStore     Ranker      PageCache\n  |  GET     |             |             |             |            |            |\n  |--------->| fetch(uid)  |             |             |            |            |\n  |          |------------>| in-net 800  |             |            |            |\n  |          |             | +OON 700    |             |            |            |\n  |          |<------------| 1500 ids    |             |            |            |\n  |          | hydrate(ids)------------->|             |            |            |\n  |          |<--------------------------| posts+cnts  |            |            |\n  |          | features(uid, ids)------------------------>|          |            |\n  |          |<-------------------------------------------| vectors  |            |\n  |          | score(batch)--------------------------------------->|            |\n  |          |<----------------------------------------------------| scores     |\n  |          | mix + dedupe + diversity                             |            |\n  |          | store ranked list + cursor-------------------------------------->|\n  |<---------| page 1 (20 items) + cursor                                       |\n  | GET cursor=abc                                                              |\n  |--------->| read next page from PageCache----------------------------------->|\n  |<---------| page 2 (no re-rank, stable order)                                |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Celebrity with 60M followers posts during a live event.",
+   "handling": "Pull mode; readers merge from ar:{author}. AuthorRecent key is hot, so serve it from many read replicas plus an in-process cache with 1s TTL."
+  },
+  {
+   "case": "Author does not see own post right after posting (replica lag).",
+   "handling": "Write to author's own list synchronously and pin the new post at the top of the author's next load for 60s."
+  },
+  {
+   "case": "Post deleted after fanout.",
+   "handling": "Tombstone in post store; hydration drops it. Lists age out naturally."
+  },
+  {
+   "case": "User blocks someone mid-session.",
+   "handling": "Block list checked at hydration and on cursor pages; page cache filtered on read."
+  },
+  {
+   "case": "Duplicate post from client retry.",
+   "handling": "Idempotency key maps to the same post_id for 24h."
+  },
+  {
+   "case": "Same post arrives via in-network and OON sources.",
+   "handling": "Dedupe by post_id before ranking, keep in-network attribution."
+  },
+  {
+   "case": "Clock skew between servers makes a post look future-dated.",
+   "handling": "Use snowflake id time from a single generator; clamp age to >= 0."
+  },
+  {
+   "case": "User follows 5000 accounts, list overflows quickly.",
+   "handling": "800 cap keeps memory bounded; ranking compensates since only the freshest are candidates; extra pull from top-affinity authors."
+  },
+  {
+   "case": "Returning user after 6 months has no candidate list.",
+   "handling": "Lazy rebuild by pulling recent posts from top 200 followees by affinity, single-flight per user, show OON while rebuilding."
+  },
+  {
+   "case": "GPU ranker overloaded at peak.",
+   "handling": "Load shed: lower heavy-ranker k from 500 to 200, then light-ranker only, with a degraded flag."
+  },
+  {
+   "case": "Viral post accumulates likes so fast it dominates for a day.",
+   "handling": "Decay plus per-session impression cap and seen filter; saturation feature for counters."
+  },
+  {
+   "case": "Mobile client retries GET with the same cursor after timeout.",
+   "handling": "Cursor pages are deterministic from page cache, so the retry returns the same page."
+  },
+  {
+   "case": "Hot Redis shard due to a few huge lists.",
+   "handling": "Hash by user_id spreads keys; monitor per-shard ops and rebalance slots."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Kafka",
+   "layer": "Event bus",
+   "overview": "Partitioned, replicated append-only log with consumer groups.",
+   "why": "Decouples posting from fanout, buffers spikes, replayable for rebuilds and training logs.",
+   "alternatives": "Pulsar (tiered storage, more ops), Kinesis (managed, lower partition throughput), RabbitMQ (no replay)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Candidate and page cache",
+   "overview": "In-memory data structure store with sorted sets and sharding by hash slot.",
+   "why": "Sorted sets give O(log n) insert and range by score; pipelining makes fanout cheap.",
+   "alternatives": "Memcached (no sorted sets), Aerospike (SSD-backed, cheaper at scale), custom in-house list store."
+  },
+  {
+   "name": "Cassandra / wide-column KV",
+   "layer": "Post store",
+   "overview": "Leaderless, tunable-consistency, partitioned store.",
+   "why": "High write throughput, linear scale, quorum reads; posts keyed by id.",
+   "alternatives": "DynamoDB (managed), MySQL shards (strong consistency, more ops for scale)."
+  },
+  {
+   "name": "Flink",
+   "layer": "Stream processing",
+   "overview": "Stateful stream processor with event time and checkpoints.",
+   "why": "Real-time counters and features with exactly-once state and windowing.",
+   "alternatives": "Kafka Streams (simpler, embedded), Spark Structured Streaming (micro-batch, higher latency)."
+  },
+  {
+   "name": "Online feature store (Aerospike/Feast)",
+   "layer": "ML serving",
+   "overview": "Low-latency KV for features with batch and stream ingestion.",
+   "why": "Multi-get of hundreds of vectors in ~10ms; shared definitions with training.",
+   "alternatives": "Redis (memory cost), Tecton (managed), DynamoDB (higher tail latency)."
+  },
+  {
+   "name": "GPU inference (Triton / TorchServe)",
+   "layer": "Heavy ranker",
+   "overview": "Model server with dynamic batching on GPUs.",
+   "why": "Batching hundreds of items per request maximises GPU utilisation.",
+   "alternatives": "CPU inference with distilled models (cheaper, less accurate)."
+  },
+  {
+   "name": "HNSW ANN index (FAISS/ScaNN)",
+   "layer": "Out-of-network retrieval",
+   "overview": "Approximate nearest-neighbour graph index over embeddings.",
+   "why": "Retrieve hundreds of similar posts in a few ms from millions.",
+   "alternatives": "IVF-PQ (smaller memory, lower recall), Elasticsearch kNN."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Fanout-on-write vs fanout-on-read (hybrid push/pull)",
+   "explain": "A timeline is the merge of posts from accounts a user follows. There are two places to do that merge. Fanout-on-write (push) copies a reference to each new post into every follower's precomputed timeline at write time, so reads are a single key lookup. Fanout-on-read (pull) stores posts only per author and, at read time, gathers recent posts from each followee and merges them. Push makes reads cheap and predictable but writes cost proportional to follower count: an account with 50 million followers turns one post into 50 million list inserts, which can take minutes and swamps the write path. Pull makes writes cheap but each read must touch hundreds of author lists, which is expensive at high read QPS and hurts tail latency. Real systems use a hybrid: push for the long tail of normal accounts (most have under a few thousand followers), pull for a small set of high-follower accounts whose posts are merged in at read time. Inactive users are often skipped by push entirely and rebuilt on demand when they return, because writing into timelines nobody reads wastes most of the fanout budget. The threshold is a tunable, typically somewhere in the 10k to 1M follower range, chosen by measuring the cost curve of both paths.",
+   "in_this_design": "Fanout workers push post ids into Redis per-user lists for authors under 100k followers and only for users active in the last 30 days. Posts from roughly 50k celebrity accounts live in a per-author recent-posts store; the Timeline Mixer pulls the 20 most recent from each followed celebrity at read time and merges them into the candidate set before ranking. Users returning after 30 days get their list rebuilt by a pull job on first open.",
+   "key_points": [
+    "Push optimises reads, pull optimises writes; the timeline is read about 100x more than it is written.",
+    "Celebrity accounts break push, so they are pulled at read time.",
+    "Skip push for dormant users; rebuild lazily on return.",
+    "The follower threshold is a measured knob, not a constant.",
+    "With ranking, push only produces candidates; order is decided at read time."
+   ],
+   "qa": [
+    {
+     "q": "Why not pure fanout-on-read with a fast cache?",
+     "a": "A user following 400 accounts would need 400 list reads and a k-way merge on every refresh. At 300k read QPS that is 120M backend reads per second. Push collapses that to one read for most of the graph, and pull is kept for the few accounts where push is pathologically expensive."
+    },
+    {
+     "q": "How do you pick the celebrity threshold?",
+     "a": "Measure fanout lag and write amplification per follower bucket, and read-time merge cost per pulled author. Set the threshold where the p99 fanout delay would breach the freshness SLO (for example 5 seconds) and keep the number of pulled authors per user small, typically under 50."
+    },
+    {
+     "q": "What happens when an account crosses the threshold?",
+     "a": "Flag it as pull-mode; new posts stop being fanned out and readers merge from its author store. Already-pushed posts stay in lists until they age out, and the Mixer dedupes by post id so nothing appears twice during the transition."
+    }
+   ]
+  },
+  {
+   "name": "Multi-stage ranking (candidate generation, light ranker, heavy ranker, re-ranking)",
+   "explain": "Ranking every possible post with an expensive model is unaffordable, so recommender systems are built as a funnel. Candidate generation pulls a few thousand plausible items cheaply from several sources: in-network posts, embedding nearest-neighbour search, graph walks, trending. A light ranker, often a logistic regression or small tree model over a handful of features, trims that to around a thousand. A heavy ranker, usually a deep neural network with hundreds or thousands of features, predicts several engagement probabilities per item (click, like, reply, long dwell, negative feedback) and combines them into one score with business weights. A final re-ranking or mixing stage applies rules that a pointwise model cannot express: author diversity, no more than N posts from the same author in a row, inserting ads at slots, filtering blocked or unsafe content, and boosting freshness. Each stage has a latency budget and a candidate count, and the art is keeping recall high in early stages while spending compute only where it changes the final order. Twitter's open-sourced home pipeline, for example, pulls about 1500 candidates and runs a heavy neural ranker over them, with the whole pipeline taking roughly 1.5 seconds on average.",
+   "in_this_design": "Candidate sources return about 1500 ids (roughly half in-network). A GBDT light ranker on 40 features cuts to 500, then a multi-task neural heavy ranker on GPU scores those 500 in batches of 128. The mixer applies author diversity (max 2 consecutive from one author), safety filters, ad slots every 6 items, and a freshness boost before cutting the first page.",
+   "key_points": [
+    "Funnel: thousands of candidates, hundreds scored deeply, tens shown.",
+    "Recall is won early, precision late.",
+    "Multi-task heads predict several actions; a weighted sum is the score.",
+    "Business rules (diversity, ads, safety) live in a re-rank stage, not in the model.",
+    "Each stage has an explicit latency budget and graceful fallback."
+   ],
+   "qa": [
+    {
+     "q": "Why have a light ranker at all if the heavy ranker is accurate?",
+     "a": "GPU cost scales with items scored. Cutting 1500 to 500 with a cheap model that keeps over 95 percent of the eventual top 50 saves two thirds of heavy-ranker compute for negligible quality loss."
+    },
+    {
+     "q": "How do you combine multiple predicted probabilities into one score?",
+     "a": "Weighted sum, for example score = 1.0*p(like) + 13*p(reply) + 0.5*p(dwell>10s) - 74*p(report). The weights encode business value and are tuned with online experiments, not by the model."
+    },
+    {
+     "q": "Where should author diversity be enforced?",
+     "a": "In the re-rank stage, because it is a list-level property. A pointwise model scores items independently and cannot know that three posts from the same author are adjacent."
+    }
+   ]
+  },
+  {
+   "name": "Time decay and freshness scoring",
+   "explain": "Freshness means newer content should beat older content when relevance is similar, and very old content should fade even if it was very popular. The simplest approach is a decay multiplier on the score. Exponential decay uses score * exp(-lambda * age) or equivalently a half-life: with a 6 hour half-life a post loses half its weight every 6 hours. Hacker News style gravity uses (votes - 1) / (age_hours + 2)^1.8, which decays polynomially. Another approach is to give the model age as a feature and let it learn the curve, then add a light explicit prior so the curve is stable under model retraining. Decay must use server-assigned timestamps to avoid client clock skew, and it interacts with pagination: if scores change every second, re-ranking between page loads causes items to jump or repeat. Most systems therefore freeze the ranked order for a session or a few minutes and only show new items through a separate 'new posts' pill. Freshness also has a systems meaning: how long between a post being created and it being eligible in followers' candidate sets, which is a fanout-lag SLO.",
+   "in_this_design": "The final score is model_score * 2^(-age_hours / 8) for in-network posts and a 4 hour half-life for out-of-network, plus age as a model feature. Ordering is frozen per session (cached ranked list with a cursor for 15 minutes); new posts arriving later show as a 'N new posts' banner and are ranked on pull-to-refresh. The system SLO is fanout lag p99 under 5 seconds.",
+   "key_points": [
+    "Half-life decay is easy to explain and tune.",
+    "Use server timestamps, never client clocks, for age.",
+    "Freeze order per session to keep pagination stable.",
+    "Freshness has two meanings: score decay and pipeline lag; set an SLO for both.",
+    "Separate half-lives per source let you trade relevance and recency deliberately."
+   ],
+   "qa": [
+    {
+     "q": "Why not let the model learn recency entirely?",
+     "a": "It can, but its learned curve shifts each retrain and is biased by what the old ranker showed. An explicit decay prior gives a stable, explainable baseline that product can tune, and the model refines around it."
+    },
+    {
+     "q": "A user complains they see a day-old post at the top. What do you check?",
+     "a": "Whether it is out-of-network viral with very high predicted engagement overpowering decay, whether the post timestamp is correct (backfilled or edited posts), and whether the session cache served a stale ranked list beyond its TTL."
+    },
+    {
+     "q": "How do you avoid duplicates across pages when scores change?",
+     "a": "Do not re-rank between pages. Store the ranked id list keyed by session cursor and page through it; only a refresh rebuilds the list, and seen ids are excluded."
+    }
+   ]
+  },
+  {
+   "name": "Online feature store and training-serving consistency",
+   "explain": "A ranking model consumes features: user features (follow count, past engagement rates), item features (age, likes in last hour, author reputation), and cross features (how often this user engages with this author). Training uses historic logs; serving needs the same features computed fresh, in milliseconds. A feature store solves this by defining each feature once, computing it in batch (daily aggregates in Spark) and streaming (real-time counters in Flink), and serving it from a low-latency key-value store keyed by entity id. The biggest risk is training-serving skew: if the online value is computed differently or at a different time than the training value, the model sees a distribution it was not trained on and quality silently drops. The standard fix is to log the exact feature vector used at serving time alongside the impression, and train on those logged vectors, so training sees what serving saw. Point-in-time correctness matters for batch backfills: when constructing training rows you must use feature values as of the impression time, not today's value, or you leak the future into training.",
+   "in_this_design": "User and author features live in an Aerospike-backed online store keyed by user_id and author_id; post engagement counters (likes_1h, replies_1h) are updated by Flink within seconds. The Mixer batch-fetches about 500 vectors per request in one multi-get (p99 15ms) and logs the vector with each served impression to Kafka for training.",
+   "key_points": [
+    "Define a feature once, serve it online and offline from the same definition.",
+    "Log served feature vectors to kill training-serving skew.",
+    "Point-in-time joins prevent label leakage.",
+    "Batch for slow-moving features, streaming for counters.",
+    "Missing features must have defined defaults, not nulls."
+   ],
+   "qa": [
+    {
+     "q": "Model AUC is great offline but online engagement fell. First suspicion?",
+     "a": "Training-serving skew: a feature computed differently online, a stale or default-filled feature at serving, or a leaked future feature in training. Compare logged online feature distributions with training distributions."
+    },
+    {
+     "q": "Why not compute features on the fly from raw tables?",
+     "a": "Aggregations over millions of events cannot run in a 200ms request budget. Precomputing and serving by key turns them into O(1) lookups."
+    },
+    {
+     "q": "What happens if the feature store is slow?",
+     "a": "The Mixer has a 30ms deadline on feature fetch; on timeout it uses cached or default features and the light ranker's order for the affected items, and emits a degraded-mode metric."
+    }
+   ]
+  },
+  {
+   "name": "Caching patterns: precomputed lists, cache-aside, and request coalescing",
+   "explain": "Caches trade freshness for latency and cost. Cache-aside means the application reads the cache, on miss reads the source and fills the cache. Write-through updates cache and source together. A precomputed materialised view, such as a per-user list of post ids, is a cache that is built ahead of reads by a background process. Bounded lists matter: a timeline cache only needs the most recent few hundred ids per user, so lists are trimmed (LTRIM in Redis) to cap memory. Thundering herd happens when a popular key expires and thousands of requests miss simultaneously, all hitting the source; request coalescing (single-flight) lets one request rebuild while others wait for it, and jittered TTLs prevent synchronised expiry. For a ranked feed there are two cache layers worth separating: the candidate cache (who posted what, updated by fanout) and the ranked-page cache (the ordered result for this session, short TTL). Losing the first is expensive because rebuilding means a pull across followees; losing the second only costs a re-rank.",
+   "in_this_design": "Redis Cluster holds per-user candidate lists trimmed to 800 ids (about 6.4KB each as 8-byte ids). The ranked-page cache stores the session's ordered ids for 15 minutes. Rebuilds of a missing candidate list use single-flight keyed by user_id so a reconnect storm does not stampede the post store.",
+   "key_points": [
+    "Precompute candidates, not the ranked order.",
+    "Trim lists to a fixed length to bound memory.",
+    "Single-flight and TTL jitter prevent stampedes.",
+    "Know which cache is cheap to lose and which is expensive.",
+    "Store ids, hydrate objects separately so edits and deletes are not stale."
+   ],
+   "qa": [
+    {
+     "q": "Why store ids instead of full post objects in timelines?",
+     "a": "A post appears in thousands of timelines; storing the object duplicates it and makes edits and deletes require touching every copy. Ids are 8 bytes, and hydration from a post cache gives one source of truth."
+    },
+    {
+     "q": "How big is the candidate cache?",
+     "a": "200M active users times 800 ids times 8 bytes is about 1.3TB raw, roughly 3TB with Redis overhead and replicas, which fits a few hundred cache nodes."
+    },
+    {
+     "q": "A Redis shard dies. What do users see?",
+     "a": "Reads for users on that shard fall back to a pull-based rebuild with a tighter candidate count while the replica is promoted, typically seconds. Feeds are a bit less personalised briefly but still load."
+    }
+   ]
+  },
+  {
+   "name": "Event streaming and at-least-once processing with idempotency",
+   "explain": "A log-based message broker such as Kafka stores events in partitioned, replicated, append-only logs. Producers append, consumers read at their own pace and commit offsets. This decouples the write path from slow downstream work like fanout and lets you replay history. Kafka gives ordering only within a partition, so you choose a partition key that keeps related events together, such as author_id for posts. Delivery is typically at-least-once: if a consumer crashes after doing work but before committing its offset, the work is redone. Exactly-once effects are achieved by making operations idempotent rather than by trusting the transport: inserting the same post id into a sorted set twice is harmless, and counters can be deduplicated by event id within a window. Backpressure happens naturally because consumers pull; lag (the distance between latest offset and committed offset) is the key health metric. Replication factor 3 with min.insync.replicas 2 and acks=all is the standard durability setting.",
+   "in_this_design": "New posts go to a posts topic keyed by author_id with 256 partitions; fanout workers consume, look up followers in pages of 5000, and ZADD post ids into follower lists (idempotent by member). Engagement events go to an engagements topic consumed by Flink for counters and features, deduplicated by event_id over 10 minutes. Consumer lag on posts is the fanout-freshness alert.",
+   "key_points": [
+    "Kafka decouples posting from fanout and enables replay.",
+    "Partition by author for ordering per author.",
+    "At-least-once plus idempotent writes equals effectively-once.",
+    "Consumer lag is the freshness SLI.",
+    "acks=all, RF=3, min.insync=2 for durability."
+   ],
+   "qa": [
+    {
+     "q": "Why not do fanout synchronously in the post request?",
+     "a": "A 100k-follower author would block the request for seconds and any failure would fail the post. Async fanout returns in milliseconds and retries independently."
+    },
+    {
+     "q": "How do you make like counters exactly-once?",
+     "a": "Dedupe on (user_id, post_id, action) because a like is a state not an event; for view counts accept approximate counts with event-id dedupe in a window."
+    },
+    {
+     "q": "Fanout lag grows to 10 minutes. What do you do?",
+     "a": "Scale consumers up to partition count, check for a hot partition from one giant author (should be in pull mode), shed fanout to inactive users, and prioritise recently active followers first."
+    }
+   ]
+  },
+  {
+   "name": "Exploration, feedback loops and online experimentation",
+   "explain": "A ranker trained on its own past impressions only learns about content it chose to show, a feedback loop that narrows the feed and starves new authors. Exploration deliberately shows some items the model is unsure about, for example via epsilon-greedy slots or Thompson sampling, to gather unbiased data. Position bias is the same problem in another form: items at the top get clicked more because they are at the top, so naive click labels overstate their quality; techniques include randomising a small slice of traffic or modelling position as a feature that is set to a constant at serving. Changes are validated with A/B tests: users are hashed into buckets, treatment gets the new model, and metrics such as time spent, daily actives, and negative feedback are compared with confidence intervals. Feed experiments need guardrail metrics (reports, hides, unfollows) and enough duration to see novelty effects fade, usually one to two weeks. Network effects can contaminate experiments when treated users' behaviour changes what control users see.",
+   "in_this_design": "2 percent of slots are exploration from out-of-network candidates with high uncertainty. Position is a training feature set to 0 at serving. Every ranker change ships behind an experiment flag with time spent per DAU as the primary metric and hide/report rate as guardrails, run for at least 14 days.",
+   "key_points": [
+    "Rankers create their own training data; that loop needs exploration.",
+    "Correct for position bias or the model learns slot, not quality.",
+    "Ship ranking changes only through A/B tests with guardrails.",
+    "Watch novelty effects; run experiments long enough.",
+    "Optimise long-term value, not just clicks."
+   ],
+   "qa": [
+    {
+     "q": "Why not optimise purely for click-through?",
+     "a": "It rewards clickbait and outrage. Use a mix of long-dwell, replies and negative-feedback penalties, and track retention as the north star."
+    },
+    {
+     "q": "How do you handle a brand new author with zero history?",
+     "a": "Content and author embedding features plus an exploration budget give them impressions; early engagement then feeds the counters quickly via streaming features."
+    },
+    {
+     "q": "What is a guardrail metric?",
+     "a": "A metric that must not regress even if the primary improves, such as report rate, unfollow rate, or p99 latency. A treatment that wins time spent but raises reports is not shipped."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Fanout model",
+   "options": "Push, pull, hybrid",
+   "choice": "Hybrid with celebrity threshold ~100k and active-user filter",
+   "why": "Push gives cheap reads for 99.9 percent of authors; pull avoids pathological writes for celebrities."
+  },
+  {
+   "decision": "When to rank",
+   "options": "At write time (precomputed ranked feed) vs at read time",
+   "choice": "Read time",
+   "why": "Scores depend on fresh engagement and user context; precomputed order goes stale and wastes work for unread feeds."
+  },
+  {
+   "decision": "Pagination",
+   "options": "Re-rank per page vs session-frozen order",
+   "choice": "Frozen per session",
+   "why": "Avoids duplicates and jumps; new content goes to a banner."
+  },
+  {
+   "decision": "Freshness mechanism",
+   "options": "Learned only vs explicit decay prior",
+   "choice": "Explicit half-life plus age feature",
+   "why": "Stable, tunable, explainable baseline across retrains."
+  },
+  {
+   "decision": "Candidate list length",
+   "options": "200, 800, 3000 ids",
+   "choice": "800",
+   "why": "Covers a couple of days for most users within ~3TB of Redis; ranking only needs the freshest."
+  },
+  {
+   "decision": "Ranking failure",
+   "options": "Error vs degrade",
+   "choice": "Degrade to light ranker, then chronological",
+   "why": "Availability of some feed beats perfect ranking."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Heavy ranker GPU pool unavailable",
+   "behavior": "Mixer times out at 120ms and serves light-ranker order with degraded flag; alert on degraded rate > 1 percent."
+  },
+  {
+   "failure": "Redis shard loss",
+   "behavior": "Replica promoted in seconds; meanwhile affected users get a pull-based rebuild limited to top 100 followees."
+  },
+  {
+   "failure": "Kafka consumer lag spike",
+   "behavior": "Feeds become stale; autoscale fanout workers, prioritise recently active followers, page on lag > 30s."
+  },
+  {
+   "failure": "Feature store slow",
+   "behavior": "Use default features; quality drops slightly; circuit breaker opens after 50 percent timeouts for 10s."
+  },
+  {
+   "failure": "Bad model deployed",
+   "behavior": "Canary at 1 percent with automatic rollback on engagement or report-rate guardrail breach."
+  },
+  {
+   "failure": "Region outage",
+   "behavior": "Traffic shifts to another region; candidate caches there are warm for users already served there, others rebuild lazily."
+  }
+ ],
+ "metrics": [
+  "Timeline p50/p99 latency per stage (candidates, hydration, features, light, heavy, mix).",
+  "Fanout lag p99 and Kafka consumer lag per partition.",
+  "Degraded-mode rate and ranker timeout rate.",
+  "Engagement: time spent per DAU, likes/replies per impression, long-dwell rate.",
+  "Guardrails: hide, report, unfollow per 1000 impressions.",
+  "Cache hit rate for candidate lists and post hydration.",
+  "GPU utilisation and cost per 1000 timeline loads.",
+  "Duplicate impression rate within a session."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you add a 'Latest' chronological mode cheaply?",
+   "a": "Read the same candidate list plus celebrity pulls, sort by timestamp, skip ranking entirely. It shares hydration and filtering, so it is mostly free and doubles as the ranking fallback."
+  },
+  {
+   "q": "How do you handle a post going viral out-of-network?",
+   "a": "OON retrieval uses engagement-velocity features; Flink counters reflect the spike in seconds. Exploration and decay keep it from dominating, and integrity checks run before broad distribution."
+  },
+  {
+   "q": "How do you reduce GPU cost by 30 percent?",
+   "a": "Better light ranker to prune to 300, distil the heavy model, cache scores per (user, post) for 10 minutes across refreshes, and skip heavy ranking for low-engagement users where it barely changes the order."
+  },
+  {
+   "q": "How do you make safety demotions take effect in under a minute?",
+   "a": "Labels are written to the post store and a fast label cache; hydration reads them on every request, and the page cache re-filters on each cursor read."
+  },
+  {
+   "q": "What if a user follows nobody?",
+   "a": "Cold start: OON-only candidates from popular and locale-based sources, onboarding interest picks, and follow suggestions inline."
+  },
+  {
+   "q": "How does this work across regions?",
+   "a": "Posts replicate cross-region asynchronously; fanout runs per region on the replicated stream; users are homed to a region for their candidate lists."
+  },
+  {
+   "q": "How do you evaluate a new ranker offline before an A/B?",
+   "a": "Replay logged impressions with counterfactual metrics (NDCG on engaged items, inverse propensity weighting for position) and check feature parity, then canary."
+  }
+ ],
+ "key_points": [
+  "Clarify scale, mix of in-network and recommended, freshness SLO and latency budget first.",
+  "Hybrid fanout: push for most, pull for celebrities, skip dormant users.",
+  "Precompute candidates, rank at read time.",
+  "Funnel: ~1500 candidates, light ranker to 500, heavy ranker, re-rank for diversity, ads and safety.",
+  "Freshness = half-life decay on score plus fanout-lag SLO under 5s.",
+  "Freeze order per session for stable pagination; new posts via a banner.",
+  "Per-stage deadlines with fallback down to chronological.",
+  "Log served features to avoid training-serving skew.",
+  "Measure fanout lag, p99 latency, degraded rate, engagement and guardrails."
+ ],
+ "quiz": [
+  {
+   "q": "A user follows 400 accounts and opens the app. With pure fanout-on-read, what dominates latency?",
+   "options": [
+    "One Redis GET for their timeline",
+    "Reading and merging recent posts from up to 400 author lists",
+    "Writing the post into followers' timelines",
+    "Running the light ranker"
+   ],
+   "answer": 1,
+   "why": "Pull means gathering from every followee at read time. Option 0 describes push, which is exactly what pull lacks."
+  },
+  {
+   "q": "An author with 60M followers posts. Under pure push, what is the main problem?",
+   "options": [
+    "Their post is lost",
+    "Reads become slow for that author",
+    "60M list inserts delay delivery and swamp fanout workers",
+    "The ranker cannot score celebrity posts"
+   ],
+   "answer": 2,
+   "why": "Write amplification equals follower count. Reads are not the issue, which is why hybrid pulls celebrities at read time."
+  },
+  {
+   "q": "Why is the ranked order cached per session instead of recomputed per page?",
+   "options": [
+    "To keep pagination stable and avoid repeats or skipped items",
+    "Because the GPU cannot be called twice",
+    "Because Redis requires it",
+    "To save network bandwidth on images"
+   ],
+   "answer": 0,
+   "why": "Scores drift with time decay and new engagement; re-ranking between pages shuffles items. Saving GPU is a side effect, not the reason."
+  },
+  {
+   "q": "Roughly how much memory do 200M timelines of 800 ids at 8 bytes each need, before overhead?",
+   "options": [
+    "About 13GB",
+    "About 130GB",
+    "About 13TB",
+    "About 1.3TB"
+   ],
+   "answer": 3,
+   "why": "200M x 800 x 8 = 1.28e12 bytes, about 1.3TB. 13TB would assume 10x more ids."
+  },
+  {
+   "q": "Offline AUC rose but online engagement fell after a model launch. Most likely cause?",
+   "options": [
+    "Kafka lost messages",
+    "Training-serving feature skew",
+    "Redis eviction policy",
+    "CDN cache misses"
+   ],
+   "answer": 1,
+   "why": "Features computed differently online vs training is the classic cause. Kafka loss would show as missing data, not a model-quality drop."
+  },
+  {
+   "q": "With a 6 hour half-life, a post that is 18 hours old keeps what fraction of its score?",
+   "options": [
+    "1/2",
+    "1/3",
+    "1/8",
+    "1/6"
+   ],
+   "answer": 2,
+   "why": "18h is three half-lives: 1/2^3 = 1/8. 1/3 is the tempting linear intuition."
+  },
+  {
+   "q": "Where should 'no more than 2 consecutive posts from one author' be enforced?",
+   "options": [
+    "In the heavy ranker loss function",
+    "In candidate generation",
+    "In the fanout workers",
+    "In the re-rank/mixing stage"
+   ],
+   "answer": 3,
+   "why": "It is a list-level constraint; pointwise models score items independently. Candidate generation is too early, order is not known yet."
+  },
+  {
+   "q": "Fanout workers crash after ZADD but before committing the Kafka offset. What happens?",
+   "options": [
+    "The post is reprocessed; ZADD is idempotent so no duplicates",
+    "The post is lost forever",
+    "Followers see the post twice",
+    "Kafka rolls back the ZADD"
+   ],
+   "answer": 0,
+   "why": "At-least-once redelivers; sorted-set membership by post id makes reinsert harmless. Kafka cannot roll back external writes."
+  },
+  {
+   "q": "Which is the best freshness SLI for the push path?",
+   "options": [
+    "Heavy ranker latency",
+    "Consumer lag on the posts topic / post-to-timeline delay",
+    "Redis memory usage",
+    "Number of followers"
+   ],
+   "answer": 1,
+   "why": "Lag measures how long a new post takes to reach followers' candidates. Ranker latency affects read latency, not freshness."
+  },
+  {
+   "q": "Why skip fanout to users inactive for 30 days?",
+   "options": [
+    "They are not allowed to see posts",
+    "Their timelines are stored on disk",
+    "Most of that write work would never be read; rebuild lazily on return",
+    "It reduces ranker cost"
+   ],
+   "answer": 2,
+   "why": "Push writes for readers who never come back are wasted. It does not affect ranking cost, which happens only on read."
+  },
+  {
+   "q": "The feature store times out for a request. Best behaviour?",
+   "options": [
+    "Return HTTP 500",
+    "Wait up to 5 seconds",
+    "Show an empty timeline",
+    "Use cached/default features and light-ranker order, emit a degraded metric"
+   ],
+   "answer": 3,
+   "why": "Degrade gracefully; a slightly worse feed beats no feed. Waiting 5s blows the latency SLO."
+  },
+  {
+   "q": "Why store post ids rather than post bodies in each timeline list?",
+   "options": [
+    "Edits and deletes stay consistent and memory is small",
+    "Redis cannot store strings",
+    "Ranking needs only ids",
+    "Ids compress images"
+   ],
+   "answer": 0,
+   "why": "One source of truth for the post, 8 bytes per entry. Ranking needs features and content, so 'only ids' is wrong."
+  },
+  {
+   "q": "Positions near the top get more clicks regardless of quality. This is called?",
+   "options": [
+    "Survivorship bias",
+    "Position bias",
+    "Selection of features",
+    "Data skew"
+   ],
+   "answer": 1,
+   "why": "Position bias inflates labels for top slots. Survivorship bias is about only observing survivors, related but not this."
+  },
+  {
+   "q": "Twitter's open-sourced home pipeline pulls approximately how many candidates per request?",
+   "options": [
+    "50",
+    "150",
+    "1500",
+    "150,000"
+   ],
+   "answer": 2,
+   "why": "About 1500 candidates, roughly half in-network. 150,000 would be unaffordable to rank."
+  },
+  {
+   "q": "A Kafka posts topic is keyed by author_id. What does that guarantee?",
+   "options": [
+    "Global order across all authors",
+    "Exactly-once delivery",
+    "Followers get posts in the same order",
+    "Posts from one author are processed in order within a partition"
+   ],
+   "answer": 3,
+   "why": "Kafka orders within a partition only. It does not give global order or exactly-once to external stores."
+  },
+  {
+   "q": "Best reason for a light ranker before the heavy ranker?",
+   "options": [
+    "Cuts heavy-ranker compute by scoring fewer items with little quality loss",
+    "Light rankers are more accurate",
+    "It enforces safety rules",
+    "It replaces candidate generation"
+   ],
+   "answer": 0,
+   "why": "It is a cost funnel. Light models are less accurate, which is why they only prune."
+  },
+  {
+   "q": "A treatment raises time spent by 3 percent and report rate by 8 percent. Decision?",
+   "options": [
+    "Ship, primary metric won",
+    "Ship to half the users",
+    "Do not ship; guardrail regressed",
+    "Retrain with more data and ship immediately"
+   ],
+   "answer": 2,
+   "why": "Guardrails veto launches. Shipping to half just exposes more users to the harm."
+  },
+  {
+   "q": "Many clients reconnect after an outage and all their candidate lists are missing. Best protection?",
+   "options": [
+    "Increase Redis TTL",
+    "Single-flight rebuild per user plus rate-limited rebuild queue",
+    "Disable ranking",
+    "Block logins"
+   ],
+   "answer": 1,
+   "why": "Coalesce and rate-limit rebuilds so the post store is not stampeded. TTL does not help when data is already gone."
+  },
+  {
+   "q": "At 300k timeline read QPS and 1500 candidates per request, roughly how many candidate hydrations per second?",
+   "options": [
+    "450 million",
+    "4.5 million",
+    "45 million",
+    "4.5 billion"
+   ],
+   "answer": 0,
+   "why": "300k x 1500 = 4.5e8. This is why hydration goes through a large post cache with multi-get batching."
+  },
+  {
+   "q": "Why give out-of-network posts a shorter half-life than in-network posts?",
+   "options": [
+    "They are less safe",
+    "They are cheaper to rank",
+    "Users expect followees' posts to persist longer; discovered content should rotate faster",
+    "Storage is cheaper for them"
+   ],
+   "answer": 2,
+   "why": "It is a product choice about relevance vs recency. Safety is handled by filters, not decay."
+  },
+  {
+   "q": "A post is deleted after being fanned out to 2M timelines. Cheapest correct handling?",
+   "options": [
+    "Remove it from all 2M lists synchronously",
+    "Filter at hydration using a tombstone in the post store; lists age out",
+    "Leave it visible",
+    "Rebuild all timelines"
+   ],
+   "answer": 1,
+   "why": "Hydration checks the source of truth so deleted posts are dropped at read. Synchronous removal is 2M writes and still races with reads."
+  },
+  {
+   "q": "Which consistency model fits the home timeline?",
+   "options": [
+    "Linearizable reads",
+    "Serializable transactions",
+    "Strict two-phase commit across shards",
+    "Eventual consistency with read-your-own-writes for the author"
+   ],
+   "answer": 3,
+   "why": "A few seconds of lag is fine for others, but authors must see their own post immediately. Linearizable reads would cost latency for no product benefit."
+  }
+ ],
+ "references": [
+  {
+   "title": "Twitter's Recommendation Algorithm (Twitter engineering blog)",
+   "url": "https://blog.twitter.com/engineering/en_us/topics/open-source/2023/twitter-recommendation-algorithm"
+  },
+  {
+   "title": "The Architecture Twitter Uses to Deal with 150M Active Users (High Scalability)",
+   "url": "https://highscalability.com/the-architecture-twitter-uses-to-deal-with-150m-active-users/"
+  },
+  {
+   "title": "Home Mixer README (the-algorithm mirror)",
+   "url": "https://github.com/sleeperb-cs/the-algorithm/blob/main/home-mixer/README.md"
+  },
+  {
+   "title": "How a News Feed Works: Fanout on Write vs Fanout on Read",
+   "url": "https://dev.to/roni_das_b1b76c5ee6583027/how-a-news-feed-works-fanout-on-write-vs-fanout-on-read-3lle"
+  }
+ ]
+}

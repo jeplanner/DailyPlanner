@@ -36,6 +36,7 @@ import ai_sde_bank as AI_SDE_BANK_MODULE
 # Imported for the scheduler's bank registry only. java_bank is a plain
 # data module — it imports no routes, so this cannot cycle.
 import java_bank
+import sd_deep_bank
 import sql_bank
 import ai_sde_recall
 import ai_sde_summary
@@ -51,6 +52,7 @@ DEFAULT_TARGET_DAYS = 42          # ~6 weeks out
 STORY_TARGET = 6                  # rehearsed stories that = "story ready"
 BEHAVIORAL_TARGET = 30             # practised behavioural questions that = "bank ready"
 SYSDESIGN_TARGET = 20              # studied designs that = "bank ready"
+DEEP_TARGET = 12                   # deep dives passed (quiz 80%+) that = "ready"
 _MAX_TITLE = 140
 _MAX_TEXT = 4000
 _MAX_MINUTES = 24 * 60
@@ -269,6 +271,15 @@ def page_behavioral():
 @login_required
 def page_design():
     return render_template("interview_prep.html", initial_tab="design")
+
+
+@interview_prep_bp.route("/interview-prep/design/<slug>", methods=["GET"])
+@login_required
+def page_design_deep(slug):
+    """One deep dive opened directly (a shareable, bookmarkable link)."""
+    if slug not in sd_deep_bank.BY_SLUG:
+        return redirect("/interview-prep/design")
+    return render_template("interview_prep.html", initial_tab="design", deep_slug=slug)
 
 
 # Whitelisted markdown prep guides shipped in the repo, surfaced in-app.
@@ -604,6 +615,13 @@ PREP_BANKS = {
         "label": "Case rounds",
         "page": "/interview-prep/cases",
     },
+    "sddeep": {
+        "project": "SystemDesignPrep",
+        "desc": "System design deep dives. Designs scheduled from "
+                "/interview-prep/design land here.",
+        "label": "System design",
+        "page": "/interview-prep/design",
+    },
 }
 
 #: bank key -> (entry list, the field holding the topic text, id prefix).
@@ -614,6 +632,7 @@ _BANK_SOURCES = {
     "sql":        (lambda: sql_bank.ENTRIES,   "title", "sq"),
     "behavioral": (lambda: QUESTIONS,          "q",     "q"),
     "tpm":        (lambda: TPM_ROUND_ENTRIES,  "title", "t"),
+    "sddeep":     (lambda: sd_deep_bank.DESIGNS, "title", "dd"),
 }
 
 # Kept as the old names because MIGRATION_AISDEPREP.sql seeds this one by
@@ -1998,8 +2017,10 @@ def dashboard():
                          if e["title"] in tpm_done) / float(total_w)
         beh = len(done_by_bank["behavioral"] & {q["q"] for q in QUESTIONS})
         sd = len(done_by_bank["sysdesign"] & {e["title"] for e in SD_ENTRIES})
+        deep = len(done_by_bank["sddeep"] & set(sd_deep_bank.BY_TITLE))
         bank_score = (min(beh, BEHAVIORAL_TARGET) / float(BEHAVIORAL_TARGET)
-                      + min(sd, SYSDESIGN_TARGET) / float(SYSDESIGN_TARGET)) / 2.0
+                      + min(sd, SYSDESIGN_TARGET) / float(SYSDESIGN_TARGET)
+                      + min(deep, DEEP_TARGET) / float(DEEP_TARGET)) / 3.0
         next_cases = [
             {"id": f"t{i}", "title": e["title"], "priority": e["priority"],
              "round": TPM_ROUNDS.get(e["round"], e["round"])}
@@ -2189,6 +2210,144 @@ def tpm_rounds_pdf():
     return _pdf_response(pdf, fname)
 
 
+# ─────────── System design deep dives ───────────────────────────────
+#
+# BRD, PRD, HLD, LLD, edge cases, tech stack, distributed-systems concepts
+# with Q&A, and a choose-the-best-answer quiz per design: the Beyz question
+# bank's 55 prompts (Clarify -> Design -> Defend) plus classic designs from
+# the wider canon, Uber as the flagship. Content: sd_deep/*.json.
+
+BEYZ_FRAMEWORK = [
+    {"step": "Clarify", "points": [
+        "Who are the users, and what does success mean?",
+        "What does 'fast' mean here - which latency, at which percentile?",
+        "What breaks first, and which trade-off matters most?",
+        "State your assumptions out loud in the first minute."]},
+    {"step": "Design", "points": [
+        "Build the baseline first, before any optimisation.",
+        "Name the core components and define the APIs.",
+        "Walk the critical path end to end."]},
+    {"step": "Defend", "points": [
+        "Name the bottleneck - the first resource to saturate.",
+        "Scale reads: caching, replication, precomputation, staleness.",
+        "Scale writes: partitioning, batching, async, idempotency.",
+        "Failure: timeouts, retries with jitter, fallbacks, bulkheads, degradation.",
+        "Close with what you would measure."]},
+]
+
+
+def _deep_list():
+    out = sd_deep_bank.summary_list()
+    for i, d in enumerate(out):
+        d["id"] = f"dd{i}"
+    return out
+
+
+@interview_prep_bp.route("/api/sd-deep", methods=["GET"])
+@login_required
+def sd_deep_list():
+    return jsonify({
+        "groups": [{"key": k, "label": v} for k, v in sd_deep_bank.GROUPS.items()],
+        "framework": BEYZ_FRAMEWORK,
+        "designs": _deep_list(),
+        "total": len(sd_deep_bank.DESIGNS),
+    })
+
+
+@interview_prep_bp.route("/api/sd-deep/<slug>", methods=["GET"])
+@login_required
+def sd_deep_one(slug):
+    d = sd_deep_bank.BY_SLUG.get(slug)
+    if not d:
+        return jsonify({"error": "Unknown design"}), 404
+    resp = jsonify(d)
+    # Static content that changes only on deploy; the SW revalidates.
+    resp.headers["Cache-Control"] = "private, max-age=300"
+    return resp
+
+
+def _bullets(items):
+    return "\n".join(f"* {x}" for x in items if x) or None
+
+
+@interview_prep_bp.route("/interview-prep/design/<slug>/pdf", methods=["GET"])
+@login_required
+def sd_deep_pdf(slug):
+    """One deep dive as a phone-readable PDF, quiz answers at the end."""
+    d = sd_deep_bank.BY_SLUG.get(slug)
+    if not d:
+        return jsonify({"error": "Unknown design"}), 404
+    fw, brd, prd, hld, lld = d["framework"], d["brd"], d["prd"], d["hld"], d["lld"]
+    S = lambda title, fields, arch=None, cat="": {
+        "title": title, "cat": cat, "fields": fields, "arch": arch, "tags": None}
+    sections = [
+        S("Overview", [("Prompt", d["prompt"]), ("Summary", d["summary"]),
+                       ("Say this out loud", _bullets(d["key_points"]))]),
+        S("Clarify -> Design -> Defend", [
+            ("Clarify", _bullets(fw["clarify"])), ("Design", _bullets(fw["design"])),
+            ("Defend", _bullets(fw["defend"])), ("Spoken opener", fw["script"])]),
+        S("BRD - business requirements", [
+            ("Problem", brd["problem"]), ("Goals", _bullets(brd["goals"])),
+            ("Non-goals", _bullets(brd["non_goals"])),
+            ("Stakeholders", _bullets(f"{x['who']}: {x['needs']}" for x in brd["stakeholders"])),
+            ("Success metrics", _bullets(f"{x['metric']}: {x['target']}" for x in brd["success_metrics"])),
+            ("Constraints", _bullets(brd["constraints"])),
+            ("Risks", _bullets(f"{x['risk']} -> {x['mitigation']}" for x in brd["risks"]))]),
+        S("PRD - product requirements", [
+            ("Personas", _bullets(f"{x['name']}: {x['needs']}" for x in prd["personas"])),
+            ("User stories", _bullets(prd["user_stories"])),
+            ("Functional", _bullets(prd["functional"])),
+            ("Non-functional", _bullets(f"{x['name']}: {x['target']}" for x in prd["non_functional"])),
+            ("Capacity assumptions", _bullets(prd["capacity"]["assumptions"])),
+            ("Back of the envelope", _bullets(prd["capacity"]["math"])),
+            ("Capacity summary", prd["capacity"]["summary"]),
+            ("Out of scope", _bullets(prd["out_of_scope"]))]),
+        S("HLD - high-level design", [
+            ("Overview", hld["overview"]),
+            ("Components", _bullets(f"{x['name']}: {x['responsibility']}" for x in hld["components"])),
+            ("Data flow", hld["data_flow"])], arch=hld["diagram"]),
+    ]
+    for f in hld["flows"]:
+        sections.append(S(f"Flow: {f['name']}", [("Steps", "\n".join(
+            f"{i}. {x}" for i, x in enumerate(f["steps"], 1)))]))
+    sections.append(S("LLD - APIs", [(f"{a['method']} {a['path']}", "\n".join(x for x in [
+        f"Request: {a['request']}", f"Response: {a['response']}",
+        (f"Notes: {a['notes']}" if a.get("notes") else "")] if x)) for a in lld["apis"]]))
+    sections.append(S("LLD - data model", [(f"{m['entity']} ({m['store']})", "\n".join(x for x in [
+        "Fields: " + ", ".join(m["fields"]), f"Keys: {m['keys']}",
+        (f"Notes: {m['notes']}" if m.get("notes") else "")] if x)) for m in lld["data_model"]]))
+    sections.append(S("LLD - classes", [(c["name"], c["responsibility"] + "\n" + _bullets(c["methods"]))
+                                        for c in lld["classes"]]))
+    for a in lld["algorithms"]:
+        sections.append(S(f"Algorithm: {a['name']}", [("How it works", a["explain"])], arch=a["pseudocode"]))
+    sections.append(S("Sequence: the critical path", [], arch=lld["sequence"]))
+    sections.append(S("Edge cases", [(e["case"], e["handling"]) for e in d["edge_cases"]]))
+    sections.append(S("Tech stack", [(f"{t['name']} ({t['layer']})", "\n".join([
+        t["overview"], f"Why here: {t['why']}", f"Alternatives: {t['alternatives']}"])) for t in d["tech_stack"]]))
+    for c in d["concepts"]:
+        sections.append(S(f"Concept: {c['name']}", [
+            ("Explained", c["explain"]), ("In this design", c["in_this_design"]),
+            ("Key points", _bullets(c["key_points"]))]
+            + [(f"Q: {qa['q']}", qa["a"]) for qa in c["qa"]]))
+    sections.append(S("Trade-offs", [(t["decision"], f"Options: {t['options']}\nChoice: {t['choice']}\nWhy: {t['why']}")
+                                     for t in d["tradeoffs"]]))
+    sections.append(S("Failure modes", [(f["failure"], f["behavior"]) for f in d["failure_modes"]]
+                      + [("What to measure", _bullets(d["metrics"]))]))
+    sections.append(S("Interviewer follow-ups", [(f"Q: {x['q']}", x["a"]) for x in d["follow_ups"]]))
+    sections.append(S("Quiz - choose the best answer", [(f"{i}. {q['q']}", "\n".join(
+        f"{'ABCD'[j]}) {o}" for j, o in enumerate(q["options"]))) for i, q in enumerate(d["quiz"], 1)]))
+    sections.append(S("Quiz answers", [(f"{i}. {'ABCD'[q['answer']]}", q["why"])
+                                       for i, q in enumerate(d["quiz"], 1)]))
+    sections.append(S("References", [(r["title"], r["url"]) for r in d["references"]]))
+    subtitle = " | ".join([d["prompt"], f"{d['minutes']} min", "DailyPlanner Interview Prep",
+                           _today().isoformat()])
+    try:
+        pdf = _pdf_bytes(d["title"], subtitle, sections, body_pt=_pdf_body_pt())
+    except ImportError:
+        return jsonify({"error": "PDF export needs fpdf2 on the server."}), 503
+    return _pdf_response(pdf, f"{slug}.pdf")
+
+
 # ─────────── Rehearsal progress, saved server-side ──────────────────
 #
 # The banks used to keep "rehearsed" ticks in localStorage, keyed by each
@@ -2202,6 +2361,7 @@ _PROGRESS_BANKS = {
     "tpm":        (lambda: TPM_ROUND_ENTRIES, "title", "t"),
     "behavioral": (lambda: QUESTIONS,         "q",     "q"),
     "sysdesign":  (lambda: SD_ENTRIES,        "title", "sd"),
+    "sddeep":     (lambda: sd_deep_bank.DESIGNS, "title", "dd"),
 }
 PROGRESS_MIGRATION = "MIGRATION_PREP_PROGRESS.sql"
 
@@ -2222,13 +2382,21 @@ def _progress_missing(exc):
 def _progress_rows(user_id, bank=None, done_only=False):
     params = {"user_id": f"eq.{user_id}",
               "select": "bank,entry_title,done,done_at,mock_attempts,"
-                        "mock_last_score,mock_best_score,mock_last_at",
+                        "mock_last_score,mock_best_score,mock_last_at,quiz_best_pct",
               "limit": "5000"}
     if bank:
         params["bank"] = _pg_eq(bank)
     if done_only:
         params["done"] = "eq.true"
-    return get("prep_progress", params=params) or []
+    try:
+        return get("prep_progress", params=params) or []
+    except Exception as exc:
+        # The table predates quiz_best_pct if the migration was run before
+        # that column was added; read without it rather than lose the ticks.
+        if "quiz_best_pct" not in str(exc):
+            raise
+        params["select"] = params["select"].replace(",quiz_best_pct", "")
+        return get("prep_progress", params=params) or []
 
 
 @interview_prep_bp.route("/api/prep/progress", methods=["GET"])
@@ -2247,19 +2415,22 @@ def prep_progress_get():
                             "mock": {}, "migration": PROGRESS_MIGRATION})
         raise
     _, by_title = _progress_maps(bank)
-    done, mock = [], {}
+    done, mock, quiz = [], {}, {}
     for r in rows:
         eid = by_title.get(r.get("entry_title"))
         if not eid:
             continue          # renamed or removed since it was recorded
         if r.get("done"):
             done.append(eid)
+        if r.get("quiz_best_pct") is not None:
+            quiz[eid] = r["quiz_best_pct"]
         if r.get("mock_attempts"):
             mock[eid] = {"attempts": r["mock_attempts"],
                          "last": r.get("mock_last_score"),
                          "best": r.get("mock_best_score"),
                          "at": r.get("mock_last_at")}
-    return jsonify({"bank": bank, "available": True, "done": done, "mock": mock})
+    return jsonify({"bank": bank, "available": True, "done": done, "mock": mock,
+                    "quiz": quiz})
 
 
 @interview_prep_bp.route("/api/prep/progress", methods=["POST"])
@@ -2292,6 +2463,27 @@ def prep_progress_save():
         title = by_id.get((data.get("id") or "").strip())
         if not title:
             return jsonify({"error": "unknown entry"}), 400
+
+        if "quiz_pct" in data:
+            try:
+                pct = int(data["quiz_pct"])
+            except (TypeError, ValueError):
+                return jsonify({"error": "quiz_pct must be 0-100"}), 400
+            if not 0 <= pct <= 100:
+                return jsonify({"error": "quiz_pct must be 0-100"}), 400
+            prev = (get("prep_progress", params={
+                "user_id": f"eq.{user_id}", "bank": _pg_eq(bank),
+                "entry_title": _pg_eq(title),
+                "select": "quiz_best_pct,done", "limit": "1",
+            }) or [{}])[0]
+            best = max(pct, int(prev.get("quiz_best_pct") or 0))
+            row = _row(title, quiz_best_pct=best)
+            # 80%+ on the quiz is what "studied" means for a deep dive.
+            if pct >= 80 and not prev.get("done"):
+                row.update(done=True, done_at=now)
+            post(target, row, prefer="resolution=merge-duplicates,return=minimal")
+            return jsonify({"status": "ok", "best": best,
+                            "done": bool(row.get("done") or prev.get("done"))})
 
         if "mock_score" in data:
             try:

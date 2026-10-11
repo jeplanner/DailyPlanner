@@ -1,0 +1,1041 @@
+{
+ "slug": "chat-presence",
+ "title": "Design Presence for a Chat Application (online / away / last seen)",
+ "prompt": "Design presence for a chat application.",
+ "group": "realtime",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 120,
+ "summary": "Presence looks like one boolean per user, but it is a high-churn, high-fan-out stream: every status change may need to reach hundreds of watchers, and mobile networks make users flicker online and offline. The core tension is freshness versus cost: pushing every change to every contact instantly is expensive and noisy, while slow detection shows stale dots. The senior answer treats presence as soft state with leases and heartbeats, debounces transitions, aggregates across devices, and fans out only to watchers who are actually looking.",
+ "framework": {
+  "clarify": [
+   "What states do we show: online, away/idle, offline with last seen, do-not-disturb, custom status? Assume online, idle, DND, offline plus last seen.",
+   "Who sees a user's presence: all contacts, members of shared channels, or only people with an open conversation? Assume contacts and the members visible on screen in a shared channel.",
+   "Scale: assume 300M DAU, 50M concurrent connections at peak, average 200 contacts, some channels with 100k members.",
+   "How fresh must it be? Assume going online shows within 2 s; going offline may take up to 30-60 s (detection by missing heartbeats) unless the client logs out cleanly.",
+   "Multiple devices per user: is a user online if any device is? Assume yes, with the most active state winning (active beats idle beats offline).",
+   "Privacy: can users hide last seen or appear offline? Assume yes, and hidden users must never leak via timing.",
+   "Is presence durable? Assume no: it is soft state; only last-seen time is persisted.",
+   "Does presence need to be strongly consistent? Assume eventual consistency with per-user ordering is fine."
+  ],
+  "design": [
+   "Baseline: clients poll GET /presence?ids=... every 30 s and a presence table stores last heartbeat. Simple but 50M users x 200 contacts every 30 s is hundreds of millions of lookups per second, and changes appear late.",
+   "Connection gateway: each client holds a WebSocket to a gateway node; the open connection plus a 30 s ping is the heartbeat, so liveness is detected at the edge without a separate API call.",
+   "Presence service: sharded by user id with consistent hashing; holds each user's devices and aggregate state in memory with a TTL lease, and persists last-seen to a durable store on transitions only.",
+   "Change propagation: only state transitions (not heartbeats) are published to a pub/sub layer on channel presence:{user_id}; gateways subscribe on behalf of connected clients that are watching that user.",
+   "Interest-based subscription: a client subscribes only to users currently visible (open chats, contact list page, visible channel members), capped at about 500, and unsubscribes when they scroll away.",
+   "Critical path: connect -> gateway authenticates -> presence service marks device online, recomputes aggregate -> if changed publish -> gateways holding subscribers push the update over WebSockets.",
+   "Large channels: no per-member fan-out; show a member count online refreshed every 30-60 s, and only fetch presence for the members on screen."
+  ],
+  "defend": [
+   "Bottleneck: fan-out of transitions. 100k transitions/s at peak x about 20 active watchers each = 2M pushes per second, so we cut it with debouncing (online only after 2 s, offline after a 10-30 s grace) and interest-based subscriptions.",
+   "Scaling reads: initial snapshot when a client opens a screen is a batched multi-get from presence shards, cacheable for a few seconds at the gateway; after that only deltas are pushed.",
+   "Scaling writes: heartbeats are absorbed by gateways; only connect, disconnect and activity changes reach the presence service, about 2B per day, partitioned by user id.",
+   "Failure: if a gateway node dies, its connections vanish without clean disconnects; leases expire after 60 s and users go offline, while clients reconnect to another node within seconds and renew, so most never appear offline.",
+   "Degradation: under overload, coalesce updates per watcher (send at most one batch per second), drop idle/active nuance before online/offline, and stop presence in large channels entirely.",
+   "Measure: online-detection latency, offline-detection latency, flap rate per user, fan-out pushes per second, subscription counts per connection, and presence accuracy sampled against connection state."
+  ],
+  "script": "Presence sounds trivial, so I want to clarify what makes it hard here. I will assume online, idle, DND and offline with last seen; 300 million daily users with 50 million concurrent connections; about 200 contacts each; channels up to 100k members; online should show within 2 seconds and offline within about a minute; and presence is soft state with eventual consistency. The baseline is clients polling a presence table, which is far too much read load and too slow. Instead, the WebSocket connection itself is the heartbeat, a presence service sharded by user id holds each user's devices with a lease, and only transitions are published on a per-user channel. Gateways subscribe on behalf of clients, and clients subscribe only to the users currently on screen. To defend it: fan-out is the bottleneck, so I debounce flapping, aggregate devices, and avoid per-member fan-out in large channels. Gateway crashes are handled by lease expiry and fast reconnects. I would measure detection latency in both directions, flap rate and pushes per second."
+ },
+ "brd": {
+  "problem": "Users decide whether to message, call or wait based on whether the other person is online. Today presence is computed by polling, shows stale dots, flickers on mobile networks, and costs a large share of chat backend capacity. We need a presence system that is fresh, stable, private and cheap enough to run for hundreds of millions of users.",
+  "goals": [
+   "Show a contact coming online within 2 s at p95 and going offline within 60 s (or 2 s on clean logout).",
+   "Eliminate visible flapping caused by brief mobile disconnects.",
+   "Support multiple devices per user with a single correct aggregate state.",
+   "Respect privacy settings (hide last seen, appear offline) with no leaks.",
+   "Cut presence-related backend cost by at least 70% versus polling."
+  ],
+  "non_goals": [
+   "Typing indicators and read receipts (separate ephemeral channels, though they reuse the transport).",
+   "Location sharing or rich activity feeds.",
+   "Guaranteed, strongly consistent presence for compliance or billing."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users",
+    "needs": "Accurate, stable online indicators and control over their own visibility."
+   },
+   {
+    "who": "Messaging and calling teams",
+    "needs": "A presence signal to choose push versus in-app delivery and to show call availability."
+   },
+   {
+    "who": "Realtime infrastructure team",
+    "needs": "Predictable connection and fan-out load, simple failure handling."
+   },
+   {
+    "who": "Privacy and trust",
+    "needs": "Assurance that hidden users are never exposed, and resistance to presence scraping."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Online detection latency",
+    "target": "p95 under 2 s"
+   },
+   {
+    "metric": "Offline detection latency (unclean disconnect)",
+    "target": "p95 under 60 s"
+   },
+   {
+    "metric": "Flaps (offline then online within 30 s) shown to watchers",
+    "target": "under 1% of transitions"
+   },
+   {
+    "metric": "Presence accuracy versus true connection state",
+    "target": "over 99% in sampled audits"
+   },
+   {
+    "metric": "Presence cost per DAU",
+    "target": "70% lower than polling baseline"
+   }
+  ],
+  "constraints": [
+   "Mobile OSes kill background sockets; on iOS and Android the app is often suspended within seconds of backgrounding.",
+   "Must reuse the existing WebSocket gateway fleet for messages.",
+   "Cross-region latency of 60-150 ms between data centers.",
+   "Privacy regulations require user control over visibility."
+  ],
+  "risks": [
+   {
+    "risk": "Fan-out storms when a gateway node restarts and thousands of users flip at once.",
+    "mitigation": "Lease grace period, reconnect jitter, and coalesced fan-out batches."
+   },
+   {
+    "risk": "Hot users (celebrities, support agents) with millions of watchers.",
+    "mitigation": "Cap per-user subscriptions, use pull for very large audiences, or disable presence for them."
+   },
+   {
+    "risk": "Privacy leak via timing (last seen hidden but online status visible).",
+    "mitigation": "Single visibility check in the presence service before any publish or read."
+   },
+   {
+    "risk": "Scraping presence to track users' routines.",
+    "mitigation": "Only contacts can subscribe, rate limits on snapshot reads, coarse last seen for non-contacts."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Mobile chat user",
+    "needs": "See who is around right now without flicker, on a patchy network, and with low battery cost."
+   },
+   {
+    "name": "Desktop team user",
+    "needs": "Accurate active/away and DND states to know if a colleague is at their desk."
+   },
+   {
+    "name": "Privacy-conscious user",
+    "needs": "Hide last seen or appear offline while still using the app."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want to see a green dot when my contact opens the app so that I know they can reply now.",
+   "As a user, I want to see last seen time when a contact is offline so that I know how recently they were around.",
+   "As a mobile user, I do not want my status to flicker when I pass through a tunnel so that contacts are not confused.",
+   "As a desktop user, I want to switch to away after 10 minutes idle so that colleagues know I am not at my desk.",
+   "As a user with a phone and a laptop, I want to appear online if either is active so that presence reflects me, not a device.",
+   "As a privacy-conscious user, I want to hide my last seen so that others cannot track my routine.",
+   "As a user, I want to set do-not-disturb so that people know I will reply later.",
+   "As a member of a 50k-member channel, I want to see how many are online so that I can gauge activity."
+  ],
+  "functional": [
+   "Track connection state per device and compute an aggregate per user: active > idle > DND-shown > offline.",
+   "Push presence changes to subscribed watchers in real time over the existing WebSocket.",
+   "Snapshot API to fetch presence for a batch of user ids when a screen opens.",
+   "Subscribe and unsubscribe to presence of specific users based on what is on screen.",
+   "Persist last-seen timestamps and serve them subject to privacy settings.",
+   "Support manual states: DND, appear offline, custom status text with expiry.",
+   "Provide approximate online counts for large channels."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "online propagation p95 under 2 s end to end; snapshot API p99 under 50 ms"
+   },
+   {
+    "name": "Scale",
+    "target": "50M concurrent connections; 100k transitions/s peak; 2M pushes/s peak"
+   },
+   {
+    "name": "Availability",
+    "target": "99.9%; failure shows stale or unknown presence, never blocks messaging"
+   },
+   {
+    "name": "Consistency",
+    "target": "eventual, per-user monotonic (watchers never see an older state after a newer one)"
+   },
+   {
+    "name": "Battery and data",
+    "target": "heartbeat at most every 30 s foreground; zero heartbeats when backgrounded"
+   },
+   {
+    "name": "Privacy",
+    "target": "zero leaks of hidden state; enforced server-side"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "300M DAU, 50M concurrent connections at peak, 1.3 devices per online user.",
+    "Each user changes state about 10 times per day (connect, background, idle, active).",
+    "Average 200 contacts; about 20 of them are online and have the user on screen at a given moment.",
+    "WebSocket ping every 30 s handled by the gateway; presence entry about 100 B per device."
+   ],
+   "math": [
+    "Heartbeats: 50M / 30 s = 1.7M pings/s, absorbed at gateways (about 4k/s per node on 400 nodes), never sent to the presence service.",
+    "Transitions: 300M x 10 / 86,400 = about 35k/s average; peak 3x = about 100k/s.",
+    "Fan-out: 100k/s x 20 watchers = 2M pushes/s at peak; each push about 60 B, about 120 MB/s across gateways.",
+    "Presence state in memory: 65M online devices x 100 B = 6.5 GB, plus subscription maps.",
+    "Subscriptions: 50M connections x 100 visible users average = 5B subscription edges; stored per gateway as user -> local connections, about 40 B each = 200 GB across the gateway fleet (0.5 GB per node).",
+    "Polling baseline for comparison: 50M users x 200 contacts / 30 s = 333M lookups/s, more than 100x the push design's load.",
+    "Last seen writes: only on transitions to offline, about 15k/s average, trivial for Cassandra or DynamoDB."
+   ],
+   "summary": "Heartbeats are 1.7M/s but stay at the edge. The presence service handles about 100k transitions/s, and fan-out is about 2M pushes/s at peak, which is the number debouncing and interest-based subscriptions exist to control."
+  },
+  "out_of_scope": [
+   "Typing indicators and read receipts.",
+   "Message delivery and storage.",
+   "Voice and video call signalling.",
+   "Analytics of user activity patterns."
+  ]
+ },
+ "hld": {
+  "overview": "Clients keep one WebSocket to a gateway node; the gateway handles pings and reports connect, disconnect and activity changes to the presence service shard that owns the user. The presence service keeps soft state with leases, aggregates devices, applies privacy, debounces, and publishes transitions to a pub/sub bus keyed by user. Gateways subscribe on behalf of their clients to the users those clients are watching and push deltas. Last seen goes to a durable store. Large channels get counts, not per-member streams.",
+  "diagram": "  Phone / Desktop clients\n      |  WebSocket (ping 30 s)\n  [Gateway nodes x400] -- local map: watched_user -> [connections]\n      |  connect/disconnect/activity         ^  presence deltas\n      v                                      |\n  [Presence service, sharded by user_id]     |\n   in-memory: user -> devices, leases,       |\n   aggregate, privacy, debounce timers       |\n      |  publish transition                  |\n      v                                      |\n  [Pub/Sub bus: channel presence:{uid}] -----+  (Redis pub/sub or NATS)\n      |\n      +--> [Last seen store: Cassandra/DynamoDB]\n      +--> [Channel online counter service] --> counts every 30 s\n\n  Shard routing: consistent hash ring of presence nodes in a coordination\n  service (etcd/ZooKeeper); gateways cache the ring.\n",
+  "components": [
+   {
+    "name": "WebSocket gateway",
+    "responsibility": "Terminates connections, answers pings, detects disconnects, reports device events, holds local subscription map and pushes deltas."
+   },
+   {
+    "name": "Presence service",
+    "responsibility": "Owns per-user soft state for its shard: device leases, aggregate state, debounce timers, privacy enforcement, versioning, publishing transitions."
+   },
+   {
+    "name": "Pub/Sub bus",
+    "responsibility": "Routes transitions from presence shards to the gateways that have subscribers for that user."
+   },
+   {
+    "name": "Subscription manager (in gateway)",
+    "responsibility": "Tracks which local connections watch which users, subscribes and unsubscribes to bus channels with reference counting."
+   },
+   {
+    "name": "Last seen store",
+    "responsibility": "Durable record of last offline time per user, read when a user is offline."
+   },
+   {
+    "name": "Privacy settings service",
+    "responsibility": "Stores visibility settings and block lists, cached in the presence service."
+   },
+   {
+    "name": "Channel counter service",
+    "responsibility": "Computes approximate online member counts for large channels periodically."
+   },
+   {
+    "name": "Ring coordinator",
+    "responsibility": "Maintains the consistent hash ring of presence nodes and handles membership changes."
+   }
+  ],
+  "flows": [
+   {
+    "name": "User comes online",
+    "steps": [
+     "App opens and connects WebSocket to a gateway; gateway authenticates and sends DeviceConnected(user, device, gateway_id) to the owner presence shard.",
+     "Presence shard creates or renews the device lease (TTL 60 s) and recomputes the aggregate.",
+     "If aggregate changed from offline and the user is not hiding, start a 2 s online debounce; if still connected after 2 s, bump version and publish {uid, state: online, v}.",
+     "Bus delivers to gateways subscribed to presence:{uid}; each gateway pushes to its local watching connections.",
+     "Clients drop updates with version lower than what they already hold."
+    ]
+   },
+   {
+    "name": "Unclean disconnect (phone loses signal)",
+    "steps": [
+     "Gateway misses pings or the TCP connection resets; it sends DeviceDisconnected(unclean) to the presence shard.",
+     "Presence shard marks the device as grace and starts an offline debounce of 20 s.",
+     "If the device reconnects within 20 s (any gateway), the lease is renewed and no transition is published.",
+     "Otherwise the aggregate becomes offline, last seen is written, version bumped, and offline published."
+    ]
+   },
+   {
+    "name": "Opening a chat list (snapshot + subscribe)",
+    "steps": [
+     "Client sends Subscribe([uids on screen]) to its gateway.",
+     "Gateway subscribes to bus channels it is not yet subscribed to (reference counted) and requests a batched snapshot from presence shards.",
+     "Presence shards return state, version and permitted last seen for each uid after privacy checks.",
+     "Gateway sends the snapshot; subsequent changes arrive as deltas. On scroll away, client unsubscribes."
+    ]
+   }
+  ],
+  "data_flow": "Liveness flows from the client to the gateway as pings and stays there. Device events flow from gateways to presence shards. Transitions flow from presence shards to the bus, then to subscribed gateways, then to watching clients. Last seen flows from presence shards to the durable store and back on snapshot reads. Privacy settings flow from the settings service into presence shard caches."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "WS",
+    "path": "client -> gateway: {op: 'subscribe', uids: [..]} / {op: 'unsubscribe', uids: [..]}",
+    "request": "Up to 500 uids per connection",
+    "response": "{op: 'snapshot', items: [{uid, state, v, last_seen?}]}",
+    "notes": "Gateway enforces cap and rate limits subscribe churn."
+   },
+   {
+    "method": "WS",
+    "path": "gateway -> client: {op: 'presence', uid, state, v, ts}",
+    "request": "push",
+    "response": "none",
+    "notes": "Clients ignore v lower than current; updates may be batched per second under load."
+   },
+   {
+    "method": "WS",
+    "path": "client -> gateway: {op: 'activity', state: active|idle}",
+    "request": "Sent on change only (idle after 10 min no input)",
+    "response": "none",
+    "notes": "Desktop and foreground mobile only."
+   },
+   {
+    "method": "RPC",
+    "path": "PresenceService.DeviceEvent",
+    "request": "{uid, device_id, gateway_id, event: connect|disconnect_clean|disconnect_unclean|activity, conn_epoch}",
+    "response": "{ok}",
+    "notes": "conn_epoch prevents a late disconnect from an old connection overriding a new one."
+   },
+   {
+    "method": "RPC",
+    "path": "PresenceService.BatchGet",
+    "request": "{viewer_uid, uids: [..]}",
+    "response": "{items: [{uid, state, v, last_seen?}]}",
+    "notes": "Applies privacy relative to the viewer."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/me/presence-settings",
+    "request": "{last_seen: everyone|contacts|nobody, appear_offline: bool, dnd_until}",
+    "response": "{settings}",
+    "notes": "Changes publish a transition immediately."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "UserPresence (soft state)",
+    "store": "Presence service memory",
+    "fields": [
+     "uid",
+     "devices: map device_id -> {gateway_id, conn_epoch, state, lease_expiry}",
+     "aggregate_state",
+     "version (monotonic int)",
+     "pending_timer"
+    ],
+    "keys": "Owned by shard = ring(uid); not persisted",
+    "notes": "Rebuilt from gateway re-registration after shard failover."
+   },
+   {
+    "entity": "LastSeen",
+    "store": "Cassandra / DynamoDB",
+    "fields": [
+     "uid",
+     "last_seen_ts"
+    ],
+    "keys": "PK uid",
+    "notes": "Written only on transition to offline; about 15k writes/s."
+   },
+   {
+    "entity": "PresenceSettings",
+    "store": "Postgres (source) + cache in presence shards",
+    "fields": [
+     "uid",
+     "last_seen_visibility",
+     "appear_offline",
+     "dnd_until",
+     "custom_status",
+     "status_expiry"
+    ],
+    "keys": "PK uid",
+    "notes": "Cached with invalidation on change."
+   },
+   {
+    "entity": "GatewaySubscriptions",
+    "store": "Gateway memory",
+    "fields": [
+     "watched_uid -> set(connection_id)",
+     "connection_id -> set(watched_uid)"
+    ],
+    "keys": "Local per gateway node",
+    "notes": "Reference counts drive bus subscribe/unsubscribe."
+   }
+  ],
+  "classes": [
+   {
+    "name": "PresenceShard",
+    "responsibility": "Holds UserPresence for owned users, processes device events, timers and publishes.",
+    "methods": [
+     "on_device_event(evt)",
+     "aggregate(user) -> state",
+     "schedule(user, delay, action)",
+     "publish(user)",
+     "batch_get(viewer, uids)"
+    ]
+   },
+   {
+    "name": "LeaseManager",
+    "responsibility": "Tracks device lease expiries using a hierarchical timing wheel for millions of timers.",
+    "methods": [
+     "renew(device, ttl)",
+     "expire_tick()",
+     "on_expire(callback)"
+    ]
+   },
+   {
+    "name": "PrivacyFilter",
+    "responsibility": "Decides what a viewer may see about a target.",
+    "methods": [
+     "visible_state(viewer, target, state) -> state",
+     "visible_last_seen(viewer, target) -> ts|None"
+    ]
+   },
+   {
+    "name": "GatewaySubscriptionManager",
+    "responsibility": "Ref-counted bus subscriptions and local fan-out, with per-connection batching.",
+    "methods": [
+     "subscribe(conn, uids)",
+     "unsubscribe(conn, uids)",
+     "on_bus_message(msg)",
+     "flush_batches()"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Aggregate state with debounce and versioning",
+    "explain": "Device events update per-device state. The aggregate is the most active device state. Transitions to online are delayed 2 s and to offline 20 s; if the aggregate reverts before the timer fires, nothing is published. A per-user monotonic version lets clients discard reordered updates.",
+    "pseudocode": "RANK = {'active': 3, 'idle': 2, 'dnd': 2, 'offline': 0}\ndef on_device_event(u, dev, evt, epoch):\n    d = u.devices.get(dev)\n    if d and epoch < d.epoch: return          # stale event from old conn\n    apply(u, dev, evt, epoch)\n    new = max((x.state for x in live(u.devices)), key=RANK.get, default='offline')\n    if new == u.published: cancel(u.timer); return\n    delay = 2 if new != 'offline' else 20\n    u.timer = schedule(delay, lambda: commit(u, new))\ndef commit(u, new):\n    if aggregate(u) != new: return\n    u.version += 1; u.published = new\n    if new == 'offline': last_seen.write(u.uid, now())\n    if not settings(u).appear_offline: bus.publish(f'presence:{u.uid}', (new, u.version))"
+   },
+   {
+    "name": "Lease expiry with a timing wheel",
+    "explain": "Millions of leases need timers. A hashed timing wheel with 1 s slots gives O(1) insert and cancel; each tick expires the leases in one slot. Renewals move the lease to a later slot. This is how one node can manage tens of millions of timers cheaply, the same idea LinkedIn used with lightweight actors.",
+    "pseudocode": "wheel = [set() for _ in range(64)]   # 1 s slots\ndef renew(dev, ttl):\n    wheel[dev.slot].discard(dev)\n    dev.expiry = now() + ttl\n    dev.slot = int(dev.expiry) % 64; wheel[dev.slot].add(dev)\ndef tick():\n    for dev in list(wheel[int(now()) % 64]):\n        if dev.expiry <= now(): on_device_event(dev.user, dev.id, 'disconnect_unclean', dev.epoch)"
+   },
+   {
+    "name": "Gateway fan-out with ref-counted subscriptions and batching",
+    "explain": "A gateway subscribes once per watched uid regardless of how many local connections watch it. Incoming deltas are queued per connection and flushed every 250 ms (1 s under load), so a client gets at most a few frames per second even if hundreds of contacts change.",
+    "pseudocode": "def subscribe(conn, uids):\n    for uid in uids[:CAP - len(conn.watching)]:\n        if not watchers[uid]: bus.subscribe(f'presence:{uid}')\n        watchers[uid].add(conn); conn.watching.add(uid)\ndef on_bus_message(uid, state, v):\n    for conn in watchers[uid]: conn.pending[uid] = (state, v)  # keep latest only\ndef flush():  # every 250 ms\n    for conn in dirty: conn.send({'op': 'presence_batch', 'items': conn.pending}); conn.pending = {}"
+   }
+  ],
+  "sequence": "Alice phone   Gateway A     Presence shard(Alice)   Pub/Sub    Gateway B    Bob\n    | connect WS |                  |                   |           |          |\n    |----------->| DeviceEvent(connect, epoch=7)        |           |          |\n    |            |----------------->| lease 60 s        |           |          |\n    |            |                  | debounce 2 s      |           |          |\n    |            |                  | v=42 online       |           |          |\n    |            |                  |-- publish ------->|           |          |\n    |            |                  |                   |---------->| batch    |\n    |            |                  |                   |           |--------->|\n    |  ... tunnel, TCP reset ...    |                   |           |          |\n    |            |-- disconnect --->| grace 20 s        |           |          |\n    | reconnect via Gateway C (epoch=8) within 12 s     |           |          |\n    |            |                  | renew, no publish |           |          |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Phone drops off Wi-Fi to 4G and reconnects in 5 s.",
+   "handling": "Offline debounce of 20 s means no transition is published; watchers see continuous online."
+  },
+  {
+   "case": "Late disconnect from the old connection arrives after the new connection registered.",
+   "handling": "Each connection has a conn_epoch; events with an older epoch are ignored."
+  },
+  {
+   "case": "Gateway node crashes, dropping 125k connections without clean disconnects.",
+   "handling": "Presence shards notice gateway heartbeat loss and start grace timers; clients reconnect with jittered backoff to other nodes and renew; only those who do not return within 20-60 s go offline."
+  },
+  {
+   "case": "Presence shard fails and its in-memory state is lost.",
+   "handling": "Ring moves ownership; gateways re-register all connected devices for affected users; state rebuilds in seconds; brief unknown state on clients rather than false offline."
+  },
+  {
+   "case": "User online on desktop (idle) and phone (active).",
+   "handling": "Aggregate is the most active state: active; when phone backgrounds, aggregate becomes idle, not offline."
+  },
+  {
+   "case": "User with appear-offline set connects.",
+   "handling": "Privacy filter suppresses publishes and returns offline with stale last seen; checks happen in the presence service, never on the client."
+  },
+  {
+   "case": "Celebrity or support agent watched by 2M users.",
+   "handling": "Cap subscribers per uid; above a threshold, switch to pull-on-view with a cached state refreshed every 30 s, or disable presence for that account."
+  },
+  {
+   "case": "Updates arrive out of order through different bus paths.",
+   "handling": "Per-user monotonic version; clients and gateways drop lower versions."
+  },
+  {
+   "case": "100k-member channel where everyone wants presence of everyone.",
+   "handling": "No per-member fan-out; show online count computed every 30 s and fetch presence only for the 50 members on screen."
+  },
+  {
+   "case": "iOS app suspended in background so heartbeats stop but user is not really gone.",
+   "handling": "Treat background as offline after grace; messages still delivered by push notification; last seen reflects true last foreground time."
+  },
+  {
+   "case": "Clock skew between presence shards writing last seen.",
+   "handling": "Last seen uses the shard's own clock only for its owned users; small skew is acceptable since it is shown with minute precision."
+  },
+  {
+   "case": "Scraper subscribes to thousands of non-contacts to track their routines.",
+   "handling": "Subscriptions limited to contacts and visible channel members, capped at 500 per connection, rate-limited, and anomaly detection on subscribe churn."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "WebSocket gateways (Go, Erlang/Elixir)",
+   "layer": "Connection edge",
+   "overview": "Long-lived bidirectional connections; Erlang/Elixir runtimes handle millions of lightweight processes per node, as Discord does with a process per session.",
+   "why": "Liveness detection at the edge and low-latency push, reusing the chat connection.",
+   "alternatives": "MQTT brokers (efficient on mobile, used by Facebook Messenger), long polling (fallback for restrictive networks), Server-Sent Events (one-way only)."
+  },
+  {
+   "name": "Presence service in Go or Elixir",
+   "layer": "Stateful service",
+   "overview": "In-memory sharded service owning per-user soft state and timers.",
+   "why": "Presence is soft state with timers; in-memory is fastest, and losing it is recoverable from gateways.",
+   "alternatives": "Redis with keyspace notifications for expiry (simpler, but expiry events are not timely or reliable at scale), Akka actors on the JVM (LinkedIn's approach)."
+  },
+  {
+   "name": "Redis Pub/Sub or NATS",
+   "layer": "Fan-out bus",
+   "overview": "Lightweight publish-subscribe messaging with subject-based routing and no persistence.",
+   "why": "Presence deltas are ephemeral; missing one is repaired by the next snapshot, so at-most-once delivery with low latency is right.",
+   "alternatives": "Kafka (durable but higher latency and costly for millions of tiny topics), direct gateway-to-gateway RPC with a routing table (fewer hops, more complexity)."
+  },
+  {
+   "name": "etcd or ZooKeeper",
+   "layer": "Coordination",
+   "overview": "Consensus-based stores for membership and configuration.",
+   "why": "Holds the consistent hash ring of presence nodes and gateway liveness so everyone agrees on shard ownership.",
+   "alternatives": "Gossip membership (Serf/SWIM, no central store but eventual agreement), static configuration (simple but no auto-failover)."
+  },
+  {
+   "name": "Cassandra or DynamoDB",
+   "layer": "Last seen store",
+   "overview": "Partitioned, highly available wide-column or key-value stores.",
+   "why": "Simple key-value writes at tens of thousands per second, multi-region replication.",
+   "alternatives": "Redis with AOF (cheaper but less durable), Postgres (fine at smaller scale)."
+  },
+  {
+   "name": "APNs / FCM",
+   "layer": "Mobile push",
+   "overview": "OS push notification services.",
+   "why": "When a user is offline per presence, messaging falls back to push notifications.",
+   "alternatives": "None practical on iOS; on Android, persistent sockets drain battery."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Heartbeats, leases and failure detection",
+   "explain": "In a distributed system you cannot directly know that a remote process has died; you can only notice that it has stopped talking. Heartbeats are periodic messages that say I am alive. A lease is a time-bounded grant: the holder is considered alive until the lease expires unless it renews. Together they turn the question is it alive into has it renewed within T. The choice of T is a trade-off: short intervals detect failure fast but cost bandwidth, battery and processing, and they produce false positives on slow networks; long intervals are cheap but slow to notice. Detectors can be timeout based (declare dead after k missed heartbeats) or adaptive, such as the phi accrual detector used by Cassandra and Akka, which outputs a suspicion level based on the observed distribution of inter-arrival times. Clean shutdowns should send an explicit goodbye so detection is instant, leaving timeouts for crashes and network loss. Leases also need a grace margin over the heartbeat interval to tolerate jitter, which is why LinkedIn sets its presence entry to expire after d plus epsilon and fires the offline timer at d plus 2 epsilon.",
+   "in_this_design": "The WebSocket ping every 30 s is the heartbeat, handled at the gateway. The presence service holds a 60 s lease per device, renewed by gateway events. Clean logouts publish offline in about 2 s; unclean losses rely on TCP reset or missed pings plus a 20 s grace.",
+   "key_points": [
+    "You only ever detect silence, not death.",
+    "A lease is alive-until-expiry unless renewed.",
+    "Interval trades detection speed against cost and false positives.",
+    "Explicit goodbye for clean exits; timeouts for crashes.",
+    "Lease TTL must exceed the heartbeat interval plus jitter margin."
+   ],
+   "qa": [
+    {
+     "q": "Why not heartbeat every 2 seconds for faster offline detection?",
+     "a": "50M connections x 0.5/s is 25M messages per second, plus battery drain on phones and more false offline on flaky networks. Users tolerate a slower offline signal much better than flicker; online is still instant because connect is explicit."
+    },
+    {
+     "q": "What is a phi accrual detector?",
+     "a": "Instead of a fixed timeout it tracks the distribution of heartbeat gaps and outputs a suspicion value phi; you pick a threshold. It adapts to networks with variable latency, reducing false positives compared with a fixed timeout."
+    },
+    {
+     "q": "Why does the presence service need a lease if the gateway already tracks the connection?",
+     "a": "If the gateway itself dies, nobody sends a disconnect. The lease ensures the presence service eventually marks those users offline even when the reporter is gone."
+    }
+   ]
+  },
+  {
+   "name": "Publish-subscribe fan-out and interest management",
+   "explain": "Publish-subscribe decouples producers from consumers: publishers send a message to a topic, and the broker delivers it to every subscriber of that topic. The cost of a message is proportional to the number of subscribers, so fan-out is where pub/sub systems spend their resources. Two levers control fan-out. First, topic granularity: a topic per user lets subscribers pick exactly the users they care about, while a topic per group forces everyone in the group to receive every member's updates. Second, interest management: subscribe only to what the consumer can currently use, such as what is visible on screen, and unsubscribe when it is not. This is borrowed from multiplayer games, where a client only receives updates for entities near it. Multi-level fan-out reduces the work at each hop: the bus delivers once per gateway node, and each node delivers to its local connections, so the bus does not need to know about individual connections. Delivery semantics matter too: for ephemeral state, at-most-once with periodic resync is cheaper than durable queues.",
+   "in_this_design": "Each user has a topic presence:{uid}. Gateways subscribe once per watched uid with reference counting and fan out locally, so the bus does one delivery per gateway rather than per connection. Clients subscribe only to the about 100 users visible on screen, capped at 500.",
+   "key_points": [
+    "Fan-out cost scales with subscribers per message.",
+    "Per-user topics let watchers choose precisely.",
+    "Subscribe only to what is on screen (interest management).",
+    "Two-level fan-out: bus to gateway, gateway to connections.",
+    "Ephemeral data can use at-most-once delivery plus resync."
+   ],
+   "qa": [
+    {
+     "q": "Why not push every contact's presence to every user all the time?",
+     "a": "With 200 contacts and 35k transitions per second on average, that is about 7M pushes per second, most to users not looking. Interest-based subscriptions cut it to the roughly 20 watchers who actually have the user on screen."
+    },
+    {
+     "q": "Why does the gateway subscribe rather than each connection?",
+     "a": "If 300 connections on one gateway watch the same user, the bus would deliver 300 copies. Gateway-level ref-counted subscriptions deliver one and fan out in memory."
+    },
+    {
+     "q": "What if a pub/sub message is lost?",
+     "a": "The client shows a stale state until the next change. Clients resync with a snapshot on reconnect and when a screen opens, and versions let them detect gaps if needed."
+    }
+   ]
+  },
+  {
+   "name": "Consistent hashing and sharded in-memory state ownership",
+   "explain": "Stateful services need a rule for which node owns which piece of state, so that every event for a user goes to the same place. Consistent hashing provides such a rule: nodes are placed at many points on a hash ring, and a key belongs to the first node clockwise from its hash. When a node joins or leaves, only the keys between it and its neighbour move, about 1/N of the total, instead of nearly all keys as with modulo hashing. Virtual nodes give each physical node many points so load is even. The ring membership itself must be agreed on, usually via a consensus store such as etcd or ZooKeeper, or via gossip with eventual agreement. During a membership change there is a window where two nodes may both think they own a key, so systems use epochs or fencing: messages carry the ring version, and a node rejects work for keys it no longer owns. For soft state, recovery after an owner dies is a rebuild from the sources of truth rather than a replica promotion, which keeps the design simple.",
+   "in_this_design": "Presence shards are assigned users by a consistent hash ring stored in etcd; gateways cache the ring and route device events by uid. When a shard dies, its users move to neighbours, and gateways re-send DeviceConnected for affected users so state is rebuilt within seconds.",
+   "key_points": [
+    "Consistent hashing gives sticky ownership with minimal movement.",
+    "Virtual nodes even out load.",
+    "Ring membership needs agreement: consensus or gossip.",
+    "Fence ownership changes with ring versions or epochs.",
+    "Soft state can be rebuilt from sources instead of replicated."
+   ],
+   "qa": [
+    {
+     "q": "Why not replicate presence state to a standby?",
+     "a": "The truth lives in the gateways' connections. Rebuilding from them takes seconds and avoids replication cost and split-brain issues on 100k writes per second of fast-changing state."
+    },
+    {
+     "q": "What happens to events in flight during a ring change?",
+     "a": "They may hit the old owner, which rejects them with the new ring version; the gateway retries to the new owner. Epochs on device events prevent stale ones from overriding newer state."
+    },
+    {
+     "q": "Could you route by gateway instead of by user?",
+     "a": "Then a user's multiple devices on different gateways would be owned by different nodes and aggregation would need cross-node coordination. Routing by user puts all devices of a user on one shard."
+    }
+   ]
+  },
+  {
+   "name": "Debouncing, hysteresis and flap suppression",
+   "explain": "Signals from unreliable sources oscillate. A mobile user moving between cell towers may disconnect and reconnect several times a minute, and naively each change becomes an event. Debouncing delays acting on a change until the signal has been stable for some time; if it reverts within that window, nothing happens. Hysteresis uses different thresholds for entering and leaving a state, so small fluctuations around one threshold do not cause repeated switching. Both reduce noise at the cost of latency. The asymmetry matters: users notice a missing online dot less than flicker, and they want online to be fast because it invites a message, while offline being a bit late is harmless. So systems use a short delay to go online and a longer grace to go offline. The same idea appears in load shedding (fast to shed, slow to restore), in autoscaling cooldowns and in circuit breakers. Flap suppression also protects the backend: every suppressed flap saves the full fan-out to all watchers.",
+   "in_this_design": "Going online waits 2 s (so a quick app open and close does not notify everyone) and going offline waits 20 s after an unclean disconnect. Reconnection within the grace keeps the user online with no publish. Idle requires 10 minutes without input on desktop.",
+   "key_points": [
+    "Debounce acts only after a change is stable.",
+    "Hysteresis uses different enter and exit thresholds.",
+    "Fast online, slow offline matches what users care about.",
+    "Every suppressed flap saves a full fan-out.",
+    "The price is detection latency; state the numbers explicitly."
+   ],
+   "qa": [
+    {
+     "q": "Why delay online by 2 seconds at all?",
+     "a": "Many app opens are a glance at a notification lasting a second or two. Without the delay each glance would fan out online and then offline to all watchers, doubling noise for no user value."
+    },
+    {
+     "q": "How did LinkedIn handle mobile jitter?",
+     "a": "If a member reconnects within the heartbeat interval and the next heartbeat arrives, they stay online. The offline trigger only fires after d plus 2 epsilon with no heartbeat, which avoids flapping."
+    },
+    {
+     "q": "Can debouncing cause a wrong final state?",
+     "a": "Not if the commit step re-checks the current aggregate when the timer fires and only publishes if it still differs from the last published state."
+    }
+   ]
+  },
+  {
+   "name": "Eventual consistency with per-key ordering (versions and epochs)",
+   "explain": "Eventual consistency means that if updates stop, all replicas and observers converge to the same value, but at any moment they may disagree. For many user-facing signals this is fine as long as two anomalies are prevented: going backwards (seeing an older value after a newer one) and stale writers overriding fresh ones. Monotonic version numbers per key solve the first: the single owner of a key increments a counter on each change, and readers ignore any update whose version is lower than what they hold. Connection epochs or fencing tokens solve the second: each new connection or lease gets a higher epoch, and the owner rejects events tagged with an older epoch. This avoids needing global clocks, which are unreliable because of skew. Because there is a single owner per key, a simple counter suffices; with multiple writers you would need vector clocks or a CRDT to merge concurrent updates. Under CAP, presence chooses availability: during a partition each side keeps showing its best guess.",
+   "in_this_design": "Each user's presence shard is the single writer and increments version on every published transition; gateways and clients drop lower versions. Device events carry conn_epoch so a late disconnect from an old connection cannot override a new connect. During partitions presence may be stale but messaging is unaffected.",
+   "key_points": [
+    "Eventual consistency is fine if we prevent going backwards.",
+    "Single owner plus monotonic version gives per-key ordering.",
+    "Epochs or fencing tokens stop stale writers.",
+    "Avoid wall-clock ordering across machines.",
+    "Multiple writers would need vector clocks or CRDTs."
+   ],
+   "qa": [
+    {
+     "q": "Why not order updates by timestamp?",
+     "a": "Clocks on different machines drift by milliseconds to seconds, so a later event can carry an earlier timestamp. A counter maintained by a single owner is always correct."
+    },
+    {
+     "q": "What does conn_epoch protect against?",
+     "a": "The old gateway may report a disconnect after the user has already reconnected elsewhere. Without epochs that late disconnect would mark the user offline incorrectly."
+    },
+    {
+     "q": "Is presence CP or AP?",
+     "a": "AP. During a partition we prefer to show a possibly stale dot rather than no presence or blocking. Nothing critical depends on presence being exact."
+    }
+   ]
+  },
+  {
+   "name": "Backpressure and update coalescing for real-time streams",
+   "explain": "Backpressure is how a system copes when producers generate data faster than consumers can handle it. Without it, buffers grow until memory runs out or latency explodes. The options are to block the producer, to drop data, to buffer with limits, or to aggregate. For state streams, where only the latest value matters, coalescing is ideal: keep only the latest update per key in a buffer and flush periodically, so ten rapid changes become one message. This bounds the message rate per consumer regardless of input rate. Slow consumers, such as a phone on 2G, need per-connection send buffers with limits; when a buffer is full, the server can drop intermediate states and send a fresh snapshot later, or disconnect the client to protect the node. Priorities help too: under load, send online and offline changes but skip idle and active nuances. Contrast this with event streams such as chat messages, where every item matters and cannot be coalesced.",
+   "in_this_design": "Gateways keep a per-connection pending map uid -> latest state and flush every 250 ms, or every 1 s under load. Slow connections with full buffers get their pending map replaced by a later snapshot. Under overload, idle and active changes are suppressed and only online and offline are sent.",
+   "key_points": [
+    "Presence is state, so only the latest value per key matters.",
+    "Coalesce per key and flush on a timer to bound message rate.",
+    "Bound per-connection buffers; resync slow clients with a snapshot.",
+    "Drop low-value nuance first under load.",
+    "Never coalesce event streams like messages; only state streams."
+   ],
+   "qa": [
+    {
+     "q": "A user on a slow connection has 200 contacts flipping during a reconnect storm. What happens?",
+     "a": "Updates accumulate in a map keyed by uid, so at most 200 entries regardless of how many flips occurred. Flush sends one batch; if the socket is still backed up, the next flush replaces stale entries."
+    },
+    {
+     "q": "Why not use a durable queue per client?",
+     "a": "Intermediate presence states are worthless once newer ones exist. A durable queue would store and deliver obsolete data and cost memory, while a snapshot on reconnect is exact."
+    },
+    {
+     "q": "What is the trade-off of the 250 ms flush interval?",
+     "a": "Adds up to 250 ms latency but caps a client at 4 frames per second and lets many changes share one frame, cutting syscall and packet overhead on the gateway."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Push vs pull",
+   "options": "Clients poll presence; server pushes changes",
+   "choice": "Push transitions, pull a snapshot when a screen opens",
+   "why": "Polling 200 contacts every 30 s is over 300M lookups per second; push sends only changes to active watchers."
+  },
+  {
+   "decision": "Heartbeat location",
+   "options": "Clients call a presence API; gateway pings on the existing socket",
+   "choice": "Gateway pings on the socket",
+   "why": "Absorbs 1.7M heartbeats per second at the edge; presence service sees only transitions."
+  },
+  {
+   "decision": "Offline detection speed",
+   "options": "5 s timeout; 20-60 s grace",
+   "choice": "20 s grace after unclean disconnect, lease 60 s",
+   "why": "Avoids flapping on mobile and reduces fan-out; offline is less time sensitive than online."
+  },
+  {
+   "decision": "Fan-out bus",
+   "options": "Kafka; Redis Pub/Sub or NATS; direct RPC",
+   "choice": "Redis Pub/Sub or NATS",
+   "why": "Ephemeral, low-latency, at-most-once fits; durability is unnecessary because snapshots repair gaps."
+  },
+  {
+   "decision": "Large channels",
+   "options": "Per-member presence fan-out; online counts plus on-screen lookups",
+   "choice": "Counts plus on-screen lookups",
+   "why": "Per-member fan-out in a 100k channel is O(n squared) and useless to users."
+  },
+  {
+   "decision": "State durability",
+   "options": "Persist all presence; in-memory soft state with persisted last seen",
+   "choice": "Soft state plus last seen",
+   "why": "Presence is derived from connections and can be rebuilt; persisting every change would cost about 100k writes/s for no benefit."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Gateway node crash",
+   "behavior": "Its clients reconnect elsewhere within seconds with jitter; presence leases bridge the gap; users who do not reconnect go offline after grace."
+  },
+  {
+   "failure": "Presence shard crash",
+   "behavior": "Ring reassigns users; gateways re-register devices; clients see brief unknown or stale states, then correct within seconds."
+  },
+  {
+   "failure": "Pub/Sub cluster degraded",
+   "behavior": "Deltas lost or delayed; clients still get snapshots on screen open and reconnect; presence appears stale, messaging unaffected."
+  },
+  {
+   "failure": "Mass reconnect after a regional network blip",
+   "behavior": "Reconnect jitter spreads load; debounce suppresses offline then online for most users; gateways coalesce bursts."
+  },
+  {
+   "failure": "Last seen store slow",
+   "behavior": "Writes buffered and retried asynchronously; snapshot reads fall back to in-memory last seen from the shard or omit it."
+  },
+  {
+   "failure": "Privacy settings cache stale",
+   "behavior": "Settings changes invalidate caches and publish immediately; on cache miss the presence service fails closed (shows offline) for hidden-capable fields."
+  }
+ ],
+ "metrics": [
+  "Online propagation latency p50/p95 (connect to watcher receive).",
+  "Offline detection latency for clean and unclean disconnects.",
+  "Flap rate: transitions reverted within 30 s, before and after debounce.",
+  "Transitions per second and fan-out pushes per second per gateway.",
+  "Subscriptions per connection and bus subscriptions per gateway.",
+  "Presence accuracy audit: sampled presence versus actual connection state.",
+  "Reconnect rate and time to reconnect after gateway failure.",
+  "Per-connection buffer overflows and snapshot resyncs."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you add typing indicators?",
+   "a": "Same transport and per-conversation topic, but even more ephemeral: send typing start with a 5 s TTL, refresh while typing, never persist, and only to participants with the conversation open. Coalesce and drop freely under load."
+  },
+  {
+   "q": "How does this work across regions?",
+   "a": "Users are homed in a region; presence shards for them live there. A watcher in another region subscribes through a cross-region bus bridge that forwards only topics with remote subscribers. Expect 100-200 ms extra latency, which is fine."
+  },
+  {
+   "q": "How do you show presence for a 100k-member channel?",
+   "a": "Show an approximate online count computed every 30 s from shard counters, and fetch presence only for the members visible on screen. Never fan out each member's changes to every member."
+  },
+  {
+   "q": "Why not store presence in Redis with TTL keys and keyspace notifications?",
+   "a": "It works at small scale, but Redis expiry notifications fire only when keys are accessed or sampled, so offline detection can lag unpredictably, and notifications are fire-and-forget. A purpose-built shard with a timing wheel is precise and cheaper at 50M users."
+  },
+  {
+   "q": "What if a user has 5,000 contacts?",
+   "a": "We still only subscribe to those on screen, so fan-in to a client is bounded. On the publishing side, their transitions reach only watchers currently viewing them, so a large contact list does not mean large fan-out."
+  },
+  {
+   "q": "How would you test this?",
+   "a": "Load tests with simulated clients that flap realistically, chaos tests killing gateways and shards, and an accuracy auditor comparing sampled presence with actual connection state continuously in production."
+  }
+ ],
+ "key_points": [
+  "Presence is soft state: derive it from live connections and leases; persist only last seen.",
+  "The socket ping is the heartbeat and stays at the gateway; only transitions reach the presence service.",
+  "Shard presence by user id with consistent hashing so all of a user's devices aggregate in one place.",
+  "Fan-out is the bottleneck: about 100k transitions/s x 20 watchers = 2M pushes/s at peak.",
+  "Subscribe only to users on screen; gateways ref-count bus subscriptions and fan out locally.",
+  "Fast online (2 s), slow offline (20-60 s) to suppress mobile flapping.",
+  "Monotonic versions per user and connection epochs prevent going backwards and stale overrides.",
+  "Large channels get counts, not per-member presence.",
+  "Coalesce per watcher and flush every 250 ms; resync slow clients with snapshots.",
+  "Privacy is enforced server-side in one place before any publish or read."
+ ],
+ "quiz": [
+  {
+   "q": "Why should WebSocket pings be handled at the gateway rather than forwarded to the presence service?",
+   "options": [
+    "The presence service cannot parse WebSocket frames",
+    "Pings are about 1.7M per second and carry no state change; only transitions need central processing",
+    "Pings must be encrypted differently",
+    "Forwarding pings improves accuracy significantly"
+   ],
+   "answer": 1,
+   "why": "Absorbing heartbeats at the edge cuts central load by orders of magnitude. Forwarding them adds little accuracy because the gateway already knows the connection state."
+  },
+  {
+   "q": "A phone loses signal in a tunnel for 8 seconds. With a 20 s offline grace, what do watchers see?",
+   "options": [
+    "The user stays online throughout",
+    "Offline for 8 s, then online",
+    "Offline until the next heartbeat after 30 s",
+    "An error state"
+   ],
+   "answer": 0,
+   "why": "The device reconnects within the grace window, so no transition is published. Showing the 8 s gap is exactly the flapping the grace prevents."
+  },
+  {
+   "q": "Roughly how many presence pushes per second at peak with 100k transitions/s and 20 watching subscribers each?",
+   "options": [
+    "About 200k",
+    "About 20M",
+    "About 2M",
+    "About 100k"
+   ],
+   "answer": 2,
+   "why": "100k x 20 = 2M. 20M would assume all 200 contacts watch, ignoring interest-based subscriptions."
+  },
+  {
+   "q": "Why do device events carry a connection epoch?",
+   "options": [
+    "To encrypt the event",
+    "To order events by wall-clock time",
+    "To choose the presence shard",
+    "So a late disconnect from an old connection cannot mark a reconnected user offline"
+   ],
+   "answer": 3,
+   "why": "Epochs fence stale writers. Wall-clock ordering is unreliable across machines, which is why an epoch is used instead."
+  },
+  {
+   "q": "A user is idle on desktop and active on phone. What aggregate state is shown?",
+   "options": [
+    "Active",
+    "Idle",
+    "Offline",
+    "Whichever device connected last"
+   ],
+   "answer": 0,
+   "why": "The aggregate is the most active device state. Last-connected-wins would show idle if the desktop reconnected later, which misrepresents the user."
+  },
+  {
+   "q": "Why does the gateway subscribe to presence:{uid} once rather than once per watching connection?",
+   "options": [
+    "Pub/sub systems allow only one subscriber per topic",
+    "The bus then delivers one copy per gateway, and the gateway fans out in memory",
+    "It keeps connections stateless",
+    "It makes delivery exactly-once"
+   ],
+   "answer": 1,
+   "why": "Two-level fan-out removes redundant copies over the network. Pub/sub topics support many subscribers, so the first distractor is false."
+  },
+  {
+   "q": "Which delivery semantic fits presence deltas?",
+   "options": [
+    "Exactly-once with durable queues per client",
+    "At-least-once with persistent retries for 24 h",
+    "At-most-once with snapshot resync on reconnect or screen open",
+    "Synchronous acknowledgement from every watcher"
+   ],
+   "answer": 2,
+   "why": "Old presence states are worthless once newer ones exist, so durability adds cost without value. Snapshots repair any gaps."
+  },
+  {
+   "q": "How should presence work in a 100k-member channel?",
+   "options": [
+    "Fan out every member's change to every member",
+    "Poll all 100k members every 30 s",
+    "Disable the channel's messaging during peaks",
+    "Show an approximate online count and fetch presence only for members on screen"
+   ],
+   "answer": 3,
+   "why": "Per-member fan-out is quadratic. Polling 100k members is also enormous; interest-based lookups bound the cost."
+  },
+  {
+   "q": "Why go online after a 2 s delay but offline after a 20 s grace?",
+   "options": [
+    "Users value fast online and stable status; quick glances and brief drops should not cause fan-out",
+    "Online events are cheaper to send",
+    "Offline requires a database write that takes 20 s",
+    "Clients cannot render changes faster than 2 s"
+   ],
+   "answer": 0,
+   "why": "The asymmetry is about user value and flap suppression. The last-seen write is fast, so 20 s is not a technical constraint."
+  },
+  {
+   "q": "A presence shard crashes and loses its memory. How is state recovered?",
+   "options": [
+    "Restore from the last nightly backup",
+    "Promote a synchronous replica holding identical state",
+    "The ring reassigns its users and gateways re-register connected devices, rebuilding state in seconds",
+    "Mark all its users offline permanently until they log in again"
+   ],
+   "answer": 2,
+   "why": "Connections are the source of truth, so rebuilding is cheap. Replicas would work but add cost for state that is quickly reconstructible."
+  },
+  {
+   "q": "Why is ordering presence updates by timestamp risky?",
+   "options": [
+    "Timestamps are too large to send",
+    "Clock skew across machines can make a later event carry an earlier timestamp",
+    "Clients cannot parse timestamps",
+    "Timestamps reveal private data"
+   ],
+   "answer": 1,
+   "why": "A per-user version maintained by a single owner gives correct ordering without trusting clocks."
+  },
+  {
+   "q": "Polling 200 contacts every 30 s for 50M online users causes roughly how many lookups per second?",
+   "options": [
+    "About 3.3M",
+    "About 33M",
+    "About 3.3B",
+    "About 333M"
+   ],
+   "answer": 3,
+   "why": "50M x 200 / 30 = 333M per second, which is why push with interest-based subscriptions wins."
+  },
+  {
+   "q": "Why not rely on Redis key expiry notifications to detect offline users at scale?",
+   "options": [
+    "Expiry events fire when keys are accessed or sampled, so timing is unpredictable, and notifications are fire-and-forget",
+    "Redis cannot store user ids",
+    "Redis TTLs max out at 1 second",
+    "Keyspace notifications require Kafka"
+   ],
+   "answer": 0,
+   "why": "Redis expires lazily or by sampling, so offline detection could lag. TTLs can be long, so the second distractor is wrong."
+  },
+  {
+   "q": "A user enables appear-offline. Where must this be enforced?",
+   "options": [
+    "In each client's UI rendering",
+    "In the CDN",
+    "In the presence service before any publish or snapshot read",
+    "Only in the last seen store"
+   ],
+   "answer": 2,
+   "why": "Server-side enforcement prevents leaks through any channel. Client-side hiding would still send the real state over the wire."
+  },
+  {
+   "q": "Under heavy load a gateway has many updates queued for a slow client. Best strategy?",
+   "options": [
+    "Queue every update durably and deliver in order",
+    "Keep only the latest state per uid and flush periodically, resyncing with a snapshot if still behind",
+    "Drop the client's subscriptions permanently",
+    "Block the presence service until the client catches up"
+   ],
+   "answer": 1,
+   "why": "Coalescing bounds memory and rate. Blocking the presence service would let one slow client degrade everyone."
+  },
+  {
+   "q": "What does a lease add beyond the gateway's knowledge of the connection?",
+   "options": [
+    "It encrypts presence",
+    "It makes presence strongly consistent",
+    "It removes the need for heartbeats",
+    "It ensures users are eventually marked offline even if the gateway itself dies without reporting"
+   ],
+   "answer": 3,
+   "why": "If the reporter dies, only lease expiry catches it. Leases still depend on renewals, so heartbeats remain necessary."
+  },
+  {
+   "q": "Why shard presence by user id rather than by gateway?",
+   "options": [
+    "All of a user's devices then aggregate on one shard without cross-node coordination",
+    "Gateways cannot be hashed",
+    "It reduces WebSocket count",
+    "It keeps the bus topic count at one"
+   ],
+   "answer": 0,
+   "why": "Devices on different gateways would otherwise be owned by different nodes, making aggregation a distributed problem."
+  },
+  {
+   "q": "What is the main cost of the 250 ms gateway flush interval?",
+   "options": [
+    "Loss of all updates during the interval",
+    "Doubling bus traffic",
+    "Up to 250 ms added latency, in exchange for far fewer frames per client",
+    "Higher server memory for durable queues"
+   ],
+   "answer": 2,
+   "why": "Updates are held, not lost, and the latest per uid is sent. The latency is tiny compared with the 2 s target."
+  },
+  {
+   "q": "Which component holds the consistent hash ring that maps users to presence shards?",
+   "options": [
+    "Each client device",
+    "A coordination store such as etcd, cached by gateways",
+    "The last seen database",
+    "The CDN configuration"
+   ],
+   "answer": 1,
+   "why": "A consensus store gives an agreed ring version; gateways cache it for routing."
+  },
+  {
+   "q": "After a regional network blip, 5M clients reconnect within seconds. What prevents a fan-out storm?",
+   "options": [
+    "Durable queues on the bus",
+    "Disabling snapshots",
+    "Synchronous replication of presence shards",
+    "Reconnect jitter plus offline grace, so most users never publish offline or online"
+   ],
+   "answer": 3,
+   "why": "If clients return within the grace, nothing is published. Jitter spreads the reconnect load itself."
+  },
+  {
+   "q": "Is presence typically designed as CP or AP?",
+   "options": [
+    "AP: show a possibly stale state rather than block during partitions",
+    "CP: block reads until all replicas agree",
+    "CA: partitions are assumed impossible",
+    "Neither: presence is not distributed"
+   ],
+   "answer": 0,
+   "why": "Nothing critical depends on exact presence, so availability wins. CA is not a meaningful choice in a networked system."
+  }
+ ],
+ "references": [
+  {
+   "title": "LinkedIn: Now You See Me, Now You Don't, LinkedIn's Real-Time Presence Platform",
+   "url": "https://engineering.linkedin.com/blog/2018/01/now-you-see-me--now-you-dont--linkedins-real-time-presence-platf"
+  },
+  {
+   "title": "Discord: How Discord scaled Elixir to 5,000,000 concurrent users",
+   "url": "https://discord.com/blog/how-discord-scaled-elixir-to-5-000-000-concurrent-users"
+  },
+  {
+   "title": "Elixir blog: Real time communication at scale with Elixir at Discord",
+   "url": "https://elixir-lang.org/blog/2020/10/08/real-time-communication-at-scale-with-elixir-at-discord/"
+  },
+  {
+   "title": "System Design One: Real-time presence platform system design",
+   "url": "https://systemdesign.one/real-time-presence-platform-system-design/"
+  }
+ ]
+}

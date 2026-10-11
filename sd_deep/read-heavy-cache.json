@@ -1,0 +1,1145 @@
+{
+ "slug": "read-heavy-cache",
+ "title": "Design a caching strategy for a read-heavy API (product catalog scale)",
+ "prompt": "Design a caching strategy for a read-heavy API.",
+ "group": "caching",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "A read-heavy API (think product detail or catalog reads at 100:1 read/write) is cheap to serve only if almost every request is answered from memory. The core tension is hit ratio versus freshness: longer TTLs and more layers protect the database but serve staler data, and every cache layer adds failure modes of its own - stampedes on expiry, hot keys that melt one shard, and a cold cache after a restart that can take the database down. The senior answer is a layered cache-aside design with explicit staleness budgets, stampede protection and a plan for when the cache itself fails.",
+ "framework": {
+  "clarify": [
+   "What is the read:write ratio and peak read QPS? Assume 100:1, 500k reads/s at peak (sale event), 5k writes/s.",
+   "How stale can a response be, per field? Assume title/images/specs can be 60s stale; price and stock must be under 5s stale or verified at checkout.",
+   "Is the response per-user (personalised) or shared? Assume the base product payload is shared; personalisation is merged later from a separate call.",
+   "What is the working set? Assume 50M products, but 2M (4%) receive 90% of traffic - Zipf-like skew.",
+   "Latency target? Assume p99 under 50ms at the API, p50 under 5ms for a cache hit.",
+   "What does the source of truth look like and what can it take? Assume sharded MySQL that can sustain about 30k QPS of point reads before p99 degrades.",
+   "Are there sudden spikes (flash sale at 12:00, push notification) that hit one key? Assume yes - single products can see 50k QPS within seconds.",
+   "Do we own the clients (app) so we can use HTTP caching headers and a CDN for anonymous traffic? Assume yes."
+  ],
+  "design": [
+   "Baseline: API servers read MySQL directly, then add cache-aside on Redis with a TTL and show why that alone fails at 500k QPS (hot keys, stampedes, cold start).",
+   "Layer 1 - edge: CDN / HTTP caching for anonymous, non-personalised GETs with Cache-Control: max-age=30, stale-while-revalidate=60 and ETags for cheap revalidation.",
+   "Layer 2 - in-process near cache (Caffeine/W-TinyLFU) of about 50k entries per pod with a 5-10s TTL to absorb hot keys without any network hop.",
+   "Layer 3 - distributed cache (Redis Cluster, 16384 hash slots, 1 primary + 1 replica per shard) as the shared cache-aside store with TTL 10 min plus jitter, versioned keys.",
+   "Layer 4 - source of truth (MySQL primary + read replicas); cache misses go through a single-flight loader so one miss per key per pod reaches the DB.",
+   "Write path: update DB, then delete the Redis key (not set) and publish an invalidation event; CDC (binlog) consumer re-deletes as a safety net and bumps L1 via pub/sub.",
+   "Critical read path: CDN -> API pod L1 -> Redis -> (single-flight) -> replica -> populate Redis with TTL jitter -> populate L1 -> respond with ETag."
+  ],
+  "defend": [
+   "Bottleneck: hot keys concentrate on one Redis shard (one key lives in one slot). Fix with the L1 near cache, plus key replication (key#0..key#7 suffixes) for the top 1000 keys detected by a heavy-hitter sketch.",
+   "Scale reads: add Redis replicas for read fan-out, add shards (resharding moves slots), and push more traffic to the CDN; each layer should cut traffic to the next by 10x or more.",
+   "Scale writes / invalidations: invalidations are deletes keyed by id, so they shard naturally; batch L1 invalidation broadcasts and rate-limit CDN purges.",
+   "Failure: Redis timeouts at 20ms with a circuit breaker; on open circuit serve from L1 or stale copy and shed low-priority traffic rather than pass 500k QPS to MySQL. DB access behind a bulkhead (bounded pool, 200 connections per pod group).",
+   "Stampede: single-flight per key, probabilistic early refresh (XFetch) before TTL, and serve-stale-while-revalidate so expiry never causes a synchronous herd.",
+   "Measure: hit ratio per layer, origin QPS, p99 per layer, eviction rate, hot-key top-K, stale-serve count, invalidation lag (DB commit to cache delete) p99."
+  ],
+  "script": "Let me start by pinning down the shape of the traffic. I'll assume a catalog-style API at about 500k reads per second at peak and 5k writes, a 100 to 1 ratio, with a Zipf skew where 4 percent of items take 90 percent of reads. The key question is freshness: I'll assume descriptive fields can be a minute stale, but price and stock need to be within a few seconds or verified at checkout. Given that, my baseline is cache-aside on Redis in front of MySQL, but on its own that breaks in three ways - hot keys, stampedes on expiry and a cold start - so I'll design four layers: CDN for anonymous traffic, an in-process near cache for hot keys, Redis Cluster as the shared cache, and the database behind a single-flight loader. Writes go to the database and then delete the cache key, with a CDC consumer as a safety net. Then I'll defend it: what happens when one product gets 50k QPS, when Redis is slow or down, and which numbers - hit ratio per layer, origin QPS and invalidation lag - I'd put on the dashboard."
+ },
+ "brd": {
+  "problem": "Product and catalog reads dominate traffic and spike 10-20x during sale events. Serving them from the database makes p99 latency unpredictable, forces expensive over-provisioning of database replicas, and risks a full outage when a flash sale concentrates traffic on a handful of items. The business needs fast, cheap, resilient reads without customers seeing wrong prices or stock.",
+  "goals": [
+   "Serve 95%+ of reads without touching the database, sustaining 500k QPS at peak.",
+   "Keep API p99 under 50ms and p50 under 5ms on cache hits, including during sale spikes.",
+   "Bound staleness explicitly per field class (descriptive 60s, price/stock 5s or verified).",
+   "Reduce database read capacity (and cost) by at least 5x versus a no-cache baseline.",
+   "Survive the loss of a cache node or a full cache flush without a database outage."
+  ],
+  "non_goals": [
+   "Caching personalised responses (recommendations, user-specific pricing) in the shared cache.",
+   "Making the cache a source of truth or a durable store.",
+   "Strong read-after-write consistency for every reader globally (only the writer gets it).",
+   "Caching write responses or checkout flows."
+  ],
+  "stakeholders": [
+   {
+    "who": "Customers",
+    "needs": "Fast pages and correct price/stock when they add to cart."
+   },
+   {
+    "who": "Catalog / seller teams",
+    "needs": "Edits (price, images, descriptions) become visible within a predictable time."
+   },
+   {
+    "who": "Platform / SRE",
+    "needs": "A cache tier that degrades gracefully and has clear runbooks for flush, warm-up and hot keys."
+   },
+   {
+    "who": "Finance",
+    "needs": "Lower database and egress spend per million requests."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Combined hit ratio (CDN + L1 + Redis)",
+    "target": ">= 97% at peak"
+   },
+   {
+    "metric": "Origin (DB) read QPS at peak",
+    "target": "< 15k QPS (half of safe DB capacity)"
+   },
+   {
+    "metric": "API p99 latency",
+    "target": "< 50ms"
+   },
+   {
+    "metric": "Invalidation lag p99 (commit to cache delete)",
+    "target": "< 2s"
+   },
+   {
+    "metric": "Price mismatch at checkout",
+    "target": "< 0.01% of orders"
+   }
+  ],
+  "constraints": [
+   "Existing source of truth is sharded MySQL; we cannot change the write path radically.",
+   "Redis memory is expensive; budget about 1.5 TB of RAM across the cluster.",
+   "Must work across 2 availability zones in one region; a second region is read-only DR.",
+   "Mobile clients on flaky networks; payload sizes should stay small (gzip, field projection)."
+  ],
+  "risks": [
+   {
+    "risk": "Cache stampede when a hot key expires during a sale.",
+    "mitigation": "Single-flight, early probabilistic refresh, stale-while-revalidate."
+   },
+   {
+    "risk": "Customers see an old price.",
+    "mitigation": "Short TTL for price, delete-on-write, and authoritative price check at add-to-cart and checkout."
+   },
+   {
+    "risk": "Cache cluster loss causes DB meltdown.",
+    "mitigation": "Circuit breaker, load shedding, warm-up from a snapshot, rate-limited refill."
+   },
+   {
+    "risk": "Hot key saturates one Redis shard.",
+    "mitigation": "L1 near cache plus hot-key replication with random suffix reads."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Shopper on mobile",
+    "needs": "Product page loads in under a second on 4G, even during a sale."
+   },
+   {
+    "name": "Seller updating price",
+    "needs": "New price visible to shoppers within seconds, not minutes."
+   },
+   {
+    "name": "On-call SRE",
+    "needs": "Dashboards that show which layer is failing and levers to shed or warm."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want the product page to load instantly so that I keep browsing.",
+   "As a shopper, I want the price I see to be the price I pay so that I trust the platform.",
+   "As a seller, I want my price change to show up within 5 seconds so that my promotion starts on time.",
+   "As an SRE, I want to flush or warm the cache safely so that a bad deploy does not take down the database.",
+   "As an SRE, I want to see the top hot keys in real time so that I can act before a shard saturates.",
+   "As a product engineer, I want a cache library with sane defaults so that I do not reinvent stampede protection.",
+   "As a finance owner, I want DB read capacity to stay flat as traffic grows so that cost scales sublinearly."
+  ],
+  "functional": [
+   "GET /products/{id} returns the product payload served from the fastest layer that holds a fresh-enough copy.",
+   "Batch GET /products?ids= uses multi-get (MGET) per shard and fills misses with one DB query per shard.",
+   "Writes invalidate the affected keys in Redis and broadcast L1 invalidation to all API pods.",
+   "Responses carry ETag and Cache-Control so clients and the CDN can revalidate with 304s.",
+   "Negative caching: a not-found id is cached for 30s to stop repeated misses from hitting the DB.",
+   "Admin APIs to purge a key, purge by tag (e.g. a brand), and pre-warm a list of keys before a sale.",
+   "Hot-key detection publishes the top-K keys every 5s; the client library replicates those keys."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "p50 < 5ms, p99 < 50ms at API; Redis GET p99 < 2ms"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for reads; reads continue (possibly stale) when Redis is down"
+   },
+   {
+    "name": "Freshness",
+    "target": "Descriptive fields <= 60s stale; price/stock <= 5s stale p99"
+   },
+   {
+    "name": "Throughput",
+    "target": "500k reads/s at peak with 30% headroom"
+   },
+   {
+    "name": "Origin protection",
+    "target": "DB read QPS < 15k even on full cache flush (rate-limited refill)"
+   },
+   {
+    "name": "Durability",
+    "target": "Not required for cache; losing it must never lose data"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "50M products; average serialized payload 4 KB (compressed about 1.5 KB).",
+    "Peak 500k reads/s, 5k writes/s; Zipf skew: top 2M items take 90% of reads.",
+    "CDN can absorb about 40% of reads (anonymous, logged-out browsing).",
+    "L1 near cache hit ratio about 50% of what reaches pods; Redis hit ratio about 95% of what reaches it.",
+    "Redis node: about 100k ops/s comfortably per primary, 64 GB usable memory."
+   ],
+   "math": [
+    "Reads reaching pods = 500k * 0.6 = 300k/s.",
+    "Reads reaching Redis = 300k * 0.5 = 150k/s -> 2 shards minimum by ops; we size 12 shards for memory and headroom.",
+    "Reads reaching DB = 150k * 0.05 = 7.5k/s (well under 30k safe capacity).",
+    "Redis memory for hot set: 2M items * 1.5 KB = 3 GB; caching 20M items = 30 GB; with overhead (x1.5) about 45 GB, plus replicas = 90 GB.",
+    "L1 memory per pod: 50k entries * 4 KB = 200 MB heap - acceptable.",
+    "Bandwidth from Redis: 150k/s * 1.5 KB = 225 MB/s = 1.8 Gbps across the cluster.",
+    "Cold-start risk: with no cache, 300k/s would hit a DB rated for 30k/s - 10x overload, so refill must be throttled."
+   ],
+   "summary": "Layering turns 500k QPS into about 7.5k DB QPS. A 12-shard Redis Cluster with one replica each fits the working set in under 100 GB with headroom; the dangerous number is the 10x overload on a cold cache, which drives the warm-up and load-shedding design."
+  },
+  "out_of_scope": [
+   "Search results caching (different key space and invalidation model).",
+   "Personalised recommendation caching.",
+   "Multi-region active-active writes.",
+   "Inventory reservation logic at checkout."
+  ]
+ },
+ "hld": {
+  "overview": "Four layers, each cutting traffic to the next by about 10x: CDN for shared anonymous GETs, an in-process near cache per API pod for hot keys, Redis Cluster as the shared cache-aside store, and MySQL behind a single-flight loader and a bulkhead. Writes go to MySQL; the writer deletes the Redis key and publishes an invalidation; a CDC consumer tailing the binlog re-issues deletes as a safety net and fans out L1 invalidations. A hot-key detector feeds the client library so the top keys are replicated.",
+  "diagram": "  Mobile/Web clients\n        |  Cache-Control, ETag\n        v\n  +-----------+   miss    +--------------------------------------+\n  |    CDN    |---------->|   API pods (N)                       |\n  | (anon GET)|           |  [L1 near cache W-TinyLFU, TTL 5-10s]|\n  +-----------+           |  [single-flight loader per key]      |\n                          +-----+------------------+-------------+\n                                | GET/MGET         | miss (bulkhead)\n                                v                  v\n                     +-------------------+   +-------------------+\n                     | Redis Cluster     |   | MySQL replicas    |\n                     | 12 shards x (P+R) |   | (read)            |\n                     +---------+---------+   +---------+---------+\n                               ^ DEL                   ^ repl\n  Writers --> Catalog svc --> MySQL primary ---binlog--+\n                 |                 |\n                 | DEL key         v\n                 +-------->  CDC consumer --> Kafka 'invalidations'\n                                                  |\n                     L1 pub/sub fan-out <---------+---> CDN purge (rate-limited)\n  Hot-key detector (Count-Min + top-K) <-- sampled GETs; publishes top keys every 5s\n",
+  "components": [
+   {
+    "name": "CDN",
+    "responsibility": "Caches anonymous, non-personalised GET responses by URL; honours max-age and stale-while-revalidate; revalidates with ETag."
+   },
+   {
+    "name": "API pod with L1 near cache",
+    "responsibility": "In-process W-TinyLFU cache (Caffeine) with short TTL; absorbs hot keys with zero network hops."
+   },
+   {
+    "name": "Cache client library",
+    "responsibility": "Cache-aside logic, versioned keys, TTL jitter, single-flight, XFetch early refresh, circuit breaker, hot-key replication."
+   },
+   {
+    "name": "Redis Cluster",
+    "responsibility": "Shared distributed cache; 16384 hash slots over 12 primaries with one replica each; allkeys-lfu eviction."
+   },
+   {
+    "name": "MySQL (primary + replicas)",
+    "responsibility": "Source of truth; replicas serve cache-miss reads behind a bounded connection pool."
+   },
+   {
+    "name": "CDC consumer",
+    "responsibility": "Tails the binlog (Debezium), emits invalidation events to Kafka, re-deletes Redis keys, triggers L1 fan-out and CDN purge."
+   },
+   {
+    "name": "Hot-key detector",
+    "responsibility": "Samples GETs, maintains a Count-Min Sketch plus heap for top-K, publishes the hot list for replication."
+   },
+   {
+    "name": "Warm-up job",
+    "responsibility": "Pre-loads top-N keys before sales and after a flush, at a rate limit the DB can sustain."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Read (cache hit at Redis)",
+    "steps": [
+     "Client sends GET /products/42 with If-None-Match.",
+     "CDN misses (logged-in request) and forwards to an API pod.",
+     "Pod checks L1: miss.",
+     "Client library computes key 'p:v3:42' and GETs from Redis (timeout 20ms).",
+     "Hit: payload stored into L1 with 5s TTL, ETag computed from version, response 200 or 304."
+    ]
+   },
+   {
+    "name": "Read (miss with stampede protection)",
+    "steps": [
+     "L1 and Redis miss for key p:v3:42.",
+     "Single-flight: first goroutine/thread becomes the loader; concurrent callers on the same pod wait on its future.",
+     "Across pods: loader does SET p:v3:42:lock NX PX 3000; losers briefly poll or serve stale copy if present.",
+     "Loader reads MySQL replica through the bulkhead pool.",
+     "Loader SETs the value with TTL 600s + random(0..60s), releases lock, completes the future."
+    ]
+   },
+   {
+    "name": "Write and invalidate",
+    "steps": [
+     "Seller updates price; Catalog service commits the row (version 18) to MySQL primary.",
+     "Service deletes p:v3:42 in Redis and publishes {id:42, ver:18} to the invalidation topic.",
+     "CDC consumer sees the binlog event, re-deletes the key after 500ms (delayed double delete) to beat the stale-set race.",
+     "All API pods receive the L1 invalidation via pub/sub and evict id 42.",
+     "CDN purge for /products/42 is enqueued, batched and rate-limited."
+    ]
+   },
+   {
+    "name": "Redis outage",
+    "steps": [
+     "Redis GET timeouts exceed threshold; circuit breaker opens for 10s.",
+     "Pods serve from L1 (and stale-on-error L1 entries up to 5 min old).",
+     "Misses go to DB only through the bulkhead; excess requests get a degraded response or 503 with Retry-After.",
+     "Breaker half-opens, probes, closes; warm-up job refills hot keys at a capped rate."
+    ]
+   }
+  ],
+  "data_flow": "Reads flow outward-in: client -> CDN -> L1 -> Redis -> DB, and values flow back, populating each layer with its own TTL (CDN 30s, L1 5-10s, Redis 10min + jitter). Writes flow only to MySQL; invalidations flow from the writer and the binlog through Kafka to Redis deletes, L1 evictions and CDN purges. Telemetry (sampled keys, hit/miss counters) flows to the hot-key detector and metrics pipeline."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/products/{id}",
+    "request": "Headers: If-None-Match: \"v18\"; query fields=title,price,images",
+    "response": "200 {id, title, price, stock_band, images, version} with ETag \"v18\", Cache-Control: public, max-age=30, stale-while-revalidate=60; or 304",
+    "notes": "Price shown is advisory; authoritative price checked at add-to-cart."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/products?ids=1,2,3",
+    "request": "Up to 50 ids",
+    "response": "200 {items:[...], missing:[...]}",
+    "notes": "Client library groups ids by hash slot and issues one MGET per shard; misses filled by one IN query per DB shard."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/products/{id}",
+    "request": "{price, title, ..., expected_version}",
+    "response": "200 {version: 19}",
+    "notes": "Optimistic concurrency; on commit deletes cache key and publishes invalidation."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/cache/purge",
+    "request": "{keys:[...]} or {tag:'brand:nike'}",
+    "response": "202 {job_id}",
+    "notes": "Rate-limited; tag purge resolves tags to ids via a tag index."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/cache/warm",
+    "request": "{ids:[...], rate_per_sec: 2000}",
+    "response": "202 {job_id}",
+    "notes": "Pre-warm before sales; respects DB rate cap."
+   },
+   {
+    "method": "GET",
+    "path": "/internal/cache/hotkeys",
+    "request": "?top=100",
+    "response": "200 [{key, est_qps}]",
+    "notes": "From Count-Min Sketch + heap."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Product cache entry",
+    "store": "Redis Cluster",
+    "fields": [
+     "key p:v3:{id}",
+     "value: compressed protobuf payload",
+     "embedded version and soft_expiry timestamp"
+    ],
+    "keys": "p:v3:{id}; hash slot = CRC16(key) mod 16384",
+    "notes": "Schema version in key (v3) so a payload format change is a cheap namespace switch, no mass delete."
+   },
+   {
+    "entity": "Loader lock",
+    "store": "Redis Cluster",
+    "fields": [
+     "key p:v3:{id}:lock",
+     "value: owner token"
+    ],
+    "keys": "SET NX PX 3000",
+    "notes": "Hash tag {id} keeps lock and value in the same slot."
+   },
+   {
+    "entity": "Negative entry",
+    "store": "Redis Cluster",
+    "fields": [
+     "key p:v3:{id}",
+     "value: NULL marker"
+    ],
+    "keys": "TTL 30s",
+    "notes": "Stops repeated misses for non-existent ids (scrapers, deleted products)."
+   },
+   {
+    "entity": "Product row",
+    "store": "MySQL",
+    "fields": [
+     "id",
+     "title",
+     "price",
+     "stock",
+     "attributes JSON",
+     "version",
+     "updated_at"
+    ],
+    "keys": "PK id; sharded by id",
+    "notes": "version increments on every update; used for ETag and stale-set guards."
+   },
+   {
+    "entity": "Invalidation event",
+    "store": "Kafka topic invalidations (48 partitions)",
+    "fields": [
+     "entity",
+     "id",
+     "version",
+     "ts"
+    ],
+    "keys": "partition by id",
+    "notes": "Per-id ordering; consumers idempotent because delete is idempotent."
+   }
+  ],
+  "classes": [
+   {
+    "name": "CacheClient",
+    "responsibility": "Facade implementing cache-aside across L1 and Redis.",
+    "methods": [
+     "get(id) -> Product",
+     "mget(ids) -> map",
+     "invalidate(id, version)",
+     "put(id, product, ttl)"
+    ]
+   },
+   {
+    "name": "SingleFlight",
+    "responsibility": "Dedupe concurrent loads of the same key in-process.",
+    "methods": [
+     "do(key, loaderFn) -> Future"
+    ]
+   },
+   {
+    "name": "EarlyRefreshPolicy",
+    "responsibility": "XFetch: decide probabilistically to refresh before expiry.",
+    "methods": [
+     "shouldRefresh(entry, now) -> bool"
+    ]
+   },
+   {
+    "name": "CircuitBreaker",
+    "responsibility": "Track Redis errors/timeouts and short-circuit when unhealthy.",
+    "methods": [
+     "allow() -> bool",
+     "recordSuccess()",
+     "recordFailure()"
+    ]
+   },
+   {
+    "name": "HotKeyTracker",
+    "responsibility": "Count-Min Sketch + min-heap to estimate top-K keys.",
+    "methods": [
+     "observe(key)",
+     "topK(k) -> list"
+    ]
+   },
+   {
+    "name": "InvalidationConsumer",
+    "responsibility": "Consume CDC events, delete Redis keys (with delayed second delete), fan out L1 eviction.",
+    "methods": [
+     "onEvent(evt)",
+     "scheduleSecondDelete(key, delayMs)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Cache-aside get with single-flight and jittered TTL",
+    "explain": "Check L1, then Redis; on miss dedupe loads, read DB, write back with jitter so keys loaded together do not expire together.",
+    "pseudocode": "def get(id):\n  k = f'p:v3:{id}'\n  v = L1.get(k)\n  if v and not v.expired(): return v\n  if breaker.allow():\n    try:\n      v = redis.get(k, timeout=20ms); breaker.ok()\n      if v: L1.put(k, v, ttl=5s); maybe_early_refresh(k, v); return v\n    except Timeout: breaker.fail()\n  return singleflight.do(k, lambda: load(id, k))\n\ndef load(id, k):\n  if not redis.set(k+':lock', token, nx=True, px=3000):\n    stale = L1.get_stale(k)\n    if stale: return stale\n    sleep(20ms); return redis.get(k) or db_read(id)\n  row = bulkhead.run(lambda: db.read_replica(id))\n  ttl = 600 + random(0, 60)\n  redis.set(k, row or NULL_MARKER, ex = ttl if row else 30)\n  redis.del_if_owner(k+':lock', token)\n  L1.put(k, row, ttl=5s); return row\n"
+   },
+   {
+    "name": "XFetch probabilistic early expiration",
+    "explain": "Each reader refreshes early with probability rising as expiry nears; delta is the measured recompute time and beta (about 1.0) tunes eagerness. Spreads refreshes so one reader recomputes before the key actually expires.",
+    "pseudocode": "def maybe_early_refresh(k, entry):\n  # entry.delta = seconds the last recompute took\n  now = time()\n  if now - entry.delta * BETA * log(random()) >= entry.expiry:\n    async_refresh(k)   # background, guarded by single-flight\n"
+   },
+   {
+    "name": "Hot-key replication",
+    "explain": "Keys in the published top-K list are written to R replicas (k#0..k#R-1) spread over slots; readers pick a random suffix, dividing load by R. Invalidation deletes all R copies.",
+    "pseudocode": "R = 8\ndef read_hot(k):\n  return redis.get(f'{k}#{randint(0, R-1)}')\ndef write_hot(k, v, ttl):\n  pipeline([SET(f'{k}#{i}', v, ex=ttl) for i in range(R)])\ndef invalidate_hot(k):\n  pipeline([DEL(f'{k}#{i}') for i in range(R)])\n"
+   }
+  ],
+  "sequence": "Client      CDN        API pod (L1)      Redis           MySQL replica\n  |  GET /p/42 |              |              |                 |\n  |----------->| miss         |              |                 |\n  |            |------------->| L1 miss      |                 |\n  |            |              |--GET p:v3:42>|                 |\n  |            |              |<--- nil -----|                 |\n  |            |              |--SET lock NX>|                 |\n  |            |              |<---- OK -----|                 |\n  |            |              |------ SELECT ... WHERE id=42 ->|\n  |            |              |<------------- row v18 ---------|\n  |            |              |--SET p:v3:42 EX 600+j -------->|\n  |            |              |--DEL lock -->|                 |\n  |            |<-- 200 ETag v18, max-age=30 |                 |\n  |<-- 200 ----| (CDN stores if public)      |                 |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Hot key expiry during a flash sale (thundering herd).",
+   "handling": "Single-flight in-process, Redis lock across pods, XFetch early refresh, and stale-while-revalidate so callers get the old value while one loader refreshes."
+  },
+  {
+   "case": "Stale set race: reader loads v17 from a lagging replica, writer commits v18 and deletes, reader then SETs v17.",
+   "handling": "Delayed double delete from the CDC consumer (500ms), plus version-guarded SET via Lua (only set if incoming version >= stored) and short TTL as the final bound."
+  },
+  {
+   "case": "Replica lag makes the writer read its own old value right after update.",
+   "handling": "Read-your-writes for the writer: route that session's reads to primary for 2s after a write, or return the written payload directly."
+  },
+  {
+   "case": "Cache penetration: scraper requests millions of non-existent ids.",
+   "handling": "Negative caching with 30s TTL, Bloom filter of valid ids in front of DB, and per-client rate limiting."
+  },
+  {
+   "case": "Full Redis flush or cluster restart (cold cache).",
+   "handling": "Circuit breaker plus admission control: only N DB loads/s per pod, warm-up job loads top 2M keys from a snapshot at a capped rate, shed or degrade the rest."
+  },
+  {
+   "case": "Single hot key exceeds one shard's capacity (one product at 200k QPS).",
+   "handling": "L1 near cache absorbs most; hot-key replication across 8 slots; CDN for anonymous traffic."
+  },
+  {
+   "case": "Big values (product with 300 variants, 500 KB payload) block Redis single thread.",
+   "handling": "Cap value size (e.g. 100 KB), split into sub-keys (core vs variants), compress, and alert on big keys."
+  },
+  {
+   "case": "Synchronized expiry after a bulk warm-up (all keys loaded at 11:55 expire at 12:05).",
+   "handling": "TTL jitter of +-10%, plus early refresh."
+  },
+  {
+   "case": "Invalidation event lost or consumer lagging.",
+   "handling": "TTL bounds the damage; consumer lag alert; CDC re-reads binlog from committed offset; periodic reconciler samples keys and compares versions."
+  },
+  {
+   "case": "Network partition between one AZ's pods and Redis primary.",
+   "handling": "Timeouts plus breaker; read from replica in local AZ if allowed; L1 stale-on-error."
+  },
+  {
+   "case": "Schema change in payload format during a rolling deploy.",
+   "handling": "Version namespace in key (p:v3 -> p:v4); old and new pods use separate keys; no mass delete required."
+  },
+  {
+   "case": "Price change during an active checkout.",
+   "handling": "Cache is advisory; add-to-cart and checkout read authoritative price from the pricing service with no cache."
+  },
+  {
+   "case": "L1 inconsistency across pods (pod A has new value, pod B old).",
+   "handling": "Short L1 TTL (5s), pub/sub eviction, and ETag versions so a client never moves backwards if we check version monotonicity per session."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Redis Cluster",
+   "layer": "Distributed cache",
+   "overview": "In-memory key-value store; cluster mode shards keys over 16384 hash slots with async primary-replica replication.",
+   "why": "Sub-millisecond GET, rich ops (SET NX PX for locks, Lua for version-guarded sets, MGET), mature tooling and LFU eviction.",
+   "alternatives": "Memcached: simpler, multithreaded, great for pure GET/SET but no replication or Lua; KeyDB/Dragonfly: multithreaded Redis-compatible with less operational history."
+  },
+  {
+   "name": "Caffeine (W-TinyLFU)",
+   "layer": "In-process near cache",
+   "overview": "JVM cache library using a window LRU plus a TinyLFU admission filter (frequency sketch) to keep popular items.",
+   "why": "Near-optimal hit ratio for skewed workloads, async refresh-after-write, no network hop - ideal for hot keys.",
+   "alternatives": "Guava cache (older LRU, lower hit ratio); Ehcache (heavier, supports off-heap); per-language equivalents like ristretto in Go."
+  },
+  {
+   "name": "CDN (Akamai / CloudFront / Fastly)",
+   "layer": "Edge cache",
+   "overview": "Geographically distributed HTTP caches honouring Cache-Control, ETag and surrogate keys.",
+   "why": "Removes 30-50% of anonymous reads before they reach the region; stale-while-revalidate hides origin latency.",
+   "alternatives": "No CDN (simpler, but all traffic hits pods); self-run Varnish tier (more control, more ops)."
+  },
+  {
+   "name": "MySQL with read replicas",
+   "layer": "Source of truth",
+   "overview": "Relational store; async replication to replicas for read scale.",
+   "why": "Existing system of record; replicas handle cache-miss reads.",
+   "alternatives": "Aurora (faster replicas, lower lag); a document store like DynamoDB with DAX (managed read-through cache)."
+  },
+  {
+   "name": "Debezium + Kafka",
+   "layer": "Change data capture / invalidation bus",
+   "overview": "Debezium reads the MySQL binlog and publishes row changes to Kafka topics, preserving per-key order.",
+   "why": "Catches every write including ones that bypass the service (batch jobs, manual fixes), so invalidation is not dependent on every writer remembering to delete.",
+   "alternatives": "Application-level publish (simple but misses out-of-band writes); Maxwell; DB triggers (couples DB to cache)."
+  },
+  {
+   "name": "Resilience4j / Envoy",
+   "layer": "Resilience",
+   "overview": "Libraries/proxies for timeouts, retries with jitter, circuit breakers and bulkheads.",
+   "why": "Keeps a slow Redis or DB from exhausting threads and cascading.",
+   "alternatives": "Hystrix (in maintenance mode); service mesh policies in Istio."
+  },
+  {
+   "name": "Prometheus + Grafana",
+   "layer": "Observability",
+   "overview": "Pull-based metrics and dashboards.",
+   "why": "Per-layer hit ratio, latency histograms, evictions and lag alerts.",
+   "alternatives": "Datadog (managed, costlier); OpenTelemetry pipelines to any backend."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Caching patterns: cache-aside, read-through, write-through, write-behind",
+   "explain": "A cache is a faster, smaller copy of data whose authoritative home is elsewhere. The pattern decides who loads the cache and who keeps it in sync. In cache-aside (lazy loading), the application checks the cache, and on a miss reads the database and populates the cache itself; on writes it updates the database and deletes (or updates) the cache entry. It is the most common pattern because the cache can fail without breaking correctness and only requested data is cached. Read-through moves the loading logic into the cache layer (a library or a managed product like DAX) so callers just call get. Write-through writes to the cache and the database synchronously on every write, keeping the cache warm and consistent for that key but adding write latency and caching data nobody may read. Write-behind (write-back) acknowledges after writing to the cache and flushes to the database asynchronously, giving very fast writes but risking data loss if the cache dies before flushing. Refresh-ahead proactively reloads entries that are about to expire. The critical subtlety in cache-aside is delete versus set on write: deleting is preferred because two concurrent writers that each SET can leave the older value in cache if their SETs land out of order, whereas a delete is idempotent and the next reader loads the current value. Even delete-on-write has a known race with a slow reader, which is why TTLs remain the ultimate safety net.",
+   "in_this_design": "Cache-aside at both L1 and Redis via the CacheClient library (a read-through facade for callers). Writes go to MySQL then delete the Redis key; CDC provides a second delete. Write-through and write-behind are rejected because writes are rare and the DB must remain the source of truth for prices.",
+   "key_points": [
+    "Cache-aside: app owns load and invalidation; cache failure degrades latency, not correctness.",
+    "Delete on write, do not set - deletes are idempotent and order-insensitive.",
+    "Write-behind trades durability for write latency; never for money or stock.",
+    "TTL is the backstop that bounds every invalidation bug.",
+    "Read-through is cache-aside with the logic moved into the cache layer."
+   ],
+   "qa": [
+    {
+     "q": "Why delete the cache key on write instead of updating it?",
+     "a": "Two writers can commit v1 then v2 to the DB but their cache SETs can arrive v2 then v1, leaving v1 cached until TTL. A delete has no ordering problem: whichever arrives, the next reader loads the latest row. Updating also wastes work for keys nobody reads."
+    },
+    {
+     "q": "When would you choose write-through?",
+     "a": "When reads right after writes are common and must hit cache with fresh data, writes are not latency-sensitive and the written data is almost certainly read - for example a user session or profile. For a catalog with 100:1 reads and long-tail writes, cache-aside with delete is cheaper."
+    },
+    {
+     "q": "Is write-behind ever acceptable?",
+     "a": "Yes for data that tolerates loss or can be recomputed - view counters, analytics, rate-limit counters - where batching writes saves enormous DB load. Not for orders, payments or prices."
+    },
+    {
+     "q": "What remaining race exists with delete-on-write?",
+     "a": "A reader misses, reads v1 from DB, stalls; a writer commits v2 and deletes; the reader then sets v1. Mitigations: delayed double delete, version-guarded set, leases (Facebook's memcache), and a TTL bound."
+    }
+   ]
+  },
+  {
+   "name": "Cache stampede (thundering herd) protection",
+   "explain": "A cache stampede happens when a popular key expires or is deleted and many concurrent requests miss at the same moment. Each one independently goes to the database to recompute the value, so a key that was serving 50k requests per second can suddenly send thousands of identical queries to a database that would normally see one. Because recomputation is slow, more requests pile up behind it, latency rises, connection pools fill, and the overload can cascade into a full outage. There are four standard defences. Request coalescing (single-flight) ensures that within one process only one caller loads a key and the rest wait on its result. A distributed lock or lease (SET key:lock NX PX) extends this across processes so only one loader cluster-wide hits the database, while the others wait briefly or serve a stale copy. Probabilistic early expiration (the XFetch algorithm from Vattani et al.) makes each reader, with a probability that rises as expiry approaches, refresh the value early in the background, so the key is usually refreshed by one request before it ever expires. Finally, stale-while-revalidate keeps serving the old value past its soft TTL while one refresh runs. TTL jitter is a related defence against many different keys expiring together after a bulk load.",
+   "in_this_design": "SingleFlight per pod, a Redis lock with 3s PX across pods, XFetch early refresh with beta 1.0, soft-expiry plus stale serve in L1, and +-10% TTL jitter. Together they cap DB loads for any key to roughly one per refresh interval.",
+   "key_points": [
+    "Expiry of a hot key is an outage trigger, not a cache detail.",
+    "Coalesce in-process first (cheap), then across processes (lock/lease).",
+    "Early probabilistic refresh means the key rarely actually expires.",
+    "Serve stale while one loader refreshes; latency stays flat.",
+    "Jitter TTLs so bulk-loaded keys do not expire together."
+   ],
+   "qa": [
+    {
+     "q": "Your DB CPU spikes every 10 minutes during a sale. What do you suspect?",
+     "a": "Synchronised expiry: keys warmed together with the same TTL expire together and stampede. Add TTL jitter, single-flight and early refresh; verify by correlating miss spikes with TTL boundaries."
+    },
+    {
+     "q": "What happens if the lock holder crashes?",
+     "a": "The lock has a PX timeout (3s) so it expires; another reader takes over. Use an owner token and compare-and-delete so a slow loader does not delete someone else's lock."
+    },
+    {
+     "q": "Why not just never expire hot keys?",
+     "a": "Without expiry, any missed invalidation leaves wrong data forever, and memory fills with dead keys. Keep a TTL as the safety bound but refresh ahead of it."
+    },
+    {
+     "q": "How does XFetch choose when to refresh?",
+     "a": "It refreshes when now - delta*beta*ln(rand) >= expiry, where delta is recompute time. Since ln(rand) is negative, the term adds a random head start that grows with recompute cost, so expensive keys refresh earlier and only a few readers trigger it."
+    }
+   ]
+  },
+  {
+   "name": "Consistent hashing and hash-slot sharding",
+   "explain": "To spread keys across many cache nodes we need a function from key to node. Naive modulo hashing (hash(key) mod N) remaps almost every key when N changes, which for a cache means a near-total miss storm whenever a node is added or lost. Consistent hashing places nodes and keys on a ring of hash values; each key belongs to the next node clockwise. Adding or removing a node only moves the keys in its arc, about 1/N of the total. Virtual nodes (each physical node appearing at 100-200 ring positions) smooth out uneven arcs and spread a failed node's load across all survivors rather than one neighbour. Redis Cluster uses a variant: a fixed space of 16384 hash slots (slot = CRC16(key) mod 16384), and an explicit slot-to-node map. Resharding moves whole slots between nodes, and clients follow MOVED and ASK redirects and cache the slot map. Hash tags (the part of the key inside braces) force related keys into the same slot so multi-key operations and Lua scripts work. The trade-off of any partitioning scheme is that a single key always lives on a single shard, so partitioning spreads many keys but cannot spread one hot key.",
+   "in_this_design": "Redis Cluster with 12 primaries; product keys distribute by CRC16 slot. The lock key uses the hash tag {id} so it lands with its value. Batch reads group ids by slot for one MGET per shard. Hot keys are handled separately by replication because sharding cannot split one key.",
+   "key_points": [
+    "Modulo hashing remaps ~all keys on resize; consistent hashing remaps ~1/N.",
+    "Virtual nodes even out load and spread failover load.",
+    "Redis Cluster: 16384 fixed slots, explicit map, MOVED/ASK redirects.",
+    "Hash tags co-locate keys for multi-key ops.",
+    "Sharding spreads keys, not load on a single key."
+   ],
+   "qa": [
+    {
+     "q": "We go from 10 to 11 cache nodes with mod-N hashing. What happens?",
+     "a": "About 10/11 (91%) of keys map to a different node, so the hit ratio collapses and the DB takes nearly full traffic. With consistent hashing only about 1/11 (9%) move."
+    },
+    {
+     "q": "Why does Redis use 16384 slots rather than a ring?",
+     "a": "A fixed slot space gives a small, explicit map that nodes gossip cheaply and that operators can move deterministically. It supports up to about 1000 nodes and makes resharding an operation on slots rather than a recomputation of ring arcs."
+    },
+    {
+     "q": "How do you MGET 50 keys in Redis Cluster?",
+     "a": "Multi-key commands only work within a slot, so the client groups keys by slot (or node) and issues parallel pipelined MGETs per node, then merges. Alternatively use hash tags if the keys are logically grouped."
+    }
+   ]
+  },
+  {
+   "name": "Hot keys and near caching",
+   "explain": "Real traffic is skewed: in a Zipf distribution a small fraction of keys receives most requests, and events like a flash sale can push one key to tens or hundreds of thousands of requests per second. Because a key lives on exactly one shard, one hot key can saturate that shard's CPU or network while the rest of the cluster idles, raising latency for every other key on that shard. Detection comes first: sample requests and estimate frequencies with a Count-Min Sketch (a small 2D counter array with multiple hash functions that over-estimates but never under-estimates counts) plus a min-heap for the top-K, or use Redis's own hotkeys tooling with LFU. Mitigation has three tools. A near cache (L1) inside each application process serves the hot key from local memory, turning network load into memory reads; with 200 pods and a 5s TTL, a key needs at most 200 Redis reads per 5s. Key replication writes R copies under different suffixes so they hash to different slots, and readers pick one at random, dividing load by R. Request coalescing ensures a hot key's miss creates one load, not thousands. The cost is consistency: L1 copies across pods can disagree for up to the L1 TTL, and replicated keys need R deletes on invalidation.",
+   "in_this_design": "Caffeine L1 with W-TinyLFU admission and 5-10s TTL on every pod; HotKeyTracker publishes the top 1000 keys every 5s and the client switches those to 8-way replication; L1 evictions are pushed via pub/sub to shrink the inconsistency window.",
+   "key_points": [
+    "One key = one shard; skew turns into a single-shard bottleneck.",
+    "Detect with sampling + Count-Min Sketch + top-K heap.",
+    "Near cache converts network load into local memory reads.",
+    "Replicate hot keys under suffixes; readers pick randomly.",
+    "Short L1 TTL bounds cross-pod inconsistency."
+   ],
+   "qa": [
+    {
+     "q": "One Redis shard is at 100% CPU while others are at 20%. What is your first move?",
+     "a": "Identify the hot key(s) on that shard via sampling or redis-cli --hotkeys, confirm it is a single key rather than a slot imbalance, then enable L1 caching for it and replicate it across slots. Long term, make hot-key detection automatic."
+    },
+    {
+     "q": "Why not just add more Redis replicas for the hot shard?",
+     "a": "Replicas help if clients read from them, but replication is async so reads may be staler, and the replica count per shard is small. L1 scales with the number of pods and removes the network hop entirely, so it is the bigger lever."
+    },
+    {
+     "q": "What does W-TinyLFU add over plain LRU?",
+     "a": "An admission filter: a new item only evicts an existing one if its estimated frequency (from a compact sketch) is higher. That stops one-hit-wonder scans from flushing popular items and gives near-optimal hit ratios on skewed workloads."
+    }
+   ]
+  },
+  {
+   "name": "Consistency, staleness budgets and PACELC for caches",
+   "explain": "A cache is a replica of data, so it inherits replication's consistency questions. CAP says that during a network partition a system must choose between consistency and availability. PACELC extends it: if Partitioned choose A or C, Else (normal operation) choose Latency or Consistency. Caches are almost always PA/EL systems: they exist to give low latency and stay available, so they accept that readers may see stale data. The senior move is to make that staleness explicit and bounded rather than accidental. Classify data by how stale it may be: descriptive content might tolerate 60 seconds, price and stock only a few seconds, and checkout values none at all. Then pick mechanisms per class: TTLs bound the worst case, delete-on-write and CDC shrink the typical case, versions and ETags let clients detect and refuse to go backwards in time, and authoritative reads at the moment of commitment (add-to-cart, payment) guarantee correctness where it matters. Session guarantees matter too: read-your-writes means a seller who changes a price must see the new price immediately even if other users see the old one for a second; monotonic reads means a user should not see v18 and then v17 on refresh. These are cheaper than global strong consistency and usually what the product actually needs.",
+   "in_this_design": "Staleness budgets: descriptive 60s (CDN 30s + L1 10s + invalidation lag), price/stock 5s p99, checkout zero (authoritative read). Writer sessions read from primary for 2s after a write. ETag versions let the app enforce monotonic reads.",
+   "key_points": [
+    "Caches are PA/EL: they trade consistency for latency and availability.",
+    "Define staleness budgets per field class; sum the TTLs of every layer.",
+    "TTL is the worst-case bound; invalidation shrinks the typical case.",
+    "Verify at the point of commitment, not on every read.",
+    "Read-your-writes and monotonic reads are cheap and usually enough."
+   ],
+   "qa": [
+    {
+     "q": "Worst-case staleness for a title with CDN 30s, L1 10s, Redis 10min and delete-on-write?",
+     "a": "If invalidation works: invalidation lag (~2s) plus L1 TTL (10s, unless pub/sub evicts) plus CDN TTL (30s, unless purged) - about 42s. If invalidation is lost, Redis TTL dominates: up to 10 minutes plus the outer layers, which is why we monitor invalidation lag and run a reconciler."
+    },
+    {
+     "q": "Should the product page ever show a cached price?",
+     "a": "Yes - it is advisory and the 5s budget is acceptable to the business, as long as add-to-cart and checkout read the authoritative price and tell the user if it changed. Making every page view strongly consistent would cost far more than the rare mismatch."
+    },
+    {
+     "q": "How do you give a seller read-your-writes without making everyone hit the DB?",
+     "a": "Scope it to the writer: return the updated object in the PUT response, and for a short window (2s, or until replica lag passes the write's GTID) route that seller's reads to the primary or bypass the cache. Everyone else keeps using the cache."
+    }
+   ]
+  },
+  {
+   "name": "Eviction policies and memory sizing (LRU, LFU, TinyLFU, TTL)",
+   "explain": "A cache is smaller than the data it fronts, so when it is full it must choose what to throw away. The eviction policy is that choice, and it largely determines the hit ratio for a given memory budget. LRU (least recently used) evicts what has not been touched longest; it is simple and adapts quickly but is vulnerable to scans - a crawler touching a million cold items once can flush the hot set. LFU (least frequently used) keeps items with high access counts, which suits stable popularity but adapts slowly when popularity shifts unless counts decay. Redis implements approximated LRU and LFU by sampling a few keys (maxmemory-samples, default 5) and evicting the best candidate among them, with LFU using a logarithmic 8-bit counter and a decay time. TinyLFU and W-TinyLFU combine a small LRU window for new items with a frequency sketch that decides whether a newcomer deserves to replace a victim, giving near-optimal hit ratios across workloads. TTL-based expiry is separate from eviction: TTL removes data for freshness, eviction for space. Sizing follows the working set and the hit ratio curve: in a Zipf workload hit ratio grows roughly with the log of cache size, so the first few GB buy most of the benefit and the marginal value of more memory falls fast. Measure the miss-ratio curve before buying RAM.",
+   "in_this_design": "Redis uses maxmemory-policy allkeys-lfu with lfu-decay-time 1 so sale popularity shifts are tracked; L1 uses W-TinyLFU. Redis is sized for the top 20M products (about 45 GB with overhead per copy) rather than all 50M, because the long tail adds little hit ratio.",
+   "key_points": [
+    "Eviction is for space; TTL is for freshness - tune both.",
+    "LRU is scan-vulnerable; LFU is slow to adapt without decay.",
+    "W-TinyLFU = LRU window + frequency-based admission.",
+    "Redis eviction is sampled, not exact.",
+    "Size from the miss-ratio curve, not from the dataset size."
+   ],
+   "qa": [
+    {
+     "q": "A nightly crawler tanks the morning hit ratio. Why, and what do you change?",
+     "a": "Under LRU the crawler's one-time touches push hot items out. Switch to LFU or a TinyLFU-style admission policy, and separately rate-limit or route crawlers to a non-cached path."
+    },
+    {
+     "q": "What does Redis do when maxmemory is reached with policy noeviction?",
+     "a": "Writes that need memory fail with an OOM error while reads continue. For a cache that is almost always wrong; use allkeys-lru or allkeys-lfu."
+    },
+    {
+     "q": "Doubling Redis memory moved hit ratio from 94% to 95%. Was it worth it?",
+     "a": "Compute it: misses dropped from 6% to 5%, a 17% reduction in DB load. If DB headroom is the constraint that can be worth it; if not, the money is better spent elsewhere. This is the diminishing-returns shape of a Zipf miss-ratio curve."
+    }
+   ]
+  },
+  {
+   "name": "Resilience: timeouts, circuit breakers, bulkheads and load shedding",
+   "explain": "A cache tier changes the failure profile of a system: the database is now sized for the miss traffic, not the total traffic, so a cache failure can turn into a database failure. Resilience patterns contain this. Timeouts must be tight and explicit: a Redis GET normally takes under 1ms, so a 20ms timeout prevents a sick node from holding threads for seconds. Retries should be few, with exponential backoff and jitter, and never on the DB fallback path during an overload, because retries multiply load exactly when the system is weakest. A circuit breaker tracks the error rate of a dependency; when it crosses a threshold the breaker opens and calls fail fast for a cool-down period, then a few probe calls decide whether to close it. A bulkhead isolates resources - a separate, bounded connection pool or semaphore for DB fallback reads - so the fallback path cannot consume every thread. Load shedding and graceful degradation decide what to do with the excess: serve stale data, drop optional fields, return a lighter page, or reject low-priority requests with 503 and Retry-After. Admission control on refill (only N DB loads per second per pod) prevents a cold cache from instantly overloading the database. The goal is that losing the cache costs latency and freshness, not availability.",
+   "in_this_design": "Redis timeout 20ms, one retry with jitter on reads only; breaker opens at 50% errors over 5s for 10s; DB fallback bulkhead of 200 connections per pod group plus a token-bucket admission cap; L1 stale-on-error up to 5 minutes; low-priority callers (recommendation widgets) shed first.",
+   "key_points": [
+    "The DB is sized for misses - a cache outage is a DB outage unless contained.",
+    "Tight timeouts; retries with backoff and jitter; no retry storms.",
+    "Circuit breaker fails fast and probes to recover.",
+    "Bulkhead the fallback path; cap refill rate.",
+    "Prefer stale or degraded over unavailable."
+   ],
+   "qa": [
+    {
+     "q": "Redis cluster goes down at peak. Walk me through the next 60 seconds.",
+     "a": "Timeouts trip breakers within a few seconds; pods serve L1 hits and stale-on-error entries; misses go through the bulkhead, capped at the DB's safe rate; excess requests get degraded responses or 503s; CDN keeps serving anonymous traffic with stale-if-error. When Redis recovers, breakers half-open, and warm-up refills hot keys at a capped rate."
+    },
+    {
+     "q": "Why is retrying a failed cache read on the DB dangerous?",
+     "a": "It converts every cache failure into DB load; at 300k/s that is a 10x overload. Fallback must be rate-limited and shed, and retries need backoff with jitter to avoid synchronized storms."
+    },
+    {
+     "q": "How do you choose the Redis timeout?",
+     "a": "From measured latency: p99.9 of a healthy GET (say 2ms) times a safety factor, bounded by the request's overall budget. 20ms leaves time for a DB fallback within a 50ms p99 target."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Delete vs update cache on write",
+   "options": "Delete key; SET new value (write-through)",
+   "choice": "Delete",
+   "why": "Idempotent and immune to out-of-order writers; the next read loads the latest. Write-through only pays off for keys read immediately after write."
+  },
+  {
+   "decision": "Number of cache layers",
+   "options": "Redis only; L1 + Redis; CDN + L1 + Redis",
+   "choice": "CDN + L1 + Redis",
+   "why": "Each layer removes 10x traffic and handles a different problem (geography, hot keys, shared working set). Cost: more staleness windows to reason about."
+  },
+  {
+   "decision": "TTL length in Redis",
+   "options": "30s; 10 min; no TTL with invalidation only",
+   "choice": "10 min + jitter with event-driven invalidation",
+   "why": "Long enough for a 95% hit ratio, short enough to bound damage from a lost invalidation; no-TTL leaves bugs permanent."
+  },
+  {
+   "decision": "Redis vs Memcached",
+   "options": "Redis Cluster; Memcached",
+   "choice": "Redis Cluster",
+   "why": "Replication, Lua for version-guarded sets, NX locks and LFU outweigh Memcached's multithreaded simplicity."
+  },
+  {
+   "decision": "Invalidation source",
+   "options": "Application publishes; CDC from binlog; both",
+   "choice": "Both",
+   "why": "App delete gives low lag; CDC catches out-of-band writes and acts as a delayed second delete."
+  },
+  {
+   "decision": "Hot-key handling",
+   "options": "Bigger shard; read from replicas; L1 + key replication",
+   "choice": "L1 + key replication",
+   "why": "Scales with pod count and removes network hops; replicas only add a few readers and are staler."
+  },
+  {
+   "decision": "Behaviour when cache is down",
+   "options": "Fall through to DB; fail requests; serve stale and shed",
+   "choice": "Serve stale and shed with capped fall-through",
+   "why": "Full fall-through overloads the DB 10x; failing everything is needlessly harsh."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Single Redis primary dies",
+   "behavior": "Replica promoted in about 1-2s (cluster failover); keys on that slot range see timeouts briefly; breaker and L1 cover; writes acknowledged by the old primary but not replicated are lost (acceptable for a cache)."
+  },
+  {
+   "failure": "Whole Redis cluster unavailable",
+   "behavior": "Breakers open; L1 and stale-on-error serve hot keys; DB fallback capped by bulkhead and token bucket; low-priority traffic shed; CDN serves stale-if-error."
+  },
+  {
+   "failure": "CDC consumer lagging 10 minutes",
+   "behavior": "App-level deletes still work; out-of-band writes stay stale until TTL; lag alert pages on-call; consumer scales out by partitions."
+  },
+  {
+   "failure": "Replica lag of 30s on MySQL",
+   "behavior": "Cache misses can load old rows and repopulate stale data; delayed double delete may not cover it; mitigate by reading from primary on misses for recently written ids (tracked in a small set) or version-guarded set."
+  },
+  {
+   "failure": "Bad deploy changes payload format",
+   "behavior": "Versioned key namespace isolates old and new code; rollback switches back to the old namespace which is still warm."
+  },
+  {
+   "failure": "Memory pressure causes heavy eviction",
+   "behavior": "Hit ratio drops, DB load rises; alert on evicted_keys rate; scale shards or trim value sizes."
+  }
+ ],
+ "metrics": [
+  "Hit ratio per layer (CDN, L1, Redis) and combined, per endpoint.",
+  "Origin DB read QPS and p99, connection pool saturation.",
+  "Redis ops/s, CPU and network per shard (to spot hot shards), evicted_keys/s, memory fragmentation.",
+  "Latency histograms per layer: L1 lookup, Redis GET p99/p99.9, DB read p99.",
+  "Invalidation lag p99 (DB commit timestamp to Redis delete) and CDC consumer lag.",
+  "Single-flight dedupe ratio and lock contention count.",
+  "Stale serves per second and circuit breaker state changes.",
+  "Top-K hot keys and their estimated QPS.",
+  "Price mismatch rate at add-to-cart (business correctness signal)."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you handle a product that suddenly gets 200k QPS?",
+   "a": "L1 absorbs most - 200 pods with a 5s TTL means about 40 Redis reads per second for that key. If anonymous, the CDN takes it before pods. The hot-key detector also flips it to 8-way replication in Redis within 5 seconds, and single-flight ensures any miss becomes one DB read."
+  },
+  {
+   "q": "How do you make sure a price change is visible within 5 seconds?",
+   "a": "Delete-on-write gives sub-second Redis invalidation; pub/sub evicts L1 immediately (5s TTL as a bound); price is excluded from CDN caching or cached with max-age=5. Monitor invalidation lag p99 under 2s. And checkout re-reads authoritative price regardless."
+  },
+  {
+   "q": "What if the cache is completely empty at the start of a sale?",
+   "a": "Prevent it: run the warm-up job 30 minutes before, loading the expected top 2M keys at 5k/s from replicas. If it happens anyway, admission control caps DB fall-through, single-flight dedupes, stale-on-error serves what L1 has, and we shed low-priority traffic until hit ratio recovers."
+  },
+  {
+   "q": "Why not cache the whole page instead of the product object?",
+   "a": "Full-page caching works for anonymous traffic at the CDN, but logged-in pages are personalised and invalidating a page requires knowing every page that includes a product. Caching the object lets many pages share one entry and keeps invalidation key-based."
+  },
+  {
+   "q": "How do you test this design?",
+   "a": "Load test with production-like Zipf skew (not uniform keys), chaos tests killing Redis primaries and flushing the cache at peak load in staging, and a consistency checker that samples keys and compares cache versions to DB versions."
+  },
+  {
+   "q": "Would you use Redis replicas for reads?",
+   "a": "Selectively. Replica reads add capacity but are async and can be staler, and they complicate failover. I would use them for the hottest shards if L1 is insufficient, and keep default reads on primaries."
+  },
+  {
+   "q": "How does the design change for multiple regions?",
+   "a": "Each region has its own Redis and L1; writes happen in the home region and invalidations replicate via Kafka MirrorMaker to other regions. Remote regions accept extra lag (cross-region replication time) in their staleness budget."
+  }
+ ],
+ "key_points": [
+  "State the read/write ratio, skew and staleness budget per field before drawing anything.",
+  "Layer the cache: CDN, in-process L1, Redis, DB - each layer should cut traffic by about 10x.",
+  "Cache-aside with delete-on-write; TTL with jitter as the safety bound.",
+  "Stampede protection is mandatory: single-flight, lock/lease, early refresh, serve stale.",
+  "One key lives on one shard - handle hot keys with L1 and key replication.",
+  "The DB is sized for misses, so the cache's failure plan is the DB's survival plan: breakers, bulkheads, capped refill.",
+  "Use CDC as a second invalidation path to catch out-of-band writes and stale-set races.",
+  "Never trust the cache at the point of commitment - verify price and stock at checkout.",
+  "Measure hit ratio per layer, origin QPS and invalidation lag, not just latency."
+ ],
+ "quiz": [
+  {
+   "q": "Your read-heavy API uses cache-aside. On a write, what is the safest default action on the cache?",
+   "options": [
+    "Update the cache with the new value before writing the DB",
+    "Write the DB, then delete the cache key",
+    "Write the DB, then SET the new value in the cache",
+    "Do nothing and rely on TTL"
+   ],
+   "answer": 1,
+   "why": "Delete after DB commit is idempotent and order-insensitive; the next reader loads the latest row. SET after write is tempting but two writers' SETs can land out of order and leave the older value cached."
+  },
+  {
+   "q": "A Redis shard is at 100% CPU while the rest sit at 20%. Total QPS is unchanged. Most likely cause?",
+   "options": [
+    "A hot key or small set of hot keys on that shard",
+    "Too few total shards",
+    "The eviction policy is LRU instead of LFU",
+    "Replication lag on that shard"
+   ],
+   "answer": 0,
+   "why": "Skewed CPU with flat total load points to hot keys - one key lives on one shard. Adding shards (most tempting) does not split a single key; L1 caching or key replication does."
+  },
+  {
+   "q": "Every 10 minutes during a sale the DB CPU spikes for a few seconds. Keys were warmed together with TTL 600s. Best fix?",
+   "options": [
+    "Increase Redis memory",
+    "Add more DB read replicas",
+    "Switch to write-through caching",
+    "Add TTL jitter plus single-flight and early refresh"
+   ],
+   "answer": 3,
+   "why": "This is synchronized expiry causing a stampede. Jitter de-synchronizes expiry and single-flight/early refresh collapse reloads. More replicas treat the symptom and still allow herds."
+  },
+  {
+   "q": "Roughly what fraction of keys move when a mod-N hashed cache grows from 10 to 11 nodes?",
+   "options": [
+    "About 9%",
+    "About 50%",
+    "About 91%",
+    "0%, keys never move"
+   ],
+   "answer": 2,
+   "why": "With hash mod N almost every key's node changes: about 10/11. About 9% is the consistent-hashing answer, the tempting confusion."
+  },
+  {
+   "q": "500k reads/s, CDN absorbs 40%, L1 absorbs 50% of the rest, Redis hit ratio 95%. Roughly how many DB reads/s?",
+   "options": [
+    "25k",
+    "7.5k",
+    "15k",
+    "75k"
+   ],
+   "answer": 1,
+   "why": "500k x 0.6 = 300k to pods; x 0.5 = 150k to Redis; x 0.05 = 7.5k to DB. 15k comes from forgetting the L1 layer halves only part of the traffic correctly."
+  },
+  {
+   "q": "Which property makes an in-process near cache (L1) the strongest hot-key defence?",
+   "options": [
+    "It scales with the number of app pods and removes the network hop",
+    "It is persistent across restarts",
+    "It is strongly consistent across pods",
+    "It uses less memory than Redis"
+   ],
+   "answer": 0,
+   "why": "Each pod answers hot reads from its own memory, so capacity grows with pods. It is not consistent across pods - that is its cost, bounded by a short TTL."
+  },
+  {
+   "q": "A reader misses, loads v17 from a lagging replica, then a writer commits v18 and deletes the key, then the reader SETs v17. What best prevents this?",
+   "options": [
+    "Longer TTL",
+    "Write-behind caching",
+    "Switching to Memcached",
+    "Version-guarded set or delayed second delete"
+   ],
+   "answer": 3,
+   "why": "The stale-set race is fixed by refusing older versions (Lua compare on version) or deleting again after replica lag. A longer TTL makes the stale value live longer."
+  },
+  {
+   "q": "Redis is configured with maxmemory-policy noeviction and fills up. What happens?",
+   "options": [
+    "Oldest keys are evicted",
+    "Redis restarts automatically",
+    "Writes needing memory return OOM errors; reads still work",
+    "Keys with TTLs are deleted first"
+   ],
+   "answer": 2,
+   "why": "noeviction rejects writes once full. Deleting TTL keys first is volatile-* behaviour, a common confusion."
+  },
+  {
+   "q": "A crawler touches 5M cold products nightly and the morning hit ratio drops. Which policy change helps most?",
+   "options": [
+    "Shorter TTLs",
+    "LFU or TinyLFU admission",
+    "Plain LRU with more memory",
+    "Write-through"
+   ],
+   "answer": 1,
+   "why": "Frequency-aware admission refuses to let one-time touches evict popular items. More memory with LRU only delays the flush."
+  },
+  {
+   "q": "Which is the best reason to keep a TTL even when you have event-driven invalidation?",
+   "options": [
+    "It bounds staleness if an invalidation is lost",
+    "TTL improves hit ratio",
+    "Redis requires a TTL on every key",
+    "It reduces memory fragmentation"
+   ],
+   "answer": 0,
+   "why": "Invalidation can be lost (bugs, consumer lag, out-of-band writes); TTL caps the damage. It actually lowers hit ratio slightly - the trade is deliberate."
+  },
+  {
+   "q": "Redis goes down at peak. Which response best protects the database?",
+   "options": [
+    "Retry Redis 3 times, then read DB for every miss",
+    "Return 500 for all requests",
+    "Switch all reads to the primary DB",
+    "Open a circuit breaker, serve L1/stale, cap DB fall-through with a bulkhead, shed low priority"
+   ],
+   "answer": 3,
+   "why": "Contain the blast radius: fail fast, serve stale, rate-limit the fallback. Retries then full fall-through multiply load 10x onto a DB sized for misses."
+  },
+  {
+   "q": "What does XFetch (probabilistic early expiration) achieve?",
+   "options": [
+    "Evicts keys earlier to save memory",
+    "Locks a key so only one writer can update it",
+    "Refreshes a key in the background before it expires, triggered by few readers",
+    "Spreads keys across shards"
+   ],
+   "answer": 2,
+   "why": "Readers refresh early with a probability that increases near expiry and with recompute cost, so the key rarely expires under load. It does not evict."
+  },
+  {
+   "q": "Which caching pattern risks losing acknowledged writes if the cache node dies?",
+   "options": [
+    "Cache-aside",
+    "Write-behind",
+    "Read-through",
+    "Write-through"
+   ],
+   "answer": 1,
+   "why": "Write-behind acknowledges after writing only the cache and flushes later. Write-through writes both synchronously, so it is tempting but not the answer."
+  },
+  {
+   "q": "Why use a version namespace in keys (p:v3:{id})?",
+   "options": [
+    "To switch payload formats during deploys without a mass delete",
+    "To make keys shorter",
+    "To guarantee strong consistency",
+    "To shard keys more evenly"
+   ],
+   "answer": 0,
+   "why": "A new format writes to p:v4 while old pods still read p:v3; rollback is instant. It does not change consistency or distribution."
+  },
+  {
+   "q": "Scrapers request millions of ids that do not exist, each missing to the DB. What is this called and the standard fix?",
+   "options": [
+    "Cache avalanche; TTL jitter",
+    "Hot key; key replication",
+    "Stampede; single-flight",
+    "Cache penetration; negative caching and a Bloom filter"
+   ],
+   "answer": 3,
+   "why": "Requests for non-existent data bypass the cache every time. Cache a NULL marker briefly and filter ids with a Bloom filter. Single-flight helps per-key but each id is different."
+  },
+  {
+   "q": "With CDN max-age 30s, L1 TTL 10s, working invalidation (2s lag) but no CDN purge, roughly what is worst-case staleness for an anonymous user?",
+   "options": [
+    "About 2 seconds",
+    "About 10 seconds",
+    "About 42 seconds",
+    "About 10 minutes"
+   ],
+   "answer": 2,
+   "why": "Staleness adds up across layers: invalidation lag + L1 TTL + CDN TTL. 10 minutes is the Redis TTL and applies only if invalidation is lost."
+  },
+  {
+   "q": "Where should authoritative price be read without cache?",
+   "options": [
+    "Every product page view",
+    "Add-to-cart and checkout",
+    "Search results",
+    "Nowhere; the cache is always correct"
+   ],
+   "answer": 1,
+   "why": "Verify at the point of commitment; page views tolerate a small staleness budget. Making every view authoritative removes most of the cache's value."
+  },
+  {
+   "q": "Doubling Redis memory moves hit ratio from 94% to 95%. What does that do to DB read load?",
+   "options": [
+    "Reduces it by about 17%",
+    "Reduces it by 1%",
+    "Halves it",
+    "No effect"
+   ],
+   "answer": 0,
+   "why": "Misses go from 6% to 5%: a 1/6 reduction, about 17%. Reading it as 1% is the tempting mistake - DB load tracks miss ratio, not hit ratio."
+  },
+  {
+   "q": "Why group ids by hash slot for a batch read on Redis Cluster?",
+   "options": [
+    "It improves compression",
+    "It avoids eviction",
+    "It enables transactions across the cluster",
+    "Multi-key commands only work within one slot, so one MGET per node is needed"
+   ],
+   "answer": 3,
+   "why": "Redis Cluster rejects cross-slot multi-key commands (CROSSSLOT). Grouping by node and pipelining keeps it to one round trip per node. It does not give cross-cluster transactions."
+  },
+  {
+   "q": "A seller updates a price and immediately refreshes but sees the old price. Cheapest correct fix?",
+   "options": [
+    "Make all reads strongly consistent",
+    "Disable caching for price",
+    "Read-your-writes for that seller: return the new object and bypass cache/replica briefly",
+    "Shorten the Redis TTL to 1s"
+   ],
+   "answer": 2,
+   "why": "Scope consistency to the session that needs it. Global strong consistency or disabling the cache costs everyone; a 1s TTL still does not guarantee the writer sees it."
+  },
+  {
+   "q": "Which metric best tells you the cache is protecting the database?",
+   "options": [
+    "Redis CPU",
+    "Origin DB read QPS relative to total QPS (miss traffic)",
+    "Number of keys in Redis",
+    "Average payload size"
+   ],
+   "answer": 1,
+   "why": "The purpose of the cache is to cut origin load; track origin QPS and per-layer hit ratio. Redis CPU says how busy the cache is, not whether it is shielding the DB."
+  },
+  {
+   "q": "Which is the main cost of adding an L1 near cache on every pod?",
+   "options": [
+    "Cross-pod inconsistency for up to the L1 TTL",
+    "Higher Redis load",
+    "Loss of durability",
+    "Inability to use TTLs"
+   ],
+   "answer": 0,
+   "why": "Pods can disagree until their L1 entries expire or get evicted via pub/sub. It reduces Redis load rather than increasing it."
+  }
+ ],
+ "references": [
+  {
+   "title": "Scaling Memcache at Facebook (USENIX NSDI 2013)",
+   "url": "https://www.usenix.org/node/172909"
+  },
+  {
+   "title": "Caching strategies (ByteByteGo system-design-101)",
+   "url": "https://www.mintlify.com/ByteByteGoHq/system-design-101/guides/caching/strategies"
+  },
+  {
+   "title": "Cache layer architecture guide (Redis blog)",
+   "url": "https://redis.io/blog/cache-layer-architecture-guide.md"
+  },
+  {
+   "title": "Hot key mitigation, request coalescing, stampede protection (Codemia)",
+   "url": "https://codemia.io/courses/system_design_fundamentals/hot_key_mitigation_request_coalescing_stampede_protection"
+  },
+  {
+   "title": "How Facebook scaled Memcached (Engineer's Codex)",
+   "url": "https://read.engineerscodex.com/p/how-facebook-scaled-memcached"
+  }
+ ]
+}

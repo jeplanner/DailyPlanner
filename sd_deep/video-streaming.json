@@ -1,0 +1,1137 @@
+{
+ "slug": "video-streaming",
+ "title": "Design Netflix / YouTube-style video streaming",
+ "prompt": "Design a video streaming platform.",
+ "group": "classic",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "Video streaming is two very different systems welded together: a batch-heavy encoding pipeline that turns one master file into hundreds of segment files, and a delivery network that pushes tens of terabits per second as close to the viewer as possible. The core tension is quality versus bandwidth on unreliable last-mile networks, solved with adaptive bitrate on the client and aggressive edge caching, while the control plane stays small and highly available.",
+ "framework": {
+  "clarify": [
+   "VOD like Netflix (curated catalog, studio uploads) or UGC like YouTube (anyone uploads)? Assume VOD-first with UGC-style upload as an extension; live streaming out of scope.",
+   "Scale: 200M subscribers, 100M DAU, peak 30M concurrent streams in the evening, average 3 Mbps per stream.",
+   "Devices: smart TVs, phones on 3G/4G/5G, browsers; must support HLS and DASH, H.264 baseline plus HEVC/AV1 where supported.",
+   "Startup time target: video starts within 2 s p90; rebuffer ratio < 0.5% of watch time.",
+   "Catalog size: ~20k titles, each encoded into ~10-15 bitrate rungs x 3 codecs x multiple audio and subtitle tracks.",
+   "DRM required (Widevine, FairPlay, PlayReady) and geo-licensing: titles vary by country.",
+   "Resume playback across devices (continue watching) within seconds of switching device.",
+   "Is the recommendation homepage in scope? Assume only as a dependency that can degrade."
+  ],
+  "design": [
+   "Baseline: upload master -> chunk into ~2-4 min pieces -> encode chunks in parallel per bitrate ladder rung and codec -> package into 2-6 s segments with HLS/DASH manifests -> store in origin object storage.",
+   "Delivery: segments pushed proactively to edge caches (Netflix Open Connect style appliances inside ISPs) during off-peak fill windows; long tail fetched on demand from regional tier.",
+   "Control plane: Playback API checks entitlement and geo rights, asks Steering for the best 2-3 edge caches, returns manifest URLs and a DRM license URL.",
+   "Client runs adaptive bitrate (ABR): measures throughput and buffer level and picks the next segment's rendition; switches CDN/cache if a cache is slow.",
+   "Viewing state: heartbeats every 30 s write position into Cassandra keyed by (profile_id, title_id) for resume and analytics; events go to Kafka for QoE dashboards.",
+   "APIs: POST /v1/play, GET manifest, POST /v1/license, POST /v1/heartbeat, GET /v1/continue-watching, POST /v1/uploads (ingest)."
+  ],
+  "defend": [
+   "Bottleneck is last-mile and backbone bandwidth: 30M x 3 Mbps = 90 Tbps at peak, which only works if > 95% of bytes come from caches inside or next to ISPs.",
+   "Scale reads: proactive fill of predicted-popular titles to edge caches off-peak, consistent hashing of content across caches in a site, and a regional tier to absorb long-tail misses.",
+   "Scale writes/encoding: chunk-level parallelism across thousands of spot instances; encoding is idempotent per (title, chunk, rung) so preemption just retries the chunk.",
+   "Failure: client-side failover between multiple cache URLs, ABR drops quality before it stalls, control plane uses circuit breakers and cached fallbacks (e.g. static homepage), DRM license leases cached for the session.",
+   "Measure: startup time, rebuffer ratio, average bitrate delivered, edge hit ratio, play-start failures by error code, encoding pipeline throughput and backlog."
+  ],
+  "script": "I want to clarify a few things first. I will assume a Netflix-style VOD service at about 100 million daily viewers and 30 million concurrent streams at peak, on everything from 4K TVs to phones on patchy 4G, with DRM and country-level licensing. Success means video starts in under 2 seconds and rebuffers less than half a percent of watch time. For the design there are two halves. Ingest: a studio master is split into chunks, each chunk is encoded in parallel across a bitrate ladder and several codecs, then packaged into 4-second segments with HLS and DASH manifests and stored at origin. Delivery: those segments are pushed ahead of time to cache boxes inside ISPs, the playback API checks rights and returns a steered list of caches, and the client's adaptive bitrate logic picks a rendition per segment. Defending it: peak is about 90 terabits a second, so the real bottleneck is bandwidth and the answer is edge offload above 95 percent. Encoding scales by chunk parallelism on spot capacity, failures are absorbed by client failover and ABR, and I would watch startup time, rebuffer ratio and edge hit ratio."
+ },
+ "brd": {
+  "problem": "Viewers expect instant, high-quality playback on any screen and any network, and churn quickly when video stalls. The business pays for content licences and for delivery bandwidth, so it must maximise perceived quality per bit delivered, honour licensing and DRM obligations to studios, and scale to evening peaks several times the daily average.",
+  "goals": [
+   "Fast startup: playback begins within 2 s p90 on broadband and 3 s on mobile.",
+   "Smooth playback: rebuffer ratio < 0.5% of play time; minimise quality oscillation.",
+   "Best quality per bit: per-title / per-shot encoding to reduce bandwidth 20-40% at the same perceived quality (VMAF).",
+   "Delivery cost: > 95% of bytes served from ISP-embedded or IXP caches, minimal transit spend.",
+   "Content protection: studio-grade DRM and geo-restrictions with auditability.",
+   "Time-to-publish for new titles: fully encoded and globally pre-positioned within 24 h of master delivery."
+  ],
+  "non_goals": [
+   "Live sports/events streaming (different latency and origin model).",
+   "Building the recommendation algorithms.",
+   "Social features (comments, watch parties).",
+   "Payment and subscription billing."
+  ],
+  "stakeholders": [
+   {
+    "who": "Subscribers",
+    "needs": "Instant, high-quality, uninterrupted playback; resume anywhere."
+   },
+   {
+    "who": "Content / studio partners",
+    "needs": "DRM, geo-licensing enforcement, audit of where titles are viewable."
+   },
+   {
+    "who": "ISP partners",
+    "needs": "Lower transit costs via embedded caches; predictable fill traffic windows."
+   },
+   {
+    "who": "Encoding / media engineering",
+    "needs": "Elastic compute, reproducible pipeline, quality metrics like VMAF per encode."
+   },
+   {
+    "who": "Finance",
+    "needs": "Cost per streaming hour (compute + storage + delivery) trending down."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Play start time (click to first frame)",
+    "target": "p90 < 2 s"
+   },
+   {
+    "metric": "Rebuffer ratio",
+    "target": "< 0.5% of play time"
+   },
+   {
+    "metric": "Edge offload (bytes from ISP/IXP caches)",
+    "target": ">= 95%"
+   },
+   {
+    "metric": "Play start failure rate",
+    "target": "< 0.2% of attempts"
+   },
+   {
+    "metric": "Average delivered VMAF at given bandwidth",
+    "target": "+5 points vs fixed ladder"
+   },
+   {
+    "metric": "Control plane availability",
+    "target": "99.99% for /play"
+   }
+  ],
+  "constraints": [
+   "Studio contracts require hardware-backed DRM for HD/4K on many devices.",
+   "Geo licences differ per country and change over time.",
+   "Mobile users in India often on 1-3 Mbps with high variance; must offer 240p/360p rungs and data-saver modes.",
+   "Encoding is CPU-intensive (AV1 several times slower than H.264)."
+  ],
+  "risks": [
+   {
+    "risk": "Peak-hour congestion in an ISP saturates edge appliances",
+    "mitigation": "Steering spreads load across sites, client fails over, ABR lowers bitrate, capacity planning per ISP."
+   },
+   {
+    "risk": "A new hit title is not pre-positioned and floods origin",
+    "mitigation": "Popularity prediction drives proactive fill; regional tier with request collapsing; launch-day pre-warm."
+   },
+   {
+    "risk": "DRM license service outage stops all playback",
+    "mitigation": "Multi-region active-active license service, session-length license leases, offline download licences."
+   },
+   {
+    "risk": "Encoding bug ships corrupted renditions",
+    "mitigation": "Automated QC (VMAF, black frame, audio sync checks) before publish; versioned assets allow rollback."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Living-room viewer on 4K TV",
+    "needs": "Highest quality, HDR, Dolby audio, fast start."
+   },
+   {
+    "name": "Commuter on mobile data in Bengaluru",
+    "needs": "Low data usage, no stalls, downloads for offline viewing."
+   },
+   {
+    "name": "Content ops engineer",
+    "needs": "Ingest a master, track encode progress, QC results and regional availability."
+   }
+  ],
+  "user_stories": [
+   "As a viewer, I want playback to start within 2 seconds so that I do not abandon the title.",
+   "As a mobile viewer, I want quality to adapt to my network so that video does not stall.",
+   "As a viewer, I want to resume where I left off on another device so that switching is seamless.",
+   "As a viewer, I want to pick audio language and subtitles so that I can watch in my language.",
+   "As a mobile user, I want to download episodes for offline viewing so that I can watch without data.",
+   "As a content ops engineer, I want to upload a master and see each rendition's QC status so that I can publish confidently.",
+   "As a studio, I want titles playable only in licensed countries so that contracts are honoured.",
+   "As an SRE, I want per-ISP QoE dashboards so that I can detect congestion quickly."
+  ],
+  "functional": [
+   "Ingest masters (ProRes/IMF, 100-500 GB per feature) with resumable upload and checksum validation.",
+   "Encode a per-title bitrate ladder (e.g. 235 kbps 320x240 up to 16 Mbps 4K) in H.264, HEVC and AV1.",
+   "Package into CMAF fMP4 segments (4 s) with HLS and DASH manifests; CENC encryption.",
+   "Playback API: entitlement, geo check, device capability, steering, manifest and license URLs.",
+   "DRM license issuance for Widevine, FairPlay and PlayReady with per-device security levels.",
+   "Client ABR with buffer and throughput-based rendition selection, cache failover.",
+   "Continue watching and per-profile viewing history.",
+   "Offline downloads with time-limited licences.",
+   "QoE telemetry ingestion and dashboards."
+  ],
+  "non_functional": [
+   {
+    "name": "Startup latency",
+    "target": "p90 < 2 s click to first frame"
+   },
+   {
+    "name": "Playback API latency",
+    "target": "p99 < 250 ms"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% control plane; playback continues during control plane blips via cached license/manifests"
+   },
+   {
+    "name": "Throughput",
+    "target": "90+ Tbps peak egress globally"
+   },
+   {
+    "name": "Durability",
+    "target": "Masters and encodes in 11-nines object storage, cross-region copy"
+   },
+   {
+    "name": "Consistency",
+    "target": "Resume position eventually consistent within 30 s; entitlement strongly checked at play"
+   },
+   {
+    "name": "Security",
+    "target": "Hardware DRM (L1) for HD+, token-authenticated segment URLs"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "100M DAU, average 2 h viewing/day; peak concurrency 30M streams.",
+    "Average delivered bitrate 3 Mbps (mix of mobile 1 Mbps and TV 6-15 Mbps).",
+    "Catalog 20k titles, average 1.5 h runtime (series episodes counted individually ~ 200k assets).",
+    "Each asset encoded into ~12 rungs x 3 codecs, total stored ~ 40 GB per hour of content across all renditions.",
+    "UGC extension: 500 hours uploaded per minute (YouTube-scale) as a stretch."
+   ],
+   "math": [
+    "Peak egress: 30M x 3 Mbps = 90 Tbps; at 95% edge offload origin/regional tier serves ~4.5 Tbps.",
+    "Daily bytes: 100M x 2 h x 3600 s x 3 Mbps / 8 = 270 PB/day delivered.",
+    "Segments requested at peak: 30M streams / 4 s = 7.5M segment GETs/s across caches.",
+    "Catalog storage: 200k assets x 0.75 h avg x 40 GB/h = 6 PB of encoded renditions; plus masters ~ 200k x 50 GB = 10 PB.",
+    "Edge appliance: one box with ~ 300 TB of flash/disk serves ~ 100 Gbps; 90 Tbps needs ~ 1,000+ boxes plus headroom (2x) ~ 2,000-3,000 boxes worldwide.",
+    "Control plane: play starts ~ 100M x 4/day = 400M/day = ~5k/s average, ~25k/s at peak; heartbeats 30M / 30 s = 1M/s at peak.",
+    "Encoding: 1 h of 4K content x 36 renditions at ~ 2-10x realtime per core-hour for AV1 needs thousands of core-hours; chunked across 500 parallel workers finishes in < 2 h."
+   ],
+   "summary": "Peak ~90 Tbps and ~270 PB/day delivered dwarfs everything else; that forces ISP-embedded caches with > 95% offload. Control plane is modest (~25k play starts/s, 1M heartbeats/s). Storage ~16 PB is manageable; encoding is a bursty, embarrassingly parallel compute job."
+  },
+  "out_of_scope": [
+   "Live streaming and low-latency HLS.",
+   "Recommendation and personalisation algorithms (treated as a dependency).",
+   "Billing, payments and signup.",
+   "Ad insertion (SSAI) for an ad-supported tier, mentioned only as follow-up."
+  ]
+ },
+ "hld": {
+  "overview": "The system splits into a control plane in the cloud (catalog, playback API, entitlement, steering, DRM licences, viewing history, telemetry) and a data plane of edge caches that serve video segments. An offline encoding pipeline converts masters into a per-title ladder of renditions, packages and encrypts them, stores them at origin, and a fill system pre-positions popular content in ISP-embedded caches during off-peak hours. Clients drive quality via ABR and fail over between caches on their own.",
+  "diagram": "\n                    CONTROL PLANE (cloud, multi-region)\n +--------+   +-------------+   +----------------+   +-------------------+\n | Client |-->| API Gateway |-->| Playback API   |-->| Steering Service  |\n | (TV,   |   | auth, rate  |   | entitlement,   |   | picks OCA/CDN by  |\n | mobile)|   +-------------+   | manifest, DRM  |   | ISP, health, load |\n +--------+         |           +----------------+   +-------------------+\n   |   ^            v                  |  license           |\n   |   |     +-------------+    +-------------+     +---------------+\n   |   |     | Catalog /   |    | DRM License |     | Viewing hist. |\n   |   |     | Metadata    |    | Service     |     | (Cassandra)   |\n   |   |     +-------------+    +-------------+     +---------------+\n   |   |\n   |   |   DATA PLANE (segments)\n   |   +------ 2-6 s segments over HTTPS -------+\n   v                                            |\n +-----------------+  miss   +---------------+  |   +-------------------+\n | ISP-embedded    |-------->| IXP / regional|--+-->| Origin (S3 bucket |\n | edge cache (OCA)|         | cache tier    | fill | of encoded assets)|\n +-----------------+         +---------------+      +-------------------+\n                                                          ^\n   INGEST / ENCODING PIPELINE                             |\n +----------+  +-----------+  +-------------------+  +----+-------+\n | Studio   |->| Mezzanine |->| Chunker -> N      |->| Packager   |\n | upload   |  | store     |  | parallel encoders |  | HLS/DASH + |\n +----------+  +-----------+  | (ladder x codec)  |  | DRM (CENC) |\n                              +-------------------+  +------------+\n",
+  "components": [
+   {
+    "name": "Ingest Service",
+    "responsibility": "Resumable upload of masters, checksum, metadata registration, triggers the encode workflow."
+   },
+   {
+    "name": "Encoding Orchestrator",
+    "responsibility": "Workflow DAG: inspect, complexity analysis, chunk, encode per rung/codec, assemble, QC, package; retries per task."
+   },
+   {
+    "name": "Encoder workers (spot fleet)",
+    "responsibility": "Stateless ffmpeg/x264/x265/SVT-AV1 jobs on chunk ranges; idempotent outputs."
+   },
+   {
+    "name": "Packager + DRM encryption",
+    "responsibility": "CMAF fMP4 segments, HLS/DASH manifests, CENC encryption with per-title keys stored in a KMS."
+   },
+   {
+    "name": "Origin storage",
+    "responsibility": "Object storage of all renditions and manifests; source for cache fill."
+   },
+   {
+    "name": "Fill / Popularity service",
+    "responsibility": "Predicts per-region demand, schedules nightly fill of edge caches, places content via consistent hashing within a site."
+   },
+   {
+    "name": "Edge caches (Open Connect-like)",
+    "responsibility": "Serve segments over HTTPS from flash/disk; report health and load to steering."
+   },
+   {
+    "name": "Steering Service",
+    "responsibility": "Ranks caches for a client by ISP/BGP proximity, health, load and content presence; returns 2-3 URLs."
+   },
+   {
+    "name": "Playback API",
+    "responsibility": "Entitlement, geo rights, device capability matching, returns manifest and license endpoints with signed tokens."
+   },
+   {
+    "name": "DRM License Service",
+    "responsibility": "Issues content keys per device security level with lease durations."
+   },
+   {
+    "name": "Viewing history / Bookmark service",
+    "responsibility": "Stores resume positions and history in Cassandra; continue-watching row."
+   },
+   {
+    "name": "Telemetry pipeline",
+    "responsibility": "Kafka ingestion of heartbeats and QoE events, Flink aggregation per ISP/device, dashboards and alerts."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Ingest and encode",
+    "steps": [
+     "Studio uploads master to ingest bucket; Ingest Service validates checksum and registers asset.",
+     "Orchestrator runs complexity analysis (sample encodes at multiple CRFs, VMAF) to build a per-title ladder.",
+     "Master split at scene boundaries into ~3 min chunks; for each (chunk, rung, codec) a task is queued.",
+     "Workers encode chunks; outputs written to deterministic keys; failed or preempted tasks retried up to 3 times.",
+     "Assembler concatenates chunk outputs per rendition; QC checks VMAF, duration, A/V sync, black frames.",
+     "Packager creates 4 s CMAF segments, HLS and DASH manifests, encrypts with CENC; publishes to origin; catalog marks AVAILABLE per country window."
+    ]
+   },
+   {
+    "name": "Play start",
+    "steps": [
+     "Client POST /v1/play with title, profile, device capabilities; Playback API checks subscription, profile maturity, geo licence.",
+     "Steering returns 3 ranked cache URLs based on client IP's ISP and cache health.",
+     "API returns manifest URLs, license URL and a signed playback token (TTL 6 h).",
+     "Client fetches manifest, requests a DRM licence, starts with a conservative rung for the first segments, then ramps up via ABR.",
+     "Client sends heartbeat every 30 s and QoE events (startup time, rebuffers, bitrate switches)."
+    ]
+   },
+   {
+    "name": "Cache fill and miss",
+    "steps": [
+     "Nightly, Fill service computes per-site top content and pushes manifests of files to each cache.",
+     "Caches pull files from regional tier/origin during the ISP's off-peak window.",
+     "On a runtime miss, the cache fetches from a sibling or the regional tier with request collapsing and serves while filling."
+    ]
+   }
+  ],
+  "data_flow": "Bytes of video flow studio -> origin -> (off-peak fill) -> edge cache -> client and never touch the control plane. Control requests flow client -> API gateway -> microservices with sub-second budgets. Telemetry flows client -> Kafka -> Flink -> OLAP store (Druid) and feeds back into steering and fill decisions."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/play",
+    "request": "{title_id, profile_id, device:{codecs:['avc','hevc','av1'], hdr:true, drm:'widevine-L1'}}",
+    "response": "{manifest_urls:[...3], license_url, playback_token, start_position_s}",
+    "notes": "p99 < 250 ms; idempotent; returns 451 for geo-blocked titles."
+   },
+   {
+    "method": "GET",
+    "path": "/{cache}/v/{asset_id}/{rendition}/master.m3u8?token=",
+    "request": "-",
+    "response": "HLS master playlist listing renditions",
+    "notes": "Token validated at the edge (HMAC, expiry)."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/license",
+    "request": "DRM challenge blob + playback_token",
+    "response": "License blob with content keys, lease 8 h",
+    "notes": "Security level gates max resolution (L3 limited to 540p)."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/heartbeat",
+    "request": "{session_id, title_id, position_s, bitrate_kbps, rebuffer_ms, cache_id}",
+    "response": "204",
+    "notes": "Every 30 s; fire-and-forget, batched, writes go to Kafka then Cassandra."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/profiles/{id}/continue-watching",
+    "request": "-",
+    "response": "{items:[{title_id, position_s, updated_at}]}",
+    "notes": "Served from Cassandra with a cache."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/assets",
+    "request": "{title_id, master_uri, checksum, audio_tracks, subtitle_tracks}",
+    "response": "{asset_id, workflow_id}",
+    "notes": "Internal ingest; starts encode workflow."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "asset / rendition",
+    "store": "Catalog DB (sharded MySQL/CockroachDB) + origin object store",
+    "fields": [
+     "asset_id",
+     "title_id",
+     "rendition_id",
+     "codec",
+     "width",
+     "height",
+     "bitrate_kbps",
+     "vmaf",
+     "segment_prefix",
+     "status"
+    ],
+    "keys": "PK (asset_id, rendition_id)",
+    "notes": "Object keys /v/{asset_id}/{rendition_id}/seg_{n}.m4s are immutable."
+   },
+   {
+    "entity": "title_availability",
+    "store": "Catalog DB, cached in Playback API",
+    "fields": [
+     "title_id",
+     "country",
+     "window_start",
+     "window_end",
+     "max_resolution"
+    ],
+    "keys": "PK (title_id, country)",
+    "notes": "Read-heavy, refreshed into in-memory cache every 60 s."
+   },
+   {
+    "entity": "bookmark / viewing_history",
+    "store": "Cassandra (RF=3, LOCAL_QUORUM)",
+    "fields": [
+     "profile_id",
+     "title_id",
+     "position_s",
+     "updated_at",
+     "device_id"
+    ],
+    "keys": "PK profile_id, CK updated_at desc, title_id",
+    "notes": "Last-write-wins by updated_at; TTL none; compaction of old history to cold storage."
+   },
+   {
+    "entity": "cache_health",
+    "store": "In-memory in Steering, fed via Kafka",
+    "fields": [
+     "cache_id",
+     "site",
+     "isp_asn",
+     "load_pct",
+     "egress_gbps",
+     "health",
+     "content_bloom"
+    ],
+    "keys": "cache_id",
+    "notes": "Updated every 10 s."
+   },
+   {
+    "entity": "encode_task",
+    "store": "Workflow DB (e.g. Conductor/Temporal on MySQL)",
+    "fields": [
+     "workflow_id",
+     "task_id",
+     "chunk_idx",
+     "rendition_id",
+     "attempt",
+     "state",
+     "output_key"
+    ],
+    "keys": "PK task_id; idx (workflow_id, state)",
+    "notes": "Idempotent by (asset, chunk, rendition)."
+   }
+  ],
+  "classes": [
+   {
+    "name": "LadderBuilder",
+    "responsibility": "Builds a per-title bitrate ladder from trial encodes using the convex hull of quality vs bitrate.",
+    "methods": [
+     "analyze(asset)",
+     "convexHull(points)",
+     "selectRungs(hull, maxRungs)"
+    ]
+   },
+   {
+    "name": "ChunkEncoder",
+    "responsibility": "Encodes one chunk for one rendition and writes deterministic output.",
+    "methods": [
+     "encode(chunkRef, rendition)",
+     "verify(output)",
+     "outputKey(asset, chunk, rendition)"
+    ]
+   },
+   {
+    "name": "SteeringRanker",
+    "responsibility": "Ranks caches for a client.",
+    "methods": [
+     "rank(clientIp, assetId)",
+     "candidateSites(asn)",
+     "score(cache, asset)"
+    ]
+   },
+   {
+    "name": "PlaybackController",
+    "responsibility": "Orchestrates /play: entitlement, geo, device match, steering, tokens.",
+    "methods": [
+     "play(request)",
+     "checkEntitlement(profile, title)",
+     "signToken(session)"
+    ]
+   },
+   {
+    "name": "AbrController (client)",
+    "responsibility": "Chooses rendition for each next segment.",
+    "methods": [
+     "onSegmentDownloaded(bytes, ms)",
+     "chooseNext(bufferS, throughputEst)",
+     "failoverCache()"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Buffer-based ABR with throughput guard (BOLA/BBA-like)",
+    "explain": "Startup: pick the highest rung under 0.6 x estimated throughput (EWMA of last 3 segments) to start fast. Steady state: map buffer level to a rung; below 10 s buffer prefer safety, above 30 s allow climbing. Never pick a rung whose bitrate exceeds 0.8 x the harmonic mean throughput. Hysteresis avoids oscillation: only switch up after 2 consecutive qualifying segments.",
+    "pseudocode": "def choose_next(buffer_s, samples, ladder, current):\n    tput = harmonic_mean(samples[-5:])            # robust to spikes\n    safe = [r for r in ladder if r.kbps <= 0.8 * tput]\n    if not safe: return ladder[0]                 # lowest rung\n    if buffer_s < 10:   target = safe[max(0, len(safe)//2 - 1)]\n    elif buffer_s < 30: target = safe[-1] if safe[-1].kbps <= current.kbps else next_up(current)\n    else:               target = safe[-1]\n    if target.kbps > current.kbps and up_streak < 2:\n        up_streak += 1; return current\n    up_streak = 0\n    return target"
+   },
+   {
+    "name": "Consistent hashing of content within a cache site",
+    "explain": "A site has N caches. Each file (asset+rendition) hashes onto a ring with ~100 virtual nodes per cache, so each file lives on one or two caches and adding a cache moves only ~1/N of files. Steering uses the same ring to send a client to the cache that holds the file. Popular files are replicated to k caches to spread load.",
+    "pseudocode": "ring = SortedMap()\nfor cache in site.caches:\n    for v in range(100):\n        ring[hash(f\"{cache.id}#{v}\")] = cache\n\ndef caches_for(file_id, k):\n    h = hash(file_id); out = []\n    for node in ring.walk_from(h):\n        if node not in out and node.healthy: out.append(node)\n        if len(out) == k: break\n    return out\n\nk = 1 if popularity(file) < P90 else 3"
+   },
+   {
+    "name": "Chunked parallel encoding with idempotent retries",
+    "explain": "Split master at scene cuts into chunks (~3 min) so each chunk starts with a keyframe. Enqueue one task per (chunk, rendition). Workers on preemptible VMs encode; output key is deterministic so a retry overwrites. When all chunks of a rendition are DONE, an assembler concatenates and QC runs.",
+    "pseudocode": "def run_workflow(asset):\n    ladder = LadderBuilder.analyze(asset)\n    chunks = split_at_scene_cuts(asset.master, target_s=180)\n    tasks = [(c, r) for c in chunks for r in ladder]\n    parallel_for(tasks, max_parallel=500, retries=3, backoff='exp_jitter',\n                 fn=lambda c, r: ChunkEncoder.encode(c, r))\n    for r in ladder:\n        out = concat([key(asset, c, r) for c in chunks])\n        if vmaf(out) < r.min_vmaf or not av_sync_ok(out): raise QCFailed(r)\n    package_and_encrypt(asset, ladder)"
+   }
+  ],
+  "sequence": "\nClient       PlaybackAPI    Entitlement   Steering     DRM-Lic      EdgeCache     Origin\n  | POST /play {title,device} |             |            |             |            |\n  |------------->|----check-->|             |            |             |            |\n  |              |<---ok------|             |            |             |            |\n  |              |---------- pick 3 caches --->|         |             |            |\n  |              |<--------- [oca1, oca2, cdnX]|         |             |            |\n  |<-- manifest URL(s) + license URL + session token     |             |            |\n  | GET master.m3u8 ----------------------------------------------->|  |            |\n  |<---------------------------------------------------------------|   |            |\n  | POST license (key request) ----------------------->|             |            |\n  |<-------------------------- content key (lease) ----|             |            |\n  | GET seg_0001 @ 1080p 5.8Mbps ------------------------------------>|            |\n  |                              |            |            | miss? -->|--fill----->|\n  |<-------------------------------------- bytes (TTFB < 100 ms) ----|            |\n  | measure throughput + buffer; pick next rung (ABR)                 |            |\n  | POST /heartbeat {pos, bitrate, rebuffers} every 30 s ->|          |            |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Throughput collapses mid-stream (train enters tunnel).",
+   "handling": "ABR drops to lowest rung as buffer falls below 10 s; client keeps 30-60 s buffer when possible; if buffer empties, rebuffer with spinner and resume at low rung."
+  },
+  {
+   "case": "Assigned edge cache becomes unhealthy during playback.",
+   "handling": "Client already has 3 URLs; on 2 consecutive segment timeouts (e.g. 2 x segment duration) it fails over to the next cache without restarting."
+  },
+  {
+   "case": "New blockbuster released globally at midnight.",
+   "handling": "Pre-position via fill days ahead (encrypted, not yet licensed); availability window flips in catalog at release time; steering spreads load; caches replicate hot files to k=3."
+  },
+  {
+   "case": "Licence window ends while a user is mid-episode.",
+   "handling": "Entitlement is checked at play start; policy allows finishing the session; next /play returns 451. Licence leases expire within hours."
+  },
+  {
+   "case": "Same account streaming on too many devices.",
+   "handling": "Concurrent stream limit enforced by a session registry with heartbeat expiry (e.g. 90 s); new play returns 'too many streams' or evicts the oldest per plan rules."
+  },
+  {
+   "case": "Heartbeats arrive out of order from two devices.",
+   "handling": "Bookmark uses last-write-wins on client-reported updated_at plus server receive time; position from the most recent active session wins; minor skew acceptable."
+  },
+  {
+   "case": "Encoder preempted on spot instance mid-chunk.",
+   "handling": "Task lease expires, orchestrator retries with exponential backoff and jitter; deterministic output key makes partial output irrelevant."
+  },
+  {
+   "case": "Corrupted segment in one rendition.",
+   "handling": "QC catches most; if a client gets a decode error it switches rendition for that segment and reports; ops can republish a versioned asset and purge."
+  },
+  {
+   "case": "Seek to a far position.",
+   "handling": "Segments are independently decodable (start with IDR frame); client fetches the target segment at a low rung first for fast resume, then ramps up."
+  },
+  {
+   "case": "Token sharing / hotlinking of segment URLs.",
+   "handling": "HMAC-signed tokens bound to session and expiring in 6 h; content is DRM-encrypted anyway so bytes alone are useless."
+  },
+  {
+   "case": "Clock skew on client affects token validation.",
+   "handling": "Tokens use server-issued expiry with generous skew tolerance (5 min); edge validates against its own NTP-synced clock."
+  },
+  {
+   "case": "Control plane region outage.",
+   "handling": "Active-active in 3 regions with DNS failover; clients mid-playback keep streaming because segment delivery and leased licences do not depend on the control plane."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Open Connect-style ISP-embedded appliances (or commercial CDN)",
+   "layer": "Edge delivery",
+   "overview": "Purpose-built cache servers with large flash/disk placed inside ISP networks and at IXPs.",
+   "why": "At 90 Tbps, transit costs and backbone congestion make in-ISP caches the only economic option; proactive fill uses off-peak capacity.",
+   "alternatives": "Commercial CDNs (Akamai, CloudFront) are faster to start and fine below a few Tbps but cost more per GB at scale and give less control over fill."
+  },
+  {
+   "name": "FFmpeg with x264 / x265 / SVT-AV1",
+   "layer": "Encoding",
+   "overview": "Open-source encoders for H.264, HEVC and AV1.",
+   "why": "Mature, scriptable, deterministic; AV1 saves ~30% bits vs HEVC for capable devices.",
+   "alternatives": "Commercial encoders (e.g. hardware ASICs) are faster per watt but less flexible; cloud transcoding services simplify ops but limit per-title tuning."
+  },
+  {
+   "name": "Workflow engine (Netflix Conductor / Temporal)",
+   "layer": "Orchestration",
+   "overview": "Durable workflow execution with retries, timeouts and state.",
+   "why": "Encoding is a DAG of thousands of tasks with retries; needs durable state and visibility.",
+   "alternatives": "Airflow is batch-oriented and less suited to high fan-out per workflow; hand-rolled SQS chains lose visibility."
+  },
+  {
+   "name": "Amazon S3",
+   "layer": "Origin storage",
+   "overview": "Durable object storage.",
+   "why": "Stores masters and all renditions with 11 nines durability, feeds cache fill.",
+   "alternatives": "On-prem object store saves cost at very large scale but adds ops burden."
+  },
+  {
+   "name": "Cassandra",
+   "layer": "Viewing history",
+   "overview": "Leaderless wide-column store with tunable consistency.",
+   "why": "1M heartbeat-driven writes/s at peak, multi-region replication, LWW semantics fit bookmarks.",
+   "alternatives": "DynamoDB global tables (managed, costlier); Redis alone lacks durability."
+  },
+  {
+   "name": "Kafka + Flink + Druid",
+   "layer": "Telemetry",
+   "overview": "Event log, stream processing, real-time OLAP.",
+   "why": "Per-ISP QoE metrics in seconds feed steering and alerts.",
+   "alternatives": "Batch Spark only gives hour-level insights; ClickHouse is a strong OLAP alternative to Druid."
+  },
+  {
+   "name": "Widevine / FairPlay / PlayReady with CMAF + CENC",
+   "layer": "DRM / packaging",
+   "overview": "Industry DRM systems; CMAF lets one set of encrypted segments serve HLS and DASH.",
+   "why": "Studios mandate it; CMAF halves storage vs separate HLS TS and DASH fMP4 packages.",
+   "alternatives": "Separate packaging per protocol doubles storage and cache footprint; clear-key only acceptable for UGC."
+  },
+  {
+   "name": "Zuul / Envoy gateway with resilience4j/Hystrix patterns",
+   "layer": "Control plane edge",
+   "overview": "API gateway and client-side resilience.",
+   "why": "Timeouts, circuit breakers and bulkheads keep /play available when dependencies fail.",
+   "alternatives": "Service mesh (Istio) centralises policy but adds latency and ops complexity."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Adaptive bitrate streaming (HLS / DASH)",
+   "explain": "Adaptive bitrate streaming encodes the same video at several quality levels (a ladder of renditions) and cuts each into short segments, typically 2-6 seconds, all aligned on the same keyframe boundaries. A manifest file (an HLS .m3u8 playlist or a DASH .mpd) lists the renditions and their segment URLs. The client downloads segments one by one over plain HTTP and, before each request, decides which rendition to fetch based on measured throughput and how many seconds of video are already buffered. Because segments are aligned, switching quality between segments is seamless. Throughput-based algorithms react quickly but can be fooled by noisy samples; buffer-based algorithms (BBA, BOLA) use buffer occupancy as the main signal and are more stable; production players blend both and add hysteresis to prevent oscillation. Segment length is a trade-off: shorter segments adapt faster and start faster but increase request overhead and reduce compression efficiency; longer ones compress better. Because everything is HTTP, segments are cacheable by any CDN, which is the key reason HTTP-based ABR displaced stateful protocols like RTMP for on-demand video. CMAF standardises fMP4 segments so one encrypted file set serves both HLS and DASH clients.",
+   "in_this_design": "Each title has a per-title ladder (e.g. 8-14 rungs) in up to 3 codecs, packaged as 4 s CMAF segments. The client player uses buffer-based selection with a throughput cap of 0.8 x harmonic mean and starts on a conservative rung for fast startup.",
+   "key_points": [
+    "The ladder plus aligned segments make quality switching seamless.",
+    "Client decides, server is dumb HTTP: that is why it scales via CDN.",
+    "Buffer-based ABR is more stable; throughput-based reacts faster; blend them.",
+    "Segment length trades startup/adaptivity against overhead.",
+    "CMAF lets one package serve HLS and DASH."
+   ],
+   "qa": [
+    {
+     "q": "Why does the client, not the server, choose the bitrate?",
+     "a": "Only the client sees its real throughput and buffer; keeping the server stateless lets any HTTP cache serve segments and scale horizontally."
+    },
+    {
+     "q": "Video starts slow on mobile. What would you tune?",
+     "a": "Start at a lower rung, shorter initial segments, prefetch the manifest with /play, reduce DNS/TLS round trips (connection reuse, TLS 1.3, QUIC), and steer to a nearer cache."
+    },
+    {
+     "q": "Users complain quality keeps flipping. Fix?",
+     "a": "Add hysteresis (require sustained headroom before up-switching), use harmonic mean throughput, and lean on buffer-based logic once the buffer is healthy."
+    }
+   ]
+  },
+  {
+   "name": "Per-title encoding and the bitrate ladder",
+   "explain": "A fixed bitrate ladder (for example 1080p always at 5.8 Mbps) wastes bits on simple content like animation and starves complex content like grainy action scenes. Per-title encoding measures each title's complexity by doing trial encodes at many resolution and bitrate combinations and scoring them with a perceptual metric such as VMAF. Plotting quality against bitrate for each resolution gives curves; the upper envelope across resolutions is the convex hull, the best achievable quality at each bitrate. The ladder is then chosen as points along that hull, so each rung is the most efficient resolution for that bitrate. Netflix reported around 20% bandwidth savings from per-title encoding, and per-shot or dynamic optimisation goes further by varying parameters scene by scene. The costs are extra compute for analysis and more complex pipelines. For a mobile-heavy market the bottom of the ladder matters most: a good 300 kbps rung can prevent stalls entirely for users on congested networks.",
+   "in_this_design": "LadderBuilder runs trial encodes on sampled scenes, computes the convex hull of VMAF vs bitrate and selects 8-14 rungs, with a guaranteed low rung (~235 kbps) for poor networks and caps by device class.",
+   "key_points": [
+    "Fixed ladders over-spend on simple content and under-serve complex content.",
+    "Convex hull of quality vs bitrate picks the best resolution per bitrate.",
+    "VMAF is the perceptual quality metric used to compare encodes.",
+    "Per-title saves ~20% bandwidth; per-shot more."
+   ],
+   "qa": [
+    {
+     "q": "Why can 720p beat 1080p at the same bitrate?",
+     "a": "At low bitrates, spending bits on fewer pixels yields fewer artefacts; upscaling a clean 720p can look better than a blocky 1080p."
+    },
+    {
+     "q": "Is per-title worth the compute cost?",
+     "a": "Yes at scale: encoding happens once per title but delivery happens millions of times; a 20% bandwidth cut on hundreds of PB/day dwarfs encode compute."
+    },
+    {
+     "q": "What metric would you use to compare encodes?",
+     "a": "VMAF (perceptual, trained on human scores) over PSNR or SSIM, plus checks for worst-case scenes, not only averages."
+    }
+   ]
+  },
+  {
+   "name": "Content delivery networks, proactive fill and offload",
+   "explain": "A content delivery network places caches between users and origin so most requests are served from nearby. For video the relevant number is byte offload: the fraction of bytes served by the edge rather than upstream. Two fill strategies exist. Reactive (pull-through) caching fetches on the first miss, which works for small objects but can overload origin and backbone when a large new title becomes popular. Proactive fill pushes predicted-popular content to caches ahead of demand, typically during the ISP's off-peak hours when links are idle. Netflix Open Connect embeds appliances directly inside ISP networks and at internet exchange points, fills them nightly according to popularity forecasts, and uses a steering service in the control plane to direct each client to a cache that has the content and is healthy. Video catalogs have a steep popularity curve, so a cache holding the top few percent of titles can serve the large majority of bytes; the long tail is fetched from regional tiers. Cache placement within a site often uses consistent hashing to avoid storing every file on every box.",
+   "in_this_design": "Fill service forecasts per-region demand and pushes encrypted segments to ISP caches nightly. Steering returns 3 ranked caches. Misses go to sibling caches then the regional tier with request collapsing. Target offload is 95%+.",
+   "key_points": [
+    "Byte offload is the KPI for video CDNs.",
+    "Proactive fill uses off-peak capacity and protects backbones on launch day.",
+    "Popularity is steeply skewed, so modest caches serve most bytes.",
+    "Steering is a control-plane decision; delivery stays dumb HTTP."
+   ],
+   "qa": [
+    {
+     "q": "Why not rely on pull-through caching alone?",
+     "a": "A popular 4K title is tens of GB across renditions; thousands of simultaneous misses would flood origin and transit links at the worst moment. Pre-positioning moves that traffic to off-peak."
+    },
+    {
+     "q": "How does steering decide which cache a client uses?",
+     "a": "Map client IP to ISP/ASN and location, filter caches in that ISP or nearest IXP, prefer ones holding the file (consistent hash), then rank by health and load."
+    },
+    {
+     "q": "What if the popularity forecast is wrong?",
+     "a": "Misses fill reactively from regional tier, hot files replicate to more caches, and next night's fill corrects the forecast."
+    }
+   ]
+  },
+  {
+   "name": "Consistent hashing",
+   "explain": "Naive hashing assigns key k to server hash(k) mod N. When N changes, almost every key moves, which for a cache means a mass miss storm. Consistent hashing places servers and keys on the same hash ring (for example 0 to 2^32). Each key belongs to the first server clockwise from its hash. Adding or removing a server only moves the keys in the arc it takes over or gives up, about 1/N of keys. To smooth the uneven arc sizes that random placement produces, each physical server is given many virtual nodes (100-200 points on the ring), which evens out load and lets heterogeneous servers take proportional shares by having more virtual nodes. Replication walks clockwise to pick the next k distinct physical servers. Variants include rendezvous (highest random weight) hashing, which picks the server with the highest hash(key, server) and needs no ring, and jump consistent hash for numbered buckets. Consistent hashing underpins Dynamo, Cassandra, memcached client sharding and CDN cache placement.",
+   "in_this_design": "Within each cache site, files are mapped to caches on a ring with 100 virtual nodes per box. Steering uses the same ring to send clients to the box holding the file. Popular files get k=3 replicas so one box is not overloaded.",
+   "key_points": [
+    "mod-N rehashing moves almost all keys; consistent hashing moves ~1/N.",
+    "Virtual nodes smooth load and support weighted capacity.",
+    "Replicate by walking to the next k distinct nodes.",
+    "Rendezvous hashing is a ring-free alternative."
+   ],
+   "qa": [
+    {
+     "q": "A cache box dies. What happens to its files?",
+     "a": "Its arcs fall to the next nodes clockwise; those boxes see misses for that content and fill from siblings or the regional tier; other files are unaffected."
+    },
+    {
+     "q": "How do you handle a single extremely hot file?",
+     "a": "Hashing alone puts it on one node; replicate hot files to k nodes and have steering spread clients across them."
+    },
+    {
+     "q": "Why virtual nodes?",
+     "a": "With few physical nodes, random positions produce very uneven arcs; many virtual points per node average this out and allow weighting by capacity."
+    }
+   ]
+  },
+  {
+   "name": "Workflow orchestration, idempotent tasks and retries with jitter",
+   "explain": "Long-running pipelines such as encoding consist of many steps with dependencies: analyse, split, encode thousands of chunks, assemble, check quality, package. A workflow engine records each task's state durably so that crashes, deploys or preempted machines do not lose progress, and it retries failed tasks according to a policy. For retries to be safe, tasks must be idempotent: running a task twice must produce the same result, typically by writing to a deterministic output location and overwriting. Retries should use exponential backoff with jitter: wait base x 2^attempt plus a random component, because if thousands of tasks fail together (for example a storage blip) and retry on the same schedule, they hammer the dependency in synchronised waves (thundering herd). Full jitter (random between 0 and the backoff cap) spreads load best. Tasks also need timeouts and leases so a dead worker's task is reassigned, and a cap on attempts with a dead-letter path for human inspection. Using preemptible or spot capacity becomes cheap and safe when tasks are small and idempotent.",
+   "in_this_design": "Encoding Orchestrator (Conductor/Temporal-like) runs a DAG per asset with one task per (chunk, rendition). Workers on spot instances lease tasks for 15 min; outputs go to deterministic keys; retries use exponential backoff with full jitter, max 3, then flag for ops.",
+   "key_points": [
+    "Durable workflow state survives crashes and deploys.",
+    "Idempotent tasks make retries and spot instances safe.",
+    "Exponential backoff with full jitter prevents synchronised retry storms.",
+    "Leases and timeouts reclaim work from dead workers."
+   ],
+   "qa": [
+    {
+     "q": "Why chunk the encode rather than encode a whole film on one machine?",
+     "a": "Parallelism cuts wall-clock from many hours to under two, and a preemption only loses one small chunk instead of the whole job."
+    },
+    {
+     "q": "What is the danger of retries without jitter?",
+     "a": "Correlated failures produce correlated retries, creating load spikes that can keep the dependency down (retry storm)."
+    },
+    {
+     "q": "How do you avoid visual seams between chunks?",
+     "a": "Split at scene cuts and force keyframes at chunk boundaries; use the same encoder settings and rate control per rendition; QC checks the assembled output."
+    }
+   ]
+  },
+  {
+   "name": "Resilience patterns: timeouts, circuit breakers, bulkheads, fallbacks",
+   "explain": "In a microservice call graph, one slow dependency can exhaust threads and connection pools upstream, turning a partial failure into a total outage. Four patterns contain this. Timeouts bound how long a caller waits; they should be set from the dependency's p99 and the caller's own budget, shrinking as you go deeper. Circuit breakers track recent error rates; when errors exceed a threshold (say 50% over 10 s) the breaker opens and calls fail fast for a cool-down period, then a few trial calls (half-open) test recovery. Bulkheads isolate resources per dependency, for example separate thread pools or concurrency limits, so one slow service cannot consume every worker. Fallbacks define what to return when a dependency is unavailable: cached data, a default, or a reduced experience. Netflix popularised these through Hystrix and chaos engineering, deliberately killing instances and regions in production to verify that fallbacks actually work. The principle is graceful degradation: core function (pressing play) must survive the loss of non-core functions (personalised rows, artwork experiments).",
+   "in_this_design": "/play has a 250 ms budget: entitlement 60 ms, steering 40 ms, geo/catalog served from local cache. Recommendations and artwork have breakers with fallback to cached popular rows. Each downstream has a separate concurrency bulkhead in the gateway.",
+   "key_points": [
+    "Timeouts derived from budgets, shrinking with depth.",
+    "Circuit breakers fail fast and probe for recovery.",
+    "Bulkheads stop one slow dependency from starving others.",
+    "Define fallbacks so core flows survive non-core failures; prove it with chaos testing."
+   ],
+   "qa": [
+    {
+     "q": "Recommendations service is down. What does the user see?",
+     "a": "The homepage renders from a cached, non-personalised popular list; play still works because /play does not depend on recommendations."
+    },
+    {
+     "q": "How do you set the timeout for entitlement?",
+     "a": "From its observed p99 (say 30 ms) with headroom, constrained by the /play budget; one retry only if budget remains, with jitter."
+    },
+    {
+     "q": "Why can retries make an outage worse?",
+     "a": "Each layer retrying multiplies load (3 layers x 3 retries = 27x); use retry budgets, retry only at one layer, and stop when the breaker is open."
+    }
+   ]
+  },
+  {
+   "name": "Leaderless replication, quorums and last-write-wins",
+   "explain": "Dynamo-style stores such as Cassandra replicate each key to N nodes chosen by consistent hashing and let any replica accept writes. The client or coordinator sends a write to all N and waits for W acknowledgements; a read queries R replicas and returns the newest version. If W + R > N, read and write sets overlap, so a read sees the latest acknowledged write (with caveats under concurrent writes and failures). Typical settings are N=3, W=2, R=2 (QUORUM) or LOCAL_QUORUM in multi-region setups to avoid cross-region latency. Conflicts between concurrent writes are resolved by last-write-wins using timestamps, which is simple but can drop a write if clocks are skewed; vector clocks or CRDTs preserve concurrent updates at the cost of complexity. Anti-entropy mechanisms (read repair, hinted handoff, Merkle tree repair) bring replicas back in sync after failures. These stores favour availability and low latency (AP under CAP, EL under PACELC), which suits data where a slightly stale value is acceptable.",
+   "in_this_design": "Bookmarks and viewing history live in Cassandra with RF=3 per region, written and read at LOCAL_QUORUM, replicated across regions asynchronously. Last-write-wins on updated_at is acceptable: losing one 30 s heartbeat only shifts resume position slightly.",
+   "key_points": [
+    "W + R > N gives overlapping quorums.",
+    "LOCAL_QUORUM keeps latency regional in multi-region clusters.",
+    "LWW is simple but clock-skew sensitive; fine for resume positions.",
+    "Read repair, hinted handoff and Merkle repair heal replicas."
+   ],
+   "qa": [
+    {
+     "q": "Why is LWW acceptable for resume position but not for a bank balance?",
+     "a": "Losing a concurrent position update costs a few seconds of video; losing a balance update loses money. Balances need serialisable transactions."
+    },
+    {
+     "q": "User switches from phone to TV and resume is 2 minutes behind. Why?",
+     "a": "The phone's final heartbeat was lost or not yet replicated cross-region; fix with a pause/stop event flush and reading LOCAL_QUORUM in the user's home region."
+    },
+    {
+     "q": "What does N=3, W=1, R=1 buy you?",
+     "a": "Lowest latency and highest availability, but reads may miss recent writes; fine for telemetry, risky for anything users notice."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Delivery network",
+   "options": "Commercial CDN vs own ISP-embedded caches",
+   "choice": "Own appliances at scale, commercial CDN as overflow/failover",
+   "why": "At ~90 Tbps the per-GB savings and fill control justify the capex and ISP partnerships; commercial CDN covers regions without appliances."
+  },
+  {
+   "decision": "Segment duration",
+   "options": "2 s vs 4 s vs 6-10 s",
+   "choice": "4 s",
+   "why": "Balances startup and adaptivity against request overhead and compression efficiency; live would go shorter."
+  },
+  {
+   "decision": "Codecs",
+   "options": "H.264 only vs + HEVC vs + AV1",
+   "choice": "H.264 baseline for reach, HEVC/AV1 for capable devices",
+   "why": "AV1 saves ~30% bits but costs much more encode compute and lacks support on older devices; encode once, save on every view."
+  },
+  {
+   "decision": "Packaging",
+   "options": "Separate HLS-TS and DASH vs CMAF",
+   "choice": "CMAF fMP4 with CENC",
+   "why": "One set of segments for both protocols halves storage and cache footprint."
+  },
+  {
+   "decision": "ABR logic location",
+   "options": "Server-side session control vs client-side ABR",
+   "choice": "Client-side ABR",
+   "why": "Client has the real network signal; stateless servers are cacheable and scale linearly."
+  },
+  {
+   "decision": "Bookmark consistency",
+   "options": "Strongly consistent SQL vs Cassandra LWW",
+   "choice": "Cassandra LWW at LOCAL_QUORUM",
+   "why": "Write rate of ~1M/s and multi-region availability matter more than perfect ordering of positions."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Edge cache overloaded or down",
+   "behavior": "Steering removes it within 10 s from health reports; active clients fail over to their next URL after segment timeouts; ABR lowers quality during transition."
+  },
+  {
+   "failure": "DRM license service degraded",
+   "behavior": "Existing sessions continue with leased keys (8 h); new plays retry with jitter against another region; alert on licence error rate > 0.5%."
+  },
+  {
+   "failure": "Control plane region loss",
+   "behavior": "DNS/anycast shifts /play to other regions; playback in progress unaffected; capacity pre-provisioned for N+1 regions."
+  },
+  {
+   "failure": "Encoding pipeline backlog",
+   "behavior": "Prioritise titles by launch date; scale spot fleet; delay non-urgent AV1 re-encodes; launches gate on H.264 readiness only."
+  },
+  {
+   "failure": "Bad manifest published",
+   "behavior": "Versioned manifests allow instant rollback in catalog; canary new assets to 1% of plays first and watch play-start failure rate."
+  },
+  {
+   "failure": "Telemetry pipeline down",
+   "behavior": "Clients buffer and drop heartbeats beyond a cap; playback unaffected; bookmarks may lag; steering uses last known health."
+  }
+ ],
+ "metrics": [
+  "Play start time p50/p90 by device, ISP and country",
+  "Rebuffer ratio and rebuffer events per hour",
+  "Average delivered bitrate and VMAF, bitrate switch frequency",
+  "Edge byte offload, cache hit ratio per site, fill completion percentage",
+  "Play start failures by error code (licence, manifest, network)",
+  "/play latency and error rate; circuit breaker open counts",
+  "Encoding backlog, task retry rate, cost per encoded hour",
+  "Egress per ISP versus link capacity"
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you add live streaming?",
+   "a": "Ingest RTMP/SRT to a live encoder producing a ladder in real time, package 1-2 s segments (LL-HLS/LL-DASH with partial segments), push through CDN with short TTL manifests; latency target 3-10 s; no pre-positioning, so origin shielding and request collapsing become critical."
+  },
+  {
+   "q": "How do you support offline downloads?",
+   "a": "Download a single rendition chosen by user quality setting, with a persistent DRM licence that expires (e.g. 7 days or 48 h after first play) and a per-account download limit tracked server side."
+  },
+  {
+   "q": "How would you make this YouTube-style UGC?",
+   "a": "Massive ingest (500 h/min) means encode on upload with a fast H.264 path first so video is watchable in minutes, then better codecs later for popular videos only; pull-through CDN since popularity is unpredictable; add content ID and moderation."
+  },
+  {
+   "q": "How do you reduce startup time further?",
+   "a": "Prefetch manifests and first segments for the likely next title (homepage hover, autoplay next episode), TLS session resumption, QUIC, start on a lower rung and keyframe-aligned short first segment."
+  },
+  {
+   "q": "How would you insert ads for a cheaper tier?",
+   "a": "Server-side ad insertion: the manifest service stitches ad segments into the playlist per session, so ad blockers cannot skip and playback is seamless; ad decisions come from an ad server with a strict timeout and fall back to no ad."
+  },
+  {
+   "q": "How do you enforce the concurrent stream limit across regions?",
+   "a": "Session registry keyed by account with per-session heartbeat leases (90 s); a strongly consistent store or a home-region owner for the account avoids double counting; slight over-allowance during partitions is acceptable."
+  },
+  {
+   "q": "How do you test that the system survives a region failure?",
+   "a": "Regular chaos exercises that evacuate a region in production during low traffic, verifying capacity and failover automation, plus game days for dependency failures."
+  }
+ ],
+ "key_points": [
+  "Two systems: a batch encoding pipeline and a delivery network; the control plane is small but must be highly available.",
+  "The bottleneck is bandwidth: ~90 Tbps at peak, so 95%+ edge offload with ISP-embedded caches is the design.",
+  "Proactive off-peak fill of predicted-popular titles; consistent hashing inside a site; hot files replicated.",
+  "Client-side ABR over HTTP segments; 4 s CMAF segments serve both HLS and DASH.",
+  "Per-title convex-hull ladders save ~20% bandwidth; encode once, save on every view.",
+  "Chunked, idempotent encoding tasks on spot capacity with jittered retries.",
+  "Playback survives control-plane blips: multiple cache URLs, leased DRM keys, cached catalog.",
+  "Resilience patterns on /play: tight timeouts, breakers, bulkheads, and fallbacks for non-core features.",
+  "Measure what users feel: startup time, rebuffer ratio, delivered quality, per ISP."
+ ],
+ "quiz": [
+  {
+   "q": "Peak concurrency is 30M streams at an average 3 Mbps. Roughly what is peak egress?",
+   "options": [
+    "9 Tbps",
+    "90 Tbps",
+    "900 Tbps",
+    "900 Gbps"
+   ],
+   "answer": 1,
+   "why": "30e6 x 3e6 bps = 9e13 bps = 90 Tbps. 9 Tbps is a factor-of-ten slip that makes commercial CDN look sufficient."
+  },
+  {
+   "q": "Why does HTTP-based ABR scale better than a stateful streaming server?",
+   "options": [
+    "Segments are plain cacheable HTTP objects and the client makes bitrate decisions, so servers stay stateless",
+    "It uses UDP, which is faster",
+    "It avoids the need for encoding multiple renditions",
+    "It guarantees no rebuffering"
+   ],
+   "answer": 0,
+   "why": "Stateless, cacheable HTTP objects let ordinary caches scale delivery. ABR still needs multiple renditions, and it reduces but cannot eliminate rebuffering."
+  },
+  {
+   "q": "In per-title encoding, the ladder is chosen from:",
+   "options": [
+    "A fixed industry table of bitrates per resolution",
+    "The highest resolution the device supports",
+    "The average bitrate of the master file",
+    "The convex hull of quality (VMAF) versus bitrate across resolutions"
+   ],
+   "answer": 3,
+   "why": "The hull gives the most efficient resolution at each bitrate for that title. Fixed tables are exactly what per-title replaces."
+  },
+  {
+   "q": "A cache box is added to a site using mod-N hashing for file placement. What happens?",
+   "options": [
+    "Only 1/N of files move",
+    "No files move",
+    "Almost all files remap, causing a miss storm",
+    "Only the hottest files move"
+   ],
+   "answer": 2,
+   "why": "mod-N changes almost every assignment when N changes. 1/N movement is the property of consistent hashing, the tempting confusion."
+  },
+  {
+   "q": "Users on a congested ISP see frequent quality flips. Best fix?",
+   "options": [
+    "Increase segment length to 20 s",
+    "Add hysteresis and use harmonic-mean throughput with buffer-based selection",
+    "Remove low rungs from the ladder",
+    "Disable ABR and pin 1080p"
+   ],
+   "answer": 1,
+   "why": "Hysteresis and robust throughput estimates stop oscillation. Pinning 1080p would cause rebuffering on a congested link."
+  },
+  {
+   "q": "Why pre-position a new blockbuster's segments to ISP caches days before launch?",
+   "options": [
+    "To move tens of GB per cache of fill traffic to off-peak hours and avoid a launch-time miss storm",
+    "To speed up DRM licence issuance",
+    "To make encoding faster",
+    "Because caches cannot pull content on demand"
+   ],
+   "answer": 0,
+   "why": "Proactive fill uses idle off-peak capacity and protects origin and backbone at launch. Caches can pull on demand; it is just expensive at peak."
+  },
+  {
+   "q": "With Cassandra N=3, which setting guarantees overlapping read and write quorums?",
+   "options": [
+    "W=1, R=1",
+    "W=1, R=2",
+    "W=3, R=0",
+    "W=2, R=2"
+   ],
+   "answer": 3,
+   "why": "W + R > N requires 2 + 2 = 4 > 3. W=1, R=2 sums to 3, not greater than N, a common off-by-one."
+  },
+  {
+   "q": "The recommendations service is timing out. What should happen to /play?",
+   "options": [
+    "It should fail so users retry later",
+    "It should retry recommendations 5 times",
+    "Nothing: /play should not depend on recommendations, and the homepage falls back to cached rows",
+    "It should switch all users to the lowest bitrate"
+   ],
+   "answer": 2,
+   "why": "Core flows must not depend on non-core services. Aggressive retries would amplify load on a struggling service."
+  },
+  {
+   "q": "Encode tasks run on spot instances that get preempted. What makes this safe?",
+   "options": [
+    "Running each film on a single large machine",
+    "Idempotent per-chunk tasks with deterministic output keys and leased retries",
+    "Disabling retries",
+    "Writing outputs to local disk only"
+   ],
+   "answer": 1,
+   "why": "Small idempotent tasks mean a preemption loses little and retries are harmless. A single large machine loses hours of work on preemption."
+  },
+  {
+   "q": "Roughly how many segment requests per second at 30M concurrent streams with 4 s segments?",
+   "options": [
+    "7.5M/s",
+    "750k/s",
+    "75M/s",
+    "120M/s"
+   ],
+   "answer": 0,
+   "why": "30M / 4 s = 7.5M/s. 120M/s would be multiplying instead of dividing."
+  },
+  {
+   "q": "Why use CMAF with CENC instead of separate HLS-TS and DASH packages?",
+   "options": [
+    "CMAF has better compression than any codec",
+    "CMAF removes the need for DRM",
+    "Only CMAF works on Android",
+    "One encrypted segment set serves both protocols, halving storage and cache footprint"
+   ],
+   "answer": 3,
+   "why": "Shared segments improve cache efficiency and storage. CMAF is a container format, not a codec, so it does not change compression."
+  },
+  {
+   "q": "p90 startup time doubled in one ISP while other ISPs are normal. Most likely cause?",
+   "options": [
+    "Encoding pipeline backlog",
+    "Cassandra bookmark latency",
+    "The ISP's embedded caches are overloaded or steering is sending clients to a distant site",
+    "A codec bug affecting all devices"
+   ],
+   "answer": 2,
+   "why": "An ISP-specific regression points to delivery for that network. An encoding issue or codec bug would show across ISPs."
+  },
+  {
+   "q": "Why is last-write-wins acceptable for resume position?",
+   "options": [
+    "Clocks are perfectly synchronised",
+    "Losing an occasional concurrent update only shifts resume by seconds, an acceptable cost for availability",
+    "Cassandra prevents concurrent writes",
+    "Resume position is never updated from two devices"
+   ],
+   "answer": 1,
+   "why": "The business impact of a lost update is tiny. Clock skew is real, which is why LWW would be wrong for money."
+  },
+  {
+   "q": "What is the main purpose of full jitter in retry backoff?",
+   "options": [
+    "To desynchronise retries from many clients so they do not hit the dependency in waves",
+    "To make retries happen faster",
+    "To guarantee success on the second attempt",
+    "To reduce the number of retries"
+   ],
+   "answer": 0,
+   "why": "Jitter spreads retries in time. Backoff alone still synchronises clients that failed together."
+  },
+  {
+   "q": "Which component should know which cache holds a file and is healthy?",
+   "options": [
+    "The client player",
+    "The encoder",
+    "The DRM licence service",
+    "The steering service in the control plane"
+   ],
+   "answer": 3,
+   "why": "Steering combines health, load and placement. The client only fails over among URLs it was given."
+  },
+  {
+   "q": "Why can a 720p encode look better than 1080p at 1.5 Mbps?",
+   "options": [
+    "720p uses a better codec",
+    "TVs cannot display 1080p",
+    "Fewer pixels get more bits each, reducing compression artefacts at low bitrates",
+    "1080p always needs DRM L1"
+   ],
+   "answer": 2,
+   "why": "Bits per pixel drive artefacts at low bitrates. Codec choice is independent of resolution."
+  },
+  {
+   "q": "What does a circuit breaker do when a dependency's error rate exceeds its threshold?",
+   "options": [
+    "Retries every call three times",
+    "Fails calls fast for a cool-down period, then probes with a few trial calls",
+    "Routes calls to a random other service",
+    "Increases the timeout"
+   ],
+   "answer": 1,
+   "why": "Open state fails fast, half-open probes recovery. Increasing timeouts would tie up more threads, the opposite of the goal."
+  },
+  {
+   "q": "Total encoded catalog of 200k assets x 0.75 h x 40 GB/h is about:",
+   "options": [
+    "6 PB",
+    "600 TB",
+    "60 PB",
+    "60 TB"
+   ],
+   "answer": 0,
+   "why": "200,000 x 0.75 x 40 GB = 6,000,000 GB = 6 PB. 600 TB drops a zero."
+  },
+  {
+   "q": "The control plane in one region goes down. What happens to users already watching?",
+   "options": [
+    "All playback stops immediately",
+    "They are forced to the lowest bitrate",
+    "Their bookmarks are lost permanently",
+    "They keep streaming from edge caches with leased licences; new plays go to other regions"
+   ],
+   "answer": 3,
+   "why": "The data plane and leased keys are independent of the control plane. Bookmarks may lag but are not lost."
+  },
+  {
+   "q": "For live streaming instead of VOD, which change is most important?",
+   "options": [
+    "Longer segments (10 s+) for compression",
+    "Per-title convex hull encoding with trial encodes",
+    "Shorter segments/partial segments and short manifest TTLs, with origin shielding since pre-positioning is impossible",
+    "Storing the full ladder for days before publishing"
+   ],
+   "answer": 2,
+   "why": "Live needs low latency and cannot be pre-filled. Per-title trial encoding requires the whole asset upfront, so it does not apply to live."
+  }
+ ],
+ "references": [
+  {
+   "title": "How Netflix Pioneered Per-Title Video Encoding Optimization (Streaming Learning Center)",
+   "url": "https://streaminglearningcenter.com/articles/how-netflix-pioneered-per-title-video-encoding-optimization.html"
+  },
+  {
+   "title": "How Netflix Pioneered Per Title Video Encoding Optimization (Streaming Media)",
+   "url": "https://www.streamingmedia.com/Articles/Editorial/Featured-Articles/How-Netflix-Pioneered-Per-Title-Video-Encoding-Optimization-108547.aspx"
+  },
+  {
+   "title": "System Design: Video Streaming (Netflix) - ABR, HLS/DASH, Transcoding, CDN",
+   "url": "https://www.techinterview.org/post/3233474186/system-design-video-streaming-netflix-adaptive-bitrate-hls-dash-transcoding-cdn-recommendation-engine-microservices/"
+  },
+  {
+   "title": "How does Netflix ensure quality (Broadpeak)",
+   "url": "https://broadpeak.tv/blog/how-does-netflix-ensure-quality/"
+  },
+  {
+   "title": "Netflix global video delivery explained (DEV)",
+   "url": "https://dev.to/greygoose/netflix-global-video-delivery-explained-1hda"
+  }
+ ]
+}

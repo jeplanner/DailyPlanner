@@ -1,0 +1,1213 @@
+{
+ "slug": "collaborative-editor",
+ "title": "Design a collaborative document editor (Google Docs)",
+ "prompt": "Design a collaborative document editor.",
+ "group": "classic",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "Many people type into the same document at the same time, over flaky networks, and every one of them must see their own keystrokes instantly while all copies converge to exactly the same text. The core tension is local responsiveness versus global agreement: you apply edits optimistically on the client and then need a merge algorithm (operational transformation with a central sequencer, or a CRDT) that guarantees convergence and preserves intent, plus a session layer that routes every editor of one document to the same owner without making that owner a single point of failure.",
+ "framework": {
+  "clarify": [
+   "Scope: rich text documents (paragraphs, bold, lists, comments) like Google Docs, not spreadsheets or a Figma-style canvas. Confirm.",
+   "Concurrency: how many simultaneous editors per document? Assume typical 1-5, hard cap of about 100 active editors and several hundred viewers per doc.",
+   "Scale: assume 50M daily active users, 500M documents, peak of about 5M concurrently open documents.",
+   "Latency: local keystroke must render under 16ms (one frame); remote edits visible to collaborators within 200ms p95 in-region.",
+   "Offline: is offline editing required? Assume yes for short periods (minutes to hours) with merge on reconnect, but not weeks-long divergent branches.",
+   "Durability: an acknowledged edit must never be lost (RPO 0 for acknowledged ops); version history with named versions and restore.",
+   "Consistency: all replicas must converge to the identical document; we accept that the merged result follows algorithm rules rather than perfect human intent.",
+   "Extras in scope: presence (cursors, selections), comments, sharing permissions. Out of scope unless asked: real-time voice, full-text search ranking, export formats."
+  ],
+  "design": [
+   "Baseline: a single server holds the document in memory, clients send operations over a WebSocket, the server applies them in arrival order and broadcasts. Works for one server; then we scale it by sharding documents across many such servers.",
+   "Components: edge gateway with sticky WebSocket routing, Session Service (one owner process per active document), Operation Log store, Snapshot store, Presence service, Document metadata and ACL service, Comment service, and an async pipeline for search indexing and version history.",
+   "Merge model: operational transformation with a central sequencer per document (Google Docs / Jupiter style). Client sends op with the last server revision it has seen; server transforms the op against everything committed since, assigns the next revision number, appends to the log, then broadcasts.",
+   "APIs: WebSocket messages SUBMIT_OP {docId, clientId, clientSeq, baseRev, ops}, ACK {rev}, REMOTE_OP {rev, ops, author}, PRESENCE {cursor}; REST for open/create/share/history.",
+   "Critical path: keystroke applies locally, goes into the client pending buffer, one in-flight op at a time to the server, server transforms and appends to the log with a conditional write on rev, ACK to author, fan-out to other sessions, they transform against their own pending ops and apply.",
+   "Persistence: append-only op log keyed by (docId, rev) plus a snapshot every 500 ops or 5 minutes; loading a doc reads the latest snapshot and replays the tail.",
+   "Ownership: a lease-based router (etcd or a consistent-hash ring with leases) maps docId to exactly one session server; that server is the sole writer and the log append is fenced with the lease epoch."
+  ],
+  "defend": [
+   "Bottleneck: the per-document sequencer is a deliberate serialization point. One doc doing 100 editors x 5 ops/s = 500 ops/s is fine for one in-memory process; we batch (coalesce keystrokes into 50-100ms ops) to keep it there.",
+   "Scale reads: viewers do not need the sequencer; they subscribe to a fan-out channel off the log, and opening a doc is served from snapshot plus short tail, with snapshots cached in a CDN-backed blob store.",
+   "Scale writes: horizontal by sharding documents across session servers; there is no cross-document coordination, so capacity grows linearly with servers. The op log store is partitioned by docId.",
+   "Failure: if a session server dies, its lease expires (about 10s), the router assigns a new owner which rebuilds state from snapshot plus log; clients reconnect with exponential backoff with jitter and resend unacknowledged ops (idempotent by clientId plus clientSeq).",
+   "Degradation: if the log store is slow, stop accepting new ops (clients keep editing locally and buffer) rather than ack without durability; presence is best effort and is shed first under load.",
+   "Measure: op round-trip time p50/p95/p99, transform failures and divergence checksum mismatches, reconnect rate, ops per second per doc, snapshot lag (ops since last snapshot), and lost-ack incidents (should be zero)."
+  ],
+  "script": "Let me clarify first. I am assuming a Google Docs style rich-text editor, typically a handful of concurrent editors per document with a cap around 100, 50 million daily users, local keystrokes that render instantly, remote edits visible within about 200 milliseconds, short offline periods, and zero loss of acknowledged edits. The core problem is that everyone edits optimistically and all copies must converge. My baseline is one authoritative session per document: clients send operations tagged with the revision they were based on, the server transforms them against anything committed since, assigns a revision number, appends to a durable op log and broadcasts. That is operational transformation with a central sequencer, the model Google Docs uses, and I will contrast it with CRDTs. To scale, I shard documents across session servers with a lease-based router so each doc has exactly one writer, store an append-only log plus periodic snapshots, and run presence as a separate best-effort channel. Then I will defend it: the sequencer is a per-doc bottleneck that we keep cheap with batching, viewers bypass it, a failed owner is replaced by lease expiry and log replay, and client retries are idempotent so nothing is applied twice."
+ },
+ "brd": {
+  "problem": "Teams lose time emailing file versions back and forth and merging conflicting copies by hand. The business needs a browser and mobile editor where many people can work on one living document simultaneously, see each other's changes and cursors in real time, never lose work, and recover any earlier version, so that collaboration replaces version shuffling.",
+  "goals": [
+   "Real-time co-editing where every participant's copy converges to the same content.",
+   "Instant local responsiveness regardless of network quality.",
+   "Zero loss of acknowledged edits and a full, restorable version history.",
+   "Fine-grained sharing (owner, editor, commenter, viewer) and link sharing with org policies.",
+   "Support offline editing for short periods with automatic merge on reconnect."
+  ],
+  "non_goals": [
+   "Real-time collaborative spreadsheets with formula recalculation (separate product).",
+   "Git-style long-lived branches and manual three-way merges.",
+   "Pixel-perfect fidelity with every desktop word processor format on import.",
+   "End-to-end encryption where the server cannot read content (it breaks server-side transform and search)."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users (writers, reviewers)",
+    "needs": "Fast typing, visible collaborators, no lost work, easy restore."
+   },
+   {
+    "who": "Enterprise admins",
+    "needs": "Sharing controls, data residency, audit logs, retention and legal hold."
+   },
+   {
+    "who": "Product and growth",
+    "needs": "Engagement metrics, sharing virality, templates."
+   },
+   {
+    "who": "SRE and platform",
+    "needs": "Predictable per-doc load, clean failover, cost per active doc."
+   },
+   {
+    "who": "Security and compliance",
+    "needs": "Access control enforced server-side, DLP scanning, encryption at rest."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Remote edit propagation latency",
+    "target": "p95 under 200ms in-region, p99 under 500ms"
+   },
+   {
+    "metric": "Acknowledged edit loss",
+    "target": "0 incidents per quarter"
+   },
+   {
+    "metric": "Divergence (checksum mismatch after quiesce)",
+    "target": "under 1 in 10M sessions, auto-healed"
+   },
+   {
+    "metric": "Editor availability",
+    "target": "99.95% monthly for open and edit"
+   },
+   {
+    "metric": "Doc open time",
+    "target": "p95 under 1.5s for a 50-page doc"
+   },
+   {
+    "metric": "Share-to-open conversion",
+    "target": "track weekly; growth KPI"
+   }
+  ],
+  "constraints": [
+   "Must work on mobile networks with 300ms+ RTT and frequent disconnects.",
+   "Data residency: EU and India tenant data must stay in-region.",
+   "Browsers limit memory; very large documents (500+ pages) must still load.",
+   "Rich text model must be compatible across web, Android and iOS clients."
+  ],
+  "risks": [
+   {
+    "risk": "Transform bugs cause silent divergence between clients.",
+    "mitigation": "Property-based fuzz tests of transform functions, periodic checksum compare, server copy is authoritative and clients resync on mismatch."
+   },
+   {
+    "risk": "Viral doc (an all-hands agenda) gets 10k viewers and overloads one session server.",
+    "mitigation": "Separate viewer fan-out tier, cap active editors, degrade presence."
+   },
+   {
+    "risk": "Owner failover loses in-memory ops.",
+    "mitigation": "Ack only after durable log append; fenced writes with lease epoch."
+   },
+   {
+    "risk": "Permission revocation not enforced on live sessions.",
+    "mitigation": "ACL change events push a revoke to session servers which close the socket within seconds."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Author",
+    "needs": "Types fast, wants zero lag and autosave without thinking about it."
+   },
+   {
+    "name": "Reviewer",
+    "needs": "Suggests edits and comments, sees who changed what."
+   },
+   {
+    "name": "Meeting note-taker group",
+    "needs": "10-30 people typing simultaneously into one agenda."
+   },
+   {
+    "name": "Commuter on mobile",
+    "needs": "Edits in a train with intermittent connectivity."
+   }
+  ],
+  "user_stories": [
+   "As an author, I want my keystrokes to appear instantly so that typing feels native.",
+   "As a collaborator, I want to see other people's edits within a fraction of a second so that we do not overwrite each other.",
+   "As a collaborator, I want to see named cursors and selections so that I know where others are working.",
+   "As a mobile user, I want to keep editing while offline so that a tunnel does not stop my work.",
+   "As an owner, I want to share with specific people or a link with a role so that I control access.",
+   "As a reviewer, I want to comment on a text range so that feedback stays anchored as text moves.",
+   "As any user, I want to browse and restore earlier versions so that mistakes are recoverable.",
+   "As an admin, I want to revoke a departing employee's access and have it take effect immediately."
+  ],
+  "functional": [
+   "Create, open, rename, delete (to trash) documents.",
+   "Real-time concurrent editing of rich text: insert, delete, formatting attributes, lists, tables, images.",
+   "Presence: show active collaborators, cursor and selection positions, with colors and names.",
+   "Comments and suggestions anchored to text ranges that survive concurrent edits.",
+   "Version history: automatic versions, named versions, diff view, restore.",
+   "Sharing and ACL: user, group and link sharing with roles owner, editor, commenter, viewer.",
+   "Offline editing with queued operations and merge on reconnect.",
+   "Autosave with visible save state (Saving, All changes saved, Offline)."
+  ],
+  "non_functional": [
+   {
+    "name": "Local latency",
+    "target": "keystroke to screen under 16ms (no network in path)"
+   },
+   {
+    "name": "Remote propagation",
+    "target": "p95 under 200ms in-region, p99 under 500ms"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95% for edit; viewers degrade to read-only rather than fail"
+   },
+   {
+    "name": "Durability",
+    "target": "acknowledged ops replicated to 3 replicas before ACK; RPO 0, RTO under 30s for a doc"
+   },
+   {
+    "name": "Consistency",
+    "target": "strong eventual convergence: all clients identical after quiesce"
+   },
+   {
+    "name": "Scale per doc",
+    "target": "100 concurrent editors, 1000+ viewers"
+   },
+   {
+    "name": "Security",
+    "target": "ACL check on open and on every write session; TLS 1.2+; AES-256 at rest"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "50M DAU, each active about 30 minutes per day editing or viewing.",
+    "Peak concurrent open documents about 5M; about 40% have an active typist at any moment.",
+    "Clients coalesce keystrokes into one op every 100ms while typing; an active typist sends about 3 ops/s on average.",
+    "Average op payload 100 bytes; op log record with metadata about 200 bytes.",
+    "Average document 50KB of content; snapshot every 500 ops.",
+    "500M documents total, growing 5M per day."
+   ],
+   "math": [
+    "Active typists at peak: 5M docs x 0.4 x 1.3 typists per doc ~= 2.6M typists.",
+    "Write ops at peak: 2.6M x 3 ops/s ~= 7.8M ops/s globally. That is the sequencer workload spread across docs.",
+    "Op log ingest: 7.8M x 200B ~= 1.56 GB/s at peak; with daily average about a third of peak, ~= 45 TB/day raw, compacted by snapshots and TTL on old ops after they fold into versions.",
+    "Fan-out: average 2.5 sessions per active doc so about 1.5 recipients per op -> ~12M outbound messages/s, ~1.2 GB/s egress before compression.",
+    "WebSocket connections: 5M docs x 2.5 sessions ~= 12.5M concurrent sockets; at 50k sockets per session server node -> ~250 nodes, plan 400 for headroom and failover.",
+    "Snapshot storage: 500M docs x 50KB ~= 25 TB for latest snapshots; versions (say 20 retained per doc, delta compressed to 10KB each) ~= 100 TB.",
+    "Per doc worst case: 100 editors x 5 ops/s = 500 ops/s through one sequencer, each transform against a short window; easily handled by one core."
+   ],
+   "summary": "About 8M ops/s and 12.5M sockets at global peak, but no single document exceeds a few hundred ops/s, so the design is many small independent sequencers (one per doc) spread across roughly 400 session servers, backed by a partitioned append-only log (about 1.5 GB/s) and about 125 TB of snapshot and version storage."
+  },
+  "out_of_scope": [
+   "Spreadsheet formula engines and slide layout engines.",
+   "Full-text search ranking (we only emit change events to an indexer).",
+   "Import/export converters for every office format.",
+   "End-to-end encrypted documents."
+  ]
+ },
+ "hld": {
+  "overview": "Clients hold a full local replica of the document model and apply edits optimistically. A WebSocket gateway routes every connection for a given docId to the single session server that currently owns that doc (found through a lease-based routing table). The session server is the per-document sequencer: it transforms incoming ops, assigns revision numbers, appends them durably to a partitioned op log, acks the author, and broadcasts to other sessions. Snapshots are written asynchronously to blob storage. Presence travels on a separate, lossy channel. Metadata, ACLs, and comments live in their own services; downstream consumers (search indexing, version history, notifications) read the op log as a stream.",
+  "diagram": "\n  Web / iOS / Android clients (local replica + pending buffer)\n        |  WebSocket (ops, acks, presence)          | HTTPS (open, share, history)\n        v                                            v\n  +-----------------+                      +------------------+\n  | Edge / WS       |---lookup docId------>| Doc Router       |\n  | Gateway (L7)    |<--owner node + epoch-| (etcd leases)    |\n  +--------+--------+                      +------------------+\n           | sticky by docId\n           v\n  +-----------------------------+      +--------------------+\n  | Session Server (owner of    |----->| Presence (Redis    |\n  | doc D: sequencer, in-memory |      | pub/sub, TTL 30s)  |\n  | doc state, OT transform)    |      +--------------------+\n  +------+-------------+--------+\n         | append(rev) | read snapshot          +------------------+\n         v             v                        | Metadata + ACL   |\n  +-------------+  +-----------------+          | (Spanner/Postgres)|\n  | Op Log      |  | Snapshot Store  |          +------------------+\n  | (Bigtable/  |  | (S3/GCS blobs)  |          +------------------+\n  | Cassandra,  |  +-----------------+          | Comment Service  |\n  | key doc+rev)|                               +------------------+\n  +------+------+\n         | CDC stream (Kafka)\n         v\n  [Snapshotter] [Version history] [Search indexer] [Notifications]\n",
+  "components": [
+   {
+    "name": "Client editor engine",
+    "responsibility": "Holds the document model, applies local ops instantly, keeps a pending queue and one in-flight op, transforms incoming remote ops against local pending ops, persists unsent ops to IndexedDB for offline."
+   },
+   {
+    "name": "Edge / WebSocket gateway",
+    "responsibility": "Terminates TLS, authenticates the session token, looks up the owner of a docId and proxies the socket to it; handles reconnect redirects when ownership moves."
+   },
+   {
+    "name": "Doc Router (ownership service)",
+    "responsibility": "Maps docId to one session server using leases in etcd (TTL 10s) with a monotonically increasing epoch used as a fencing token; assigns docs on first open using consistent hashing with load awareness."
+   },
+   {
+    "name": "Session Server",
+    "responsibility": "Per-document sequencer: validates ACL, dedupes by clientId and clientSeq, transforms ops against concurrent history, assigns rev, appends to the op log, acks, broadcasts; keeps hot doc state in memory and evicts idle docs after 10 minutes."
+   },
+   {
+    "name": "Op Log store",
+    "responsibility": "Durable append-only log of operations keyed by (docId, rev) with a conditional put (rev must not exist and epoch must be current); replicated 3 ways."
+   },
+   {
+    "name": "Snapshot store",
+    "responsibility": "Blob storage of full document state at a given rev; written every 500 ops or 5 minutes; makes loading O(snapshot + tail)."
+   },
+   {
+    "name": "Presence service",
+    "responsibility": "Ephemeral cursor, selection and who-is-here state over Redis pub/sub with 30s TTL heartbeat; lossy and droppable under load."
+   },
+   {
+    "name": "Metadata and ACL service",
+    "responsibility": "Doc title, owner, folder, sharing roles, link settings; answers can-edit checks and emits revoke events."
+   },
+   {
+    "name": "Comment service",
+    "responsibility": "Stores comment threads anchored to stable positions (anchor ids) that are transformed along with the text."
+   },
+   {
+    "name": "Async consumers",
+    "responsibility": "Consume the op log stream to build version history checkpoints, update the search index, and send mention notifications."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Edit and propagate (critical path)",
+    "steps": [
+     "User types; client applies the insert to its local model immediately and appends it to the pending buffer.",
+     "If no op is in flight, client sends SUBMIT_OP {clientId, clientSeq=42, baseRev=1007, ops} on the WebSocket.",
+     "Gateway forwards to the owner session server for the doc.",
+     "Server checks dedupe table: if (clientId, 42) already committed, re-send the ACK and stop.",
+     "Server transforms the op against ops with rev 1008..current (say 1009) to produce op'.",
+     "Server appends op' as rev 1010 to the op log with a conditional write fenced by its lease epoch; waits for a quorum ack.",
+     "Server applies op' to its in-memory doc, sends ACK {rev 1010} to the author and REMOTE_OP {rev 1010, op'} to every other session.",
+     "Each receiving client transforms op' against its own in-flight and pending ops and applies the result; the author on ACK moves to the next pending op."
+    ]
+   },
+   {
+    "name": "Open a document",
+    "steps": [
+     "Client calls GET /docs/{id}/open; metadata service verifies the ACL and returns a signed session token.",
+     "Client opens a WebSocket to the gateway with docId and token; gateway asks the router for the owner, assigning one if the doc is cold.",
+     "Cold owner loads the latest snapshot (rev 9500) from blob storage and replays log rev 9501..9733.",
+     "Server sends the client the document at rev 9733 (or the client fetches the snapshot from CDN and asks for the tail).",
+     "Client renders, subscribes to presence, and starts sending ops with baseRev 9733."
+    ]
+   },
+   {
+    "name": "Reconnect after offline",
+    "steps": [
+     "Client edits offline; ops queue locally in IndexedDB, all based on the last known rev 2000.",
+     "On reconnect the client sends RESUME {lastRev 2000, unackedFrom clientSeq 17}.",
+     "Server streams ops 2001..2050 committed while the client was away; client transforms its local queue against them.",
+     "Client resubmits its pending ops one at a time (or composed into one) with the new baseRev; already-committed ones are deduped by clientSeq.",
+     "If the gap is huge (more than 10k ops), server sends a fresh snapshot and the client rebases pending ops on it."
+    ]
+   },
+   {
+    "name": "Owner failover",
+    "steps": [
+     "Session server S1 crashes; its etcd lease for doc D expires after 10s.",
+     "Next connection attempt for D asks the router, which grants the lease to S2 with epoch+1.",
+     "S2 loads snapshot plus log tail; any late write from a zombie S1 is rejected because its epoch is stale.",
+     "Clients reconnect with jittered backoff and resume as in the reconnect flow; nothing acknowledged is lost."
+    ]
+   }
+  ],
+  "data_flow": "Keystrokes become ops on the client, flow over a WebSocket to the doc's single owner, get transformed and stamped with a revision, are durably appended to the op log, then fan out to other clients. The op log is the source of truth; snapshots are a cache of the log folded up to a revision. A change-data stream from the log feeds version history, search indexing, and notifications asynchronously, so none of those sit on the typing path. Presence never touches durable storage."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/docs/{docId}/open",
+    "request": "Auth header; optional ?rev=",
+    "response": "{docId, title, role, snapshotUrl, snapshotRev, wsUrl, sessionToken (5 min)}",
+    "notes": "ACL checked here; token binds userId, docId and role for the socket."
+   },
+   {
+    "method": "WS",
+    "path": "/v1/collab?docId=&token=",
+    "request": "SUBMIT_OP {clientId, clientSeq, baseRev, ops:[{retain:12},{insert:'hi',attrs:{b:true}}]}",
+    "response": "ACK {clientSeq, rev} | REMOTE_OP {rev, author, ops} | ERROR {code: STALE_BASE|FORBIDDEN|RESYNC}",
+    "notes": "One in-flight op per client; idempotent by (clientId, clientSeq)."
+   },
+   {
+    "method": "WS",
+    "path": "/v1/collab (presence frames)",
+    "request": "PRESENCE {cursor:{anchorId, offset}, selection}",
+    "response": "PRESENCE_UPDATE {userId, color, cursor}",
+    "notes": "Throttled to 10/s per client; dropped first under load."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/docs",
+    "request": "{title, folderId, templateId?}",
+    "response": "{docId}",
+    "notes": "Creates metadata row and empty snapshot at rev 0."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/docs/{docId}/permissions",
+    "request": "{principal, role: viewer|commenter|editor|owner} or {link: {role, scope: org|anyone}}",
+    "response": "{permissionId}",
+    "notes": "Emits ACL change event; downgrades push revoke to live sessions."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/docs/{docId}/revisions?before=",
+    "request": "pagination cursor",
+    "response": "[{versionId, rev, time, authors[], name?}]",
+    "notes": "Served from version-history index, not by scanning the op log."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/docs/{docId}/restore",
+    "request": "{rev}",
+    "response": "{newRev}",
+    "notes": "Restore is a new forward op (replace content) so history stays append-only."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/docs/{docId}/comments",
+    "request": "{anchorStart, anchorEnd, text, mentions[]}",
+    "response": "{commentId}",
+    "notes": "Anchors are stable element ids, transformed with text."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Document",
+    "store": "Spanner / Postgres (sharded by docId)",
+    "fields": [
+     "docId (uuid)",
+     "ownerId",
+     "title",
+     "folderId",
+     "region",
+     "createdAt",
+     "lastRev",
+     "lastSnapshotRev",
+     "deletedAt"
+    ],
+    "keys": "PK docId; secondary index (ownerId, updatedAt)",
+    "notes": "Strongly consistent metadata; region pins residency."
+   },
+   {
+    "entity": "Operation",
+    "store": "Bigtable / Cassandra op log",
+    "fields": [
+     "docId",
+     "rev (int64)",
+     "clientId",
+     "clientSeq",
+     "authorId",
+     "epoch",
+     "ops (binary, compressed)",
+     "ts"
+    ],
+    "keys": "Row key docId#rev zero-padded, so a doc's ops are contiguous and range-scannable",
+    "notes": "Conditional insert (IF NOT EXISTS) gives single-writer per rev; TTL after ops fold into a retained version."
+   },
+   {
+    "entity": "Snapshot",
+    "store": "S3 / GCS",
+    "fields": [
+     "docId",
+     "rev",
+     "contentBlob (protobuf)",
+     "checksum"
+    ],
+    "keys": "Object key snapshots/{docId}/{rev}",
+    "notes": "Pointer to latest in Document.lastSnapshotRev; immutable objects, CDN cacheable."
+   },
+   {
+    "entity": "Permission",
+    "store": "Spanner / Postgres",
+    "fields": [
+     "docId",
+     "principalType (user|group|link)",
+     "principalId",
+     "role",
+     "grantedBy",
+     "grantedAt"
+    ],
+    "keys": "PK (docId, principalType, principalId); index principalId for 'shared with me'",
+    "notes": "Cached in session server with invalidation on change events."
+   },
+   {
+    "entity": "ClientDedupe",
+    "store": "Session server memory, rebuilt from op log",
+    "fields": [
+     "docId",
+     "clientId",
+     "lastCommittedSeq",
+     "rev"
+    ],
+    "keys": "(docId, clientId)",
+    "notes": "Rebuilt on failover by scanning the log tail since snapshot."
+   },
+   {
+    "entity": "Comment",
+    "store": "Postgres",
+    "fields": [
+     "commentId",
+     "docId",
+     "anchorStartId",
+     "anchorEndId",
+     "authorId",
+     "body",
+     "resolved",
+     "threadParentId"
+    ],
+    "keys": "PK commentId; index (docId, resolved)",
+    "notes": "Anchors refer to element ids that survive edits."
+   }
+  ],
+  "classes": [
+   {
+    "name": "DocSession",
+    "responsibility": "Server-side owner of one document: holds state, rev, dedupe table and connected clients.",
+    "methods": [
+     "submit(clientId, clientSeq, baseRev, ops) -> Ack",
+     "broadcast(rev, op, exceptClient)",
+     "loadFrom(snapshot, tail)",
+     "maybeSnapshot()",
+     "evictIfIdle()"
+    ]
+   },
+   {
+    "name": "Transformer",
+    "responsibility": "Pure OT functions for the rich text op type.",
+    "methods": [
+     "transform(a, b, side) -> (a', b')",
+     "compose(a, b) -> ab",
+     "apply(doc, op) -> doc",
+     "invert(op, doc) -> op"
+    ]
+   },
+   {
+    "name": "OpLogRepository",
+    "responsibility": "Durable append and range reads with fencing.",
+    "methods": [
+     "append(docId, rev, epoch, op) throws Conflict|StaleEpoch",
+     "readRange(docId, fromRev, toRev)",
+     "latestRev(docId)"
+    ]
+   },
+   {
+    "name": "ClientSyncEngine",
+    "responsibility": "Client-side state machine: Synchronized, AwaitingAck, AwaitingAckWithBuffer.",
+    "methods": [
+     "applyLocal(op)",
+     "onAck(rev)",
+     "onRemote(rev, op)",
+     "onReconnect()",
+     "persistPending()"
+    ]
+   },
+   {
+    "name": "DocRouter",
+    "responsibility": "Lease-based ownership of docs across session servers.",
+    "methods": [
+     "ownerOf(docId) -> (node, epoch)",
+     "acquire(docId) -> epoch",
+     "renew(docId)",
+     "release(docId)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Server-side OT with a central sequencer (Jupiter model)",
+    "explain": "Every op carries the revision it was based on. The server keeps history; it transforms the incoming op against every op committed after baseRev, which is a simple linear walk because the server has a total order. This avoids the general multi-site OT puzzles (TP2) because transforms only ever happen between a client and the single server.",
+    "pseudocode": "def submit(clientId, seq, baseRev, op):\n    if dedupe.get(clientId, -1) >= seq:\n        return Ack(seq, dedupe_rev[clientId])      # retry of committed op\n    if baseRev < log_floor:                         # too old, history trimmed\n        return Error('RESYNC')\n    for r in range(baseRev + 1, self.rev + 1):\n        op, _ = transform(op, history[r], side='right')\n    new_rev = self.rev + 1\n    oplog.append(doc_id, new_rev, epoch, op)       # conditional, quorum\n    self.doc = apply(self.doc, op); self.rev = new_rev\n    history[new_rev] = op; dedupe[clientId] = seq\n    broadcast(new_rev, op, except_client=clientId)\n    return Ack(seq, new_rev)"
+   },
+   {
+    "name": "Client state machine (one in-flight op)",
+    "explain": "The client has at most one op awaiting ACK and one composed buffer of later local ops. Remote ops are transformed against both so the client's view stays a valid future of the server's history. Composing the buffer keeps message count low on slow networks.",
+    "pseudocode": "state: inflight=None, buffer=None, rev\non_local(op):\n    apply_to_editor(op)\n    if inflight is None: inflight = op; send(op, rev)\n    else: buffer = op if buffer is None else compose(buffer, op)\non_ack(new_rev):\n    rev = new_rev; inflight = buffer; buffer = None\n    if inflight: send(inflight, rev)\non_remote(new_rev, op):\n    if inflight: inflight, op = transform(inflight, op)\n    if buffer:   buffer, op = transform(buffer, op)\n    apply_to_editor(op); rev = new_rev"
+   },
+   {
+    "name": "Transform insert vs insert on a linear text",
+    "explain": "Two inserts at positions p1 and p2 from the same base. If one is strictly before the other, shift the later one by the length of the earlier. On a tie, break deterministically (server op wins left, or lower clientId) so all sites agree.",
+    "pseudocode": "def xform_ins_ins(a, b, a_wins_tie):\n    if a.pos < b.pos or (a.pos == b.pos and a_wins_tie):\n        return a, Insert(b.pos + len(a.text), b.text)\n    return Insert(a.pos + len(b.text), a.text), b"
+   },
+   {
+    "name": "Snapshot and log compaction",
+    "explain": "After 500 committed ops or 5 minutes idle, the session server serializes state at rev R to blob storage, then updates lastSnapshotRev. Ops older than the oldest retained version and older than 30 days can be TTL'd because restore uses version checkpoints.",
+    "pseudocode": "def maybe_snapshot():\n    if self.rev - last_snap_rev >= 500 or idle_for(300):\n        blob.put(f'snapshots/{doc}/{self.rev}', encode(self.doc))\n        meta.cas(doc, 'lastSnapshotRev', last_snap_rev, self.rev)\n        last_snap_rev = self.rev"
+   }
+  ],
+  "sequence": "\nAlice(client)      Gateway       SessionServer(D)      OpLog(3 replicas)     Bob(client)\n    | type 'x'        |                 |                      |                   |\n    | apply locally   |                 |                      |                   |\n    |--SUBMIT seq42 base1007----------->|                      |                   |\n    |                 |                 | dedupe ok            |                   |\n    |                 |                 | transform vs 1008-9  |                   |\n    |                 |                 |--append rev1010 ep7->|                   |\n    |                 |                 |<--quorum ack (W=2)---|                   |\n    |                 |                 | apply, rev=1010      |                   |\n    |<----------ACK seq42 rev1010-------|                      |                   |\n    |                 |                 |--REMOTE_OP rev1010 --------------------->|\n    |                 |                 |                      |   transform vs    |\n    |                 |                 |                      |   own pending,    |\n    |                 |                 |                      |   apply           |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Two users insert at the exact same position at the same time.",
+   "handling": "Deterministic tie-break in transform (server-committed op goes first, or compare site ids) so every replica orders the two inserts identically; no interleaving of characters."
+  },
+  {
+   "case": "User A deletes a paragraph while user B is typing inside it.",
+   "handling": "B's insert transformed against A's delete collapses to the delete start position (or is dropped depending on policy); Google Docs style keeps B's text at the boundary so work is not silently lost. Document the chosen intent rule."
+  },
+  {
+   "case": "Client retries a SUBMIT because the ACK was lost on a flaky mobile network.",
+   "handling": "Server dedupes on (clientId, clientSeq) and returns the original ACK with the committed rev; the op is never applied twice."
+  },
+  {
+   "case": "Zombie session server (paused by GC for 20s) wakes up after ownership moved.",
+   "handling": "Its op log appends carry an old epoch and are rejected by the conditional write; it learns it lost the lease and closes its sockets."
+  },
+  {
+   "case": "Client was offline for two days and has 3,000 pending ops against a doc that changed heavily.",
+   "handling": "Server sends snapshot plus tail or a RESYNC; client rebases its composed pending op; if transform cost exceeds a budget, show a conflict copy as a fallback rather than freeze the browser."
+  },
+  {
+   "case": "Hot document: 5,000 people open the company all-hands agenda.",
+   "handling": "Cap active editors (for example 100); others join as viewers fed by a separate fan-out tier; presence aggregated to show '4,900 viewers' instead of 5,000 cursors."
+  },
+  {
+   "case": "Permission revoked while user is mid-session.",
+   "handling": "ACL service emits revoke event; session server rejects further ops with FORBIDDEN and closes the socket within seconds; unsent local edits are kept only on the client as a downloadable copy."
+  },
+  {
+   "case": "Op log write succeeds but server crashes before sending ACK.",
+   "handling": "Op is durable; on reconnect the client resubmits, dedupe finds it committed and returns the rev; client sees no duplicate."
+  },
+  {
+   "case": "Comment anchored to text that is deleted.",
+   "handling": "Anchors are element ids; when both anchors are deleted, comment becomes orphaned and is shown as 'original text deleted' rather than vanishing."
+  },
+  {
+   "case": "Undo in a multi-user document.",
+   "handling": "Undo must invert only the local user's op, transformed through later remote ops, not roll back the shared document; implement via invert(op) then transform forward."
+  },
+  {
+   "case": "Huge paste (a 5MB table) in one operation.",
+   "handling": "Enforce max op size (for example 1MB), chunk large pastes into several ops, and upload images separately to blob storage referencing them by id."
+  },
+  {
+   "case": "Clock skew between clients shows wrong edit times in history.",
+   "handling": "Revision order and timestamps come from the server, never client clocks; client time is only a hint."
+  },
+  {
+   "case": "Divergence detected (client checksum differs from server at the same rev).",
+   "handling": "Client discards its state, reloads snapshot at a known rev and rebases unacknowledged ops; emit a metric because it signals a transform bug."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "WebSocket over TLS",
+   "layer": "Client transport",
+   "overview": "Full-duplex persistent connection over a single TCP connection, upgraded from HTTP.",
+   "why": "Ops and presence flow both ways at high frequency with low overhead; server push without polling.",
+   "alternatives": "Server-Sent Events plus POST for writes (simpler, one-directional push); WebTransport/QUIC (better on lossy mobile, less mature support); long polling (fallback only)."
+  },
+  {
+   "name": "OT library (ot.js style / ShareDB) or CRDT (Yjs, Automerge)",
+   "layer": "Merge algorithm",
+   "overview": "OT transforms concurrent ops against each other relative to a central order; CRDTs give each element a unique id so ops commute without a central server.",
+   "why": "We have a server anyway, so OT with a central sequencer is compact and proven (Google Docs). Yjs is the strong alternative when offline-first or peer-to-peer matters.",
+   "alternatives": "Yjs/Automerge CRDT (no central ordering needed, bigger metadata, tombstones); Figma-style server-authoritative last-writer-wins per property (great for object graphs, not for character-level text)."
+  },
+  {
+   "name": "etcd",
+   "layer": "Coordination",
+   "overview": "Raft-replicated key-value store with leases and watches.",
+   "why": "Holds docId to owner leases with TTL and a revision number usable as a fencing token; watches let gateways learn ownership changes fast.",
+   "alternatives": "ZooKeeper (similar, heavier ops); consistent hashing without leases (simpler, but two nodes can both believe they own a doc during membership churn)."
+  },
+  {
+   "name": "Bigtable / Cassandra",
+   "layer": "Op log store",
+   "overview": "Wide-column stores with sorted row keys, high write throughput and replication.",
+   "why": "Row key docId#rev gives contiguous range scans for replay; per-row conditional insert (Cassandra LWT, Bigtable check-and-mutate) enforces one op per rev.",
+   "alternatives": "Kafka as the log (great ordering per partition, but per-doc partitions do not scale to 500M docs); Postgres sharded by docId (fine at smaller scale, simpler transactions)."
+  },
+  {
+   "name": "S3 / GCS",
+   "layer": "Snapshot and media storage",
+   "overview": "Object storage with eleven nines durability.",
+   "why": "Snapshots and images are immutable blobs; cheap and CDN-friendly.",
+   "alternatives": "Storing snapshots in the database (simpler, but bloats hot storage); a dedicated blob store like Magic Pocket at extreme scale."
+  },
+  {
+   "name": "Redis pub/sub",
+   "layer": "Presence",
+   "overview": "In-memory store with lightweight pub/sub and key TTLs.",
+   "why": "Cursor and who-is-here data is ephemeral, high frequency and fine to lose; TTL 30s cleans up dead sessions.",
+   "alternatives": "Keep presence entirely in the session server memory (simplest when all sessions of a doc are on one node); NATS for larger fan-out."
+  },
+  {
+   "name": "Spanner / Postgres",
+   "layer": "Metadata, ACL, comments",
+   "overview": "Relational stores with transactions; Spanner adds global strong consistency.",
+   "why": "Sharing and ownership need transactions and strong reads (revocations must stick).",
+   "alternatives": "CockroachDB; a Zanzibar-style relationship tuple service for ACLs at very large scale."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Change stream",
+   "overview": "Partitioned, replicated commit log for event streaming.",
+   "why": "Decouples version history, search indexing and notifications from the typing path; consumers replay at their own pace.",
+   "alternatives": "Pub/Sub or Kinesis (managed); CDC from the op log store via Debezium."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Operational Transformation (OT)",
+   "explain": "Operational transformation solves this problem: two replicas start from the same document, each applies a different local edit, and then each receives the other's edit. If you naively apply a remote 'insert X at position 5' after you have already inserted three characters at position 2, the X lands in the wrong place. OT defines a function transform(a, b) that takes two operations generated against the same state and returns a' and b' such that applying a then b' gives the same result as applying b then a'. This property is called TP1 (convergence for two ops). For text, ops are usually expressed as a sequence of retain(n), insert(str) and delete(n) components, and transform walks both sequences shifting positions. In a fully peer-to-peer setting you also need TP2, a stronger property about transforming across three or more concurrent ops in different orders, and many published algorithms were later shown to violate it. The practical trick used by Google Docs (derived from the Jupiter system at Xerox PARC) is to have a central server that imposes a total order. Each client only ever transforms against the server's linear history, so only TP1 is required, and correctness becomes tractable. The costs: the server is in the loop for ordering, the client can have only one unacknowledged op at a time (later local ops are buffered and composed), and every new op type (tables, formatting) requires carefully written and fuzz-tested transform functions for every pair of op types.",
+   "in_this_design": "The session server for each doc is the central sequencer. Clients submit ops with baseRev; the server transforms them against ops committed after baseRev, assigns the next rev, and broadcasts. Clients transform incoming remote ops against their in-flight and buffered local ops.",
+   "key_points": [
+    "transform(a, b) must satisfy TP1: apply(apply(S, a), b') == apply(apply(S, b), a').",
+    "A central server removes the need for TP2, which is what makes OT practical.",
+    "Client keeps one in-flight op plus a composed buffer.",
+    "Transform functions grow quadratically with op types; fuzz test every pair.",
+    "Ties at the same position need a deterministic rule."
+   ],
+   "qa": [
+    {
+     "q": "Why does Google Docs use a central server with OT instead of peer-to-peer OT?",
+     "a": "Peer-to-peer OT needs TP2, which is very hard to get right and several published algorithms broke it. A central server gives a total order so every transform is between a client op and the server's linear history, needing only TP1. It also gives a natural place for durability, access control and revision numbers."
+    },
+    {
+     "q": "Why can the client have only one op in flight?",
+     "a": "So that the server always transforms against a known base. If the client sent op2 before op1 was acked, op2's base would include op1 which the server may transform differently. Instead later edits are composed into a buffer and sent after the ack, which also reduces message count on slow links."
+    },
+    {
+     "q": "What happens if transform has a bug?",
+     "a": "Replicas silently diverge. Defence: property-based tests that generate random concurrent op pairs and assert TP1, periodic checksums of document state at a rev, and automatic resync from the authoritative server copy when a mismatch is detected."
+    },
+    {
+     "q": "How does OT handle undo in a shared doc?",
+     "a": "Undo is not 'rewind the document'. You invert the user's own op and then transform that inverse forward through every op committed since, then submit it as a new op. That way you remove only your change, not collaborators' later edits."
+    }
+   ]
+  },
+  {
+   "name": "CRDTs for text (sequence CRDTs such as RGA / YATA)",
+   "explain": "A conflict-free replicated data type is a data structure whose operations are designed so that replicas can apply them in any order and still converge, with no central coordinator. State-based CRDTs merge whole states with a join that is commutative, associative and idempotent; operation-based CRDTs broadcast ops that commute given causal delivery. For text, the key idea is to stop addressing characters by integer index, which shifts under concurrent edits, and instead give every inserted character a globally unique, immutable id (for example siteId plus a Lamport counter) and record which character it was inserted after. A concurrent insert at the same spot is ordered by comparing ids, which every replica does identically. Deletion cannot actually remove the element because a concurrent insert might reference it, so deleted characters become tombstones. Yjs (YATA) and Automerge (RGA-derived) are the popular implementations; they pack runs of characters typed by one user into single items to keep memory reasonable. Benefits: offline-first and peer-to-peer just work, the server can be a dumb relay plus storage, and merges never need a transform function per op pair. Costs: per-character metadata and tombstones grow the document (mitigated by run-length encoding and garbage collection when all replicas have seen a delete), interleaving anomalies on concurrent multi-character inserts in some algorithms, and rich text formatting and intent preservation (for example moving a paragraph) remain hard.",
+   "in_this_design": "We chose server-sequenced OT for the main path, but we present CRDT as the alternative and would pick Yjs if the product requirement became long offline sessions, peer-to-peer, or a dumb-relay backend. Figma uses a server-authoritative scheme inspired by CRDTs for its object properties.",
+   "key_points": [
+    "CRDT ops commute, so order of delivery does not matter for convergence.",
+    "Characters get unique ids instead of integer positions.",
+    "Deletes leave tombstones; GC needs knowledge that all replicas have seen them.",
+    "Great for offline and peer-to-peer; pays in metadata size.",
+    "OT needs a server for ordering; CRDT needs only causal delivery."
+   ],
+   "qa": [
+    {
+     "q": "When would you choose a CRDT over OT for this editor?",
+     "a": "When offline editing is long and common, when we want peer-to-peer or edge-local sync, or when we want the backend to be a simple relay and store that never understands the document. If we already need a central server for ACL, history and ordering, OT is more compact."
+    },
+    {
+     "q": "Why do CRDTs need tombstones?",
+     "a": "Another replica may concurrently insert after the deleted character, referencing its id. If the id vanished, that insert could not be placed. Tombstones are only safe to purge once every replica has acknowledged the delete."
+    },
+    {
+     "q": "What is the interleaving problem?",
+     "a": "If two users concurrently type words at the same position, some sequence CRDTs interleave their characters ('hweolrllod'). YATA and later algorithms like Fugue are designed to keep each user's run contiguous."
+    }
+   ]
+  },
+  {
+   "name": "Single-writer ownership with leases and fencing tokens",
+   "explain": "Many designs are simplest if exactly one process is responsible for a given key at a time: that process can keep state in memory and order operations without distributed locks. The hard part is handing ownership over safely when that process crashes or is just slow. A lease is a lock with an expiry: a node acquires ownership from a coordination service (etcd, ZooKeeper, Chubby) for, say, 10 seconds and must renew before it expires. If it dies, the lease runs out and another node can take over. But leases alone are not safe: a node can be paused by a long garbage collection or a network partition, still believe it owns the key, and wake up to write after a new owner has taken over. The fix is a fencing token: every grant of the lease comes with a monotonically increasing number (the epoch). Every write to shared storage carries the epoch, and storage rejects any write whose epoch is lower than the highest it has seen for that key. So the zombie's write is refused even though the zombie is confused. This pattern, popularised by Martin Kleppmann's analysis of distributed locks, is the standard way to get single-writer semantics on top of a quorum store.",
+   "in_this_design": "The Doc Router grants a lease per docId to one session server with an epoch. The op log append is conditional on both 'rev not already present' and 'epoch is current', so two servers can never commit different ops at the same rev.",
+   "key_points": [
+    "A lease is a lock with an expiry; it limits but does not eliminate dual ownership.",
+    "Fencing tokens make storage reject writes from stale owners.",
+    "Lease TTL trades failover speed against false failovers (10s is typical).",
+    "Storage, not the owner, enforces safety."
+   ],
+   "qa": [
+    {
+     "q": "Why is a lease alone not enough?",
+     "a": "A GC pause or partition can make the old owner keep acting after its lease expired, because it has not noticed. Only a check at the storage layer with a monotonic epoch stops its writes."
+    },
+    {
+     "q": "How do you pick the lease TTL?",
+     "a": "Short TTL means faster failover but more false failovers on transient hiccups and more renewal traffic. For editing, a 10s TTL with renewals every 3s is a good balance: clients buffer locally during the gap."
+    },
+    {
+     "q": "Could you just use consistent hashing to pick the owner?",
+     "a": "Consistent hashing picks a candidate, but during membership changes two nodes can disagree about the ring. You still need a lease and fencing to make ownership exclusive."
+    }
+   ]
+  },
+  {
+   "name": "Event sourcing with snapshots (append-only op log)",
+   "explain": "Event sourcing stores the sequence of changes as the source of truth rather than only the current state. The current state is a fold over the events: state = reduce(apply, events, initial). This gives a full audit trail, makes time travel and replay trivial, and fits naturally when the domain is already expressed as operations. The obvious problem is that replaying millions of events to load an object is slow, so you periodically persist a snapshot: the folded state at version N. Loading becomes 'read latest snapshot, then replay events after N'. Snapshots are a cache, never the source of truth, which means a corrupted snapshot can be rebuilt from the log. Logs also need retention policy: you can compact by discarding events older than the oldest snapshot you will ever need, or by keeping coarser checkpoints for history. Event sourcing pairs naturally with CQRS: write side appends events, read models (search index, history list, analytics) are built asynchronously by consuming the event stream, each optimised for its query pattern. The trade-off is eventual consistency for read models and more moving parts.",
+   "in_this_design": "The op log keyed by (docId, rev) is the source of truth. Snapshots every 500 ops bound open-time replay. Version history, search indexing and notifications are read models built by consumers of the log stream.",
+   "key_points": [
+    "Events are truth; state is a fold.",
+    "Snapshots bound replay cost; they are rebuildable caches.",
+    "Read models (history, search) are fed asynchronously, CQRS style.",
+    "Retention and compaction must be designed up front."
+   ],
+   "qa": [
+    {
+     "q": "How often should you snapshot?",
+     "a": "Balance replay time against write cost. With ops around 200 bytes and apply cost in microseconds, 500 ops replay in well under 50ms, so every 500 ops or 5 idle minutes is plenty. Snapshot more often for very large documents where apply is expensive."
+    },
+    {
+     "q": "How is restore-to-version implemented?",
+     "a": "Not by truncating the log. Compute the document at the target rev from the nearest checkpoint, then submit a forward op that replaces current content with it. History stays append-only and the restore itself is undoable."
+    },
+    {
+     "q": "What if a snapshot is corrupt?",
+     "a": "Verify checksum on load; if it fails, fall back to the previous snapshot and replay a longer tail. Because the log is the source of truth nothing is lost."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and at-least-once delivery",
+   "explain": "Over real networks you cannot get exactly-once delivery; a message can be lost, or delivered and its acknowledgement lost. If the sender retries on timeout you get at-least-once delivery, which means duplicates. Exactly-once effect is achieved by combining at-least-once delivery with idempotent processing: each request carries a unique key, and the receiver records which keys it has already applied so a duplicate returns the original result instead of applying again. The key must be generated by the client before the first attempt (not by the server), stored atomically with the effect (or derivable from the durable log), and retained long enough to cover the maximum retry window. Sequence numbers per client are a compact idempotency key when a client sends ordered requests: the server only needs to remember the highest committed sequence per client. Retries should use exponential backoff with jitter so that a fleet of clients does not hammer a recovering server in lockstep (the thundering herd).",
+   "in_this_design": "Each op carries (clientId, clientSeq). The session server keeps the last committed seq per client, derived from the op log so it survives failover. A retry of a committed op returns the original rev. Reconnects use backoff from 500ms doubling to 30s with full jitter.",
+   "key_points": [
+    "Exactly-once delivery is impossible; exactly-once effect is idempotency plus retries.",
+    "Client-generated keys, stored with the effect.",
+    "Per-client monotonic sequence numbers are cheap dedupe keys.",
+    "Backoff with jitter prevents synchronized retry storms."
+   ],
+   "qa": [
+    {
+     "q": "Why must the dedupe state be rebuilt from the op log after failover?",
+     "a": "If it lived only in memory, a new owner would accept a retried op as new and apply it twice. Storing clientId and clientSeq inside each log record lets the new owner rebuild the table by scanning the tail since the snapshot."
+    },
+    {
+     "q": "What is full jitter?",
+     "a": "Sleep a random time between 0 and min(cap, base x 2^attempt). It spreads reconnects uniformly, which empirically minimises total load on a recovering server compared with fixed or equal-jitter backoff."
+    },
+    {
+     "q": "Can the server use a timestamp as the idempotency key?",
+     "a": "No. Two different ops can share a timestamp and a retry might be assigned a new one. The key must uniquely identify the intent and be chosen by the client before the first attempt."
+    }
+   ]
+  },
+  {
+   "name": "Real-time fan-out over WebSockets and presence",
+   "explain": "Pushing updates to many connected clients requires persistent connections and a way to get each message from where it is produced to every node holding a subscriber's socket. A WebSocket connection is cheap at rest (tens of KB of memory each, so 50k to 100k per well-tuned node) but connections are stateful, which complicates load balancing and deployment: you need sticky routing, graceful draining on deploys, and clients that reconnect and resume from a known position. If all subscribers of a topic are on the same node, fan-out is a local loop; otherwise you need a pub/sub backbone (Redis, NATS, Kafka) between nodes. Messages differ in value: durable data (document ops) must be ordered and resumable using a position like a revision number, while ephemeral data (cursors, typing indicators) can be sampled, coalesced and dropped. Separating the two lets you apply backpressure: when a slow client's outbound buffer fills, drop presence for it first and, if ops back up beyond a threshold, close the socket and let it resync rather than buffer unboundedly in server memory.",
+   "in_this_design": "All editors of a doc connect to the owner session server, so op fan-out is local. Presence uses Redis pub/sub with TTL heartbeats and 10 updates/s throttling. Viewers of hot docs attach to a separate fan-out tier that tails the op log.",
+   "key_points": [
+    "Route all sockets for one doc to one node to make fan-out local.",
+    "Separate durable ops from lossy presence.",
+    "Resume by revision number after reconnect.",
+    "Bound per-connection buffers; disconnect slow consumers instead of OOM."
+   ],
+   "qa": [
+    {
+     "q": "How do you deploy session servers without kicking everyone off?",
+     "a": "Drain: stop assigning new docs, transfer doc leases one by one (new owner loads from log), send clients a RECONNECT hint with jitter, and wait for sockets to move before terminating. Since clients resume by rev, users see at most a brief 'reconnecting'."
+    },
+    {
+     "q": "A doc has 10,000 viewers. What changes?",
+     "a": "Viewers do not need to submit ops, so attach them to a fan-out tier (several relay nodes tailing the op log or subscribing to a topic) instead of the owner. Aggregate presence into counts. The owner only handles editors."
+    },
+    {
+     "q": "Why throttle presence to 10 per second?",
+     "a": "Cursor moves can fire at 60Hz per user; with 50 users that is 3,000 messages per second per recipient. Humans cannot perceive more than about 10 cursor updates per second, so throttle and coalesce."
+    }
+   ]
+  },
+  {
+   "name": "Consistency models: strong eventual consistency and CAP for editors",
+   "explain": "CAP says that during a network partition a replicated system must choose between consistency (every read sees the latest write) and availability (every request gets a non-error response). PACELC extends this: even without partitions, you trade latency against consistency. Collaborative editors make an interesting choice: each client is a replica that must stay available for local writes even when partitioned (offline), so the system cannot be linearizable. Instead it targets strong eventual consistency: any two replicas that have received the same set of updates are in the same state, regardless of order. This is weaker than linearizability (you can see a state nobody else has yet) but stronger than plain eventual consistency (which only promises convergence eventually, possibly after conflict resolution that discards data). Separately, specific subsystems choose differently: the op log append for a given rev is effectively a linearizable compare-and-set (only one op can win rev 1010), and the ACL store must be strongly consistent so a revoke is not undone by a stale read. Naming which part of the system sits where on the spectrum is what interviewers look for.",
+   "in_this_design": "Clients are AP for editing (always accept local edits) with strong eventual convergence. The per-rev log append is CP (conditional write with quorum). ACL reads are strongly consistent at open time and invalidated by events during the session.",
+   "key_points": [
+    "Editors are AP at the edge: local writes always succeed.",
+    "Strong eventual consistency: same updates means same state.",
+    "The sequencer and log append are CP per document.",
+    "ACLs need strong consistency to make revocation stick."
+   ],
+   "qa": [
+    {
+     "q": "Is a collaborative editor CP or AP?",
+     "a": "Both, in different layers. The user experience is AP: local edits never block. The per-document ordering at the server is CP: if the log store loses quorum we stop committing new revs and clients buffer locally until it returns."
+    },
+    {
+     "q": "What is the difference between eventual and strong eventual consistency?",
+     "a": "Eventual consistency only promises that replicas converge eventually, possibly after some reconciliation. Strong eventual consistency guarantees that any replicas which have seen the same set of updates are already identical, deterministically, with no rollback."
+    },
+    {
+     "q": "Why not make every keystroke linearizable?",
+     "a": "It would put a network round trip in every keystroke and fail completely offline. Optimistic local apply plus convergence gives native-feeling typing."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Merge algorithm",
+   "options": "OT with central server; CRDT (Yjs/Automerge); lock paragraphs",
+   "choice": "OT with a central per-doc sequencer",
+   "why": "Compact ops, small metadata, proven at Google Docs scale; we already need a server for ACL and history. CRDT kept as an option for offline-heavy clients; locking feels terrible."
+  },
+  {
+   "decision": "Where per-doc state lives",
+   "options": "Stateless servers reading DB on every op; stateful owner per doc",
+   "choice": "Stateful owner with leases",
+   "why": "Transform needs recent history in memory; stateless would add a DB read per keystroke and race on rev assignment."
+  },
+  {
+   "decision": "Ack timing",
+   "options": "Ack after in-memory apply; ack after durable quorum append",
+   "choice": "Ack after quorum append",
+   "why": "Adds a few ms but guarantees RPO 0 for acknowledged ops; local typing does not wait for ack anyway."
+  },
+  {
+   "decision": "Op granularity",
+   "options": "Per keystroke; coalesced every 50-100ms",
+   "choice": "Coalesce 50-100ms",
+   "why": "Cuts message and log volume 3-5x with no perceptible delay for collaborators."
+  },
+  {
+   "decision": "Presence transport",
+   "options": "Through the op log; separate lossy channel",
+   "choice": "Separate lossy channel",
+   "why": "Presence is high frequency and worthless after a second; durable storage would waste capacity."
+  },
+  {
+   "decision": "Op log store",
+   "options": "Kafka partitions; wide-column store; relational shards",
+   "choice": "Wide-column store keyed by docId#rev",
+   "why": "Hundreds of millions of tiny independent logs fit row-key ranges far better than Kafka partitions; conditional inserts give per-rev uniqueness."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Session server crash",
+   "behavior": "Lease expires in about 10s, router assigns new owner which loads snapshot plus tail; clients reconnect with jittered backoff and resubmit unacked ops (deduped). Users see 'reconnecting', no data loss."
+  },
+  {
+   "failure": "Op log store loses quorum in a partition",
+   "behavior": "Appends fail; owner stops acking; clients keep editing locally and show 'trying to save'. No acknowledged data lost; service resumes when quorum returns."
+  },
+  {
+   "failure": "Network partition isolates a client",
+   "behavior": "Client goes offline mode, persists pending ops to IndexedDB, merges on reconnect via RESUME."
+  },
+  {
+   "failure": "Router (etcd) unavailable",
+   "behavior": "Existing owners keep serving docs whose leases they hold (renewals fail and they will stop after TTL); new doc opens fail over to read-only snapshot views until etcd recovers."
+  },
+  {
+   "failure": "Transform bug causing divergence",
+   "behavior": "Checksum mismatch triggers client resync from server state; alert on the divergence metric; feature-flag the offending op type."
+  },
+  {
+   "failure": "Region outage",
+   "behavior": "Docs owned in that region become read-only from cross-region replicated snapshots and log; for residency-pinned tenants, wait for region recovery; others can fail over ownership to the secondary region after log replication catches up."
+  }
+ ],
+ "metrics": [
+  "Op round-trip time (submit to ack) p50/p95/p99 per region.",
+  "Remote propagation latency (commit to apply on other clients).",
+  "Divergence checksum mismatch rate and resync count.",
+  "Reconnect rate and median reconnect duration.",
+  "Ops per second per doc (top-N hottest docs) and active editors per doc.",
+  "Ops since last snapshot (snapshot lag) and doc open time p95.",
+  "Op log append latency and conditional-write conflict rate (should be near zero; spikes mean dual owners).",
+  "WebSocket connections per node and outbound buffer depth."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just lock paragraphs so only one person edits a paragraph?",
+   "a": "Locking adds latency and frustrates users (you click and cannot type). It also fails offline. Fine-grained optimistic merge (OT/CRDT) gives better UX; locks are a fallback only for objects that cannot merge, like an embedded chart's settings."
+  },
+  {
+   "q": "How do you scale a single document that has 500 people typing?",
+   "a": "The sequencer is cheap per op, so 500 x 3 ops/s = 1,500 ops/s is still fine CPU-wise, but fan-out is 1,500 x 499 = 750k messages/s. Cap editors around 100, batch broadcast frames every 50ms, and move extra people to suggest or view mode. Very large docs could be split into independently sequenced sections."
+  },
+  {
+   "q": "How would you implement version history without storing every op forever?",
+   "a": "Consumers fold the op stream into checkpoints (every 30 minutes of activity or named versions) stored as delta-compressed snapshots with author lists. Raw ops older than 30 days are TTL'd; restore reads checkpoints."
+  },
+  {
+   "q": "How do comments stay attached to the right text?",
+   "a": "Anchor to stable element ids (or positions that get transformed like cursors). Every op is applied to anchors the same way as to text, so a comment moves with the sentence it is on."
+  },
+  {
+   "q": "What happens to unsaved changes when the browser crashes?",
+   "a": "The client persists the pending buffer to IndexedDB on every local op; on reload it restores them and resumes with the stored baseRev."
+  },
+  {
+   "q": "How do you support data residency?",
+   "a": "Document metadata has a region; the router only assigns owners within that region and the op log and snapshots are stored in-region. Cross-region users connect to the remote owner and accept higher latency."
+  },
+  {
+   "q": "How would Figma's approach differ?",
+   "a": "Figma edits a tree of objects with properties, so they use a server-authoritative model where each property is last-writer-wins and the server decides order, borrowing ideas from CRDTs without full CRDT overhead. That works because concurrent edits to the same property are rare and LWW is acceptable; for character-level text you need OT or a sequence CRDT."
+  }
+ ],
+ "key_points": [
+  "Apply locally first, converge later: typing never waits on the network.",
+  "One owner per document acts as the sequencer; OT then only needs TP1.",
+  "Ack only after a quorum append to the op log; RPO 0 for acknowledged edits.",
+  "Fence the owner with a lease epoch so a zombie can never commit.",
+  "Idempotent ops via clientId plus clientSeq make retries safe on mobile.",
+  "Op log is the source of truth; snapshots every 500 ops bound open time.",
+  "Presence is a separate lossy channel, throttled and shed first.",
+  "Scale is many small sequencers, not one big one: shard by docId.",
+  "Viewers of hot docs go to a fan-out tier, editors capped around 100.",
+  "Know when CRDT wins: long offline, peer-to-peer, dumb relay backend."
+ ],
+ "quiz": [
+  {
+   "q": "Why does a central server make OT much easier to get right?",
+   "options": [
+    "It imposes a total order so only the TP1 property is needed",
+    "It removes the need for transform functions entirely",
+    "It allows clients to send unlimited concurrent ops",
+    "It eliminates network latency from the editing path"
+   ],
+   "answer": 0,
+   "why": "With a single sequencer, each client op is transformed against one linear history, so only TP1 matters. Transform functions are still required (option B is wrong); the tempting answer is that it removes transforms, but it only removes the hard multi-site TP2 property."
+  },
+  {
+   "q": "A client sends op seq 42, the server commits it, but the ACK is lost. The client retries. What should happen?",
+   "options": [
+    "The server applies it again at a new revision",
+    "The server rejects it with an error and the client discards it",
+    "The server recognises (clientId, 42) as committed and returns the original revision",
+    "The server asks the client to reload the whole document"
+   ],
+   "answer": 2,
+   "why": "Dedupe by client-generated sequence makes retries idempotent. Rejecting with an error (B) would confuse the client into thinking its edit was lost."
+  },
+  {
+   "q": "Session server S1 is paused by a 20s GC and its lease is taken by S2. S1 wakes and tries to append rev 1010. What stops corruption?",
+   "options": [
+    "S1 checks its local clock and notices the lease expired",
+    "etcd kills the S1 process",
+    "Clients refuse to talk to S1",
+    "The op log rejects the write because S1's epoch is lower than the current one"
+   ],
+   "answer": 3,
+   "why": "Only the storage-side fencing check is reliable. S1's own clock check (A) is tempting but a paused process can pass that check and then stall again before writing."
+  },
+  {
+   "q": "Roughly how many WebSocket connections does a 5M concurrently-open-doc system with 2.5 sessions per doc need?",
+   "options": [
+    "About 1.25M",
+    "About 12.5M",
+    "About 125M",
+    "About 500K"
+   ],
+   "answer": 1,
+   "why": "5M x 2.5 = 12.5M. 125M would be confusing DAU-style numbers with concurrency."
+  },
+  {
+   "q": "Why does the client keep only one unacknowledged op in flight?",
+   "options": [
+    "To keep the server's transform base well defined; later ops are composed into a buffer",
+    "Because WebSockets cannot carry more than one message at a time",
+    "To save battery on mobile",
+    "Because the server can only store one op per client"
+   ],
+   "answer": 0,
+   "why": "One in-flight op means the server transforms a single op against known history. WebSockets can carry many messages (B), which is the tempting misconception."
+  },
+  {
+   "q": "Which is the strongest reason to pick a CRDT like Yjs over server-sequenced OT?",
+   "options": [
+    "CRDTs use less memory per character",
+    "CRDTs need no transform functions and are always smaller on the wire",
+    "Long offline sessions or peer-to-peer sync without a central ordering server",
+    "CRDTs preserve user intent perfectly"
+   ],
+   "answer": 2,
+   "why": "CRDTs shine when there is no central sequencer. They usually use more metadata (A is backwards) and intent preservation is still imperfect."
+  },
+  {
+   "q": "Where should cursor positions and who-is-here data be stored?",
+   "options": [
+    "In the op log with every edit",
+    "In the snapshot blobs",
+    "In the relational metadata DB",
+    "In a lossy ephemeral channel with TTL heartbeats"
+   ],
+   "answer": 3,
+   "why": "Presence is high frequency and worthless after seconds. Putting it in the op log (A) would multiply durable writes for no benefit."
+  },
+  {
+   "q": "p99 op round-trip jumps from 80ms to 900ms for one doc while others are fine. Most likely cause?",
+   "options": [
+    "A global op log outage",
+    "A hot document whose owner is saturated by editors and fan-out",
+    "DNS misconfiguration",
+    "Clock skew on clients"
+   ],
+   "answer": 1,
+   "why": "A single-doc regression points to that doc's sequencer or fan-out. A global log outage (A) would affect all docs."
+  },
+  {
+   "q": "How should 'restore to version from yesterday' be implemented?",
+   "options": [
+    "Submit a new forward op that replaces content with yesterday's state",
+    "Delete newer snapshots",
+    "Truncate the op log back to yesterday's rev",
+    "Ask every client to roll back locally"
+   ],
+   "answer": 0,
+   "why": "Forward restore keeps history append-only and the restore itself undoable. Truncation (C) loses history and breaks clients holding later revs."
+  },
+  {
+   "q": "What does snapshotting every 500 ops primarily bound?",
+   "options": [
+    "Storage cost of the op log",
+    "WebSocket fan-out",
+    "Time to load a document (replay tail length)",
+    "Number of concurrent editors"
+   ],
+   "answer": 2,
+   "why": "Open time = load snapshot + replay at most ~500 ops. It helps storage only indirectly via later compaction, which is the tempting wrong answer."
+  },
+  {
+   "q": "Two users insert at the same position concurrently. What guarantees both replicas end up identical?",
+   "options": [
+    "Whichever arrives first at each client wins locally",
+    "Locking the position",
+    "Client timestamps",
+    "A deterministic tie-break rule inside transform"
+   ],
+   "answer": 3,
+   "why": "All sites must break the tie the same way. Arrival order (A) differs per client, so it would diverge."
+  },
+  {
+   "q": "Which layer of this system is CP rather than AP?",
+   "options": [
+    "The client's local editing",
+    "The conditional append of an op at a given revision",
+    "Presence",
+    "The viewer fan-out tier"
+   ],
+   "answer": 1,
+   "why": "Only one op can win a rev, enforced by a quorum conditional write. Local editing (A) is deliberately AP."
+  },
+  {
+   "q": "Why coalesce keystrokes into an op every 50-100ms?",
+   "options": [
+    "To cut message and log volume several-fold without perceptible delay to collaborators",
+    "To make typing feel faster locally",
+    "Because OT cannot handle single characters",
+    "To avoid needing idempotency"
+   ],
+   "answer": 0,
+   "why": "Batching saves network and storage; local feel is unchanged because local apply is immediate, so A is wrong."
+  },
+  {
+   "q": "A user's edit permission is revoked mid-session. Best handling?",
+   "options": [
+    "Wait until they next open the doc",
+    "Let the client decide based on cached role",
+    "ACL change event pushes a revoke; owner rejects further ops and closes the socket",
+    "Revert all their past edits"
+   ],
+   "answer": 2,
+   "why": "Revocation must be enforced server-side promptly. Waiting for next open (A) leaves a window where a removed employee keeps editing."
+  },
+  {
+   "q": "What is a fencing token?",
+   "options": [
+    "A TLS certificate for session servers",
+    "A client authentication cookie",
+    "A rate limit token",
+    "A monotonically increasing number issued with each lease grant and checked by storage"
+   ],
+   "answer": 3,
+   "why": "Fencing tokens let storage reject stale owners. The rate-limit token bucket (C) is a different concept."
+  },
+  {
+   "q": "Why use a wide-column store keyed by docId#rev rather than one Kafka partition per doc?",
+   "options": [
+    "Kafka cannot store binary data",
+    "Hundreds of millions of tiny logs do not map to Kafka partitions, but map well to sorted row-key ranges",
+    "Kafka has no replication",
+    "Wide-column stores are always faster"
+   ],
+   "answer": 1,
+   "why": "Kafka scales to thousands of partitions, not hundreds of millions. Kafka does replicate (C) and stores bytes fine (A)."
+  },
+  {
+   "q": "A client was offline 2 days with 3,000 pending ops. The doc has changed heavily. Best approach?",
+   "options": [
+    "Rebase the composed pending op onto a fresh snapshot, with a conflict-copy fallback if too costly",
+    "Reject all offline changes",
+    "Apply offline ops directly without transform",
+    "Replace the server document with the client's copy"
+   ],
+   "answer": 0,
+   "why": "Rebasing preserves work; a conflict copy bounds worst-case cost. Overwriting the server (D) would destroy others' work."
+  },
+  {
+   "q": "Which metric best catches a transform-function bug in production?",
+   "options": [
+    "CPU usage of session servers",
+    "WebSocket connection count",
+    "Document checksum mismatch rate between client and server at the same rev",
+    "Op log disk usage"
+   ],
+   "answer": 2,
+   "why": "Transform bugs cause divergence, which checksums detect directly. CPU (A) would not change."
+  },
+  {
+   "q": "Why does the dedupe table need to be derivable from the op log?",
+   "options": [
+    "To save memory",
+    "Because Redis is not durable",
+    "For search indexing",
+    "So a new owner after failover still recognises retried ops and does not apply them twice"
+   ],
+   "answer": 3,
+   "why": "Failover would otherwise accept a retry as new. Memory saving (A) is not the motivation."
+  },
+  {
+   "q": "Approximately how much op log ingest does 7.8M ops/s at 200 bytes each produce?",
+   "options": [
+    "About 15 MB/s",
+    "About 1.5 GB/s",
+    "About 150 GB/s",
+    "About 15 TB/s"
+   ],
+   "answer": 1,
+   "why": "7.8M x 200B = 1.56 GB/s. Off-by-100x answers are common when mixing bits and bytes or forgetting the multiplier."
+  },
+  {
+   "q": "A doc has 5,000 viewers and 20 editors. What is the best architectural move?",
+   "options": [
+    "Serve viewers from a separate fan-out tier and aggregate presence into counts",
+    "Give each viewer full editor sessions on the owner",
+    "Shard the document across five sequencers",
+    "Disable real-time updates for everyone"
+   ],
+   "answer": 0,
+   "why": "Viewers do not need ordering, only a feed. Sharding one doc's sequencer (C) breaks the single total order OT relies on."
+  },
+  {
+   "q": "Which statement about exactly-once is correct?",
+   "options": [
+    "TCP guarantees exactly-once delivery to the application",
+    "Kafka makes every consumer exactly-once automatically",
+    "Exactly-once effect comes from at-least-once delivery plus idempotent processing",
+    "Exactly-once requires synchronized clocks"
+   ],
+   "answer": 2,
+   "why": "Retries plus dedupe give exactly-once effect. TCP (A) does not survive connection resets or app crashes."
+  }
+ ],
+ "references": [
+  {
+   "title": "What's different about the new Google Docs: Making collaboration fast (Google Drive Blog)",
+   "url": "https://drive.googleblog.com/2010/09/whats-different-about-new-google-docs.html"
+  },
+  {
+   "title": "How Figma's multiplayer technology works",
+   "url": "https://www.figma.com/blog/how-figmas-multiplayer-technology-works/"
+  },
+  {
+   "title": "Understanding sync engines: how Figma, Linear and Google Docs work (Liveblocks)",
+   "url": "https://www.liveblocks.io/blog/understanding-sync-engines-how-figma-linear-and-google-docs-work"
+  },
+  {
+   "title": "How Multiplayer Data Structures Work (Matt Rickard)",
+   "url": "https://mattrickard.com/collaborative-data-types"
+  }
+ ]
+}

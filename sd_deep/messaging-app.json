@@ -1,0 +1,1203 @@
+{
+ "slug": "messaging-app",
+ "title": "Design a Messaging App (WhatsApp / Messenger)",
+ "prompt": "Design a messaging app.",
+ "group": "classic",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "A messaging app must deliver every message exactly once, in order, to devices that are frequently offline, over flaky mobile networks, at tens of billions of messages a day. The interesting problems are holding hundreds of millions of persistent connections, routing a message to whichever gateway the recipient is connected to, per-conversation ordering with client-side dedupe, offline sync, group fan-out, and doing it all end-to-end encrypted so the server never sees content.",
+ "framework": {
+  "clarify": [
+   "Scale: assume 1B DAU, 50 messages sent per user per day = 50B messages/day (about 580K/s average, about 1.5M/s peak).",
+   "Features in scope: 1:1 chat, group chat (max 1,024 members), delivery and read receipts, online/last-seen presence, typing indicators, media attachments, multi-device. Voice/video calls out of scope.",
+   "Delivery guarantees: at-least-once over the network with idempotent client dedupe, giving effectively exactly-once display; ordering guaranteed per conversation, not globally.",
+   "Storage model: WhatsApp-style (server stores until delivered, then deletes; history lives on devices and backups) or Messenger/Discord-style (server keeps full history)? Assume server keeps history 30 days for multi-device sync; confirm.",
+   "Encryption: end-to-end (Signal protocol) assumed, so the server routes opaque ciphertext and cannot do server-side search or content moderation.",
+   "Latency target: p99 < 500 ms sender-to-recipient when both are online in the same region.",
+   "Clients are mostly mobile on 2G-4G with frequent disconnects and backgrounding; push notifications (APNs/FCM) are needed when the app is not connected.",
+   "Message size: text up to 64 KB; media up to 100 MB uploaded separately to blob storage."
+  ],
+  "design": [
+   "Baseline: clients POST messages to an API that stores them; recipients poll. Explain why polling fails at this scale (latency and wasted requests) and move to persistent connections.",
+   "Connection gateways: stateless-ish servers holding WebSocket/MQTT-style TCP connections (about 500K-1M per box, WhatsApp famously ran 2M+ per Erlang server). A session registry maps user_device -> gateway_id.",
+   "Send path: client sends {client_msg_id, conv_id, ciphertext} over its socket; gateway forwards to the chat service, which assigns a per-conversation sequence number, persists to the message store, acks the sender (single tick), then routes.",
+   "Routing: look up each recipient device in the session registry; if online, push to that gateway over an internal RPC/pub-sub; if offline, enqueue in the device inbox and send a push notification via APNs/FCM.",
+   "Delivery and read receipts are themselves small messages flowing back to the sender (double tick, blue tick).",
+   "Sync: on reconnect, the client sends its last acked sequence per conversation (or a per-device inbox cursor) and pulls everything after it.",
+   "Groups: sender-side fan-out of encrypted copies (Sender Keys reduce this to one ciphertext plus per-member key distribution); server fans out a single stored message to member inboxes.",
+   "Media: client encrypts the file, uploads to blob storage via pre-signed URL, sends a message containing the blob URL plus decryption key and hash."
+  ],
+  "defend": [
+   "Bottleneck: connection count and routing lookups. 1B DAU with maybe 300M concurrent connections at peak needs about 600 gateways at 500K each; the session registry handles millions of lookups/s and must be in memory and sharded.",
+   "Scaling writes: messages partitioned by conversation_id in a wide-column store (Cassandra/ScyllaDB); Discord moved from 177 Cassandra nodes to 72 ScyllaDB nodes and cut p99 read latency from 40-125 ms to about 15 ms.",
+   "Scaling reads: recent messages per conversation are cached; sync reads are sequential range scans within one partition; time-bucket partitions (conv_id, bucket) bound partition size.",
+   "Failure: gateway crash drops its connections - clients reconnect with jittered exponential backoff (to avoid a reconnect storm) to another gateway and resync from their cursor; unacked messages are redelivered and deduped by message ID.",
+   "Retries: client resends with the same client_msg_id until acked; server dedupes on (sender_device, client_msg_id) so a retry never creates a second message.",
+   "Degradation: under overload shed typing indicators and presence first, then delay read receipts, and keep message delivery last to degrade.",
+   "Measure: end-to-end delivery latency p50/p99, undelivered queue depth, connection churn and reconnect rate, ack timeouts, push notification success rate, message store p99 write latency."
+  ],
+  "script": "Let me pin requirements first. I am assuming a billion daily users sending about 50 messages each, so around 600K messages a second average and 1.5 million at peak, 1:1 and groups up to about a thousand, receipts, presence and multi-device, end-to-end encrypted. The key guarantees are no lost messages, no duplicates on screen, and ordering within a conversation - not global ordering. The design centres on persistent connections: clients hold a socket to a gateway, a session registry knows which gateway each device is on, and a chat service assigns a per-conversation sequence number, persists the message, acks the sender and routes to online recipients or queues for offline ones with a push notification. On reconnect, a device syncs from its last cursor. To defend it, I will talk about holding hundreds of millions of connections, how idempotent client message IDs and sequence numbers give effectively exactly-once in-order delivery, how the store is partitioned by conversation, group fan-out, reconnect storms, and what we shed first under load."
+ },
+ "brd": {
+  "problem": "People need a fast, reliable and private way to message individuals and groups across unreliable mobile networks and cheap devices. Lost, duplicated, delayed or leaked messages destroy trust immediately, and the product only wins if it works on 2G in a village as well as on Wi-Fi in a city.",
+  "goals": [
+   "Deliver messages to online recipients in under 500 ms p99 within a region and under 1 s globally.",
+   "Never lose an acknowledged message; never show a duplicate.",
+   "Preserve order within each conversation.",
+   "End-to-end encryption by default for all chats and media.",
+   "Work well on low-end Android devices and 2G/3G networks (small payloads, low battery usage).",
+   "Support multi-device (phone plus up to 4 linked devices) with consistent history."
+  ],
+  "non_goals": [
+   "Voice and video calling (separate real-time media system).",
+   "Server-side message search or content-based ads (incompatible with E2EE).",
+   "Public broadcast channels with millions of followers (different fan-out model).",
+   "Global total ordering of messages across conversations."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users",
+    "needs": "Reliable, instant, private messaging that saves data and battery."
+   },
+   {
+    "who": "Business users (customer support via chat)",
+    "needs": "APIs, high throughput, delivery status."
+   },
+   {
+    "who": "Security and privacy team",
+    "needs": "E2EE correctness, key transparency, minimal metadata retention."
+   },
+   {
+    "who": "Legal and compliance",
+    "needs": "Lawful process handling within E2EE limits, data residency, spam controls."
+   },
+   {
+    "who": "SRE / infra",
+    "needs": "Predictable connection capacity, safe deploys that do not drop millions of sockets at once."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Delivery latency p99 (both online, same region)",
+    "target": "< 500 ms"
+   },
+   {
+    "metric": "Message loss rate (acked but never delivered)",
+    "target": "0 (alert on any)"
+   },
+   {
+    "metric": "Duplicate display rate",
+    "target": "< 1 per 10M messages"
+   },
+   {
+    "metric": "Send success within 10 s on 3G",
+    "target": ">= 99.5%"
+   },
+   {
+    "metric": "Gateway availability",
+    "target": ">= 99.99%"
+   },
+   {
+    "metric": "Push notification delivery within 5 s",
+    "target": ">= 95% (platform dependent)"
+   }
+  ],
+  "constraints": [
+   "Mobile OSes kill background sockets; must rely on APNs/FCM to wake apps.",
+   "Server cannot read content (E2EE), limiting spam detection to metadata and user reports.",
+   "Data residency and lawful interception regimes vary by country.",
+   "Battery and data budget: heartbeats no more frequent than every few minutes when idle."
+  ],
+  "risks": [
+   {
+    "risk": "Reconnect storm after a gateway or region failure overwhelms auth and sync",
+    "mitigation": "Jittered exponential backoff, connection admission control, sync rate limits, staged deploys draining connections gradually."
+   },
+   {
+    "risk": "Spam and scams at scale",
+    "mitigation": "Rate limits on new accounts, forward limits, reputation on metadata, user reporting with message franking."
+   },
+   {
+    "risk": "Hot partitions for very large active groups",
+    "mitigation": "Group size cap, time-bucketed partitions, request coalescing on reads."
+   },
+   {
+    "risk": "Key compromise or protocol bugs",
+    "mitigation": "Signal protocol with forward secrecy, security reviews, safety numbers, key transparency logs."
+   },
+   {
+    "risk": "Message store latency spikes during compaction or GC",
+    "mitigation": "ScyllaDB-style shard-per-core stores, compaction throttling, a data service layer that coalesces reads."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Lakshmi, small-town shop owner",
+    "needs": "Talks to customers on a low-end Android over patchy 3G; must not lose orders."
+   },
+   {
+    "name": "Family group admin",
+    "needs": "Group of 80 relatives, lots of photos, read receipts."
+   },
+   {
+    "name": "Multi-device professional",
+    "needs": "Phone plus laptop, history consistent on both."
+   },
+   {
+    "name": "Trust and Safety analyst",
+    "needs": "Acts on spam reports using metadata only."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want to send a message that arrives instantly when my friend is online so that conversation feels live.",
+   "As a user, I want to know when my message is sent, delivered and read so that I am not left wondering.",
+   "As a user on a bad network, I want messages I typed offline to send automatically when I reconnect, without duplicates.",
+   "As a user, I want to receive messages sent while my phone was off as soon as I turn it on, in the right order.",
+   "As a group member, I want to message 200 people at once so that I can coordinate events.",
+   "As a user, I want to send photos and videos that load quickly and do not consume excessive data.",
+   "As a user, I want to see if a contact is online or typing so that I know whether to wait for a reply.",
+   "As a privacy-conscious user, I want my messages end-to-end encrypted so that nobody, including the provider, can read them.",
+   "As a multi-device user, I want my laptop to show the same chats as my phone so that I can switch devices."
+  ],
+  "functional": [
+   "1:1 and group messaging (groups up to 1,024 members) with text, emoji, replies, reactions.",
+   "Message states: sending (clock), sent to server (one tick), delivered to device (two ticks), read (blue ticks).",
+   "Offline queueing and sync on reconnect, ordered per conversation.",
+   "Push notifications for offline or backgrounded devices.",
+   "Presence (online / last seen with privacy settings) and typing indicators.",
+   "Media upload/download with client-side encryption, thumbnails, resumable uploads.",
+   "Multi-device: each device has its own keys; messages are encrypted per device.",
+   "Delete for everyone within a time window, block, report."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "p99 < 500 ms send-to-receive, same region, both online"
+   },
+   {
+    "name": "Reliability",
+    "target": "Zero loss of acked messages; at-least-once transport with client dedupe"
+   },
+   {
+    "name": "Ordering",
+    "target": "Total order per conversation via server sequence numbers"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for send/receive"
+   },
+   {
+    "name": "Durability",
+    "target": "Undelivered messages stored RF=3 across AZs until delivered or 30 days"
+   },
+   {
+    "name": "Privacy",
+    "target": "E2EE for all content; metadata minimised and retention-limited"
+   },
+   {
+    "name": "Efficiency",
+    "target": "Idle heartbeat <= every 4-5 min; message overhead < 100 bytes framing"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "1B DAU; 50 messages/user/day; average encrypted text message 200 bytes including metadata.",
+    "Peak concurrency about 30% of DAU = 300M open connections.",
+    "Average devices per user 1.3; groups average 20 members, 25% of messages are group messages.",
+    "5% of messages carry media averaging 300 KB after compression.",
+    "Server retains messages 30 days for multi-device sync; peak factor about 2.5x."
+   ],
+   "math": [
+    "Messages: 50B/day / 86,400 = about 580K/s average, about 1.5M/s peak.",
+    "Deliveries (fan-out): 75% 1:1 x 1.3 devices + 25% group x 20 members x 1.3 = 0.98 + 6.5 = about 7.5 deliveries per message -> about 4.3M deliveries/s average.",
+    "Text storage: 50B x 200 B = 10 TB/day; 30-day retention = 300 TB, x3 replication = 900 TB.",
+    "Media: 50B x 5% x 300 KB = 750 TB/day into blob storage (lifecycle to cold tiers, deleted after download window for WhatsApp-style).",
+    "Connections: 300M / 500K per gateway = 600 gateways at peak (plus 30-50% headroom for failover -> about 900).",
+    "Heartbeats: 300M / 240 s = 1.25M/s tiny frames - comparable to message traffic, so they must be handled on the gateway without backend calls.",
+    "Receipts: delivered + read receipts roughly double small-message traffic."
+   ],
+   "summary": "About 1.5M messages/s at peak expanding to several million deliveries/s, around 300M concurrent connections on roughly 600-900 gateways, 10 TB/day of message data and 750 TB/day of media. The connection tier and the delivery fan-out, not raw storage, are the hard parts."
+  },
+  "out_of_scope": [
+   "Voice and video calls.",
+   "Stories / status updates.",
+   "Payments in chat.",
+   "Bots and business API details beyond rate limits."
+  ]
+ },
+ "hld": {
+  "overview": "Clients maintain a long-lived encrypted connection to a gateway. Gateways are thin: they terminate TLS/Noise, authenticate the device, handle heartbeats, and forward frames to the chat service. A session registry maps each online device to its gateway. The chat service dedupes, sequences and persists messages to a wide-column store partitioned by conversation, writes per-device inbox entries, and routes to online devices via their gateway or triggers push notifications for offline ones. Group service holds membership. Presence service tracks online state with TTL heartbeats. Media goes directly to blob storage.",
+  "diagram": "  Phone/Laptop                                                                  \n      | TLS/Noise long-lived socket (WebSocket or MQTT-like)                     \n      v                                                                         \n +-----------+  L4 LB (sticky)  +-------------------+    register/lookup         \n |  Client   |----------------->|  Gateway fleet    |<------------------+        \n +-----------+                  |  ~600-900 nodes   |                   |        \n      |                         +----+---------+----+          +--------+------+ \n      | pre-signed PUT               |frames   ^ deliver       | Session       | \n      v                              v         |               | registry      | \n +-----------+                +------------------+             | (Redis, TTL)  | \n | Blob store|                |   Chat service   |------------>+---------------+ \n | + CDN     |                | dedupe, seq,     |                               \n +-----------+                | persist, route   |---> Group svc (members)       \n                              +----+--------+----+                               \n                                   |        | offline                            \n                         write     v        v                                    \n              +--------------------+   +-----------+     +------------------+    \n              | Message store      |   | Push svc  |---->| APNs / FCM       |    \n              | Cassandra/Scylla   |   +-----------+     +------------------+    \n              | (conv_id, bucket)  |                                             \n              | + device inbox     |   Presence svc (heartbeat TTL, pub/sub)     \n              +--------------------+                                             \n",
+  "components": [
+   {
+    "name": "Client app",
+    "responsibility": "Local encrypted DB of messages, outbox of unsent messages with client_msg_id, Signal protocol sessions, dedupe by message ID, reconnect with backoff."
+   },
+   {
+    "name": "Gateway (connection) service",
+    "responsibility": "Hold persistent connections, auth device tokens, heartbeats, flow control; forwards frames to chat service and pushes deliveries down to devices."
+   },
+   {
+    "name": "Session registry",
+    "responsibility": "device_id -> {gateway_id, connection_epoch} in an in-memory sharded store with TTL refreshed by heartbeats."
+   },
+   {
+    "name": "Chat service",
+    "responsibility": "Idempotency check, per-conversation sequence allocation, persistence, inbox writes, routing, receipts."
+   },
+   {
+    "name": "Message store",
+    "responsibility": "Wide-column store partitioned by (conversation_id, time_bucket), clustered by sequence; RF=3, LOCAL_QUORUM."
+   },
+   {
+    "name": "Device inbox",
+    "responsibility": "Per-device queue of pending message references; drained on delivery ack; drives offline sync."
+   },
+   {
+    "name": "Group service",
+    "responsibility": "Membership, admin roles, member device lists, sender-key distribution metadata."
+   },
+   {
+    "name": "Presence service",
+    "responsibility": "Online/last-seen with heartbeat TTLs, subscribed only by contacts with an open chat to limit fan-out."
+   },
+   {
+    "name": "Push notification service",
+    "responsibility": "Batch and send APNs/FCM pushes for offline devices, collapse keys, retry with backoff."
+   },
+   {
+    "name": "Media service + blob store + CDN",
+    "responsibility": "Pre-signed resumable uploads of client-encrypted blobs, thumbnails, CDN delivery, lifecycle expiry."
+   },
+   {
+    "name": "Key distribution service",
+    "responsibility": "Stores public identity keys, signed prekeys and one-time prekeys per device for Signal session setup."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Send 1:1 message, recipient online",
+    "steps": [
+     "Client A encrypts with B's device sessions and sends SEND{client_msg_id, conv_id, per-device ciphertexts} on its socket.",
+     "Gateway GA forwards to chat service (partitioned by conv_id so one instance sequences each conversation).",
+     "Chat service checks dedupe table for (A_device, client_msg_id); if seen, re-ack with the original seq.",
+     "Assign seq = next per-conversation counter; write message row and B's device inbox rows (LOCAL_QUORUM).",
+     "Ack A: SENT{client_msg_id, msg_id, seq, server_ts} -> single tick.",
+     "Look up B's devices in session registry -> gateway GB; RPC deliver to GB, which writes the frame to B's socket.",
+     "B's client stores, dedupes by msg_id, displays, sends DELIVERED{msg_id} ack; chat service deletes inbox entry and forwards a delivery receipt to A -> double tick."
+    ]
+   },
+   {
+    "name": "Recipient offline then reconnects",
+    "steps": [
+     "Registry has no live entry for B's device; message stays in B's inbox.",
+     "Push service sends an FCM/APNs notification (collapsible, no plaintext content; app wakes and decrypts).",
+     "B reconnects: authenticates, registers in session registry with new connection_epoch.",
+     "B sends SYNC{inbox_cursor}; chat service pages inbox entries in order (100 at a time), B acks each page.",
+     "Acked entries removed; receipts flow back to senders."
+    ]
+   },
+   {
+    "name": "Group message",
+    "steps": [
+     "Sender encrypts once with its Sender Key for the group (keys distributed earlier via pairwise sessions).",
+     "Chat service sequences in the group conversation, stores one message row.",
+     "Fan-out: fetch member device list from group service (cached), write inbox references for each device, route to online devices in batches by gateway.",
+     "Per-member delivery and read receipts aggregate; sender sees 'delivered to all' when all acks arrive."
+    ]
+   }
+  ],
+  "data_flow": "Upstream: client -> gateway -> chat service -> message store + device inboxes. Downstream: chat service -> session registry lookup -> recipient gateway -> client, or -> push service -> APNs/FCM. Acks and receipts flow back the same way as tiny messages. Presence heartbeats terminate at gateways, which batch presence changes to the presence service. Media bypasses the chat path entirely: client -> blob store (encrypted), with only a pointer and key travelling inside the encrypted message."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "WS frame",
+    "path": "SEND",
+    "request": "{client_msg_id (UUID), conv_id, type, payloads:[{device_id, ciphertext}], sent_at_client}",
+    "response": "SENT {client_msg_id, msg_id, seq, server_ts} or ERROR{code, retry_after}",
+    "notes": "Idempotent on (device_id, client_msg_id); client retries with the same ID until SENT."
+   },
+   {
+    "method": "WS frame (server->client)",
+    "path": "DELIVER",
+    "request": "{msg_id, conv_id, seq, sender_device, ciphertext, server_ts}",
+    "response": "Client replies ACK{msg_id} / DELIVERED{msg_id}",
+    "notes": "Server redelivers unacked frames after 10 s or on reconnect."
+   },
+   {
+    "method": "WS frame",
+    "path": "SYNC",
+    "request": "{inbox_cursor, max=100}",
+    "response": "BATCH {messages[], next_cursor, has_more}",
+    "notes": "Used after reconnect; client ACKs the batch to advance the cursor."
+   },
+   {
+    "method": "WS frame",
+    "path": "RECEIPT",
+    "request": "{conv_id, up_to_seq, kind: delivered|read}",
+    "response": "-",
+    "notes": "Cumulative receipts ('read up to seq 812') cut receipt traffic."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/media/uploads",
+    "request": "{size, sha256_of_ciphertext, mime}",
+    "response": "{upload_url (pre-signed, resumable), media_id}",
+    "notes": "Client encrypts with a random AES-256 key that is sent inside the E2EE message."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/keys/{user_id}/devices",
+    "request": "-",
+    "response": "[{device_id, identity_key, signed_prekey, one_time_prekey}]",
+    "notes": "Consumes one one-time prekey per device to start a session."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/groups/{group_id}/members",
+    "request": "{add:[user_id], remove:[user_id]}",
+    "response": "{version}",
+    "notes": "Membership changes trigger sender key rotation."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Message",
+    "store": "ScyllaDB / Cassandra",
+    "fields": [
+     "conv_id",
+     "bucket (10-day window)",
+     "seq (bigint)",
+     "msg_id (Snowflake)",
+     "sender_device",
+     "ciphertext / per-device payload refs",
+     "server_ts",
+     "type"
+    ],
+    "keys": "PRIMARY KEY ((conv_id, bucket), seq) WITH CLUSTERING ORDER BY (seq DESC)",
+    "notes": "Bucketing bounds partition size (Discord buckets by channel and time window); TTL 30 days."
+   },
+   {
+    "entity": "DeviceInbox",
+    "store": "ScyllaDB (or Redis + durable log)",
+    "fields": [
+     "device_id",
+     "inbox_seq",
+     "conv_id",
+     "msg_id",
+     "enqueued_at"
+    ],
+    "keys": "PRIMARY KEY (device_id, inbox_seq)",
+    "notes": "Row deleted on ack; TTL 30 days; this is the offline queue."
+   },
+   {
+    "entity": "DedupeRecord",
+    "store": "Redis / Scylla with TTL 7 days",
+    "fields": [
+     "device_id#client_msg_id",
+     "msg_id",
+     "seq"
+    ],
+    "keys": "PK device_id#client_msg_id",
+    "notes": "Guarantees a retried SEND maps to the same message."
+   },
+   {
+    "entity": "Conversation",
+    "store": "MySQL/Scylla",
+    "fields": [
+     "conv_id",
+     "type (direct|group)",
+     "members_version",
+     "last_seq",
+     "created_at"
+    ],
+    "keys": "PK conv_id; direct conv_id = hash(min(u1,u2), max(u1,u2))",
+    "notes": "last_seq is owned by the sequencing shard."
+   },
+   {
+    "entity": "Session",
+    "store": "Redis Cluster",
+    "fields": [
+     "device_id",
+     "gateway_id",
+     "connection_epoch",
+     "last_heartbeat"
+    ],
+    "keys": "PK device_id, TTL 2 x heartbeat interval",
+    "notes": "Epoch prevents a stale gateway from overwriting a newer registration."
+   },
+   {
+    "entity": "GroupMember",
+    "store": "MySQL (sharded by group_id) + cache",
+    "fields": [
+     "group_id",
+     "user_id",
+     "role",
+     "joined_at"
+    ],
+    "keys": "PK (group_id, user_id)",
+    "notes": "Cached device fan-out list per group."
+   }
+  ],
+  "classes": [
+   {
+    "name": "ConnectionHandler (gateway)",
+    "responsibility": "Per-socket state machine: auth, heartbeat, inbound frames, outbound queue with flow control.",
+    "methods": [
+     "on_frame(frame)",
+     "deliver(frame) -> bool",
+     "on_heartbeat()",
+     "close(reason)"
+    ]
+   },
+   {
+    "name": "ChatService",
+    "responsibility": "Dedupe, sequence, persist, route.",
+    "methods": [
+     "send(device, msg) -> SentAck",
+     "route(msg, recipients)",
+     "on_ack(device, msg_id)",
+     "sync(device, cursor)"
+    ]
+   },
+   {
+    "name": "Sequencer",
+    "responsibility": "Per-conversation monotonic sequence allocation on the owning shard.",
+    "methods": [
+     "next_seq(conv_id) -> int",
+     "load_last_seq(conv_id)"
+    ]
+   },
+   {
+    "name": "SessionRegistry",
+    "responsibility": "Register/lookup/unregister device connections with epochs.",
+    "methods": [
+     "register(device, gateway, epoch)",
+     "lookup(devices) -> map",
+     "unregister(device, epoch)"
+    ]
+   },
+   {
+    "name": "ClientOutbox (client)",
+    "responsibility": "Persist unsent messages, retry with backoff, reconcile SENT acks.",
+    "methods": [
+     "enqueue(msg)",
+     "flush_on_connect()",
+     "on_sent(ack)",
+     "backoff_delay(attempt)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Idempotent send with per-conversation sequencing",
+    "explain": "Requests for a conversation are routed to the shard that owns it (consistent hashing on conv_id), which keeps an in-memory last_seq loaded from the store. Dedupe first, then allocate, then persist with a conditional insert so a crash between allocation and write leaves a gap rather than a duplicate. Gaps are harmless: clients order by seq and only use it for ordering and sync cursors.",
+    "pseudocode": "def send(device, m):\n    prev = dedupe.get(device.id + '#' + m.client_msg_id)\n    if prev: return SentAck(m.client_msg_id, prev.msg_id, prev.seq)\n    seq = sequencer.next_seq(m.conv_id)            # owner shard, in-memory counter\n    msg_id = snowflake()\n    store.insert(conv=m.conv_id, bucket=bucket(now()), seq=seq, ...)   # LOCAL_QUORUM\n    for dev in recipients_devices(m.conv_id):\n        inbox.append(dev, msg_id, m.conv_id)\n    dedupe.put(device.id + '#' + m.client_msg_id, (msg_id, seq), ttl=7*DAY)\n    route_async(msg_id, recipients_devices(m.conv_id))\n    return SentAck(m.client_msg_id, msg_id, seq)\n"
+   },
+   {
+    "name": "Routing with session registry and fallback to push",
+    "explain": "Batch-lookup all recipient devices, group by gateway, and send one RPC per gateway. Anything not online or not acked within a timeout stays in the inbox and triggers a push notification.",
+    "pseudocode": "def route_async(msg_id, devices):\n    sessions = registry.lookup(devices)              # one MGET\n    by_gw = group_by(sessions.online, key='gateway_id')\n    for gw, devs in by_gw.items():\n        rpc(gw).deliver(msg_id, devs, timeout=200ms)  # gateway writes to sockets\n    for dev in sessions.offline:\n        push.notify(dev, collapse_key=conv_of(msg_id))\n    schedule(check_acks, msg_id, after=10s)          # redeliver or push if unacked\n"
+   },
+   {
+    "name": "Client reconnect with exponential backoff and full jitter",
+    "explain": "After a disconnect, clients wait a random time between 0 and min(cap, base x 2^attempt) before reconnecting. Full jitter spreads millions of clients across the window and prevents synchronized reconnect storms after a gateway or region outage.",
+    "pseudocode": "def reconnect_loop():\n    attempt = 0\n    while not connected():\n        delay = random.uniform(0, min(60_000, 500 * 2 ** attempt))   # ms\n        sleep(delay)\n        if try_connect(): sync(from_cursor=local_db.inbox_cursor); outbox.flush()\n        attempt += 1\n"
+   }
+  ],
+  "sequence": "ClientA     GatewayA     ChatSvc      Store/Inbox    Registry    GatewayB    ClientB\n  |SEND(cid)    |            |              |             |           |          |\n  |------------>|----------->| dedupe miss  |             |           |          |\n  |             |            | seq=812      |             |           |          |\n  |             |            |--insert msg, inbox(B)----->|           |          |\n  |             |            |<--ok (quorum)|             |           |          |\n  |<--SENT(812)-|<-----------|              |             |           |          |\n  |  one tick   |            |--lookup(B devices)-------->|           |          |\n  |             |            |<--GatewayB, epoch 7--------|           |          |\n  |             |            |--deliver(msg)------------------------->|          |\n  |             |            |              |             |           |--DELIVER>|\n  |             |            |              |             |           |<--ACK----|\n  |             |            |<--ack(B, msg)--------------------------|          |\n  |             |            |--delete inbox(B,msg)------>|           |          |\n  |<--RECEIPT delivered (two ticks)                                              |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Sender retries after SENT ack was lost on a flaky network",
+   "handling": "Same client_msg_id hits the dedupe record; server returns the original msg_id and seq; no duplicate is stored or delivered."
+  },
+  {
+   "case": "Recipient receives the same DELIVER twice (redelivery after missed ack)",
+   "handling": "Client dedupes by msg_id in its local DB and re-acks; display is idempotent."
+  },
+  {
+   "case": "Two members send to a group at the same instant",
+   "handling": "Owner shard for the conversation serialises sequence allocation, so all members see the same order by seq."
+  },
+  {
+   "case": "Client clocks are wrong by hours",
+   "handling": "Ordering and display use server seq and server_ts; client timestamps are informational only."
+  },
+  {
+   "case": "Device registers on a new gateway while the old gateway still thinks it is connected",
+   "handling": "Registry entries carry a connection_epoch; the newer epoch wins and the old gateway's unregister with a stale epoch is ignored."
+  },
+  {
+   "case": "Gateway crashes with 500K connections",
+   "handling": "Clients reconnect with full-jitter backoff spread over about a minute; admission control on remaining gateways; undelivered messages sit in inboxes and are synced on reconnect."
+  },
+  {
+   "case": "Message arrives for a conversation before the client has the earlier ones (gap in seq)",
+   "handling": "Client detects seq gap, holds display of later messages briefly and issues SYNC for the missing range; gaps from server-side allocation without write are confirmed as empty."
+  },
+  {
+   "case": "User removed from a group while a message is in flight",
+   "handling": "Membership is checked at sequencing time against members_version; sender key rotated on removal so the removed member cannot decrypt later messages."
+  },
+  {
+   "case": "Recipient offline for 30+ days",
+   "handling": "Inbox TTL expires; sender shows two ticks never reached; WhatsApp-style behaviour is to drop after 30 days; documented to users."
+  },
+  {
+   "case": "Very large active group (1,024 members, many online) - hot partition",
+   "handling": "Partition by (conv_id, bucket); fan-out batches per gateway; group size cap; per-group send rate limit."
+  },
+  {
+   "case": "Push notification token expired or app uninstalled",
+   "handling": "APNs/FCM return invalid-token; push service deletes the token; messages remain in inbox for sync."
+  },
+  {
+   "case": "Message sent while sender offline, then sender changes device",
+   "handling": "Outbox lives on the original device; new device cannot resend; on next online of the original device the outbox flushes."
+  },
+  {
+   "case": "Delete-for-everyone after the recipient already read it",
+   "handling": "Send a revoke control message referencing msg_id; clients replace content with 'message deleted'; best-effort, cannot un-read."
+  },
+  {
+   "case": "Media upload interrupted at 80%",
+   "handling": "Resumable uploads (chunked, offset tracked); message is only sent after upload completes and the blob hash verifies."
+  },
+  {
+   "case": "Spam bot sending to thousands of unknown numbers",
+   "handling": "Rate limits on messages to non-contacts, new-account limits, metadata reputation scoring, user reports with franked evidence."
+  },
+  {
+   "case": "Network partition between regions while users chat across them",
+   "handling": "Each conversation has a home region that sequences it; the partitioned side queues sends in client outboxes and retries; no split-brain ordering."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Erlang/Elixir (BEAM) or Go for gateways",
+   "layer": "Connection tier",
+   "overview": "Runtimes built for massive numbers of lightweight concurrent processes.",
+   "why": "One lightweight process or goroutine per connection, cheap context switches; WhatsApp ran 2M+ connections per server on FreeBSD with Erlang.",
+   "alternatives": "Java Netty (mature, more GC tuning); Rust/Tokio (low memory per connection, steeper learning curve)."
+  },
+  {
+   "name": "WebSocket / MQTT-style binary protocol over TLS or Noise",
+   "layer": "Client protocol",
+   "overview": "Full-duplex persistent connection with compact binary frames.",
+   "why": "Server push without polling; small framing overhead saves mobile data and battery.",
+   "alternatives": "HTTP long polling (simpler, more overhead); gRPC streaming (good for internal, heavier on mobile); raw XMPP (verbose XML)."
+  },
+  {
+   "name": "ScyllaDB / Cassandra",
+   "layer": "Message store",
+   "overview": "Wide-column, leaderless, partitioned stores optimised for write-heavy append workloads.",
+   "why": "Messages are append-only, read by (conversation, recent range) - a perfect partition + clustering key fit. Discord stores trillions of messages this way and migrated to ScyllaDB for lower tail latency.",
+   "alternatives": "HBase (Facebook Messenger used it historically; strong consistency per row, more ops); sharded MySQL (fine at smaller scale); DynamoDB (managed, cost at this volume)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Session registry, dedupe, presence",
+   "overview": "In-memory sharded key-value store with TTLs and pub/sub.",
+   "why": "Millions of lookups/s with sub-ms latency, TTL-based liveness for sessions and presence.",
+   "alternatives": "In-memory gateway mesh with consistent hashing (no external store, harder ops); etcd (too slow for this rate)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Async pipelines",
+   "overview": "Durable partitioned log.",
+   "why": "Receipts aggregation, push notification jobs, analytics and abuse metadata pipelines off the hot path.",
+   "alternatives": "Pulsar; internal queues per service."
+  },
+  {
+   "name": "APNs and FCM",
+   "layer": "Push notifications",
+   "overview": "OS vendor push channels that can wake backgrounded apps.",
+   "why": "The only reliable way to reach iOS/Android apps whose sockets the OS has killed.",
+   "alternatives": "None for iOS; on Android custom persistent services are restricted by battery policies."
+  },
+  {
+   "name": "Signal protocol (X3DH + Double Ratchet, Sender Keys)",
+   "layer": "End-to-end encryption",
+   "overview": "Asynchronous key agreement and ratcheting encryption giving forward secrecy and post-compromise security.",
+   "why": "Industry standard for E2EE messaging used by WhatsApp and Signal; works when the recipient is offline via prekeys.",
+   "alternatives": "MLS (IETF Messaging Layer Security; scales better for large groups with tree-based keys); server-side encryption only (not E2EE)."
+  },
+  {
+   "name": "Object storage + CDN",
+   "layer": "Media",
+   "overview": "S3-like blob store with resumable uploads and edge delivery.",
+   "why": "Media is 75x the bytes of text; keeping it off the chat path keeps messages small.",
+   "alternatives": "Storing media in the message DB (never at this scale)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Persistent connections and the connection tier (WebSocket, long polling, heartbeats)",
+   "explain": "HTTP is request-response: the server cannot speak until the client asks. Chat needs the server to push. Short polling (ask every few seconds) wastes requests and adds latency equal to the poll interval. Long polling holds each request open until there is data or a timeout, then the client reconnects - better, but every message costs a new HTTP request and headers. WebSockets upgrade an HTTP connection into a full-duplex TCP channel with tiny framing, so either side can send at any time. Keeping millions of such connections open changes the server design: each connection consumes a file descriptor, kernel socket buffers and some application memory (tens of KB), so a well-tuned server holds 500K to a few million. Load balancers must be layer 4 or WebSocket-aware and connections are sticky by nature. NATs and mobile carriers silently drop idle connections after minutes, so clients send heartbeats (pings) at an interval shorter than the shortest NAT timeout, trading battery for liveness. Because connections are long-lived, deploys must drain gradually: killing a gateway disconnects every client on it at once, and their simultaneous reconnects can overload the fleet - a thundering herd that jittered backoff and admission control prevent.",
+   "in_this_design": "About 300M concurrent sockets across roughly 600-900 gateways. Gateways handle TLS, auth and heartbeats locally (1.25M heartbeats/s never reach backends), keep a per-connection outbound queue with flow control, and register each device in the session registry. Deploys drain 1-2% of connections per minute.",
+   "key_points": [
+    "Server push needs a persistent channel; WebSocket beats polling on latency and overhead.",
+    "Connection capacity is about memory and file descriptors, not CPU.",
+    "Heartbeats must beat NAT timeouts but cost battery - typical 4-5 minutes when idle.",
+    "Terminate heartbeats at the gateway; never fan them to backends.",
+    "Drain deploys slowly and jitter reconnects to avoid storms."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use HTTP long polling?",
+     "a": "It works and is a fine fallback, but each delivered message requires a new request with headers and TLS work, adding latency and data cost on mobile. WebSockets carry a message in a few bytes of framing on an existing connection."
+    },
+    {
+     "q": "How many connections can a single gateway hold and what limits it?",
+     "a": "Hundreds of thousands to a few million; limits are memory per connection (buffers plus app state), file descriptor limits, and the cost of TLS handshakes during reconnect bursts. WhatsApp reported over 2 million per server."
+    },
+    {
+     "q": "How do you deploy a new gateway version without dropping 300M users?",
+     "a": "Rolling drain: stop accepting new connections on a node, send a 'reconnect later' control frame to a small fraction of connections per second, let them reconnect elsewhere with jitter, then restart the node."
+    }
+   ]
+  },
+  {
+   "name": "Delivery semantics: at-least-once with idempotency = effectively exactly-once",
+   "explain": "In a distributed system you cannot know whether a message that timed out was processed. If the sender never retries you get at-most-once (possible loss). If it retries until acknowledged you get at-least-once (possible duplicates). True exactly-once delivery over an unreliable network is impossible in general (the Two Generals problem), but exactly-once effect is achievable: combine at-least-once delivery with idempotent processing, so duplicates are detected and ignored. The standard technique is an idempotency key generated by the client before the first attempt and reused on every retry; the server records the key with the result and returns the stored result for repeats. On the receive side, each message carries a unique server ID; the receiver stores processed IDs and acks duplicates without reprocessing. Acks must be end to end at each hop that holds state: the sender's outbox clears only on server ack; the server's inbox entry clears only on device ack. Dedupe records need a retention window longer than the maximum retry window. This end-to-end argument - reliability must ultimately be ensured at the endpoints - is why messaging apps keep outboxes and dedupe on the client too.",
+   "in_this_design": "The client's outbox persists each message with a UUID client_msg_id and retries until SENT; the server dedupes on (device_id, client_msg_id) for 7 days. The server keeps inbox entries until the device ACKs msg_id; devices dedupe on msg_id. Result: no loss, no visible duplicates.",
+   "key_points": [
+    "Exactly-once delivery is impossible; exactly-once effect is not.",
+    "Client-generated idempotency keys make retries safe.",
+    "Ack at every stateful hop; delete only after ack.",
+    "Dedupe window must exceed the maximum retry horizon.",
+    "Receivers must also be idempotent."
+   ],
+   "qa": [
+    {
+     "q": "The SENT ack is lost and the client retries. What prevents a duplicate?",
+     "a": "The retry carries the same client_msg_id, the server finds the dedupe record and returns the original msg_id and seq without storing or routing again."
+    },
+    {
+     "q": "Why must the server keep a message until the device acks it, rather than until it is written to the socket?",
+     "a": "Writing to a socket only means bytes are in a kernel buffer; the connection may die before the device receives or stores them. Only an application-level ack proves durable receipt."
+    },
+    {
+     "q": "How long should dedupe records live?",
+     "a": "Longer than any client would retry, including a device that was offline for days with an outbox; we use 7 days, and messages older than that from an outbox get a new ID check against content hash if needed."
+    }
+   ]
+  },
+  {
+   "name": "Ordering: per-conversation sequence numbers vs timestamps",
+   "explain": "Users expect messages within a chat to appear in the same order for everyone. Wall-clock timestamps are unreliable for this: device clocks drift and can be wrong by hours, and even server clocks differ by milliseconds, so two messages sent close together can be ordered differently on different servers. Global total ordering across all conversations would require a single sequencer and is unnecessary - causality only matters within a conversation. The standard approach is a single logical owner per conversation (chosen by consistent hashing of the conversation ID or a leader per partition) that assigns monotonically increasing sequence numbers. All participants then order by sequence number, which is a total order per conversation. Gaps can occur if a sequence is allocated and the write fails, so clients must treat seq as an ordering key, not a count. Clients detect missing ranges to trigger a resync. Lamport clocks and vector clocks are alternatives for systems without a single owner: Lamport clocks give a total order consistent with causality, vector clocks detect concurrency, but both add complexity that a single sequencer avoids. The cost of a single owner is that the conversation's throughput is bounded by one shard, which is fine because a conversation rarely exceeds tens of messages per second.",
+   "in_this_design": "Chat service instances own conversations by consistent hashing on conv_id; the owner keeps last_seq in memory (recovered from the store's max seq on failover) and stamps each message. Clients render by seq, show server_ts as the time label, and resync on gaps. Ownership moves on failover, with a fencing epoch so two owners never allocate concurrently.",
+   "key_points": [
+    "Order per conversation, not globally.",
+    "One owner per conversation assigns monotonic sequence numbers.",
+    "Never order by client timestamps.",
+    "Gaps are acceptable; duplicates are not.",
+    "Fence ownership changes so two sequencers never overlap."
+   ],
+   "qa": [
+    {
+     "q": "Why not order by server timestamp?",
+     "a": "Different chat service nodes have clock skew of milliseconds, so two near-simultaneous messages could be stamped out of order; a single sequencer gives a definitive order."
+    },
+    {
+     "q": "What happens to sequencing when the owner node crashes?",
+     "a": "Ownership moves to another node, which reads the max seq from the store (quorum read) and continues from there under a new epoch; the old owner, if it comes back, is fenced out by the epoch check on writes."
+    },
+    {
+     "q": "When would you need vector clocks instead?",
+     "a": "In multi-leader or peer-to-peer settings where no single node can sequence, such as offline-first collaborative editing; for a server-mediated chat a sequencer is simpler and gives a total order."
+    }
+   ]
+  },
+  {
+   "name": "Partitioning the message store (partition keys, time bucketing, hot partitions)",
+   "explain": "Wide-column stores like Cassandra and ScyllaDB distribute data by a partition key (hashed onto a token ring) and sort rows within a partition by clustering keys. Good modelling starts from queries: for chat the dominant queries are 'append to conversation' and 'read the latest N messages of a conversation' or 'read after seq X'. So conversation ID is the natural partition key and sequence or message ID the clustering key, making reads a single sequential slice. Unbounded partitions are dangerous: a years-old busy group can grow to gigabytes, making compaction, repair and reads slow. Time bucketing adds a bucket component (for example a 10-day window) to the partition key so each partition is bounded; reading history walks buckets backwards. Hot partitions happen when one key receives disproportionate traffic - a giant active group or a popular server channel. Discord described exactly this: a few huge channels caused hot partitions that slowed whole Cassandra nodes, which then hurt unrelated traffic. Their fixes included moving to ScyllaDB (shard-per-core, no JVM GC pauses) and adding a data-service layer in Rust that coalesces concurrent identical reads so a thousand users opening the same channel trigger one database query. Replication factor 3 with LOCAL_QUORUM reads and writes gives consistency within a region with tolerance for one replica failure.",
+   "in_this_design": "Message table PRIMARY KEY ((conv_id, bucket), seq) with 10-day buckets and TTL 30 days; device inbox keyed by device_id. Writes and reads use LOCAL_QUORUM with RF=3. A read-coalescing layer sits in front for group conversations, and group size is capped at 1,024 to bound fan-out and hotness.",
+   "key_points": [
+    "Model tables from queries: partition by conversation, cluster by sequence.",
+    "Time-bucket partitions to keep them bounded.",
+    "Hot partitions hurt neighbours; coalesce reads and cap group size.",
+    "RF=3 with quorum tolerates one replica loss with consistent reads.",
+    "Tombstones from deletes are costly in LSM stores; prefer TTLs."
+   ],
+   "qa": [
+    {
+     "q": "Why not partition messages by user_id?",
+     "a": "A conversation's messages would be spread across two (or 1,000) partitions and reading a chat would require merging them; writing a group message would mean many writes. Partitioning by conversation makes the main read one slice."
+    },
+    {
+     "q": "A single group's partition becomes a hotspot. What do you do?",
+     "a": "Bound partition size with time buckets, cache recent messages, coalesce concurrent reads, and limit group size; for broadcast-scale channels use a different fan-out design."
+    },
+    {
+     "q": "Why might deletes hurt Cassandra performance?",
+     "a": "Deletes write tombstones that must be read past until compaction removes them; heavy deletes make reads scan many tombstones. TTL-based expiry and dropping whole time buckets is cheaper."
+    }
+   ]
+  },
+  {
+   "name": "Presence and the pub/sub fan-out problem",
+   "explain": "Presence (online, last seen, typing) looks small but can generate more traffic than messages. Naively, every status change is broadcast to all contacts: a user with 500 contacts going online or offline triggers 500 notifications, and phones flap online/offline constantly as they move between networks. Systems therefore treat presence as soft state with TTLs: a user is online while heartbeats keep refreshing a key with a short expiry, and offline when it expires, which avoids explicit logout messages that may never arrive. To control fan-out, presence is pull-or-subscribe on demand: clients subscribe to presence only for contacts whose chat is currently open, and unsubscribe when they leave. Typing indicators are ephemeral, never stored, and rate-limited (one event per few seconds). Status changes are debounced so short disconnects do not flap. Presence is a classic candidate for load shedding: under pressure it is acceptable to show stale or no presence, while message delivery must continue. Pub/sub infrastructure (Redis pub/sub, an in-memory gateway mesh) routes presence events to the gateways of subscribed viewers.",
+   "in_this_design": "Gateways refresh presence:{user} with a 2 x heartbeat TTL; the presence service publishes changes only to devices that subscribed by opening that chat. Last-seen is written at most once per minute. Typing events go directly gateway-to-gateway via the registry and are dropped first under load.",
+   "key_points": [
+    "Presence is soft state: TTL, not explicit logout.",
+    "Subscribe only to presence you are looking at.",
+    "Debounce flapping; rate-limit typing.",
+    "Ephemeral signals are never stored and are first to be shed.",
+    "Presence traffic can exceed message traffic if naive."
+   ],
+   "qa": [
+    {
+     "q": "Why use TTLs for online status rather than explicit offline events?",
+     "a": "Mobile clients disappear without saying goodbye (tunnels, battery death); a TTL guarantees eventual correctness without relying on a message that may never arrive."
+    },
+    {
+     "q": "How do you avoid presence fan-out for users with thousands of contacts?",
+     "a": "Do not broadcast; let viewers subscribe only for the chat they have open, or fetch on demand. Group chats show presence lazily or not at all."
+    },
+    {
+     "q": "Under overload, what do you shed?",
+     "a": "Typing indicators first, then presence updates, then delay read receipts; message send and delivery are protected."
+    }
+   ]
+  },
+  {
+   "name": "End-to-end encryption (Signal protocol, forward secrecy, group keys)",
+   "explain": "End-to-end encryption means only the communicating devices hold the keys; the server relays ciphertext it cannot read. The Signal protocol, used by WhatsApp and Signal, has two parts. X3DH (extended triple Diffie-Hellman) lets Alice establish a shared secret with Bob even when Bob is offline: Bob uploads an identity key, a signed prekey and a batch of one-time prekeys to the server; Alice fetches a bundle, performs several Diffie-Hellman operations, and derives a session key. The Double Ratchet then derives a fresh key for every message by combining a symmetric hash ratchet with a Diffie-Hellman ratchet on each reply, giving forward secrecy (stealing today's keys does not decrypt past messages) and post-compromise security (the session heals after a compromise once new DH keys are exchanged). For groups, encrypting separately to every member device is expensive, so Sender Keys let each sender distribute a symmetric chain key to members once over pairwise sessions, then encrypt each group message once; removal of a member requires key rotation. Multi-device means each device is a separate cryptographic endpoint, so a message to a user with three devices is encrypted three times. MLS (Messaging Layer Security) is a newer IETF standard using tree-based key agreement for efficient large groups. E2EE constrains the server: no server-side search, content moderation only via user reports, and media must be encrypted client-side.",
+   "in_this_design": "Key service stores public identity, signed and one-time prekeys per device. 1:1 messages carry a ciphertext per recipient device; group messages use Sender Keys so the server stores one ciphertext. Media is AES-256 encrypted on device with the key and SHA-256 inside the message. Server sees only routing metadata.",
+   "key_points": [
+    "Server routes ciphertext and never holds private keys.",
+    "X3DH enables async session setup with prekeys.",
+    "Double Ratchet gives forward secrecy and post-compromise security.",
+    "Sender Keys make group sends O(1) ciphertext; rotate on membership change.",
+    "Each device is a separate endpoint; multi-device multiplies encryption work."
+   ],
+   "qa": [
+    {
+     "q": "How can Alice start an encrypted conversation with Bob while Bob is offline?",
+     "a": "Bob pre-uploaded signed prekeys and one-time prekeys; Alice uses them in X3DH to derive a shared secret and sends the first message, which Bob can decrypt when he comes online."
+    },
+    {
+     "q": "What does E2EE prevent you from doing as the provider, and how do you handle spam?",
+     "a": "Server-side content scanning, search and content-based ranking. Spam is handled with metadata signals (send rates, new accounts, unknown recipients), user reports that include the reported messages, and client-side heuristics."
+    },
+    {
+     "q": "Why rotate group keys when someone leaves?",
+     "a": "Otherwise the removed member, who holds the old sender keys, could decrypt future messages if they obtained the ciphertext."
+    }
+   ]
+  },
+  {
+   "name": "Backpressure, retries with jitter, and reconnect storms",
+   "explain": "When a downstream component slows, upstream components must not keep pushing work at full speed or queues grow without bound and latency explodes. Backpressure propagates the slowdown: bounded queues, flow control windows (TCP itself does this), credit-based protocols, and explicit 'retry after' responses. When requests fail, naive immediate retries amplify load exactly when the system is weakest; exponential backoff spaces retries out, and jitter (randomising the wait) prevents clients that failed at the same moment from retrying in lockstep. 'Full jitter' - wait a random time between zero and the exponential cap - spreads load most evenly. Retry budgets cap retries to a fraction of normal traffic. Circuit breakers stop calling a failing dependency for a cooling-off period. For connection-oriented systems the worst case is a reconnect storm: a gateway or region failure disconnects millions of clients at once, and their simultaneous reconnects hit TLS handshakes, authentication and sync all together. Defences include jittered client backoff, server-side admission control that rejects with a retry-after hint when over capacity, prioritising cheap reconnects (session resumption tickets avoid full TLS handshakes) and rate-limited sync so devices fetch the backlog in pages.",
+   "in_this_design": "Clients reconnect with full jitter (0 to min(60 s, 0.5 s x 2^n)); gateways admit new connections at a configured rate and return RETRY_AFTER beyond it; TLS session resumption cuts handshake cost; SYNC is paged at 100 messages. Per-connection outbound queues are bounded; a slow client is disconnected rather than allowed to consume unbounded memory.",
+   "key_points": [
+    "Bounded queues plus explicit backpressure prevent latency explosions.",
+    "Exponential backoff with full jitter de-synchronises retries.",
+    "Admission control and retry-after hints protect the fleet.",
+    "TLS session resumption makes reconnect storms cheaper.",
+    "Disconnect slow consumers rather than buffering forever."
+   ],
+   "qa": [
+    {
+     "q": "A region fails over and 50M clients reconnect to another region. What protects it?",
+     "a": "Client-side jittered backoff spreads attempts over minutes, gateways admit at a fixed rate and hint retry-after, session resumption reduces CPU, and sync is paged so the message store sees a smooth ramp."
+    },
+    {
+     "q": "Why is jitter needed if you already have exponential backoff?",
+     "a": "Clients that failed together would still retry together at 1 s, 2 s, 4 s... producing synchronized spikes; jitter spreads them across the interval."
+    },
+    {
+     "q": "A recipient's device is on a very slow link and its outbound queue grows. What do you do?",
+     "a": "Bound the queue; once it exceeds the limit, close the connection. Messages remain in the durable inbox and the client resyncs at its own pace on reconnect."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Transport",
+   "options": "Short polling; long polling; WebSocket/MQTT-style persistent connection",
+   "choice": "Persistent binary connection with long-polling fallback",
+   "why": "Lowest latency and overhead; fallback for networks that block WebSockets."
+  },
+  {
+   "decision": "Message retention on server",
+   "options": "Delete after delivery (WhatsApp-style); keep full history (Messenger/Discord-style); keep 30 days",
+   "choice": "30 days, configurable",
+   "why": "Supports multi-device sync and offline devices while limiting metadata exposure and storage (300 TB vs petabytes)."
+  },
+  {
+   "decision": "Ordering mechanism",
+   "options": "Client timestamps; server timestamps; per-conversation sequencer; vector clocks",
+   "choice": "Per-conversation sequencer",
+   "why": "Deterministic total order per chat with minimal complexity; conversations are low throughput."
+  },
+  {
+   "decision": "Group encryption",
+   "options": "Pairwise per member device; Sender Keys; MLS",
+   "choice": "Sender Keys (MLS for future large groups)",
+   "why": "One ciphertext per group message; MLS scales better beyond about 1K members but is newer."
+  },
+  {
+   "decision": "Message store",
+   "options": "Sharded MySQL; HBase; Cassandra/ScyllaDB",
+   "choice": "ScyllaDB",
+   "why": "Append-heavy, partition-by-conversation access, high write throughput and low tail latency without JVM GC."
+  },
+  {
+   "decision": "Receipts",
+   "options": "Per message; cumulative up_to_seq",
+   "choice": "Cumulative",
+   "why": "One 'read up to 812' replaces dozens of receipts, cutting small-message traffic."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Gateway node crash",
+   "behavior": "Its clients reconnect with jitter to other gateways; registry entries expire or are superseded by newer epochs; undelivered messages remain in inboxes and sync on reconnect."
+  },
+  {
+   "failure": "Chat service owner for a conversation fails",
+   "behavior": "Ownership moves via consistent hashing; new owner recovers last_seq from the store under a new epoch; in-flight sends time out and are retried by clients with the same client_msg_id."
+  },
+  {
+   "failure": "Message store replica down",
+   "behavior": "RF=3 with LOCAL_QUORUM continues with 2 of 3; hinted handoff and repair restore the replica."
+  },
+  {
+   "failure": "Session registry shard loss",
+   "behavior": "Lookups fail open to 'offline': messages queue in inboxes and push notifications are sent; gateways re-register devices on the next heartbeat, rebuilding the shard within minutes."
+  },
+  {
+   "failure": "APNs/FCM degraded",
+   "behavior": "Push retries with backoff; messages are safe in inboxes; users opening the app sync normally."
+  },
+  {
+   "failure": "Whole region outage",
+   "behavior": "DNS steers clients to another region; conversations homed in the failed region fail over to replicas (async replication may lose the last seconds of unacked-by-recipient metadata, but sender outboxes retry unacked sends)."
+  }
+ ],
+ "metrics": [
+  "End-to-end delivery latency p50/p99 (server receive to device ack).",
+  "Concurrent connections per gateway, connection churn and reconnect rate.",
+  "SEND ack latency and timeout rate; dedupe hit rate (proxy for client retries).",
+  "Inbox depth and age of oldest undelivered message.",
+  "Message store write/read p99 and hot-partition detection.",
+  "Push notification send success and latency per platform.",
+  "Sequence gap rate seen by clients and resync frequency.",
+  "Load-shedding activations (presence/typing dropped)."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you support groups of 100K members (broadcast channels)?",
+   "a": "Switch to a read model: store the message once, do not create per-device inbox rows; online members get pushed via pub/sub topics per channel on gateways; offline members pull the channel log on open. Encryption becomes per-channel keys or no E2EE for public channels."
+  },
+  {
+   "q": "How do you add multi-device without a phone being online?",
+   "a": "Each linked device is a first-class endpoint with its own keys and inbox; senders encrypt to all of the recipient's devices; history for a new device is transferred encrypted from an existing device or from encrypted backup."
+  },
+  {
+   "q": "How do you do message search with E2EE?",
+   "a": "On-device search over the local database. Server-side search is not possible without breaking E2EE."
+  },
+  {
+   "q": "What is the latency budget breakdown for 500 ms p99?",
+   "a": "Client upload about 100-200 ms on mobile, gateway + chat service + quorum write about 20-30 ms, routing and registry lookup about 5 ms, downstream push to device about 100-200 ms. Server-side must stay well under 50 ms p99."
+  },
+  {
+   "q": "How would you handle a recipient in another region?",
+   "a": "Conversation homed in one region (where it was created or by participant majority). Messages from the other region traverse a cross-region link (about 100-200 ms); delivery to the recipient's gateway happens in their region via a regional relay."
+  },
+  {
+   "q": "How do you detect message loss in production?",
+   "a": "Synthetic probe accounts send sequenced messages continuously between regions and alert on any gap or delay; clients report sequence gaps; reconcile server SENT acks against device acks with age alerts."
+  },
+  {
+   "q": "What happens when someone changes phones?",
+   "a": "New device registers new identity keys; contacts see a safety-number change notification; restore history from encrypted cloud backup; old device's sessions are invalidated."
+  }
+ ],
+ "key_points": [
+  "Ordering is per conversation via a single sequencer, never global and never by client clocks.",
+  "At-least-once plus idempotency keys and client dedupe gives effectively exactly-once.",
+  "Persistent connections on a gateway fleet plus a session registry mapping device to gateway.",
+  "Offline devices: durable per-device inbox plus push notification; sync from a cursor on reconnect.",
+  "Message store partitioned by (conversation, time bucket), clustered by sequence - one slice per read.",
+  "About 1.5M msgs/s peak becomes several million deliveries/s; connections (about 300M) are the scaling unit.",
+  "Presence and typing are soft state with TTLs, subscribe-on-view, and the first to be shed.",
+  "Reconnect storms are the scariest failure: full-jitter backoff, admission control, paged sync.",
+  "E2EE with the Signal protocol means the server routes ciphertext only - no server search."
+ ],
+ "quiz": [
+  {
+   "q": "A sender's SENT ack is lost and it retries. What guarantees no duplicate message?",
+   "options": [
+    "Server dedupe on the client-generated client_msg_id",
+    "Kafka exactly-once semantics",
+    "TCP retransmission",
+    "Ordering by timestamp"
+   ],
+   "answer": 0,
+   "why": "The client reuses the same idempotency key; the server returns the original result. TCP retransmission only covers a single connection, and the retry may be on a new one."
+  },
+  {
+   "q": "Which is the best way to order messages within a group chat?",
+   "options": [
+    "Client device timestamps",
+    "Server wall-clock timestamps from whichever node received it",
+    "A per-conversation sequence number from the owning shard",
+    "Message size"
+   ],
+   "answer": 2,
+   "why": "A single owner gives a total order. Server timestamps are tempting but skew across nodes can invert near-simultaneous messages."
+  },
+  {
+   "q": "Roughly how many messages per second is 1B DAU x 50 messages/day on average?",
+   "options": [
+    "58K/s",
+    "58M/s",
+    "5.8M/s",
+    "580K/s"
+   ],
+   "answer": 3,
+   "why": "50B / 86,400 is about 580K/s; peak is around 1.5M/s."
+  },
+  {
+   "q": "When can the server delete a message from a device's inbox?",
+   "options": [
+    "When the frame is written to the socket",
+    "When the device sends an application-level ACK",
+    "After 1 minute",
+    "When the sender receives SENT"
+   ],
+   "answer": 1,
+   "why": "Socket writes only reach kernel buffers; the connection can die before the app stores the message. Only the device ACK proves receipt."
+  },
+  {
+   "q": "A gateway with 1M connections crashes. What is the biggest secondary risk?",
+   "options": [
+    "Lost messages",
+    "A synchronized reconnect storm overloading other gateways and auth",
+    "Message reordering",
+    "Key compromise"
+   ],
+   "answer": 1,
+   "why": "Messages are safe in inboxes, so A is wrong; the herd of reconnects is the danger, solved with jittered backoff and admission control."
+  },
+  {
+   "q": "Why add a time bucket to the message table partition key?",
+   "options": [
+    "To bound partition size for busy, long-lived conversations",
+    "To enable global ordering",
+    "To make deletes faster per message",
+    "Because Cassandra requires it"
+   ],
+   "answer": 0,
+   "why": "Unbounded partitions slow compaction and reads. Bucketing does not create global ordering."
+  },
+  {
+   "q": "Which presence design scales best?",
+   "options": [
+    "Broadcast every status change to all contacts",
+    "Store presence in the message table",
+    "TTL-based soft state with subscriptions only for chats currently open",
+    "Poll presence for all contacts every 5 s"
+   ],
+   "answer": 2,
+   "why": "Broadcasting multiplies traffic by contact count and flapping; subscribe-on-view bounds it."
+  },
+  {
+   "q": "Why use full jitter in reconnect backoff?",
+   "options": [
+    "To reduce battery usage",
+    "To keep message order",
+    "To improve encryption",
+    "To de-synchronise clients that failed at the same moment"
+   ],
+   "answer": 3,
+   "why": "Exponential backoff alone keeps simultaneous failures retrying in lockstep at the same intervals."
+  },
+  {
+   "q": "In the Signal protocol, what lets Alice message Bob while Bob is offline?",
+   "options": [
+    "The server holds Bob's private key",
+    "Bob's pre-uploaded signed and one-time prekeys used in X3DH",
+    "Alice waits until Bob is online",
+    "TLS between Alice and the server"
+   ],
+   "answer": 1,
+   "why": "Prekeys allow asynchronous key agreement. The server never holds private keys - option A would break E2EE."
+  },
+  {
+   "q": "Approximately how many gateways for 300M concurrent connections at 500K each, before headroom?",
+   "options": [
+    "60",
+    "600",
+    "6,000",
+    "60,000"
+   ],
+   "answer": 1,
+   "why": "300M / 500K = 600; add 30-50% headroom for failover."
+  },
+  {
+   "q": "Under overload, which should be shed first?",
+   "options": [
+    "Typing indicators",
+    "Message delivery",
+    "SENT acks",
+    "Offline inbox writes"
+   ],
+   "answer": 0,
+   "why": "Typing is ephemeral and low value; acks and inbox writes are part of the reliability guarantee."
+  },
+  {
+   "q": "Why partition the message store by conversation_id rather than user_id?",
+   "options": [
+    "Users have fewer messages",
+    "It improves encryption",
+    "The main read is the recent slice of one conversation, which becomes a single partition read",
+    "It allows global ordering"
+   ],
+   "answer": 2,
+   "why": "Partitioning by user would scatter a chat across participants' partitions and multiply group writes."
+  },
+  {
+   "q": "A device's clock is 3 hours fast. What should happen to ordering?",
+   "options": [
+    "Its messages appear 3 hours in the future and sort last",
+    "The server rejects its messages",
+    "Nothing - ordering uses server sequence numbers, client time is informational",
+    "Everyone's clocks are adjusted"
+   ],
+   "answer": 2,
+   "why": "Server seq determines order; using client timestamps (option A) is exactly the bug we avoid."
+  },
+  {
+   "q": "What is the main benefit of Sender Keys for group messages?",
+   "options": [
+    "Stronger encryption than pairwise",
+    "The sender encrypts each group message once instead of once per member device",
+    "No key rotation is ever needed",
+    "The server can read group messages"
+   ],
+   "answer": 1,
+   "why": "It is an efficiency win; it actually requires rotation when members leave, so C is wrong."
+  },
+  {
+   "q": "A device registers on gateway G2, but G1's delayed unregister arrives afterwards. How do you avoid marking it offline?",
+   "options": [
+    "Last write wins by arrival",
+    "Delete all registry entries every minute",
+    "Use TCP keepalive",
+    "Connection epochs: ignore unregister with an older epoch"
+   ],
+   "answer": 3,
+   "why": "Epochs fence stale updates. Arrival-order LWW is the tempting but buggy approach."
+  },
+  {
+   "q": "Delivery receipts are sent as cumulative 'read up to seq N'. Why?",
+   "options": [
+    "They are required by APNs",
+    "They cut receipt traffic dramatically versus one per message",
+    "They improve encryption",
+    "They guarantee ordering"
+   ],
+   "answer": 1,
+   "why": "One receipt covers many messages, halving or better the small-message volume."
+  },
+  {
+   "q": "Why must heartbeats be terminated at the gateway?",
+   "options": [
+    "At 300M connections every 4 minutes they are about 1.25M/s and would overload backends",
+    "They contain message content",
+    "Backends cannot parse them",
+    "Heartbeats are encrypted end-to-end"
+   ],
+   "answer": 0,
+   "why": "Heartbeat volume rivals message volume; keeping them local is a capacity decision."
+  },
+  {
+   "q": "Discord's move from Cassandra to ScyllaDB mainly addressed what?",
+   "options": [
+    "Lack of SQL joins",
+    "Encryption requirements",
+    "Tail latency and hot-partition pain from JVM GC and noisy neighbours",
+    "Global ordering"
+   ],
+   "answer": 2,
+   "why": "They reported p99 reads falling to about 15 ms on fewer nodes. Joins were never the issue for this access pattern."
+  },
+  {
+   "q": "A client sees seq 810 then 812 in a conversation. Best behaviour?",
+   "options": [
+    "Display both and ignore",
+    "Drop 812",
+    "Reorder by timestamp",
+    "Request SYNC for the missing range; treat a confirmed gap as empty"
+   ],
+   "answer": 3,
+   "why": "Gaps may be harmless allocation gaps or missing deliveries; resyncing distinguishes them."
+  },
+  {
+   "q": "Why can't true exactly-once delivery be guaranteed over an unreliable network?",
+   "options": [
+    "TCP drops packets",
+    "The sender can never be sure whether a timed-out message was processed (Two Generals)",
+    "Encryption prevents it",
+    "Servers have clock skew"
+   ],
+   "answer": 1,
+   "why": "Uncertainty after a timeout forces a choice between possible loss and possible duplicates; idempotency gives exactly-once effect."
+  },
+  {
+   "q": "What is the server's main limitation under end-to-end encryption?",
+   "options": [
+    "It cannot search or scan message content",
+    "It cannot store messages",
+    "It cannot route messages",
+    "It cannot send push notifications"
+   ],
+   "answer": 0,
+   "why": "It still routes, stores ciphertext and pushes. Content-based features move to the client or are lost."
+  },
+  {
+   "q": "A slow client's outbound queue on the gateway keeps growing. Best action?",
+   "options": [
+    "Buffer unlimited in memory",
+    "Drop messages permanently",
+    "Close the connection; messages stay in the durable inbox for resync",
+    "Slow down all other clients"
+   ],
+   "answer": 2,
+   "why": "Bounded queues protect the gateway; the durable inbox means closing is safe, unlike option B."
+  }
+ ],
+ "references": [
+  {
+   "title": "How Discord Stores Trillions of Messages (ScyllaDB)",
+   "url": "https://resources.scylladb.com/blog/how-discord-stores-trillions-of-messages"
+  },
+  {
+   "title": "How Discord Stores Trillions of Messages - ByteByteGo",
+   "url": "https://bytebytego.com/guides/how-discord-stores-trillions-of-messages/"
+  },
+  {
+   "title": "Design WhatsApp Messenger - EnjoyAlgorithms",
+   "url": "https://enjoyalgorithms.com/blog/design-whatsapp"
+  },
+  {
+   "title": "System Design: Chat System (WhatsApp / Messenger Scale) - techinterview.org",
+   "url": "https://www.techinterview.org/post/3233459980/design-chat-system/"
+  },
+  {
+   "title": "Discord migrates from Cassandra to ScyllaDB - InfoQ",
+   "url": "https://www.infoq.com/news/2023/06/discord-cassandra-scylladb/"
+  }
+ ]
+}

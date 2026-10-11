@@ -1,0 +1,1045 @@
+{
+ "slug": "hot-key-counter",
+ "title": "Design a counter service that avoids hot keys (likes, views, inventory-style counts)",
+ "prompt": "Design a counter service that avoids hot keys.",
+ "group": "storage",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 90,
+ "summary": "Counting looks trivial until one key, a viral post or a flash-sale product, receives 500,000 increments per second and every one of them lands on the same shard, the same row lock or the same Redis thread. The core tension is accuracy and freshness versus spreading load: sharded sub-counters, in-memory aggregation and write batching remove the hot key but make reads approximate or slightly stale, while exactly-once and bounded counters (inventory, rate limits) need stricter techniques.",
+ "framework": {
+  "clarify": [
+   "What is being counted and does it need to be exact? Assume likes, views and shares on posts: views can be approximate, likes must be exact eventually and idempotent per user.",
+   "Scale: assume 1 billion counter keys, average 200,000 increments per second globally, peaks of 2 million per second, and a single viral key at up to 500,000 per second.",
+   "Read pattern: counts are displayed on every feed item, so reads are about 5 million per second; is a few seconds of staleness acceptable? Assume yes, 2 to 5 s.",
+   "Is it increment-only or also decrement (unlike)? Assume both; counts must never go negative.",
+   "Do we need per-user dedupe (one like per user)? Assume yes for likes, no for views.",
+   "Any bounded counters (inventory, quota) where overshoot is unacceptable? Assume out of scope for the main path but discuss as a follow-up.",
+   "Multi-region? Assume active-active writes in 3 regions with a global total.",
+   "Durability: can we lose a few seconds of view counts on a crash? Assume acceptable for views, not for likes."
+  ],
+  "design": [
+   "Baseline: a single row or Redis key per counter with atomic INCR. It works until one key exceeds what one shard or one thread can do (roughly 50,000 to 100,000 ops/s on a Redis shard, a few thousand per second on a locked SQL row).",
+   "Separate the source of truth from the count: likes are stored as an idempotent edge (user_id, post_id) and the counter is a derived aggregate; views are pure events.",
+   "Absorb writes with local aggregation: each counter-ingest node buffers increments in memory per key and flushes deltas every 1 s, turning 500,000 increments into a few hundred delta writes.",
+   "Split hot keys into N sub-counters (key#0..key#N-1), choosing a random shard per write; reads sum the shards. N is adaptive: 1 for cold keys, up to 64 or more for hot ones.",
+   "Persist deltas in a durable log (Kafka partitioned by key hash) and a store such as Cassandra counters or a sharded KV with sub-counter rows; serve reads from a cached total refreshed every few seconds.",
+   "Critical path: client -> API -> idempotency check (likes) -> local aggregator -> Kafka delta -> counter store (sub-counters) -> periodic rollup -> read cache -> feed."
+  ],
+  "defend": [
+   "Bottleneck: single-key throughput. Defend with in-memory coalescing (reduces writes by 100x to 1,000x) plus sub-counter sharding so no physical partition sees more than about 5,000 writes/s.",
+   "Scaling reads: never sum 64 shards on every read; maintain a materialised total refreshed by the rollup job and cache it with a 2 s TTL, plus request coalescing on miss.",
+   "Scaling writes: partition Kafka by hash(key, sub_shard) so even the hot key's deltas spread over many partitions and consumers.",
+   "Failure: aggregator crash loses at most one flush window of views (accepted); likes are durable because the edge is written first and counts can be recomputed from edges.",
+   "Detect hot keys automatically with a count-min sketch or top-K per node; promote keys to sharded mode when they exceed 1,000 writes/s, demote after they cool.",
+   "Measure: per-key write rate top-K, per-partition load skew, flush lag, count drift between edge truth and counter, read staleness p99."
+  ],
+  "script": "I want to clarify what kind of count this is, because that drives everything. For views I will accept approximate and a few seconds stale; for likes I want exact, idempotent per user, and eventually consistent within a few seconds; inventory-style bounded counters I will treat separately. The scale I will assume is about 2 million increments per second at peak with a single viral key at 500,000 per second and 5 million reads per second for display. A naive INCR on one key breaks because one shard handles maybe 100,000 operations per second and one SQL row only a few thousand. So my design does three things: first, the like edge is the source of truth and the count is derived, so retries never double count; second, ingest nodes aggregate increments in memory and flush deltas every second, which shrinks 500,000 writes into a few hundred; third, hot keys are split into sub-counters whose total is rolled up and cached. Then I will defend it: automatic hot-key detection with a count-min sketch, reads that never fan out on the hot path, what we lose when an aggregator crashes, and how we reconcile counts against the edge table."
+ },
+ "brd": {
+  "problem": "The platform displays likes, views and shares on every post. During viral moments or flash sales a single counter receives hundreds of thousands of updates per second, overloading one database shard or cache node, causing timeouts for unrelated keys on the same shard, lost increments, and inconsistent counts across devices. The business needs counts that scale with virality without affecting the rest of the system.",
+  "goals": [
+   "Sustain 2 million increments per second globally and 500,000 per second on a single key without errors.",
+   "Display counts with p99 read latency under 10 ms and staleness under 5 s.",
+   "Exact like counts per user (no double counting from retries or multiple devices).",
+   "Isolate hot keys so that no shard exceeds 70% utilisation due to one key.",
+   "Allow reconciliation of counters against source-of-truth events.",
+   "Keep cost low: minimise per-increment storage writes."
+  ],
+  "non_goals": [
+   "Strongly consistent bounded counters for inventory (separate reservation service).",
+   "Real-time analytics breakdowns by country or age.",
+   "Per-second historical time series for every key.",
+   "Fraud detection for fake views (consumes the event stream separately)."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users and creators",
+    "needs": "Counts that move in near real time and never visibly go backwards or double."
+   },
+   {
+    "who": "Feed and post services",
+    "needs": "Batch read of counts for 50 posts within the render budget."
+   },
+   {
+    "who": "Creator analytics and monetisation",
+    "needs": "Accurate view and like totals for payouts, reconciled daily."
+   },
+   {
+    "who": "SRE",
+    "needs": "No hot shard pages during viral events; graceful degradation."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Peak single-key increment throughput",
+    "target": "500,000/s with no errors"
+   },
+   {
+    "metric": "Count read p99",
+    "target": "under 10 ms"
+   },
+   {
+    "metric": "Display staleness p99",
+    "target": "under 5 s"
+   },
+   {
+    "metric": "Like count drift vs edge table",
+    "target": "0 after daily reconciliation, under 0.01% intra-day"
+   },
+   {
+    "metric": "Max shard utilisation during viral events",
+    "target": "under 70%"
+   }
+  ],
+  "constraints": [
+   "Redis single shard is single-threaded for commands, about 100,000 simple ops/s in practice.",
+   "Mobile clients retry on flaky networks, producing duplicate requests.",
+   "Existing like edges live in a sharded MySQL table keyed by post_id, which itself can get hot.",
+   "Creator payouts are computed from view counts, so they must be auditable."
+  ],
+  "risks": [
+   {
+    "risk": "Approximate counts used for payouts.",
+    "mitigation": "Payouts use the reconciled batch pipeline over the raw event log, not the display counter."
+   },
+   {
+    "risk": "Hot-key detection lags and a shard melts before promotion.",
+    "mitigation": "Local aggregation is always on, so even undetected hot keys are coalesced; detection runs per node every second."
+   },
+   {
+    "risk": "Unlike races make counts negative.",
+    "mitigation": "Count derives from edge inserts and deletes that are idempotent; display clamps at 0 and reconciliation repairs."
+   },
+   {
+    "risk": "Aggregator crash loses buffered increments.",
+    "mitigation": "Short flush window (1 s); likes recoverable from edges; views accept bounded loss or use Kafka-first ingestion."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Viewer",
+    "needs": "Tap like and see the count update instantly; see roughly accurate counts on every post."
+   },
+   {
+    "name": "Creator",
+    "needs": "Trust that view and like totals are real and complete."
+   },
+   {
+    "name": "Feed engineer",
+    "needs": "A simple, fast batch API for counts."
+   },
+   {
+    "name": "SRE",
+    "needs": "Automatic handling of viral keys without manual resharding."
+   }
+  ],
+  "user_stories": [
+   "As a viewer, I want my like to register once even if my phone retries so that counts are honest.",
+   "As a viewer, I want the like count to include my like immediately so that the UI feels responsive.",
+   "As a creator, I want my view count to update within seconds during a viral moment so that I can engage.",
+   "As a creator, I want my monthly totals to be exact so that payouts are fair.",
+   "As a feed engineer, I want to fetch counts for 50 posts in one call under 10 ms so that rendering stays fast.",
+   "As an SRE, I want hot keys detected and split automatically so that I do not get paged during viral events.",
+   "As a viewer, I want unliking to decrement the count so that counts reflect current state."
+  ],
+  "functional": [
+   "Increment and decrement named counters (post:{id}:likes, post:{id}:views) with optional idempotency key.",
+   "Record like and unlike as idempotent edges; derive like count from edge changes.",
+   "Aggregate increments in memory per key and flush deltas every 1 s or 10,000 updates.",
+   "Automatically split hot keys into N sub-counters and merge them on read or rollup.",
+   "Batch-read up to 100 counters in one call from a cached total.",
+   "Reconcile counters against source events daily and correct drift."
+  ],
+  "non_functional": [
+   {
+    "name": "Write throughput",
+    "target": "2 M/s global, 500,000/s single key"
+   },
+   {
+    "name": "Read latency",
+    "target": "p99 under 10 ms for batch of 50"
+   },
+   {
+    "name": "Freshness",
+    "target": "under 5 s p99 from increment to visible count"
+   },
+   {
+    "name": "Accuracy",
+    "target": "likes exact after reconciliation; views within 0.1% intra-day"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for reads; writes degrade to buffering rather than errors"
+   },
+   {
+    "name": "Durability",
+    "target": "likes: no loss; views: loss bounded to one flush window per failed node"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "1 billion counter keys, about 3 counters per post.",
+    "Average 200,000 increments/s, peak 2 M/s; hottest key 500,000/s.",
+    "Reads 5 M counters/s (feeds render about 50 posts each).",
+    "100 ingest nodes, flush interval 1 s."
+   ],
+   "math": [
+    "Storage: 1 B keys x (key 24 B + value 8 B + overhead about 30 B) = about 60 GB; with RF=3 about 180 GB. Tiny; this is a throughput problem.",
+    "Without aggregation, the hot key needs 500,000 writes/s on one partition; a Cassandra partition or Redis shard tops out far below that for a single key.",
+    "With aggregation on 100 ingest nodes: each node sees about 5,000/s for the hot key and flushes once per second, so the store sees about 100 delta writes/s for that key.",
+    "Global peak 2 M/s spread over, say, 2 M distinct active keys per second still collapses: each node flushes at most the distinct keys it saw, about 20,000 per node per second, so 2 M deltas/s in the worst case; in practice the Zipf distribution cuts this to roughly 300,000 deltas/s.",
+    "Reads: 5 M/s served from Redis read cache at about 100,000 ops/s per shard needs about 50 shards plus replicas; hot read keys are additionally cached in-process with 1 s TTL."
+   ],
+   "summary": "Data fits in about 180 GB; the work is shrinking a 500,000/s single-key write stream to about 100 delta writes/s through in-memory aggregation and sub-counters, and serving 5 M reads/s from a sharded cache plus in-process hot caches."
+  },
+  "out_of_scope": [
+   "Inventory and quota counters that must never overshoot (discussed only as follow-up).",
+   "Bot and fraud filtering of views.",
+   "Long-term time-series storage of counts.",
+   "UI optimistic update logic beyond the API contract."
+  ]
+ },
+ "hld": {
+  "overview": "Clients call a Counter API. Likes first write an idempotent edge (user_id, post_id) to the edge store; only a newly inserted or deleted edge produces a +1 or -1 delta. Views produce deltas directly. Deltas go to an in-memory aggregator on the ingest node, keyed by counter key, which flushes summed deltas every second to Kafka partitioned by hash(key, sub_shard). Counter writers consume Kafka and apply deltas to a counter store as sub-counter rows; a rollup job periodically sums sub-counters into a total row that is pushed to the read cache. A Hot Key Detector on each node tracks top-K keys with a count-min sketch and publishes the shard count N per key to a config store so writers spread hot keys over more sub-counters.",
+  "diagram": "\n Clients --> API/LB --> Ingest node (x100)\n                          |  1. like? -> Edge store (user_id,post_id) idempotent insert\n                          |  2. delta -> in-memory aggregator  {key: +n}  flush 1s\n                          |  3. count-min sketch / top-K -> Hot Key Detector\n                          v\n                 Kafka topic counter-deltas (partition = hash(key, sub_shard))\n                          |\n                 Counter writers (consumer group)\n                          |   UPSERT counter_shard(key, s) += delta\n                          v\n                 Counter store (Cassandra / sharded KV)   <-- reconciliation job\n                          |                                   (edges, event log)\n                 Rollup: total(key) = sum(shards), every 1-2 s for active keys\n                          v\n                 Read cache (Redis, total:{key}, TTL 5s) + in-process hot cache\n                          ^\n Feed/Post service ---- batchGet(keys) ----+\n\n Hot key config (N shards per key) <--- Hot Key Detector  ---> writers, rollup\n",
+  "components": [
+   {
+    "name": "Counter API / ingest nodes",
+    "responsibility": "Validate, dedupe likes via edges, aggregate deltas in memory, flush to Kafka."
+   },
+   {
+    "name": "Edge store",
+    "responsibility": "Source of truth for likes: (post_id, user_id) with insert-if-absent semantics; sharded by post_id with a user-hash suffix for hot posts."
+   },
+   {
+    "name": "In-memory aggregator",
+    "responsibility": "Per-node map of key to pending delta; flush every 1 s or when map exceeds 50,000 keys."
+   },
+   {
+    "name": "Hot Key Detector",
+    "responsibility": "Count-min sketch plus heap of top 1,000 keys per node; promotes keys above 1,000/s to sharded mode with N chosen by rate."
+   },
+   {
+    "name": "Kafka delta topic",
+    "responsibility": "Durable, replayable buffer of deltas; partitioned so a hot key's sub-shards spread across partitions."
+   },
+   {
+    "name": "Counter writers",
+    "responsibility": "Apply deltas to sub-counter rows idempotently using (partition, offset) checkpoints."
+   },
+   {
+    "name": "Counter store",
+    "responsibility": "Stores counter_shard rows and total rows; RF=3."
+   },
+   {
+    "name": "Rollup service",
+    "responsibility": "Sum sub-counters for recently changed keys and write totals to store and cache."
+   },
+   {
+    "name": "Read cache",
+    "responsibility": "Redis cluster with total:{key}; in-process LRU for top read keys; request coalescing."
+   },
+   {
+    "name": "Reconciliation job",
+    "responsibility": "Daily recompute of like counts from edges and view counts from the raw event log; corrects drift."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Like on a viral post",
+    "steps": [
+     "Client sends POST /v1/posts/P/like with Idempotency-Key; API routes to any ingest node.",
+     "Node inserts edge (P, U) with IF NOT EXISTS; if it already existed, return current count without a delta.",
+     "Node adds +1 to aggregator[post:P:likes]; detector bumps sketch for the key.",
+     "Every 1 s the node flushes {post:P:likes: +4,812} as one record to Kafka, choosing sub_shard = random(0..N-1) where N comes from hot key config (say 32).",
+     "Writer consumes and does UPDATE counter_shard SET v = v + 4812 WHERE key=P AND shard=s.",
+     "Rollup for active keys sums 32 shards every second and writes total to Redis.",
+     "Response to the liking user includes cached total + 1 so their UI reflects the like immediately."
+    ]
+   },
+   {
+    "name": "Feed reads counts",
+    "steps": [
+     "Feed service calls batchGet for 50 keys.",
+     "Counter API checks in-process hot cache (1 s TTL) then Redis MGET total:{key}.",
+     "On miss, single-flight per key reads the total row from the store and fills Redis with TTL 5 s.",
+     "Returns in under 10 ms p99."
+    ]
+   },
+   {
+    "name": "Hot key promotion",
+    "steps": [
+     "Detector on each node sees post:P:likes above 1,000/s in the current window and reports to a coordinator.",
+     "Coordinator aggregates reports; global rate 300,000/s maps to N = 64 shards.",
+     "Config store updates N for that key with a version; ingest nodes and rollup pick it up within 1 s.",
+     "Old single-row value stays as shard 0; new shards start at 0; total is sum of all, so no migration is needed."
+    ]
+   }
+  ],
+  "data_flow": "Increments flow client -> ingest node memory -> Kafka (every second) -> counter writers -> sub-counter rows -> rollup -> total row and Redis -> readers. Likes additionally write edges first, and both edges and raw view events are archived for reconciliation and payouts."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/counters/{key}:increment",
+    "request": "{delta: 1, idempotency_key?}",
+    "response": "{approx_total}",
+    "notes": "Views path; returns cached total + delta for UI."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/posts/{post_id}/like",
+    "request": "{user from token}",
+    "response": "{liked: true, approx_total}",
+    "notes": "Edge insert-if-absent; delta only if new."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/posts/{post_id}/like",
+    "request": "{user from token}",
+    "response": "{liked: false, approx_total}",
+    "notes": "Edge delete-if-present; -1 only if a row was deleted."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/counters:batchGet",
+    "request": "{keys: [...<=100]}",
+    "response": "{counts: {key: n}, as_of_ms}",
+    "notes": "Served from caches; as_of tells clients staleness."
+   },
+   {
+    "method": "GET",
+    "path": "/internal/hotkeys?limit=100",
+    "request": "query param limit (default 100)",
+    "response": "{keys: [{key, rate, shards}]}",
+    "notes": "Ops visibility."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "like_edge",
+    "store": "Cassandra (or sharded MySQL)",
+    "fields": [
+     "post_id",
+     "bucket (hash(user_id) % 16 for hot posts)",
+     "user_id",
+     "created_at"
+    ],
+    "keys": "Partition (post_id, bucket), clustering user_id",
+    "notes": "Bucket prevents one viral post's edges from forming a giant hot partition."
+   },
+   {
+    "entity": "counter_shard",
+    "store": "Cassandra counter table or KV",
+    "fields": [
+     "key",
+     "shard int",
+     "value bigint",
+     "updated_at"
+    ],
+    "keys": "Partition (key, shard)",
+    "notes": "Each sub-counter is its own partition so hot keys spread across nodes on the ring."
+   },
+   {
+    "entity": "counter_total",
+    "store": "Same store plus Redis",
+    "fields": [
+     "key",
+     "total",
+     "as_of",
+     "shard_count"
+    ],
+    "keys": "Partition key",
+    "notes": "Written by rollup; Redis key total:{key} TTL 5 s."
+   },
+   {
+    "entity": "hot_key_config",
+    "store": "etcd / config service",
+    "fields": [
+     "key",
+     "shards N",
+     "version",
+     "expires_at"
+    ],
+    "keys": "key",
+    "notes": "Only a few thousand entries; pushed to nodes."
+   },
+   {
+    "entity": "writer_checkpoint",
+    "store": "Kafka consumer offsets plus store",
+    "fields": [
+     "partition",
+     "offset"
+    ],
+    "keys": "partition",
+    "notes": "Delta application stores the last offset per (partition) in the same batch for idempotency."
+   }
+  ],
+  "classes": [
+   {
+    "name": "DeltaAggregator",
+    "responsibility": "Lock-striped map of key to pending delta; swap-and-flush.",
+    "methods": [
+     "add(key, delta)",
+     "flush() -> list[(key, delta)]",
+     "size()"
+    ]
+   },
+   {
+    "name": "HotKeyDetector",
+    "responsibility": "Count-min sketch with decay plus top-K heap.",
+    "methods": [
+     "observe(key)",
+     "top(k)",
+     "rate(key)"
+    ]
+   },
+   {
+    "name": "ShardSelector",
+    "responsibility": "Choose sub-shard for a key from config.",
+    "methods": [
+     "shards_for(key)",
+     "pick(key)"
+    ]
+   },
+   {
+    "name": "CounterWriter",
+    "responsibility": "Apply deltas idempotently with offset checkpoints.",
+    "methods": [
+     "apply(batch)",
+     "commit(partition, offset)"
+    ]
+   },
+   {
+    "name": "CountReader",
+    "responsibility": "Tiered cache read with single-flight.",
+    "methods": [
+     "batch_get(keys)",
+     "fill(key)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Swap-and-flush local aggregation",
+    "explain": "Increments go to a concurrent map; every second the map is atomically swapped with an empty one and the old map is sent as one batch. This bounds memory and loss window to one interval.",
+    "pseudocode": "class DeltaAggregator:\n    def __init__(self): self.buf = ConcurrentMap()\n    def add(self, key, d): self.buf.merge(key, d, operator.add)\n    def flush_loop(self):\n        while True:\n            sleep(1.0)\n            old, self.buf = self.buf, ConcurrentMap()   # atomic swap\n            batch = [(k, v) for k, v in old.items() if v != 0]\n            for k, v in batch:\n                s = shard_selector.pick(k)                 # 0 for cold keys\n                kafka.send('counter-deltas', key=f'{k}#{s}', value=v)\n            kafka.flush()"
+   },
+   {
+    "name": "Hot key detection with count-min sketch",
+    "explain": "A count-min sketch estimates per-key frequency in fixed memory (d hash rows x w counters), never underestimating. Combined with a min-heap of top-K it finds heavy hitters; counters decay each window.",
+    "pseudocode": "W, D = 2**16, 4\ncms = [[0]*W for _ in range(D)]\ndef observe(key):\n    est = min(cms[i][h_i(key) % W] for i in range(D))\n    for i in range(D): cms[i][h_i(key) % W] += 1\n    heap.update(key, est + 1)                  # keep top 1000\ndef every_second():\n    for k, est in heap.items():\n        if est > 1000: report_hot(k, est)\n    decay(cms, factor=0.5)\n\ndef shards_for(rate):\n    return min(256, next_pow2(ceil(rate / 5000)))   # <= 5k writes/s per shard"
+   },
+   {
+    "name": "Rollup of sub-counters",
+    "explain": "Only keys with recent deltas are rolled up, so cost is proportional to activity, not key count.",
+    "pseudocode": "def rollup_loop():\n    while True:\n        keys = dirty_keys.drain()           # from writers\n        for k in keys:\n            n = config.shards(k)\n            total = sum(store.get(k, s) for s in range(n_max_seen(k)))\n            store.put_total(k, total, now())\n            redis.set(f'total:{k}', total, ex=5)\n        sleep(1.0)"
+   }
+  ],
+  "sequence": "\nClient   IngestNode      EdgeStore    Aggregator   Kafka      Writer     Store    Rollup  Redis\n |like P   |                |            |           |          |          |         |      |\n |-------->| INSERT IF NOT EXISTS (P,U)  |           |          |          |         |      |\n |         |--------------->|            |           |          |          |         |      |\n |         |<--- applied ---|            |           |          |          |         |      |\n |         | add(P,+1) ---------------->|            |          |          |         |      |\n |<- 200 (cached+1)         |            |           |          |          |         |      |\n |         |       ... 1 s flush ...     |--{P#7:+4812}------->|          |          |         |\n |         |                |            |           |--------->| v+=4812  |         |      |\n |         |                |            |           |          |--------->|         |      |\n |         |                |            |           |          |  dirty P |-------->|      |\n |         |                |            |           |          |          | sum 32  |      |\n |         |                |            |           |          |          |<--------|      |\n |         |                |            |           |          |          |   set total --->|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Mobile client retries a like three times due to timeouts.",
+   "handling": "Edge insert-if-absent returns already-applied for retries, so only the first produces a delta."
+  },
+  {
+   "case": "User likes and unlikes rapidly from two devices.",
+   "handling": "Edge operations are serialised per (post, user) row in the store; only state transitions emit deltas, so the net delta matches final state."
+  },
+  {
+   "case": "Ingest node crashes holding 1 s of buffered deltas.",
+   "handling": "Likes are recoverable from edges by reconciliation; views lose at most one window from that node (about 1% of a second of global traffic), accepted by product."
+  },
+  {
+   "case": "Kafka redelivers a batch after a writer crash.",
+   "handling": "Writers store the last applied offset per partition atomically with the update (or use idempotent producer plus transactional consume-transform-produce), so replays are skipped."
+  },
+  {
+   "case": "Hot key shard count increases from 8 to 64 while deltas are in flight.",
+   "handling": "Rollup sums all shards ever used (tracks max N), so deltas to old or new shards are always included; no data migration."
+  },
+  {
+   "case": "Key cools down after going viral.",
+   "handling": "Detector demotes after 10 minutes below threshold; a compaction job folds sub-counters into shard 0 using a two-step move (add to 0, subtract from s) inside one batch."
+  },
+  {
+   "case": "Count briefly appears to go down on refresh.",
+   "handling": "Clients keep max(local optimistic, server) for the session; server totals are monotone for increment-only counters because rollup never publishes a lower total for them."
+  },
+  {
+   "case": "Viral post's like edges form a hot partition in the edge store.",
+   "handling": "Edge partition includes bucket = hash(user_id) % 16 for hot posts, spreading inserts across 16 partitions."
+  },
+  {
+   "case": "Bot traffic inflates views on one key to millions per second.",
+   "handling": "Per-client and per-IP rate limits at the edge; views counted from deduped sessions; fraud pipeline adjusts payout counts later."
+  },
+  {
+   "case": "Region partition in active-active setup.",
+   "handling": "Each region keeps its own sub-counters (region is part of the shard id); global total sums regions, which is a G-counter style merge with no conflicts."
+  },
+  {
+   "case": "Counter read for a brand-new key that has no total yet.",
+   "handling": "Return 0 with as_of; negative caching for 1 s to avoid repeated store misses during a burst on a new post."
+  },
+  {
+   "case": "Decrement drives a counter negative due to reordering of unlike before like delta.",
+   "handling": "Deltas are commutative so the final sum is right; display clamps at 0 and reconciliation verifies."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Kafka",
+   "layer": "Delta log",
+   "overview": "Partitioned durable commit log.",
+   "why": "Buffers flushes, decouples ingest from storage, allows replay and reconciliation; idempotent producers reduce duplicates.",
+   "alternatives": "Kinesis or Pulsar; direct writes to the store (no replay, tighter coupling)."
+  },
+  {
+   "name": "Cassandra / ScyllaDB",
+   "layer": "Counter and edge store",
+   "overview": "Leaderless wide-column store with consistent hashing and native counter columns.",
+   "why": "Sub-counter partitions spread on the ring; very high write throughput; RF=3.",
+   "alternatives": "DynamoDB with write sharding (managed, per-partition limit of about 1,000 WCU forces sharding anyway); sharded MySQL with UPDATE v=v+delta (row locks limit hot rows)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Read cache",
+   "overview": "In-memory KV with cluster sharding by hash slot.",
+   "why": "Sub-millisecond MGET for totals; replicas for read scaling.",
+   "alternatives": "Memcached; in-process caches only (no cross-node consistency)."
+  },
+  {
+   "name": "In-process aggregator (JVM/Go)",
+   "layer": "Write coalescing",
+   "overview": "Concurrent hash map with periodic swap.",
+   "why": "Cuts writes by orders of magnitude for skewed keys at negligible cost.",
+   "alternatives": "Stream processor (Flink) doing windowed aggregation after Kafka, which moves the hot key problem to Kafka partitions unless pre-sharded."
+  },
+  {
+   "name": "Apache Flink (optional)",
+   "layer": "Stream aggregation",
+   "overview": "Stateful stream processor with exactly-once checkpoints.",
+   "why": "Can replace the writer and rollup with keyed windowed sums and exactly-once sinks.",
+   "alternatives": "Kafka Streams; custom consumers as above."
+  },
+  {
+   "name": "etcd",
+   "layer": "Hot key config",
+   "overview": "Consistent KV store with watches.",
+   "why": "Pushes shard counts per key to all nodes within a second with versioning.",
+   "alternatives": "ZooKeeper, Consul, or a config service with polling."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Hot keys and partition skew",
+   "explain": "Partitioning spreads keys across nodes, assuming load is roughly uniform per key. Real workloads follow power laws: a tiny fraction of keys receive most traffic. A hot key is a key whose request rate exceeds what the single partition, shard, thread or row lock that owns it can handle. Partitioning cannot help, because by definition all requests for one key go to one owner. Symptoms include high CPU or latency on one node while others are idle, timeouts for unrelated keys co-located with the hot one, and lock contention on a single row. Amazon's DynamoDB documentation describes a per-partition limit of about 1,000 write units per second and recommends write sharding by appending a random suffix to hot partition keys. Remedies fall into a few families: reduce the number of operations reaching the owner (client-side or node-side aggregation, batching), split the key into multiple keys (sub-counters, suffix sharding) and merge on read, replicate reads (caching, read replicas, in-process copies) for read-hot keys, and isolate hot keys on dedicated capacity. Detection matters as much as remedy: you need per-key rate visibility, typically from sampling or sketches, because averages hide skew.",
+   "in_this_design": "A viral post's like counter is the hot key. Aggregation shrinks its write rate, sub-counter splitting spreads what remains, and in-process caching handles its read hotness.",
+   "key_points": [
+    "Partitioning distributes keys, not load per key.",
+    "Write-hot: aggregate and split. Read-hot: cache and replicate.",
+    "Hot keys hurt neighbours on the same shard.",
+    "Detect skew per key; averages hide it."
+   ],
+   "qa": [
+    {
+     "q": "Why does adding nodes not fix a hot key?",
+     "a": "The hot key still maps to one owner (one partition or replica set). More nodes reduce load from other keys but not the single key's load. You must change the key (split) or reduce operations (aggregate)."
+    },
+    {
+     "q": "How do you tell write-hot from read-hot?",
+     "a": "Per-key operation counts split by type. Read-hot keys are solved with caching and replication, write-hot keys with aggregation and splitting; using the wrong fix wastes effort."
+    },
+    {
+     "q": "What is the cost of splitting a key into N?",
+     "a": "Reads must merge N values, so read cost rises; you mitigate with a materialised total. Also N must be chosen carefully: too small does not help, too large wastes rollup work."
+    }
+   ]
+  },
+  {
+   "name": "Sharded counters (sub-counters) and merge on read",
+   "explain": "A sharded counter replaces one counter with N independent counters for the same logical key. Each write increments one sub-counter chosen at random or by hashing a request attribute; the logical value is the sum of all sub-counters. Because addition is commutative and associative, the order and placement of increments do not matter, so sub-counters need no coordination. Google App Engine popularised this pattern for Datastore entities, which were limited to about one write per second per entity group; with 20 shards a counter could take 20 writes per second. The trade-off is read cost: a read must fetch N values. With N=64 and millions of reads per second that becomes expensive, so production systems maintain a pre-computed total, refreshed periodically, and serve reads from it. Choosing N adaptively is better than a fixed large N, because most keys are cold and need N=1. When N increases you can simply start using additional shards; when it decreases you must fold values back. For decrements the same applies: a sub-counter may become negative even if the total is positive, which is fine as long as only the sum is exposed.",
+   "in_this_design": "Hot keys get N between 8 and 256 sub-counter partitions (about 5,000 writes/s each), chosen from the measured rate; a rollup service maintains the total for reads.",
+   "key_points": [
+    "Commutative operations can be split and summed without coordination.",
+    "Writes scale with N; reads cost N unless you materialise a total.",
+    "Adapt N per key; cold keys stay at 1.",
+    "Track max N ever used so rollups never miss a shard."
+   ],
+   "qa": [
+    {
+     "q": "How do you pick N for a key at 300,000 writes/s after aggregation is off?",
+     "a": "Target a safe per-partition rate, say 5,000/s: 300,000/5,000 = 60, round to 64. With node aggregation on, the rate after flush is far lower, so N can be much smaller."
+    },
+    {
+     "q": "Why random shard choice instead of hashing user_id?",
+     "a": "Random gives uniform load per write. Hashing user_id is useful when you want a user's increments to land in the same shard for dedupe, but it can skew if a few users are very active."
+    },
+    {
+     "q": "Can sharded counters support exact bounded counters like inventory?",
+     "a": "Not directly, because no single shard knows the total. You allocate quota per shard (each shard owns a slice of stock) and rebalance, or use a single serialised owner with batching."
+    }
+   ]
+  },
+  {
+   "name": "Write coalescing and batching",
+   "explain": "Coalescing means combining many small operations into fewer larger ones before they reach a bottleneck. For counters it is especially powerful because increments merge losslessly: a thousand +1 operations on the same key become a single +1000. The ingest tier holds a map from key to pending delta and flushes on a timer (for example every second) or when the map grows too large. The reduction factor equals the average number of increments per key per flush interval per node; for a viral key at 500,000/s across 100 nodes, each node merges about 5,000 increments into one write per second, a 5,000x reduction. The costs are latency (counts become visible after up to one interval) and a loss window (if the node crashes, unflushed deltas are lost unless they were first logged durably). You can trade between them: write each increment to a local append-only log or to Kafka first and aggregate after, which is durable but moves the write load to the log; or aggregate in memory first, which is cheaper but lossy. Batching also applies to outgoing writes: sending one Kafka record per flush per key and batching records to the broker amortises network and fsync costs.",
+   "in_this_design": "Ingest nodes aggregate in memory and flush every 1 s; likes are durable because their truth is the edge table, so only view deltas are exposed to the one-second loss window.",
+   "key_points": [
+    "Commutative updates merge losslessly.",
+    "Reduction factor = increments per key per node per interval.",
+    "Trade-off: freshness and loss window versus write load.",
+    "Keep the source of truth elsewhere if loss is unacceptable."
+   ],
+   "qa": [
+    {
+     "q": "Why not aggregate in Kafka consumers instead of ingest nodes?",
+     "a": "Then every increment is a Kafka record and the hot key's records all hash to one partition, recreating the hot spot in Kafka. Aggregating before Kafka reduces record count; if you must log first, pre-shard the Kafka key."
+    },
+    {
+     "q": "How do you bound memory on an aggregator during a key explosion?",
+     "a": "Flush early when the map exceeds a size (say 50,000 keys), and drop or sample view increments under extreme pressure rather than run out of memory."
+    },
+    {
+     "q": "Can coalescing break idempotency?",
+     "a": "Yes, the merged delta has no per-request identity. Do idempotency checks (edge insert) before aggregation, and make the flushed batch idempotent by offset or batch id."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and exactly-once counting",
+   "explain": "Networks fail in ways that leave clients unsure whether a request was applied, so they retry. If increments are not idempotent, retries inflate counts. Idempotency means applying an operation twice has the same effect as once. A raw increment is not idempotent, but an operation expressed as a set insertion is: inserting edge (user, post) into a set is the same whether done once or three times. That is why likes should be stored as edges and the count derived. For operations without a natural identity, clients send an idempotency key and the server records processed keys for a retention window. Inside the pipeline, at-least-once delivery from brokers means a consumer can see the same batch twice after a crash. Exactly-once effect is achieved by making the apply step idempotent: store the last applied (partition, offset) atomically with the counter update and skip anything at or below it, or use Kafka transactions that commit consumer offsets together with produced output. Truly exactly-once end to end across arbitrary systems is not possible, but exactly-once effect on a specific sink is achievable with idempotent or transactional writes.",
+   "in_this_design": "Like and unlike are edge insert/delete with IF NOT EXISTS / IF EXISTS; only real state transitions emit deltas. Writers checkpoint offsets with the counter updates, so Kafka redeliveries do not double apply.",
+   "key_points": [
+    "Model countable actions as set membership when possible.",
+    "Retries are normal on mobile; design for them.",
+    "At-least-once delivery plus idempotent apply = exactly-once effect.",
+    "Store offsets atomically with state to skip replays."
+   ],
+   "qa": [
+    {
+     "q": "Why not dedupe likes in Redis with SETNX instead of an edge table?",
+     "a": "You need the edge anyway to show whether the user liked the post and to reconcile counts; a Redis-only set risks loss on failover. The durable edge is both dedupe and truth."
+    },
+    {
+     "q": "Can views be idempotent?",
+     "a": "Approximately: count unique (session, post) per time window using a short-lived set or HyperLogLog for unique viewers; raw view counts usually accept some duplication."
+    },
+    {
+     "q": "What does Kafka exactly-once give you here?",
+     "a": "Transactions let a consumer atomically commit its input offsets and produced output records, so a Flink or Kafka Streams aggregator does not double count; it does not dedupe client retries, which still need edges or idempotency keys."
+    }
+   ]
+  },
+  {
+   "name": "Approximate counting and streaming sketches (count-min, HyperLogLog)",
+   "explain": "When exact answers are too expensive, probabilistic data structures give bounded-error answers in fixed memory. A count-min sketch estimates how often each item appears in a stream. It has d rows of w counters and d hash functions; each arrival increments one counter per row, and an estimate is the minimum across rows. It never underestimates, and with w = e/epsilon and d = ln(1/delta) the overestimate is at most epsilon times the stream length with probability 1 - delta. A few hundred KB can track millions of keys, which makes it ideal for finding heavy hitters (hot keys) when combined with a small heap of top candidates. HyperLogLog estimates the number of distinct items (cardinality) using about 12 KB for a standard error near 0.81%, by tracking the maximum number of leading zeros in hashed values across many registers; Redis provides it as PFADD and PFCOUNT, and registers can be merged, making it great for unique viewer counts across shards and time windows. Morris counters approximate large counts in very few bits. The engineering lesson is to decide where approximation is acceptable (display, detection) and where it is not (payouts, inventory).",
+   "in_this_design": "Each ingest node runs a count-min sketch with decay to detect hot keys every second; unique-viewer counts can use HyperLogLog per post per day. Exact paths (likes, payouts) do not use approximations.",
+   "key_points": [
+    "Count-min: frequency estimates, never under, bounded over.",
+    "HyperLogLog: distinct counts in about 12 KB with about 0.8% error, mergeable.",
+    "Sketch plus top-K heap finds heavy hitters cheaply.",
+    "Use approximation for display and detection, not money."
+   ],
+   "qa": [
+    {
+     "q": "Why a count-min sketch instead of a hash map of all keys for detection?",
+     "a": "A node sees millions of distinct keys per minute; a full map costs a lot of memory and GC. The sketch is fixed size and only the top-K heap holds key names."
+    },
+    {
+     "q": "Can count-min underestimate?",
+     "a": "No. Collisions only add counts, so the minimum across rows is an upper bound on the true count, which is safe for hot-key detection (it might over-promote, never miss)."
+    },
+    {
+     "q": "How would you count unique viewers across 3 regions?",
+     "a": "Keep an HLL per post per region per day and merge registers by taking the max per register; the merged HLL estimates the global unique count."
+    }
+   ]
+  },
+  {
+   "name": "CRDT G-counter and PN-counter for multi-region counting",
+   "explain": "Conflict-free replicated data types are data structures designed so replicas can be updated independently and merged deterministically, converging to the same value without coordination. The simplest is the grow-only counter (G-counter): each replica keeps a vector of per-replica counts, increments only its own entry, and merging takes the element-wise maximum; the value is the sum of entries. Because max is commutative, associative and idempotent, merges can happen in any order and any number of times. A PN-counter supports decrements by keeping two G-counters, one for increments (P) and one for decrements (N); the value is P minus N. These map naturally to multi-region active-active counting: each region writes only its own slot, so there are no conflicting writes, and the global value is the sum across regions. Riak and Redis Enterprise active-active use CRDT counters. Limits: CRDT counters cannot enforce invariants like value >= 0 or value <= stock without coordination, and state grows with the number of replicas, which is fine for a handful of regions.",
+   "in_this_design": "Region id is part of the sub-counter id, so each region only increments its own rows; the global total is the sum over regions and shards, which is a PN-counter by construction. Cross-region replication of these rows is conflict-free.",
+   "key_points": [
+    "Each replica owns its own slot; merge with max per slot.",
+    "PN-counter = two G-counters for increments and decrements.",
+    "Converges without coordination under any message order.",
+    "Cannot enforce bounds; use reservations for inventory."
+   ],
+   "qa": [
+    {
+     "q": "Why not last-writer-wins on a single global counter across regions?",
+     "a": "Concurrent increments in two regions would overwrite each other and lose counts. Per-region slots avoid conflicts entirely."
+    },
+    {
+     "q": "Why is merge using max safe?",
+     "a": "Each slot only grows and is written by one owner, so the larger value always includes the smaller; taking max is idempotent and order-independent."
+    },
+    {
+     "q": "How do you enforce stock not going below zero across regions?",
+     "a": "Allocate stock quotas to regions (escrow); each region can decrement only its quota and requests more from a coordinator when low. That bounds total sales without per-request global coordination."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Where to aggregate",
+   "options": "Client side / ingest node memory / stream processor after Kafka",
+   "choice": "Ingest node memory",
+   "why": "Largest reduction before any shared resource; clients cannot be trusted and post-Kafka aggregation keeps Kafka hot."
+  },
+  {
+   "decision": "Sub-counter count",
+   "options": "Fixed N for all keys / adaptive N per key",
+   "choice": "Adaptive",
+   "why": "Most keys are cold; fixed large N multiplies read and storage cost for nothing."
+  },
+  {
+   "decision": "Read path",
+   "options": "Sum shards on every read / materialised total with TTL",
+   "choice": "Materialised total",
+   "why": "5 M reads/s cannot fan out to 64 shards; 2 to 5 s staleness is acceptable."
+  },
+  {
+   "decision": "Like truth",
+   "options": "Counter is truth / edge table is truth",
+   "choice": "Edge table",
+   "why": "Idempotent, auditable, enables reconciliation and 'did I like this' queries."
+  },
+  {
+   "decision": "Durability of views",
+   "options": "Log every increment first / aggregate in memory first",
+   "choice": "Aggregate first, accept 1 s loss window",
+   "why": "Logging each view costs 100x more writes; product accepts small view loss; payouts use a separate raw event pipeline."
+  },
+  {
+   "decision": "Store",
+   "options": "Redis INCR as truth / Cassandra sub-counters / SQL rows",
+   "choice": "Cassandra sub-counters plus Redis cache",
+   "why": "Durable, horizontally scalable writes; Redis alone risks loss on failover and single-thread limits."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Ingest node crash.",
+   "behavior": "Up to 1 s of that node's view deltas lost; likes unaffected (edges durable); LB routes traffic elsewhere."
+  },
+  {
+   "failure": "Kafka partition leader failover.",
+   "behavior": "Producers retry with idempotent producer enabled; brief flush delays; aggregators keep buffering up to memory limits, then flush early."
+  },
+  {
+   "failure": "Counter store node slow.",
+   "behavior": "Writers back off with jittered retries; Kafka absorbs backlog; read cache keeps serving last totals with growing staleness reported via as_of."
+  },
+  {
+   "failure": "Redis read cache shard fails.",
+   "behavior": "Replica promoted; misses fall to the store with single-flight per key and in-process caches absorbing the hottest keys."
+  },
+  {
+   "failure": "Hot key detector misses a sudden spike.",
+   "behavior": "In-memory aggregation still coalesces writes so the store sees at most about 100 writes/s per node for that key; promotion follows within seconds."
+  },
+  {
+   "failure": "Rollup service lag.",
+   "behavior": "Totals become stale; alert on rollup lag over 10 s; readers still get last good totals; no loss since sub-counters hold truth."
+  }
+ ],
+ "metrics": [
+  "Top-K keys by write rate and read rate, per node and global.",
+  "Per-partition write rate and max/avg skew ratio in the counter store and Kafka.",
+  "Aggregator flush size, flush latency and map size.",
+  "Kafka consumer lag for counter writers.",
+  "Rollup lag and display staleness (now - as_of) p99.",
+  "Count drift: reconciled value minus live value for sampled keys.",
+  "Edge insert conflict rate (retries detected).",
+  "Batch read p99 and cache hit rate per tier."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you handle a flash-sale inventory counter where overselling is not allowed?",
+   "a": "Use a reservation model, not a display counter: stock is split into buckets (quota per shard or per region), each decremented atomically with a conditional write (only if value > 0); when a bucket empties, requests try another bucket or a coordinator rebalances. A Redis Lua script per bucket gives atomic check-and-decrement at about 100,000 ops/s per shard."
+  },
+  {
+   "q": "Why not just use Redis INCR and scale with Redis Cluster?",
+   "a": "Cluster shards by key, so one hot key still lands on one single-threaded shard at around 100,000 ops/s, and Redis as the only truth risks losing acknowledged increments on failover since replication is asynchronous."
+  },
+  {
+   "q": "How do you show the liker their own like instantly if counts are 2 s stale?",
+   "a": "Return cached total + 1 in the like response and let the client keep an optimistic local adjustment until the server total catches up."
+  },
+  {
+   "q": "How do you reconcile counts?",
+   "a": "Daily batch counts edges per post and raw view events per post (after fraud filtering) and writes corrections as deltas to shard 0, so the live pipeline is untouched."
+  },
+  {
+   "q": "What if a celebrity has 100 million followers all viewing at once?",
+   "a": "Views are aggregated per node, so the write side scales; the read side is hot too, served from in-process caches on every API node with 1 s TTL, so the Redis shard for that key sees only one fetch per node per second."
+  },
+  {
+   "q": "How would DynamoDB change your design?",
+   "a": "Partition limit around 1,000 WCU forces write sharding by suffix from the start; use UpdateItem ADD on sub-counter items, DAX or Redis for reads, and Streams plus Lambda for rollup."
+  },
+  {
+   "q": "What would you do differently if counts had to be exact and real time?",
+   "a": "Drop the in-memory buffer, log every increment to Kafka with pre-sharded keys and use Flink with exactly-once checkpoints and 100 ms windows, accepting higher cost; exact real time on a single key is then bounded by partition parallelism."
+  }
+ ],
+ "key_points": [
+  "Partitioning distributes keys, not load per key: hot keys need aggregation and splitting.",
+  "Aggregate increments in memory and flush every second: 5,000x fewer writes for a viral key.",
+  "Split hot keys into adaptive N sub-counters; merge into a materialised total for reads.",
+  "Make likes idempotent edges; the count is derived and reconcilable.",
+  "At-least-once delivery plus offset-checkpointed apply gives exactly-once effect.",
+  "Count-min sketch plus top-K finds hot keys in fixed memory.",
+  "Per-region slots make multi-region counters CRDT-style conflict-free.",
+  "Approximate for display, exact for payouts and inventory with different mechanisms."
+ ],
+ "quiz": [
+  {
+   "q": "A viral post's like counter gets 500,000 increments/s on one Redis key. Adding 10 more Redis shards will...",
+   "options": [
+    "Spread the load evenly",
+    "Not help, because one key still maps to one shard",
+    "Help only if replicas are added",
+    "Halve latency for that key"
+   ],
+   "answer": 1,
+   "why": "Cluster sharding distributes keys, not load per key. Replicas help reads, not writes, which is the tempting wrong choice."
+  },
+  {
+   "q": "100 ingest nodes, viral key at 500,000/s, flush every 1 s. Roughly how many writes/s reach storage for that key?",
+   "options": [
+    "500,000",
+    "5,000",
+    "100",
+    "1"
+   ],
+   "answer": 2,
+   "why": "Each node flushes one merged delta per second, so about 100. 5,000 is the per-node increment rate, not the write rate."
+  },
+  {
+   "q": "Best source of truth for like counts?",
+   "options": [
+    "A Redis INCR key",
+    "The counter_total row",
+    "Client-reported totals",
+    "An idempotent (post_id, user_id) edge table"
+   ],
+   "answer": 3,
+   "why": "Edges make likes idempotent and reconcilable. Redis INCR is fast but not idempotent and can lose writes on failover."
+  },
+  {
+   "q": "Why does a count-min sketch suit hot-key detection?",
+   "options": [
+    "Fixed memory and never underestimates frequency",
+    "It gives exact counts",
+    "It stores every key name",
+    "It counts distinct elements"
+   ],
+   "answer": 0,
+   "why": "Over-estimation only risks over-promoting a key; fixed memory handles millions of keys. Distinct counting is HyperLogLog, the tempting confusion."
+  },
+  {
+   "q": "Reads of a counter split into 64 sub-counters at 5 M reads/s should be served by...",
+   "options": [
+    "Summing 64 rows on every read",
+    "Reading a random sub-counter and multiplying by 64",
+    "A materialised total refreshed every 1-2 s and cached",
+    "Strongly consistent quorum reads of all shards"
+   ],
+   "answer": 2,
+   "why": "A rolled-up total keeps reads O(1). Summing on every read is correct but multiplies read load by 64."
+  },
+  {
+   "q": "A mobile client retries a like 3 times. What prevents triple counting?",
+   "options": [
+    "Kafka exactly-once producer",
+    "Edge insert-if-absent emitting a delta only on new insert",
+    "Redis INCRBY with TTL",
+    "The rollup job"
+   ],
+   "answer": 1,
+   "why": "Only the edge insert distinguishes a new like from a retry. Kafka exactly-once dedupes producer retries within the pipeline, not client retries."
+  },
+  {
+   "q": "With a target of 5,000 writes/s per sub-counter, a key at 300,000 writes/s needs about how many shards?",
+   "options": [
+    "8",
+    "16",
+    "640",
+    "64"
+   ],
+   "answer": 3,
+   "why": "300,000 / 5,000 = 60, rounded up to 64. 640 is a factor-of-ten slip."
+  },
+  {
+   "q": "Aggregating counts in Kafka consumers (after logging every increment) still suffers a hot spot because...",
+   "options": [
+    "Every increment for the hot key hashes to one Kafka partition",
+    "Kafka cannot store integers",
+    "Consumers cannot keep state",
+    "Kafka has no ordering"
+   ],
+   "answer": 0,
+   "why": "Keyed by counter id, all records for the key land in one partition. Pre-aggregation or pre-sharded keys fix it."
+  },
+  {
+   "q": "Which multi-region approach avoids conflicts for increment-only counters?",
+   "options": [
+    "Last-writer-wins on one global value",
+    "Per-region slots summed globally (G-counter)",
+    "Two-phase commit on every increment",
+    "Single leader region for all writes"
+   ],
+   "answer": 1,
+   "why": "Each region owns its slot; merge by max per slot and sum. Single-leader works but adds cross-region latency to every increment."
+  },
+  {
+   "q": "When N grows from 8 to 64 shards for a key, what must rollup do?",
+   "options": [
+    "Migrate old shard values into the new shards first",
+    "Reset the counter to zero",
+    "Sum over all shards ever used (track max N)",
+    "Stop writes during the change"
+   ],
+   "answer": 2,
+   "why": "Shards are independent and sums are commutative; just include every shard. Migration is unnecessary work and risks double counting."
+  },
+  {
+   "q": "What is the main cost of in-memory aggregation for view counts?",
+   "options": [
+    "Up to one flush window of loss on node crash and added staleness",
+    "Views become non-commutative",
+    "It requires distributed locks",
+    "It doubles storage"
+   ],
+   "answer": 0,
+   "why": "The trade-off is freshness and a bounded loss window. Distributed locks are not needed since each node aggregates independently."
+  },
+  {
+   "q": "Storage for 1 billion counters at about 60 bytes each with RF=3 is roughly...",
+   "options": [
+    "18 GB",
+    "1.8 TB",
+    "180 TB",
+    "180 GB"
+   ],
+   "answer": 3,
+   "why": "1 B x 60 B = 60 GB; x3 = 180 GB. Counters are a throughput problem, not a storage one."
+  },
+  {
+   "q": "Why can't plain sharded counters enforce 'stock never below zero'?",
+   "options": [
+    "Sharded counters cannot decrement",
+    "No single shard knows the global total at write time",
+    "Cassandra counters do not support subtraction",
+    "Rollup is too frequent"
+   ],
+   "answer": 1,
+   "why": "Each shard decrements independently, so the sum can go negative. Allocating stock per shard (escrow) fixes it."
+  },
+  {
+   "q": "Writers consume deltas from Kafka and crash before committing offsets. How to avoid double applying on restart?",
+   "options": [
+    "Disable retries",
+    "Use a larger flush interval",
+    "Store last applied offset atomically with the counter update and skip older",
+    "Read with QUORUM"
+   ],
+   "answer": 2,
+   "why": "Offset checkpointing with the state gives exactly-once effect. Longer flush intervals just change batch size."
+  },
+  {
+   "q": "A Cassandra node hosting the hot key shows 95% CPU while others idle. Total cluster QPS is modest. Diagnosis?",
+   "options": [
+    "Insufficient replication factor",
+    "Too many vnodes",
+    "GC tuning issue on all nodes",
+    "Write-hot partition on that node"
+   ],
+   "answer": 3,
+   "why": "One node hot with modest totals is skew. GC issues would affect all nodes similarly."
+  },
+  {
+   "q": "Unique viewers across 3 regions per post per day. Best structure?",
+   "options": [
+    "HyperLogLog per region, merged by register max",
+    "Count-min sketch",
+    "Exact set of user_ids in Redis",
+    "G-counter of views"
+   ],
+   "answer": 0,
+   "why": "HLL counts distinct items in about 12 KB and merges across regions. A G-counter counts views, not unique viewers."
+  },
+  {
+   "q": "A user likes a post. How does their UI show the updated count despite 2 s staleness?",
+   "options": [
+    "Block until rollup completes",
+    "Return cached total + 1 and keep an optimistic local adjustment",
+    "Force a quorum read of all sub-counters",
+    "Invalidate the cache for everyone"
+   ],
+   "answer": 1,
+   "why": "Optimistic local adjustment gives instant feedback cheaply. Forcing reads of all shards on every like is costly."
+  },
+  {
+   "q": "Why spread a viral post's like edges with bucket = hash(user_id) % 16?",
+   "options": [
+    "To speed up reads of a single edge",
+    "To shrink edge size",
+    "To avoid a hot partition in the edge store",
+    "To enable TTL on edges"
+   ],
+   "answer": 2,
+   "why": "Edge inserts for one post would otherwise land on one partition. It does not change edge size."
+  },
+  {
+   "q": "Creator payouts should be computed from...",
+   "options": [
+    "The display counter in Redis",
+    "Client-side counters",
+    "The hot key detector",
+    "Reconciled raw events after fraud filtering"
+   ],
+   "answer": 3,
+   "why": "Payouts need auditability and exactness. The display counter is approximate and stale by design."
+  },
+  {
+   "q": "Which change most reduces write load for a write-hot counter?",
+   "options": [
+    "Adding read replicas",
+    "Increasing cache TTL",
+    "Coalescing increments before the shared store",
+    "Switching to UUID keys"
+   ],
+   "answer": 2,
+   "why": "Coalescing merges many increments into one write. Read replicas and cache TTL only affect reads."
+  }
+ ],
+ "references": [
+  {
+   "title": "Grokking the System Design Interview: Sharded counters",
+   "url": "https://www.educative.io/courses/grokking-the-system-design-interview/system-design-the-sharded-counters"
+  },
+  {
+   "title": "AlgoMaster: Design a distributed counter",
+   "url": "https://algomaster.io/learn/system-design-interviews/design-distributed-counter"
+  },
+  {
+   "title": "System Design: Distributed Counter (techinterview.org)",
+   "url": "https://www.techinterview.org/post/3233474288/system-design-distributed-counter-atomic-operations-sharded-counters-approximate-counting-redis-incr-dynamodb-atomic/"
+  },
+  {
+   "title": "How to implement distributed counters in MongoDB (OneUptime)",
+   "url": "https://oneuptime.com/blog/post/2026-03-31-mongodb-distributed-counters/view"
+  }
+ ]
+}

@@ -1,0 +1,1218 @@
+{
+ "slug": "spam-abuse-controls",
+ "title": "Design spam and abuse controls (user-generated content)",
+ "prompt": "Design spam and abuse controls for user-generated content.",
+ "group": "security",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "A trust and safety platform that sits in front of every review, Q&A answer, comment, chat message and seller listing, deciding allow / challenge / hold / block in tens of milliseconds while a slower asynchronous tier clusters accounts, catches campaigns and feeds human moderators. The core tension is adversarial: precision versus recall, synchronous latency versus depth of analysis, and speed of shipping new rules versus the risk of a bad rule silently blocking millions of genuine users.",
+ "framework": {
+  "clarify": [
+   "Which surfaces are in scope: product reviews, Q&A, comments, seller listings, buyer-seller chat, profile fields? I will assume all text plus images, across web and app.",
+   "What abuse types matter most: commercial spam (links, phone numbers), fake reviews and rating manipulation, harassment and hate, scams and phishing, account farms? I will assume all, with fake reviews and scam links as the top business risk.",
+   "Scale: assume 50M DAU, about 20M UGC writes per day, 2M signups per day, peaking at 5x during a sale event.",
+   "Latency budget for the synchronous decision on the write path: I will assume p99 under 50ms added to the post request.",
+   "What actions are allowed: block, shadow-hide (visible only to the author), hold for review, require CAPTCHA or OTP, rate-limit, suspend account. Who can appeal and in what SLA?",
+   "Precision expectations: what false positive rate on genuine users is tolerable? I will assume under 0.1% of genuine posts wrongly blocked, and legal takedown SLAs (for example 36 hours under Indian IT Rules) for reported unlawful content.",
+   "Do we already have identity signals (phone-verified accounts, purchase history, device fingerprints) I can reuse? Verified buyers are a strong trust signal for reviews.",
+   "Languages: English, Hindi and code-mixed Hinglish plus other Indian languages - this affects the ML models and keyword lists."
+  ],
+  "design": [
+   "Baseline: every UGC write calls a Decision Service synchronously with the content plus actor context; the service runs cheap rules, rate limits and a lightweight model and returns allow / challenge / hold / block within 50ms; everything is also published to Kafka for deep asynchronous analysis.",
+   "Layered defence: edge controls (WAF, bot detection, per-IP and per-device rate limits) -> account trust (age, verification, purchase history, reputation score) -> content checks (blocklists, URL reputation, near-duplicate SimHash, text and image classifiers) -> behaviour aggregation (velocity counters, clustering of accounts) -> human review.",
+   "Rule engine with a small DSL so analysts can ship rules in minutes, with shadow mode, sampling and auto-rollback, rather than code deploys.",
+   "APIs: POST /v1/decisions (sync verdict), POST /v1/reports (user reports), GET /v1/review-queue (moderators), POST /v1/actions (enforce / appeal), PUT /v1/rules (versioned rules).",
+   "Critical path: client -> API gateway -> UGC service -> Decision Service (feature fetch from Redis counters and online feature store, rule eval, model score) -> verdict -> UGC service writes with visibility state -> event to Kafka -> async scorers and clustering -> may retroactively hide content and enforce on accounts.",
+   "Moderation loop: held and reported items go to a prioritised review queue; reviewer labels flow back as training data and as rule feedback, closing the loop."
+  ],
+  "defend": [
+   "Bottleneck: feature fetch on the sync path. Keep all sync features in Redis or an in-memory feature store with a 10ms budget; anything slower (graph features, heavy image models) runs async and acts retroactively.",
+   "Scaling reads: counters and reputation are sharded by actor id; hot actors (a viral seller) are cached locally for 1-5s; blocklists are compiled into in-process Bloom filters and Aho-Corasick automata refreshed every 30s.",
+   "Scaling writes: Kafka partitions by actor id so per-actor velocity aggregation is ordered and local; counters use approximate sliding windows to avoid per-event rows.",
+   "Failure behaviour: Decision Service has a 50ms timeout; on timeout we fail open for trusted actors and fail to hold-for-async for new or low-trust actors - never fail closed for everyone. Circuit breakers per dependency, bulkheads between surfaces so chat abuse cannot starve review checks.",
+   "Rule safety: every new rule runs in shadow mode first, then 1% enforcement, with an automatic kill switch if its block rate exceeds its expected rate by 3x.",
+   "Measure: prevalence of violating content seen by users (sampled and labelled), precision and recall per rule and model, false positive appeals overturned, time-to-action on reported content, sync decision p99, and attacker cost signals like CAPTCHA solve rates."
+  ],
+  "script": "I will start by clarifying scope: which surfaces, which abuse types, and what latency I can add to the write path - I will assume reviews, Q&A, chat and listings, about 20 million writes a day, and a 50 millisecond budget. The key insight is that spam is adversarial and economic, so no single classifier wins; I will design a layered system. Synchronously, every write hits a Decision Service that combines rate limits, account trust, blocklists, near-duplicate hashing and a light model to return allow, challenge, hold or block. Asynchronously, every event goes to Kafka, where heavier models and account clustering catch coordinated campaigns and act retroactively. Analysts ship rules through a DSL with shadow mode and kill switches, and human moderators label the hard cases, which feeds back into models. To defend it, I will talk about keeping sync features in memory, failing open for trusted users but holding new accounts when dependencies are slow, preventing a bad rule from blocking real customers, and measuring prevalence and false-positive rates rather than just block counts."
+ },
+ "brd": {
+  "problem": "User-generated content drives conversion on an e-commerce marketplace - reviews, ratings and Q&A answers are what buyers trust - but it is constantly attacked: paid fake reviews, competitor review-bombing, scam links and phone numbers in Q&A and chat, harassment of sellers and buyers, and account farms that create thousands of accounts for each campaign. Every spam item seen erodes trust, while every genuine post wrongly blocked angers a real customer. The business needs abuse controls that are fast, precise, explainable, and adaptable within hours when attackers change tactics.",
+  "goals": [
+   "Reduce prevalence of violating UGC seen by users to under 0.05% of views.",
+   "Block or hold more than 95% of known-pattern spam before it is ever visible.",
+   "Keep false positives on genuine users under 0.1% of posts, with appeals resolved in 24 hours.",
+   "Let trust and safety analysts deploy a new rule in under 15 minutes with safe rollout.",
+   "Detect coordinated campaigns (rings of accounts) within 1 hour and remediate retroactively.",
+   "Meet regulatory takedown SLAs for reported unlawful content (for example 36 hours, 24 hours for specific categories)."
+  ],
+  "non_goals": [
+   "Payment fraud and chargeback detection - handled by the risk platform, though we share signals.",
+   "Building a general-purpose content recommendation or ranking system.",
+   "Copyright and trademark enforcement workflows beyond a takedown hook.",
+   "Full identity verification (KYC) of buyers."
+  ],
+  "stakeholders": [
+   {
+    "who": "Buyers",
+    "needs": "Trustworthy reviews and safe chat without scams or harassment."
+   },
+   {
+    "who": "Sellers",
+    "needs": "Protection from review-bombing by competitors and a fair appeal path."
+   },
+   {
+    "who": "Trust and safety analysts",
+    "needs": "Fast rule authoring, investigation tooling and metrics per rule."
+   },
+   {
+    "who": "Human moderators",
+    "needs": "A prioritised queue with context, and well-being controls for graphic content."
+   },
+   {
+    "who": "Legal and compliance",
+    "needs": "Auditable decisions, takedown SLAs, grievance officer reporting."
+   },
+   {
+    "who": "Product teams owning surfaces",
+    "needs": "A single low-latency API with clear verdicts and minimal friction for good users."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Prevalence of violating content per 10k views (sampled, labelled)",
+    "target": "< 5"
+   },
+   {
+    "metric": "Sync decision latency p99",
+    "target": "< 50ms"
+   },
+   {
+    "metric": "False positive rate on genuine posts (from appeals and audits)",
+    "target": "< 0.1%"
+   },
+   {
+    "metric": "Median time-to-action on user reports",
+    "target": "< 2 hours; 99% < 24 hours"
+   },
+   {
+    "metric": "Rule deploy time from authoring to 100% enforcement",
+    "target": "< 15 minutes including shadow"
+   },
+   {
+    "metric": "Campaign detection lag",
+    "target": "< 1 hour from first post"
+   }
+  ],
+  "constraints": [
+   "Cannot add more than 50ms p99 to any user write.",
+   "Must support code-mixed Indian languages and transliterated text.",
+   "Personal data processing must follow DPDP Act data minimisation; raw device fingerprints are hashed.",
+   "Every enforcement must be explainable with a reason code for appeals and audits.",
+   "Peak sale traffic is 5-10x normal and attackers deliberately strike during sales."
+  ],
+  "risks": [
+   {
+    "risk": "A bad rule blocks millions of genuine posts during a sale.",
+    "mitigation": "Shadow mode, staged rollout, automatic kill switch on anomalous block rate, per-rule budget caps."
+   },
+   {
+    "risk": "Attackers probe the system to learn thresholds.",
+    "mitigation": "Shadow-hide instead of hard block, randomised delays, hidden thresholds, retroactive enforcement."
+   },
+   {
+    "risk": "Model drift as attackers adapt.",
+    "mitigation": "Weekly retraining on fresh moderator labels, drift dashboards, adversarial red-teaming."
+   },
+   {
+    "risk": "Moderator burnout and inconsistency.",
+    "mitigation": "Blurred previews, rotation limits, double review for borderline cases, calibration sessions."
+   },
+   {
+    "risk": "Bias against certain languages or dialects.",
+    "mitigation": "Per-language precision audits and fairness metrics before model launch."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Genuine buyer reviewer",
+    "needs": "Post a review instantly with no friction."
+   },
+   {
+    "name": "New seller",
+    "needs": "List products and answer questions without being mistaken for a spammer."
+   },
+   {
+    "name": "Spammer or fraud ring",
+    "needs": "(Adversary) Post at volume across many accounts while evading detection."
+   },
+   {
+    "name": "T and S analyst",
+    "needs": "Find a new campaign, write a rule, measure its precision, ship it in minutes."
+   },
+   {
+    "name": "Moderator",
+    "needs": "Review queued items quickly with full context and consistent policy guidance."
+   },
+   {
+    "name": "Surface engineer",
+    "needs": "One API call and a verdict with reason codes."
+   }
+  ],
+  "user_stories": [
+   "As a buyer, I want reviews I read to be from real purchasers so that I can trust ratings.",
+   "As a seller, I want competitor review-bombing to be detected and reversed so that my rating is fair.",
+   "As a genuine user whose post was held, I want to know it is under review and appeal it so that I am not silently censored.",
+   "As an analyst, I want to write a rule like 'new account AND contains phone number AND posted to more than 5 products in 10 minutes' and run it in shadow mode so that I can measure precision before enforcement.",
+   "As a moderator, I want items ordered by severity and reach so that the most harmful content is handled first.",
+   "As a buyer in chat, I want links to phishing sites blocked so that I do not lose money.",
+   "As a compliance officer, I want an audit trail of every enforcement so that I can answer regulators.",
+   "As a product engineer, I want a fail-safe default if the decision service is down so that my surface keeps working."
+  ],
+  "functional": [
+   "Synchronous decision API returning verdict (allow, challenge, hold, shadow, block), reason codes and a decision id.",
+   "Multi-dimensional rate limiting by IP, device, account, and target (product or seller).",
+   "Content checks: keyword and regex blocklists, URL and domain reputation, phone and UPI handle extraction, near-duplicate detection, text toxicity and spam classifiers, image hashing and NSFW classifier.",
+   "Account trust scoring from age, verification, purchase history, prior strikes and device reuse.",
+   "Rule engine with versioned DSL rules, shadow mode, percentage rollout and kill switch.",
+   "Asynchronous pipeline for heavy models, campaign clustering and retroactive enforcement on content and accounts.",
+   "User reporting with deduplication and priority scoring.",
+   "Moderator queue with SLAs, labelling, double review and appeal handling.",
+   "Enforcement ladder: warning, content removal, posting cooldown, feature restriction, suspension, ban; with reason codes.",
+   "Audit log and analytics on decisions, rules and outcomes."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "Sync decision p50 < 15ms, p99 < 50ms"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95% for the decision API; graceful degradation when below"
+   },
+   {
+    "name": "Throughput",
+    "target": "6,000 decisions/s peak (writes plus signups plus chat), 50k counter ops/s"
+   },
+   {
+    "name": "Freshness",
+    "target": "Velocity counters reflect events within 1s; blocklists propagate within 60s"
+   },
+   {
+    "name": "Durability",
+    "target": "Decisions and audit log retained 1 year, no loss (Kafka RF=3, acks=all)"
+   },
+   {
+    "name": "Precision",
+    "target": "Auto-block rules must show > 99% precision in shadow before enforcement"
+   },
+   {
+    "name": "Explainability",
+    "target": "100% of enforcement actions carry a reason code"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "50M DAU; 20M UGC writes per day (reviews, answers, comments, listings) plus 100M chat messages per day.",
+    "2M signups per day, peak 5x during sales.",
+    "Each decision touches about 20 counters and 1 KB of features.",
+    "0.5% of writes go to human review; a moderator handles about 400 items per 8-hour shift."
+   ],
+   "math": [
+    "UGC writes: 20M / 86,400 = about 230/s average, 1,200/s at 5x peak.",
+    "Chat: 100M / 86,400 = about 1,150/s average, 5,800/s peak; chat uses a cheaper rule subset.",
+    "Total sync decisions at peak: about 7,000/s; with 20 counter reads plus 10 increments each = about 210k Redis ops/s, so a 12-shard Redis cluster at about 20k ops/s/shard with headroom.",
+    "Decision log: 120M decisions/day x 1 KB = 120 GB/day, about 44 TB/year raw, about 10 TB compressed in object storage.",
+    "SimHash index: 64-bit hash + 8-byte id per item, 20M/day x 30 days = 600M entries x 16 B = about 10 GB, fits in memory sharded across 4 nodes.",
+    "Human review: 0.5% x 20M = 100k items/day; at 400 per moderator shift = 250 moderator-shifts per day, so about 90 moderators per shift across 3 shifts.",
+    "Model inference: 1,200/s peak through a distilled text model at 3ms on CPU = 3.6 CPU-seconds per second, so a handful of cores; image models run async on GPUs."
+   ],
+   "summary": "Throughput is modest; the hard parts are tail latency of feature fetch, counter hot keys during campaigns, human review capacity, and making decisions precise enough to auto-enforce."
+  },
+  "out_of_scope": [
+   "Payment and refund fraud models.",
+   "Building in-house large multimodal models; we consume vendor or platform models.",
+   "Seller onboarding KYC.",
+   "Legal case management beyond the takedown and audit hooks."
+  ]
+ },
+ "hld": {
+  "overview": "Two tiers. The synchronous tier (edge controls plus Decision Service) protects the write path within 50ms using in-memory features, rate limits, compiled blocklists, a near-duplicate check and a small model, orchestrated by a rule engine. The asynchronous tier consumes every UGC and account event from Kafka, runs heavy text and image models, builds account graphs and campaign clusters, and can retroactively hide content or enforce on accounts. A moderation platform handles held and reported items, and labels feed training and rule tuning.",
+  "diagram": "\n Client (app/web)\n      |\n  [CDN + WAF + bot mgmt] --- per-IP / device rate limits, CAPTCHA\n      |\n  [API Gateway] ---> [UGC Service: reviews, Q&A, chat, listings]\n                          |  sync call, 50ms timeout\n                          v\n                 +-------------------+     +-------------------+\n                 | Decision Service  |<--->| Redis: counters,  |\n                 | rule engine + DSL |     | rate limits       |\n                 | light model       |<--->| Online feature    |\n                 | blocklists, SimHash|    | store (trust)     |\n                 +-------------------+     +-------------------+\n                          | verdict + decision event\n                          v\n                    [Kafka: ugc-events, decisions, reports]\n               +----------+-----------+----------------+\n               v          v           v                v\n        [Heavy ML    [Campaign    [Report         [Decision log ->\n         scorers:     clustering:  service]        data lake]\n         text/image]  graph, LSH]     |                |\n               \\          |          v                v\n                +-> [Enforcement Service] <---- [Moderation queue + tools]\n                          |                          |\n                    hide content / strike /     labels -> training,\n                    suspend account             rule metrics\n",
+  "components": [
+   {
+    "name": "Edge (CDN, WAF, bot management)",
+    "responsibility": "Drop obvious bots and floods: per-IP token buckets, JA3/TLS and device fingerprinting, CAPTCHA challenges."
+   },
+   {
+    "name": "Decision Service",
+    "responsibility": "Stateless sync scorer: gather features, evaluate rule DSL, call light model, return verdict and reason codes within 50ms."
+   },
+   {
+    "name": "Rate limit and counter store (Redis Cluster)",
+    "responsibility": "Sliding-window counters by actor, IP, device, target, content-hash; token buckets for posting limits."
+   },
+   {
+    "name": "Online feature store",
+    "responsibility": "Account trust features (age, verified phone, orders, strikes, reputation) precomputed and served at sub-5ms."
+   },
+   {
+    "name": "Rule engine and rule registry",
+    "responsibility": "Versioned DSL rules with shadow, percentage rollout and kill switch; compiled and hot-loaded every 30s."
+   },
+   {
+    "name": "Content analyzers",
+    "responsibility": "Blocklists (Aho-Corasick), URL and phone extraction plus reputation, SimHash near-duplicate index, PDQ image hashes."
+   },
+   {
+    "name": "Async ML scorers",
+    "responsibility": "Heavier multilingual text and image classifiers on Kafka events; emit scores that may trigger retroactive action."
+   },
+   {
+    "name": "Campaign clustering",
+    "responsibility": "Build graphs of accounts linked by device, IP, payment, content similarity; find dense clusters and enforce as a group."
+   },
+   {
+    "name": "Enforcement Service",
+    "responsibility": "Apply actions idempotently (hide, remove, strike, cooldown, suspend), write audit log, notify users with reason."
+   },
+   {
+    "name": "Report Service",
+    "responsibility": "Accept user reports, dedupe, score priority by reporter reputation and content reach."
+   },
+   {
+    "name": "Moderation platform",
+    "responsibility": "Priority queues, SLA tracking, labelling UI, double review, appeals, reviewer well-being controls."
+   },
+   {
+    "name": "Analytics and data lake",
+    "responsibility": "Decision logs, labels and outcomes for rule precision dashboards and model training."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Synchronous write decision",
+    "steps": [
+     "User submits a review; UGC service builds a request with actor id, device hash, IP, target product, text and media ids.",
+     "Decision Service checks rate limits (actor, device, IP, target) in Redis with one pipelined round trip.",
+     "It fetches trust features for the actor from the online feature store.",
+     "It runs content analyzers: blocklist automaton, URL and phone extraction, SimHash lookup for near-duplicates posted in the last 24 hours.",
+     "It evaluates enforced rules in priority order and a distilled spam model; shadow rules are evaluated and only logged.",
+     "It returns the most severe verdict with reason codes; UGC service stores the review with visibility = public, author_only, pending or rejected.",
+     "Decision Service publishes the decision event to Kafka asynchronously (fire and forget with a local buffer)."
+    ]
+   },
+   {
+    "name": "Asynchronous campaign detection and retroactive enforcement",
+    "steps": [
+     "Kafka consumers join UGC events with account and device data and update a link graph (shared device, IP /24, payment instrument, SimHash cluster).",
+     "Every 5 minutes a job finds connected components and dense subgraphs exceeding thresholds (for example 20 accounts, 80% reviews on the same seller in 2 hours).",
+     "Suspicious clusters are scored; high-confidence clusters are auto-enforced, medium ones go to the moderator queue as a single case.",
+     "Enforcement Service hides all reviews from the cluster, recomputes affected product ratings and strikes the accounts.",
+     "Signals (device hashes, domains, text hashes) are pushed to blocklists so the sync tier catches the next wave."
+    ]
+   },
+   {
+    "name": "User report to moderator action",
+    "steps": [
+     "A buyer reports an answer as a scam; Report Service dedupes by content id and increments the report count.",
+     "Priority = severity of category x reach (views) x reporter reputation; above a threshold the content is auto-hidden pending review.",
+     "Moderator reviews with context (author history, similar items), labels and acts.",
+     "Label flows to training data and to the per-rule precision metrics; the author is notified and can appeal."
+    ]
+   }
+  ],
+  "data_flow": "Writes flow synchronously through the Decision Service and are stored with a visibility state; every write, decision, report and enforcement is an event on Kafka. Async consumers enrich and score events, update counters, graphs and indexes, and emit enforcement commands. Labels from moderators and appeals land in the data lake and feed model retraining (weekly) and rule precision dashboards (hourly). Blocklists and compiled rules flow back down to the Decision Service every 30-60s."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/decisions",
+    "request": "{surface: 'review', actor_id, device_hash, ip, target_id, content: {text, media_ids, links}, idempotency_key}",
+    "response": "{decision_id, verdict: 'allow|challenge|hold|shadow|block', reasons: ['NEW_ACCT_PHONE_NUMBER'], challenge_type?}",
+    "notes": "50ms server timeout; idempotency_key = hash of surface+actor+content so retries return the same verdict."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/reports",
+    "request": "{reporter_id, content_id, category, note}",
+    "response": "{report_id, status: 'received'}",
+    "notes": "Deduped per (reporter, content); rate limited per reporter to stop report-bombing."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/review-queue?queue=scam&limit=20",
+    "request": "moderator auth",
+    "response": "[{case_id, items, author_context, similar_items, sla_due}]",
+    "notes": "Leased for 10 minutes so two moderators do not work the same case."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/actions",
+    "request": "{case_id|content_id|account_id, action: 'remove|restore|strike|suspend', reason_code, actor}",
+    "response": "{action_id, applied: true}",
+    "notes": "Idempotent by action_id; writes audit log."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/rules/{rule_id}",
+    "request": "{dsl, mode: 'shadow|enforce', rollout_pct, expected_hit_rate, owner}",
+    "response": "{version, compiled: true}",
+    "notes": "Validated, compiled and backtested against the last 24h before activation."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/appeals",
+    "request": "{content_id|account_id, user_text}",
+    "response": "{appeal_id, sla_due}",
+    "notes": "Routed to a different moderator than the original decision."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Counter",
+    "store": "Redis Cluster",
+    "fields": [
+     "key e.g. cnt:post:actor:{id}:{minute_bucket}",
+     "value int",
+     "TTL"
+    ],
+    "keys": "Hash slot by actor or IP id in braces so per-actor buckets co-locate",
+    "notes": "Sliding window approximated with 60 one-minute buckets; TTL 2h."
+   },
+   {
+    "entity": "AccountTrust",
+    "store": "Online feature store (Redis or Aerospike) backed by offline Hive tables",
+    "fields": [
+     "account_id",
+     "account_age_days",
+     "phone_verified",
+     "orders_90d",
+     "strikes",
+     "reputation_score",
+     "device_accounts_count"
+    ],
+    "keys": "account_id",
+    "notes": "Refreshed streaming for strikes, daily batch for aggregates."
+   },
+   {
+    "entity": "Decision",
+    "store": "Kafka -> object storage (Parquet) + Elasticsearch for 30 days",
+    "fields": [
+     "decision_id",
+     "ts",
+     "surface",
+     "actor_id",
+     "target_id",
+     "verdict",
+     "reasons[]",
+     "shadow_hits[]",
+     "rule_versions",
+     "model_score",
+     "latency_ms"
+    ],
+    "keys": "decision_id; partitioned by date and surface",
+    "notes": "Source of truth for rule precision and audits."
+   },
+   {
+    "entity": "SimHashIndex",
+    "store": "In-memory sharded service",
+    "fields": [
+     "band_key (16-bit block + block index)",
+     "content_id",
+     "simhash64",
+     "ts"
+    ],
+    "keys": "4 tables by 16-bit block for Hamming distance <= 3 lookup",
+    "notes": "24h to 30d window depending on surface."
+   },
+   {
+    "entity": "Case",
+    "store": "PostgreSQL",
+    "fields": [
+     "case_id",
+     "queue",
+     "priority",
+     "items[]",
+     "status",
+     "lease_owner",
+     "lease_until",
+     "sla_due",
+     "labels"
+    ],
+    "keys": "case_id; index on (queue, status, priority desc)",
+    "notes": "SELECT ... FOR UPDATE SKIP LOCKED for leasing."
+   },
+   {
+    "entity": "Enforcement",
+    "store": "PostgreSQL (audit) + Kafka",
+    "fields": [
+     "action_id",
+     "subject",
+     "action",
+     "reason_code",
+     "source (rule/model/human)",
+     "ts",
+     "reversed_by"
+    ],
+    "keys": "action_id; index on subject",
+    "notes": "Append-only; reversals are new rows."
+   }
+  ],
+  "classes": [
+   {
+    "name": "DecisionOrchestrator",
+    "responsibility": "Parallel feature fetch with deadlines, run rules and model, merge verdicts.",
+    "methods": [
+     "decide(request) -> Decision",
+     "fetchFeatures(ctx, deadline)",
+     "mergeVerdicts(list) -> Verdict"
+    ]
+   },
+   {
+    "name": "RuleEngine",
+    "responsibility": "Hold compiled rule set, evaluate in priority order, record shadow hits.",
+    "methods": [
+     "load(version)",
+     "evaluate(features) -> [RuleHit]",
+     "killSwitch(rule_id)"
+    ]
+   },
+   {
+    "name": "RateLimiter",
+    "responsibility": "Token bucket and sliding window checks on multiple dimensions in one Redis pipeline.",
+    "methods": [
+     "check(dimensions[]) -> LimitResult",
+     "consume(dimensions[])"
+    ]
+   },
+   {
+    "name": "NearDupIndex",
+    "responsibility": "SimHash compute, insert and Hamming-distance query.",
+    "methods": [
+     "simhash(text) -> u64",
+     "query(hash, k=3) -> [content_id]",
+     "insert(hash, id)"
+    ]
+   },
+   {
+    "name": "EnforcementService",
+    "responsibility": "Idempotent action application, notification, audit.",
+    "methods": [
+     "apply(action)",
+     "reverse(action_id)",
+     "notify(user, reason)"
+    ]
+   },
+   {
+    "name": "ClusterDetector",
+    "responsibility": "Union-find over link edges, score and emit clusters.",
+    "methods": [
+     "addEdge(a, b, type)",
+     "components() -> [Cluster]",
+     "score(cluster) -> float"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Sliding window counter (bucketed)",
+    "explain": "Approximate count of events in the last N minutes using per-minute buckets; constant memory per key and one pipelined round trip. Weighted interpolation of the oldest bucket keeps error low.",
+    "pseudocode": "def count_last(key, window_min=10, now=time()):\n    m = now // 60\n    keys = [f'{key}:{m-i}' for i in range(window_min + 1)]\n    vals = redis.mget(keys)\n    frac = (now % 60) / 60.0\n    total = sum(vals[0:window_min])\n    total += vals[window_min] * (1 - frac)   # partial oldest bucket\n    return total\n\ndef incr(key, now=time()):\n    k = f'{key}:{now // 60}'\n    pipe.incr(k); pipe.expire(k, 7200)"
+   },
+   {
+    "name": "SimHash near-duplicate detection",
+    "explain": "Shingle text into tokens, hash each, sum signed bit-vectors weighted by token weight, take sign per bit to form a 64-bit fingerprint. Near-duplicate texts differ in few bits. Split into 4 blocks of 16 bits; by pigeonhole any pair within Hamming distance 3 shares at least one identical block, so 4 exact-match tables find candidates.",
+    "pseudocode": "def simhash(text):\n    v = [0]*64\n    for tok, w in weighted_shingles(normalize(text)):\n        h = hash64(tok)\n        for i in range(64):\n            v[i] += w if (h >> i) & 1 else -w\n    return sum(1 << i for i in range(64) if v[i] > 0)\n\ndef query(h):\n    cands = set()\n    for b in range(4):\n        cands |= table[b].get((h >> (16*b)) & 0xFFFF, [])\n    return [c for c in cands if popcount(c.hash ^ h) <= 3]"
+   },
+   {
+    "name": "Verdict merge with fail-safe",
+    "explain": "Gather signals in parallel with a deadline; if a dependency misses the deadline, use a trust-aware default rather than failing everything open or closed.",
+    "pseudocode": "def decide(req):\n    futs = parallel(rate_limits(req), trust(req), content(req), model(req))\n    res = wait_all(futs, deadline=40ms)\n    if res.trust is MISSING:\n        res.trust = conservative_default(req)   # new account assumed\n    verdicts = rules.evaluate(res) + [model_verdict(res.model)]\n    v = max(verdicts, key=severity) if verdicts else ALLOW\n    if res.any_missing and v == ALLOW and res.trust.low:\n        v = HOLD_ASYNC        # post as author_only until async check\n    log_async(req, res, v)\n    return v"
+   }
+  ],
+  "sequence": "\nClient   UGC Svc    Decision Svc    Redis     FeatureStore   Kafka    Async ML  Enforcement\n  |--post-->|            |             |            |           |          |          |\n  |         |--decide--->|             |            |           |          |          |\n  |         |            |--MGET/INCR->|            |           |          |          |\n  |         |            |--get trust------------->|           |          |          |\n  |         |            |<-counters---|            |           |          |          |\n  |         |            |<-trust-------------------|           |          |          |\n  |         |            | rules + simhash + model  |           |          |          |\n  |         |<-verdict---|  (p99 < 50ms)            |           |          |          |\n  |<-201----|  store w/ visibility                  |           |          |          |\n  |         |            |--decision event--------------------->|          |          |\n  |         |--ugc event----------------------------------------> |        |          |\n  |         |            |             |            |           |--consume>|          |\n  |         |            |             |            |           |   score high        |\n  |         |            |             |            |           |          |--hide--->|\n  |         |<--------------------------- retroactive hide + strike -------------------|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Attacker spreads spam across 5,000 freshly created accounts, each posting once (low and slow).",
+   "handling": "Per-account limits do not fire, so aggregate on other dimensions: device hash, IP /24, ASN, SimHash cluster and target product. Campaign clustering links them and enforces as a group retroactively."
+  },
+  {
+   "case": "Text obfuscation: 'w h a t s a p p 9 8 7 6...', homoglyphs, emoji digits, Devanagari numerals.",
+   "handling": "Normalise before matching: Unicode NFKC, confusables mapping, strip zero-width chars, collapse spacing, map number words and native numerals to digits; then run phone and URL extractors."
+  },
+  {
+   "case": "Images containing spam text or QR codes to evade text filters.",
+   "handling": "Async OCR and QR decoding on uploaded images; extracted text and URLs go through the same analyzers; new accounts' images are held until scanned."
+  },
+  {
+   "case": "Hot key: a viral product page gets 50k reviews in an hour after a sale; per-target counter key becomes hot.",
+   "handling": "Shard hot counters with suffixes (key:0..15) and sum on read; local in-process cache of 1s for read-mostly trust features."
+  },
+  {
+   "case": "Client retries the post after a timeout and gets two different verdicts.",
+   "handling": "Idempotency key on the decision request; cached decision for 10 minutes returns the same verdict and avoids double-counting rate limits."
+  },
+  {
+   "case": "Review-bombing a seller by many real but coordinated accounts (brigading after a social media post).",
+   "handling": "Detect rating velocity anomalies per target versus its baseline; hold new low ratings for verified-purchase check; label as a case for human review rather than auto-ban real users."
+  },
+  {
+   "case": "Genuine user shares a legitimate link that matches a newly added blocklisted domain (shared URL shortener).",
+   "handling": "Expand shorteners before reputation lookup; blocklist at full URL or path level for shared hosts; allowlist of major domains; appeal path."
+  },
+  {
+   "case": "Decision Service dependency (feature store) is down during a sale.",
+   "handling": "Circuit breaker opens; trusted accounts (verified, many orders) are allowed; new accounts posts are stored as author_only and rescored async when it recovers."
+  },
+  {
+   "case": "Bad rule deployed matches 30% of all reviews.",
+   "handling": "Expected hit rate declared on the rule; kill switch auto-disables when observed rate exceeds 3x expected over 5 minutes; affected decisions are replayed and content restored."
+  },
+  {
+   "case": "Attacker probes thresholds by posting variants and checking visibility from a second account.",
+   "handling": "Shadow-hide content (visible to author only), add randomness to thresholds, delay enforcement, and take action on accounts in batches so feedback is noisy."
+  },
+  {
+   "case": "Report-bombing: a group mass-reports a legitimate seller to get them taken down.",
+   "handling": "Weight reports by reporter reputation and diversity; cap reports per reporter; never auto-remove only on report count for established accounts; route to human."
+  },
+  {
+   "case": "Clock skew between Decision Service hosts affects minute buckets.",
+   "handling": "Use Redis server time (TIME) or NTP-synced hosts with bucket tolerance; windows are approximate by design so one minute skew is acceptable."
+  },
+  {
+   "case": "Content edited after approval to insert spam links.",
+   "handling": "Every edit is a new decision with the full new text; edits by new accounts on old approved posts are weighted higher risk."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Redis Cluster",
+   "layer": "Counters and rate limits",
+   "overview": "In-memory key-value store with atomic INCR, TTLs, pipelining and Lua scripting, sharded across 16,384 hash slots.",
+   "why": "Sub-millisecond atomic counters for sliding windows and token buckets at 200k+ ops/s; hash tags co-locate an actor's keys.",
+   "alternatives": "Aerospike (better for larger persistent data, more ops overhead); in-process counters with gossip (no network hop but inaccurate across nodes)."
+  },
+  {
+   "name": "Apache Kafka",
+   "layer": "Event backbone",
+   "overview": "Distributed partitioned commit log with consumer groups, replication and retention.",
+   "why": "Decouples sync tier from async scorers; partitions by actor id keep per-actor ordering; replay lets us backtest rules on historical events.",
+   "alternatives": "Pulsar (tiered storage built in), Kinesis (managed but per-shard limits)."
+  },
+  {
+   "name": "Apache Flink",
+   "layer": "Stream aggregation",
+   "overview": "Stateful stream processor with event-time windows, checkpoints and exactly-once state.",
+   "why": "Computes velocity features, ratings anomalies and graph edges over windows with late events handled by watermarks.",
+   "alternatives": "Kafka Streams (simpler, library-only); Spark Structured Streaming (micro-batch, higher latency)."
+  },
+  {
+   "name": "Rule DSL engine (custom, inspired by Facebook FXL / Sigma style)",
+   "layer": "Policy",
+   "overview": "A declarative language for rules over features, compiled to an evaluation plan with batching of feature fetches.",
+   "why": "Analysts ship rules in minutes without code deploys; shadow mode and versioning are built in.",
+   "alternatives": "Drools or OPA (general purpose but not tuned for feature fetch batching); hard-coded rules (slow to change)."
+  },
+  {
+   "name": "Distilled multilingual transformer (e.g. MuRIL or IndicBERT based) served with ONNX Runtime",
+   "layer": "Sync ML",
+   "overview": "Small transformer fine-tuned for spam and toxicity on Indian languages, quantised to int8 for CPU inference.",
+   "why": "Handles Hinglish and transliteration; 2-4ms CPU inference fits the sync budget.",
+   "alternatives": "Logistic regression on n-grams (faster, much weaker on obfuscation); large LLM moderation (better recall, too slow and costly for sync)."
+  },
+  {
+   "name": "PostgreSQL",
+   "layer": "Cases, enforcement audit",
+   "overview": "Relational database with strong consistency, row locking and rich indexing.",
+   "why": "Moderator case leasing with SKIP LOCKED and an append-only audit log need transactions.",
+   "alternatives": "DynamoDB (scale, but leasing and ad hoc queries are harder)."
+  },
+  {
+   "name": "Elasticsearch / OpenSearch",
+   "layer": "Investigation",
+   "overview": "Inverted-index search engine.",
+   "why": "Analysts search decisions and content by phrase, domain or phone number during an investigation.",
+   "alternatives": "ClickHouse (faster aggregates, weaker full-text)."
+  },
+  {
+   "name": "PDQ / PhotoDNA style perceptual hashing",
+   "layer": "Image matching",
+   "overview": "Hash that stays similar under resize, recompression and small edits.",
+   "why": "Catches re-uploads of known spam or abusive images and shares hashes with industry databases.",
+   "alternatives": "Embedding similarity with a vector index (more robust, heavier)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Rate limiting algorithms (token bucket, sliding window)",
+   "explain": "Rate limiting caps how often an actor can do something. The token bucket keeps a bucket of capacity B that refills at rate r tokens per second; each action takes one token, and if the bucket is empty the action is rejected or delayed. It allows bursts up to B while enforcing an average of r. The leaky bucket is the queue-based twin that smooths output to a constant rate. Fixed window counters (count per calendar minute) are cheap but allow twice the limit at window boundaries: 100 requests at 12:00:59 and 100 more at 12:01:00. Sliding window log stores every timestamp and is exact but memory heavy. The sliding window counter keeps per-bucket counts and interpolates the oldest bucket, giving near-exact limits with constant memory. In a distributed system the counter must live in a shared store like Redis with atomic operations (INCR, or a Lua script for check-and-consume) so that many stateless servers enforce one limit. The key design question is the dimension: limiting only per account is useless against account farms, so abuse systems limit on many keys at once - account, device, IP, IP /24, ASN, target object and content hash.",
+   "in_this_design": "Every UGC write consumes tokens on several dimensions in one Redis pipeline: account (5 reviews per 10 minutes for new accounts, 30 for trusted), device, IP /24, target product (velocity anomaly) and SimHash cluster. Limits are trust-aware: new accounts get small buckets, verified buyers get large ones. Exceeding a soft limit yields a CAPTCHA challenge, a hard limit a cooldown.",
+   "key_points": [
+    "Token bucket allows bursts up to capacity while enforcing an average rate.",
+    "Fixed windows leak 2x at boundaries; sliding window counters fix that with constant memory.",
+    "Abuse limits must be multi-dimensional - account, device, network, target, content.",
+    "Make limits trust-aware so genuine power users are not punished.",
+    "Use atomic Lua or INCR in a shared store so stateless servers agree."
+   ],
+   "qa": [
+    {
+     "q": "Why not just limit per account?",
+     "a": "Spammers create thousands of accounts, so per-account limits only stop lazy attackers. Limits on device, IP range, ASN, target and content similarity aggregate across accounts and catch the farm."
+    },
+    {
+     "q": "How do you avoid a race where two servers both see 4 of 5 and both allow?",
+     "a": "Do check-and-consume atomically in Redis - a Lua script that reads, compares and increments in one step, or INCR first and compare the returned value, decrementing or rejecting if over."
+    },
+    {
+     "q": "What happens if Redis is unavailable?",
+     "a": "Fall back to a local in-process limiter with a conservative per-host share of the limit, and for new accounts hold content for async review. Do not fail closed for all users."
+    },
+    {
+     "q": "Token bucket or sliding window for posting limits?",
+     "a": "Token bucket for user-facing posting limits because it tolerates natural bursts (posting three reviews after a delivery). Sliding windows for detection features like 'posts in last 10 minutes' because analysts reason about exact windows."
+    }
+   ]
+  },
+  {
+   "name": "Locality-sensitive hashing for near-duplicates (SimHash, MinHash)",
+   "explain": "Normal cryptographic hashes change completely when one character changes, so they only find exact duplicates. Locality-sensitive hashing (LSH) is designed so that similar inputs collide with high probability. MinHash estimates Jaccard similarity of two sets of shingles: apply k random hash functions, keep the minimum hash value of each, and the fraction of matching minimums estimates Jaccard similarity. Banding the signatures (b bands of r rows) turns this into a candidate lookup where pairs above a similarity threshold almost surely share a band. SimHash (Charikar) produces one 64-bit fingerprint whose Hamming distance approximates cosine distance between weighted feature vectors; Google used it for near-duplicate web page detection with distance threshold 3 on 64-bit hashes. To query efficiently, split the fingerprint into blocks; by the pigeonhole principle, two hashes differing in at most 3 bits must agree exactly on at least one of 4 blocks, so you keep one exact-match table per block and verify candidates. LSH turns an O(n^2) all-pairs comparison into near-constant time lookups, at the cost of tunable false positives and negatives.",
+   "in_this_design": "Spam campaigns reuse templates with small variations. Each UGC text is normalised and SimHashed on the sync path; a lookup against the last 24 hours on the same surface tells us how many near-duplicates exist and from how many distinct accounts. 'Same text from 30 accounts in an hour' is a strong spam signal. MinHash with banding runs async for longer texts like listings.",
+   "key_points": [
+    "LSH makes similar items collide, unlike cryptographic hashes.",
+    "SimHash: 64-bit fingerprint, Hamming distance <= 3 means near-duplicate.",
+    "Pigeonhole block tables give fast candidate lookup.",
+    "Normalise text first or trivial obfuscation defeats the hash.",
+    "Count distinct authors per cluster, not just copies."
+   ],
+   "qa": [
+    {
+     "q": "Why not compare each new post against all recent posts with edit distance?",
+     "a": "With 600M items that is far too slow. LSH reduces lookup to a few hash-table probes and a handful of candidate checks, which fits a millisecond budget."
+    },
+    {
+     "q": "Genuine reviews like 'Good product' are near-duplicates of each other. How do you avoid false positives?",
+     "a": "Ignore very short texts or weight them low, use IDF-weighted shingles so common phrases matter less, and require the cluster to also share suspicious attributes - same new-account cohort, same target, links or phone numbers."
+    },
+    {
+     "q": "SimHash or MinHash?",
+     "a": "SimHash gives a compact single fingerprint and is great for short to medium text with weighted tokens; MinHash estimates Jaccard on sets and its banding is easier to tune for a target threshold. I use SimHash on the sync path for compactness and MinHash async for listings."
+    },
+    {
+     "q": "How long do you retain the index?",
+     "a": "24 hours for chat and comments where campaigns are bursty, 30 days for reviews and listings. Memory is about 16 bytes per item per table, so 600M items is about 40 GB across 4 tables, sharded."
+    }
+   ]
+  },
+  {
+   "name": "Bloom filters and compiled blocklists",
+   "explain": "A Bloom filter is a probabilistic set: a bit array of m bits and k hash functions. Inserting an item sets k bits; querying checks whether all k bits are set. If any bit is zero the item is definitely not in the set; if all are set it is probably in the set, with a false positive rate of roughly (1 - e^(-kn/m))^k. With about 10 bits per element and 7 hashes, the false positive rate is about 1%. Bloom filters cannot delete (counting Bloom filters or cuckoo filters can) and never give false negatives. They let a service keep a membership test for tens of millions of items in a few tens of megabytes, in process, without a network hop. For blocklists of phrases rather than exact items, the Aho-Corasick automaton is the matching counterpart: it compiles thousands of patterns into a trie with failure links and finds all occurrences in one linear pass over the text, regardless of the number of patterns. Together these let a sync service check text against millions of bad domains, phone numbers and phrases in microseconds.",
+   "in_this_design": "Known-bad domains, URL hashes, phone numbers, UPI handles and device hashes (tens of millions of entries) are distributed as Bloom filters refreshed every 60s; a positive is confirmed against Redis to eliminate false positives before blocking. Phrase blocklists per language are compiled into Aho-Corasick automata. This keeps the blocklist stage under 1ms.",
+   "key_points": [
+    "Bloom filter: no false negatives, tunable false positives, about 10 bits per item for 1%.",
+    "Confirm positives against an exact store before taking action.",
+    "Aho-Corasick matches thousands of patterns in one linear pass.",
+    "Ship filters to every host for zero-network-hop checks.",
+    "Use cuckoo or counting filters if you need deletion."
+   ],
+   "qa": [
+    {
+     "q": "Why not just query Redis for every URL?",
+     "a": "You can, but most URLs are benign. An in-process Bloom filter answers 'definitely not bad' for 99% of lookups with no network hop, and only probable hits pay the round trip."
+    },
+    {
+     "q": "How do you remove a domain that was wrongly blocklisted?",
+     "a": "Standard Bloom filters cannot delete, so we rebuild the filter from the source of truth on each refresh (every 60s), and the exact-store confirmation step already excludes removed entries immediately."
+    },
+    {
+     "q": "How big is a filter for 50M entries at 0.1% false positives?",
+     "a": "About 14.4 bits per element, so roughly 720 Mbit or 90 MB, with about 10 hash functions - acceptable per host, or split by type."
+    }
+   ]
+  },
+  {
+   "name": "Synchronous vs asynchronous enforcement (and retroactive action)",
+   "explain": "Any check placed on a request path consumes that path's latency budget and availability. Synchronous checks can stop harm before it happens but must be fast and reliable, so they are limited to cheap features. Asynchronous checks run after the action is accepted, on a stream or queue, so they can use expensive models, cross-entity joins, graph analysis and human review, but harm may be visible for some window before action. Mature abuse systems combine both: a sync gate for high-confidence, cheap signals and an async tier that continuously re-evaluates, with the ability to retroactively undo - hide content, recompute ratings, revoke rewards, suspend accounts. A useful middle state is 'pending' or 'author-only' visibility, where content is accepted (good UX, no error) but not shown to others until async checks complete. The general principle is to place each check where its cost, latency and confidence fit, and to measure exposure (views before action) rather than only whether a check was synchronous.",
+   "in_this_design": "The Decision Service handles rate limits, blocklists, SimHash and a small model under 50ms. Heavy multilingual models, OCR on images, account clustering and rating anomaly detection run on Kafka consumers. New-account content can be stored as author-only and promoted to public after async checks clear, usually within seconds. Retroactive enforcement hides clusters and recomputes product ratings.",
+   "key_points": [
+    "Sync for cheap, high-precision signals; async for heavy, cross-entity analysis.",
+    "Author-only or pending visibility bridges the gap without user-facing errors.",
+    "Retroactive enforcement is essential - campaigns are only visible in aggregate.",
+    "Measure harm as views before action, not only block rate.",
+    "Async also hides your thresholds from attackers."
+   ],
+   "qa": [
+    {
+     "q": "Why not run everything synchronously to be safe?",
+     "a": "Heavy models and graph joins would add hundreds of milliseconds and make the write path depend on many fragile systems. Campaign signals also only exist after several posts, so sync analysis cannot see them anyway."
+    },
+    {
+     "q": "What does the user see if their post is held for async review?",
+     "a": "For most cases they see it posted (author-only visibility) to avoid tipping off attackers; if held for long, genuine users get a 'under review' notice and an appeal path."
+    },
+    {
+     "q": "How do you bound exposure for async decisions?",
+     "a": "Prioritise async scoring by expected reach, keep the consumer lag SLO under 30 seconds, and apply author-only visibility to low-trust actors so exposure is near zero until cleared."
+    }
+   ]
+  },
+  {
+   "name": "Graph-based clustering of coordinated accounts (connected components, union-find)",
+   "explain": "Individual spam accounts often look innocent; what gives them away is coordination. Represent accounts as nodes and add edges when they share something rare: a device fingerprint, a payment instrument, an IP address in a short window, a phone number prefix block, a near-duplicate content cluster, or a common target reviewed within minutes. Connected components can be found incrementally with union-find (disjoint set union), which supports near-constant-time union and find with path compression and union by rank. Plain connectivity over-merges through common hubs (a shared office NAT or a popular product), so edges are weighted by rarity and time, hub nodes are excluded, and denser structures are sought - for example k-cores, label propagation communities, or bipartite 'lockstep' patterns where many accounts act on the same set of targets in the same time windows (as in Facebook's CopyCatch). Each cluster is then scored on features like account age distribution, fraction of interactions within cluster, and burstiness. Acting at cluster level lets you remove a whole ring at once and makes the attacker lose their investment.",
+   "in_this_design": "A Flink job emits edges (shared device hash, shared IP within 1 hour, SimHash cluster co-membership, co-review of the same seller within 30 minutes). A clustering job runs every 5 minutes with union-find over rare edges and a lockstep detector over account x seller x time. Clusters above score thresholds are auto-enforced; borderline clusters become one moderator case.",
+   "key_points": [
+    "Coordination is the signal; individual accounts look benign.",
+    "Union-find gives incremental connected components cheaply.",
+    "Weight edges by rarity and drop hub nodes to avoid giant components.",
+    "Lockstep behaviour - same targets, same time windows - is a strong fake-review signal.",
+    "Enforce at cluster level to raise attacker cost."
+   ],
+   "qa": [
+    {
+     "q": "A college hostel shares one IP and all reviewed the same textbook. Won't you ban them?",
+     "a": "Shared IP alone is a weak, hub-like edge; we down-weight NAT and mobile carrier IPs and require multiple independent edge types plus suspicious behaviour before action. Ambiguous clusters go to human review."
+    },
+    {
+     "q": "How do you run this at scale?",
+     "a": "Edges are generated in streaming windows; union-find runs over a few hundred million edges per day in memory per partition, and heavy community detection runs hourly in Spark GraphX or a graph engine."
+    },
+    {
+     "q": "What does retroactive cluster enforcement involve?",
+     "a": "Hide all cluster content, recompute affected product ratings, strike or suspend accounts, push device hashes and content hashes to blocklists so the next wave is caught synchronously, and log everything for appeals."
+    }
+   ]
+  },
+  {
+   "name": "Shadow mode, canary rollout and kill switches for rules and models",
+   "explain": "Abuse rules and models directly affect users, and a bad one can block millions of genuine posts within minutes. Safe rollout borrows from progressive delivery. In shadow mode a rule is evaluated on live traffic and its hits are logged but no action is taken; analysts measure hit rate and precision by sampling hits for labelling. Backtesting replays historical events through the rule to estimate impact before even shadowing. A canary then enforces on a small percentage of traffic (1%, 10%, 50%) with automatic monitoring. Each rule declares an expected hit rate, and a kill switch automatically disables it if observed hits exceed a multiple of that, or if appeal overturn rates spike. Versioning every rule and recording the rule version in every decision lets you replay and reverse all actions taken by a bad version. The same discipline applies to model thresholds. The cost is a small delay before new rules are fully active, which is acceptable compared to the risk of mass false positives.",
+   "in_this_design": "The rule registry supports modes shadow, enforce with rollout percent, and disabled. New rules must run in shadow for at least 10 minutes (or be backtested on the last 24 hours of Kafka) and show over 99% precision on a labelled sample before auto-block. Every decision logs rule versions so a bad rule's actions can be bulk reversed.",
+   "key_points": [
+    "Shadow first, then 1% -> 10% -> 100%.",
+    "Declare expected hit rate; auto-kill at 3x.",
+    "Log rule versions in decisions so you can mass-reverse.",
+    "Backtest on replayed Kafka events before shadow.",
+    "Speed of iteration matters as much as accuracy against adaptive attackers."
+   ],
+   "qa": [
+    {
+     "q": "Doesn't shadow mode slow you down during an active attack?",
+     "a": "For emergencies analysts can use a softer action immediately - hold for review or author-only visibility - which limits harm without false public blocks, while the rule shadows for auto-block."
+    },
+    {
+     "q": "How do you measure precision of a rule in shadow?",
+     "a": "Sample a few hundred hits stratified by surface and language, have moderators label them, and compute precision with a confidence interval. Recall is estimated from labelled random samples of all traffic."
+    },
+    {
+     "q": "A rule was wrong for 2 hours. How do you recover?",
+     "a": "Kill it, query decisions by rule version, restore content and lift strikes idempotently via the Enforcement Service, recompute ratings and notify affected users."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and at-least-once event processing",
+   "explain": "Distributed message systems like Kafka typically guarantee at-least-once delivery: a consumer that crashes after acting but before committing its offset will see the same event again. Exactly-once end to end is only possible if the side effect and the offset commit are atomic (as within Kafka transactions) or if the side effect is idempotent. Idempotency means applying the same operation twice has the same effect as once. Common techniques are idempotency keys stored with a unique constraint, conditional writes (set state to hidden only if not already hidden), deterministic ids derived from the input (action_id = hash(rule_version, subject)), and versioned state transitions. Clients retrying an HTTP request after a timeout create the same problem on the sync path; an idempotency key in the request lets the server return the original result without redoing work. Without idempotency, retries cause double strikes, double notifications to users or double-counted rate limits.",
+   "in_this_design": "Decision requests carry an idempotency key so a client retry returns the cached verdict and does not consume rate-limit tokens twice. Enforcement actions use deterministic action ids and a unique constraint, so a replayed Kafka event or a re-run cluster job does not strike an account twice or send duplicate notices.",
+   "key_points": [
+    "Kafka gives at-least-once; make side effects idempotent.",
+    "Deterministic action ids plus unique constraints stop double strikes.",
+    "Idempotency keys on sync APIs make client retries safe.",
+    "Reversals are new events, not deletes, for auditability."
+   ],
+   "qa": [
+    {
+     "q": "Why not use Kafka exactly-once semantics?",
+     "a": "Kafka transactions give exactly-once only for read-process-write within Kafka. Our side effects hit Postgres, notifications and the UGC service, so idempotent operations are simpler and more robust."
+    },
+    {
+     "q": "How long do you keep idempotency keys?",
+     "a": "Decision keys 10 minutes (covers client retries); enforcement action ids forever, because they are the audit log."
+    },
+    {
+     "q": "What if two different rules want to strike the same account for the same content?",
+     "a": "Strike ids are keyed by (account, content, policy) rather than rule, so the account gets one strike for one violation with both rules listed as reasons."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Hard block vs shadow-hide for detected spam",
+   "options": "Return an error and block; or accept and show only to the author",
+   "choice": "Shadow-hide for suspected spammers, hard block only for policy-required cases (illegal content)",
+   "why": "Hard blocks teach attackers the threshold instantly; shadow-hiding wastes their effort. Genuine users rarely trip it, and when they do they still see their own content and can appeal."
+  },
+  {
+   "decision": "Fail open vs fail closed when the Decision Service is slow",
+   "options": "Allow all; block all; trust-aware degradation",
+   "choice": "Trust-aware: allow trusted, author-only for low-trust",
+   "why": "Fail closed punishes all users during an outage; fail open invites attackers who can trigger outages. Trust-aware degradation keeps good UX for most while bounding exposure."
+  },
+  {
+   "decision": "Rules vs ML models",
+   "options": "Hand-written rules; ML classifiers; both",
+   "choice": "Both: rules for fast response to new campaigns and explainability, models for generalisation",
+   "why": "Rules can ship in minutes against a new pattern and give clear reason codes; models catch variations rules miss but need labels and retraining. Rules also act as features for models."
+  },
+  {
+   "decision": "Exact sliding-window log vs approximate bucketed counters",
+   "options": "Store every timestamp; per-minute buckets",
+   "choice": "Bucketed counters",
+   "why": "Approximate within a few percent with constant memory per key; exact logs would need millions of sorted-set entries per hot key during campaigns."
+  },
+  {
+   "decision": "Central decision service vs per-surface logic",
+   "options": "Each team builds its own filters; one platform",
+   "choice": "One platform with per-surface policies",
+   "why": "Attackers move across surfaces; shared signals and a shared rule engine catch them everywhere, and analysts learn one tool."
+  },
+  {
+   "decision": "Pre-moderation of all content vs post-moderation",
+   "options": "Human review before publish; automated gate plus reactive review",
+   "choice": "Automated gate plus reactive and sampled review",
+   "why": "20M items a day cannot be human-reviewed before publish; pre-moderation is kept only for high-risk cases (new sellers' first listings)."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Redis counter shard fails",
+   "behavior": "Replica promoted within seconds; during failover the limiter falls back to local conservative limits and low-trust content is author-only."
+  },
+  {
+   "failure": "Feature store latency spikes beyond 20ms",
+   "behavior": "Deadline-based fetch returns partial features; missing trust features use conservative defaults; circuit breaker trips after 50% timeouts in 10s."
+  },
+  {
+   "failure": "Kafka consumer lag grows (async scorers slow)",
+   "behavior": "Autoscale consumers; prioritise high-reach surfaces via separate topics; alert at lag > 30s; author-only content waits longer but is not exposed."
+  },
+  {
+   "failure": "Model server deploy introduces a broken model (scores all 0.99)",
+   "behavior": "Score distribution monitor detects drift within minutes; automatic rollback to the prior model version; rules guard against model-only blocks without corroboration for trusted users."
+  },
+  {
+   "failure": "Moderation queue backlog during a large campaign",
+   "behavior": "Cluster-level cases collapse thousands of items into one decision; temporary stricter auto-actions on low-trust actors; surge staffing."
+  },
+  {
+   "failure": "Region outage",
+   "behavior": "Decision Service is stateless and multi-region; counters are regional (slight undercount acceptable); rules and blocklists are replicated globally."
+  }
+ ],
+ "metrics": [
+  "Prevalence of violating content per 10k views (weekly labelled random sample).",
+  "Sync decision latency p50, p99 and timeout rate per surface.",
+  "Verdict mix (allow, challenge, hold, shadow, block) per surface; alert on sudden shifts.",
+  "Per-rule hit rate, precision from labelled samples, and appeal overturn rate.",
+  "Model score distribution drift and precision/recall per language.",
+  "Async pipeline consumer lag and time-to-retroactive-action.",
+  "Report-to-action time p50 and p99 versus legal SLA.",
+  "Moderator throughput, agreement rate and queue age.",
+  "CAPTCHA challenge solve rate (attacker economics signal).",
+  "False positive complaints and NPS for posting flows."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you know your system is working if attackers just get quieter?",
+   "a": "Measure prevalence with labelled random samples of what users actually see, not block counts. Block counts can fall because attackers moved elsewhere or because you are missing them; prevalence tells you exposure."
+  },
+  {
+   "q": "How would you handle a brand new attack you have never seen, starting at the peak of a sale?",
+   "a": "Analysts spot it via anomaly dashboards (verdict mix, near-dup clusters, new-account posting spikes), push an emergency hold rule on the pattern (author-only, low risk), backtest and shadow an auto-block version, and add the signals to blocklists. Cluster jobs remove what already got through."
+  },
+  {
+   "q": "Where would an LLM fit?",
+   "a": "Async, for nuanced categories (scams with social engineering, harassment in code-mixed text) and to help moderators summarise context. It is too slow and costly for 7,000 sync decisions per second, and its outputs need calibration and auditing before auto-enforcement."
+  },
+  {
+   "q": "How do you protect against model bias against a language?",
+   "a": "Per-language labelled evaluation sets, precision and false positive targets per language, and launch gates. Normalisation for transliteration and native numerals reduces both bias and evasion."
+  },
+  {
+   "q": "How do you stop fake reviews from real purchasers paid via cashback schemes?",
+   "a": "Verified purchase is necessary but not sufficient: look for reviewer-seller graph anomalies (same reviewers across a seller's products), order patterns (low-value orders refunded), timing (reviews minutes after delivery), and text templates. Enforce on the seller as well as reviewers."
+  },
+  {
+   "q": "What is your data retention and privacy story?",
+   "a": "Hash device identifiers and IPs with rotating salts for linking, keep raw content only as long as the content exists plus legal hold, keep decisions 1 year for audit, and restrict analyst access with logging."
+  },
+  {
+   "q": "How do moderators stay consistent?",
+   "a": "Clear policy guidelines with examples, double review on a sample, inter-rater agreement tracking, calibration sessions, and gold-standard test items injected into the queue."
+  }
+ ],
+ "key_points": [
+  "Spam is adversarial and economic: the goal is to raise attacker cost, not to find a perfect classifier.",
+  "Layered defence: edge, account trust, content, behaviour aggregation, humans.",
+  "Sync tier under 50ms for cheap high-precision signals; async tier for heavy models and campaigns, with retroactive enforcement.",
+  "Rate limit on many dimensions, trust-aware, not just per account.",
+  "Near-duplicate hashing and account clustering catch campaigns that look innocent one post at a time.",
+  "Rules for speed and explainability, models for generalisation; ship rules via DSL with shadow mode and kill switches.",
+  "Degrade trust-aware: fail open for trusted users, author-only for new accounts.",
+  "Shadow-hide rather than hard block to deny attackers feedback.",
+  "Measure prevalence (what users see) and false positives, not just block counts.",
+  "Close the loop: moderator labels feed models, rules and blocklists."
+ ],
+ "quiz": [
+  {
+   "q": "A spammer creates 3,000 accounts and posts one scam answer from each. Which control is LEAST effective on its own?",
+   "options": [
+    "Near-duplicate clustering of the answer text",
+    "Device and IP-range velocity limits",
+    "Per-account posting rate limit",
+    "Account clustering on shared signals"
+   ],
+   "answer": 2,
+   "why": "Each account posts once, so a per-account limit never fires. Near-dup clustering is tempting to dismiss because texts vary, but SimHash tolerates small variations and catches the template."
+  },
+  {
+   "q": "Your sync decision p99 jumps from 30ms to 120ms during a sale. The most likely culprit is:",
+   "options": [
+    "A hot counter key in Redis for a viral product",
+    "The rule DSL compiler",
+    "Kafka producer acks=all",
+    "The Bloom filter false positive rate"
+   ],
+   "answer": 0,
+   "why": "A hot key concentrates load on one Redis shard and its latency spikes. Kafka publish is fire-and-forget off the critical path, so acks=all should not affect sync latency."
+  },
+  {
+   "q": "Why prefer shadow-hiding (author-only visibility) over returning an error for suspected spam?",
+   "options": [
+    "It uses less storage",
+    "It is required by law",
+    "It makes the model more accurate",
+    "It denies attackers feedback about which content tripped detection"
+   ],
+   "answer": 3,
+   "why": "Attackers probe thresholds by watching for errors; shadow-hiding makes their content look posted. It is not a legal requirement; legal takedowns may require clear notice instead."
+  },
+  {
+   "q": "With 64-bit SimHash and a Hamming threshold of 3, why split the hash into 4 blocks of 16 bits for lookup?",
+   "options": [
+    "To reduce memory by 4x",
+    "Because any pair within distance 3 must match exactly on at least one block",
+    "Because 16-bit keys are faster to hash",
+    "To encrypt the fingerprint"
+   ],
+   "answer": 1,
+   "why": "Pigeonhole principle: 3 differing bits can touch at most 3 of 4 blocks, so one block matches exactly and can be found by exact lookup. Memory actually grows (4 tables), not shrinks."
+  },
+  {
+   "q": "The Decision Service's feature store times out. The best default behaviour is:",
+   "options": [
+    "Block all posts until it recovers",
+    "Allow trusted actors, store low-trust actors' posts as author-only pending async checks",
+    "Allow all posts",
+    "Return HTTP 503 to clients"
+   ],
+   "answer": 1,
+   "why": "Trust-aware degradation keeps most users unaffected while bounding exposure from new accounts. Allowing everything is tempting for UX but attackers can induce or wait for outages."
+  },
+  {
+   "q": "Roughly how many sync decisions per second at peak for 20M UGC writes/day at 5x peak (excluding chat)?",
+   "options": [
+    "About 230",
+    "About 12,000",
+    "About 120,000",
+    "About 1,200"
+   ],
+   "answer": 3,
+   "why": "20M / 86,400 is about 230/s average; 5x gives about 1,200/s. 230 is the average, the most tempting wrong answer."
+  },
+  {
+   "q": "A new rule should auto-block posts. What is the safest launch sequence?",
+   "options": [
+    "Backtest on replayed events, shadow, then canary 1% to 100% with an auto kill switch",
+    "Enforce at 100% and watch appeals",
+    "Train an ML model first, then never use the rule",
+    "Have moderators approve each hit for a week"
+   ],
+   "answer": 0,
+   "why": "Backtest plus shadow measures precision without harm, and canary plus kill switch bounds damage. Watching appeals detects problems only after harm has happened."
+  },
+  {
+   "q": "A Bloom filter of bad domains reports 'present' for a URL. What should the service do?",
+   "options": [
+    "Block immediately - Bloom filters never err",
+    "Ignore it - Bloom filters are unreliable",
+    "Confirm against the exact store before blocking",
+    "Rebuild the filter"
+   ],
+   "answer": 2,
+   "why": "Bloom filters can give false positives but never false negatives, so a positive needs confirmation. 'Never err' is the common misconception - only the negative answer is certain."
+  },
+  {
+   "q": "Which signal best distinguishes a paid fake-review ring from a group of genuine fans?",
+   "options": [
+    "All reviews are 5 stars",
+    "Reviews contain the product name",
+    "Accounts acting in lockstep on the same set of sellers in tight time windows with shared devices",
+    "Reviews are written in Hinglish"
+   ],
+   "answer": 2,
+   "why": "Lockstep behaviour across many targets plus shared infrastructure is coordination. 5-star ratings alone are common among genuine fans."
+  },
+  {
+   "q": "Why measure prevalence (sampled views of violating content) instead of only counting blocks?",
+   "options": [
+    "Block counts can drop because attackers evade you, not because there is less abuse",
+    "Blocks are hard to count",
+    "Prevalence is cheaper to compute",
+    "Regulators only accept prevalence"
+   ],
+   "answer": 0,
+   "why": "Block counts reflect detection, not exposure. Prevalence from labelled random samples tells you what users actually see."
+  },
+  {
+   "q": "A Kafka consumer crashes after striking an account but before committing its offset. On restart, how do you avoid a double strike?",
+   "options": [
+    "Use acks=0",
+    "Increase the consumer session timeout",
+    "Disable retries",
+    "Deterministic action id with a unique constraint in the enforcement store"
+   ],
+   "answer": 3,
+   "why": "Idempotent side effects make at-least-once delivery safe. Session timeouts change when rebalances happen, not whether the event is redelivered."
+  },
+  {
+   "q": "Which text normalisation step matters most against 'W h @ t s A p p  9 8 7...' obfuscation?",
+   "options": [
+    "Lowercasing only",
+    "Unicode NFKC, confusable mapping, whitespace collapse and numeral normalisation before extraction",
+    "Stemming",
+    "Removing stop words"
+   ],
+   "answer": 1,
+   "why": "Obfuscation uses spacing, symbols, homoglyphs and native numerals; you must canonicalise all of them. Lowercasing alone leaves spaced digits and look-alike characters intact."
+  },
+  {
+   "q": "Where should a large multimodal LLM classifier run in this design?",
+   "options": [
+    "On the sync path for every chat message",
+    "Async, on prioritised or ambiguous items, with calibration before auto-enforcement",
+    "At the CDN edge",
+    "Only in offline analytics, never in production"
+   ],
+   "answer": 1,
+   "why": "LLMs are too slow and costly for thousands of sync decisions per second but valuable for nuanced cases async. Banning them from production wastes their recall on hard categories."
+  },
+  {
+   "q": "Your union-find clustering produces one giant component with 2M accounts. The most likely cause:",
+   "options": [
+    "Too few hash functions",
+    "Kafka partitions are unbalanced",
+    "Clock skew",
+    "Hub edges such as carrier-grade NAT IPs or popular products linking unrelated accounts"
+   ],
+   "answer": 3,
+   "why": "Common shared attributes act as hubs and connect everything; down-weight or drop them and require rare, multiple edge types. Partition imbalance affects throughput, not graph structure."
+  },
+  {
+   "q": "Which rate-limit algorithm lets a genuine buyer post 3 reviews quickly after a delivery but caps sustained posting?",
+   "options": [
+    "Token bucket",
+    "Fixed window counter",
+    "Leaky bucket with zero queue",
+    "Sliding window log with a 1-second window"
+   ],
+   "answer": 0,
+   "why": "Token bucket permits bursts up to capacity while enforcing a long-run average. A fixed window also allows bursts but leaks 2x at boundaries and is less precise."
+  },
+  {
+   "q": "An analyst's rule matched 30% of reviews within 5 minutes of launch, versus an expected 0.2%. What should happen automatically?",
+   "options": [
+    "Nothing until the next business day",
+    "The model is retrained",
+    "Kill switch disables the rule, and actions by that rule version are reversed",
+    "Redis is flushed"
+   ],
+   "answer": 2,
+   "why": "Declared expected hit rates enable automatic kill switches; rule versions in decision logs enable bulk reversal. Retraining a model does not undo a rule's damage."
+  },
+  {
+   "q": "Report-bombing targets a legitimate seller. The best defence is:",
+   "options": [
+    "Auto-remove after 50 reports",
+    "Ignore all reports",
+    "Weight reports by reporter reputation and diversity and route established accounts to humans",
+    "Require reporters to pay a fee"
+   ],
+   "answer": 2,
+   "why": "Raw counts are easily gamed by a coordinated group; reputation weighting plus human review protects legitimate users. Ignoring reports would break legal takedown obligations."
+  },
+  {
+   "q": "Which is the strongest argument for a central abuse platform rather than per-surface filters?",
+   "options": [
+    "Attackers move across surfaces, so shared signals and rules catch them everywhere",
+    "It is cheaper to build",
+    "It removes the need for moderators",
+    "It guarantees zero false positives"
+   ],
+   "answer": 0,
+   "why": "Cross-surface signal sharing is the key benefit; a farm caught spamming chat can be blocked in reviews. Cost is not necessarily lower, and no system guarantees zero false positives."
+  },
+  {
+   "q": "Why keep velocity counters in Redis rather than in each Decision Service host's memory?",
+   "options": [
+    "Redis is faster than local memory",
+    "Local memory cannot store integers",
+    "Redis provides ML features",
+    "Limits must be shared across all stateless hosts behind the load balancer"
+   ],
+   "answer": 3,
+   "why": "Requests from one attacker spread across hosts; only a shared store sees the total. Local memory is faster, which is why it is used as a fallback, but it undercounts."
+  },
+  {
+   "q": "A seller's product receives 400 one-star reviews in 30 minutes from verified buyers after a social media post. Best handling?",
+   "options": [
+    "Auto-delete all reviews",
+    "Hold new low ratings for human review as a brigading case, notify the seller, avoid auto-banning real users",
+    "Ignore it - they are verified buyers",
+    "Ban the seller"
+   ],
+   "answer": 1,
+   "why": "Brigading by real users is not spam but may be manipulation; humans should decide. Ignoring it because purchases are verified misses coordinated manipulation."
+  },
+  {
+   "q": "Which metric best catches a broken model deploy within minutes?",
+   "options": [
+    "Weekly prevalence sample",
+    "Real-time score distribution drift and verdict mix per surface",
+    "Monthly appeal overturn rate",
+    "Moderator headcount"
+   ],
+   "answer": 1,
+   "why": "Score distribution and verdict mix shift immediately when a model breaks. Prevalence and appeals are important but lag by days or weeks."
+  },
+  {
+   "q": "The decision API is retried by the client after a timeout. Without idempotency keys, what goes wrong first?",
+   "options": [
+    "The post is stored in two regions",
+    "The Bloom filter overflows",
+    "Kafka loses messages",
+    "Rate-limit tokens are consumed twice and the verdict may differ"
+   ],
+   "answer": 3,
+   "why": "Each retry re-runs counters and can push a genuine user over a limit, and non-deterministic components can yield a different verdict. Storage duplication is prevented at the UGC layer, not here."
+  }
+ ],
+ "references": [
+  {
+   "title": "Facebook Engineering - Spam Fighting @Scale 2015 recap",
+   "url": "https://engineering.fb.com/2015/05/15/web/spam-fighting-scale-recap/"
+  },
+  {
+   "title": "Fighting Spam with Haskell (Haxl / Sigma talk, SPLASH 2015)",
+   "url": "https://2015.splashcon.org/details/splash2015-splash-i/8/Fighting-Spam-with-Haskell"
+  },
+  {
+   "title": "Detecting Spam Blogs: A Machine Learning Approach (AAAI 2006)",
+   "url": "https://ebiquity.umbc.edu/paper/html/id/296/Detecting-Spam-Blogs-A-Machine-Learning-Approach"
+  }
+ ]
+}

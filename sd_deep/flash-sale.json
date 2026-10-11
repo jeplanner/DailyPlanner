@@ -1,0 +1,1188 @@
+{
+ "slug": "flash-sale",
+ "title": "Design a flash sale system (Big Billion Days style sale event)",
+ "prompt": "Design a flash sale system for a big e-commerce sale event.",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "A flash sale turns normal e-commerce traffic into a step function: at 00:00 on day one of a big Indian sale, tens of millions of users open the app at once and hammer a few hundred deal SKUs with tiny stock (1,000 phones at Rs 9,999). The core tension is strict correctness on a handful of extremely hot inventory keys (never oversell, never lose a paid order) against read and write volume 50-100x normal, plus slow and flaky payment rails like UPI in the middle. Winning designs shape demand before it reaches inventory (waiting room, token gates), make the inventory decrement atomic and cheap, pre-warm everything, and have a rehearsed degradation ladder that sheds the right features in the right order.",
+ "framework": {
+  "clarify": [
+   "Event shape: multi-day sale (think BBD / Great Indian Festival) with scheduled 'deal drops' every few hours: 200-500 hero SKUs with limited stock plus millions of normally-priced SKUs at higher discount.",
+   "Scale: ~400M registered, ~50-80M users on day one; peak ~5-10M concurrent sessions in the first 15 minutes; product page views ~1M/s; add-to-cart/buy attempts ~200-300k/s on hero SKUs at drop time.",
+   "Inventory: hero deal stock is small (100 to 50,000 units per SKU) and spread across warehouses (FCs); does stock need to be pincode/FC aware? Assume yes for delivery promise but deal quota is a national pool per SKU.",
+   "Correctness: zero oversell on deal quota; a successful payment must always become an order or a refund within minutes. Undersell by a small buffer is acceptable and released later.",
+   "Fairness and abuse: per-user limit (1 unit per deal), bots and reseller scripts, account farms; is first-come-first-served required or is a randomized admission acceptable? Assume randomized within the opening window.",
+   "Payments: UPI, cards with bank offers (instant 10% off with HDFC/SBI/ICICI), EMI, wallets, COD. Gateways and bank switches will throttle and fail at peak; checkout hold time ~10 minutes.",
+   "What may degrade? Assume recommendations, reviews, personalised widgets, and order history can degrade; browse, search, cart, checkout and payment cannot.",
+   "Lead time: we know the date months ahead, so capacity, load tests (game days) and cache warming are part of the design."
+  ],
+  "design": [
+   "Baseline: CDN + edge for static and semi-static pages, browse/search tier from caches, a dedicated Deal service owning deal quota, Cart/Checkout, Order, Payment, and an async fulfilment pipeline.",
+   "Admission: virtual waiting room in front of deal checkout (not in front of the whole site). Users get a signed queue token; admitted in batches at the rate checkout and payment can actually absorb (e.g. 20-30k/s).",
+   "Inventory: deal quota preloaded into Redis (or Aerospike) as N sharded counters per SKU; reservation is a single atomic Lua script that checks per-user limit, decrements a shard and writes a reservation with TTL.",
+   "Order path: reservation -> async order creation via Kafka -> payment -> on success commit (reservation -> sold) in the inventory DB with a conditional update; on failure or timeout release quota back.",
+   "Pre-warm: deal pages, product details, prices, offers and serviceability pre-computed and pushed to CDN, local caches and Redis before the drop; JIT and connection pools warmed by synthetic traffic.",
+   "Degradation ladder: pre-wired feature flags from L0 (normal) to L5 (only browse-cached, cart, checkout, pay), triggered by SLO burn, plus load shedding by request priority at the gateway.",
+   "Critical path: drop starts -> waiting room admits -> reserve (Lua, < 2 ms) -> 202 with reservation id -> checkout with idempotency key -> payment -> confirm -> order placed -> notifications."
+  ],
+  "defend": [
+   "Bottleneck: the single hot key per hero SKU. Shard the counter into 16-64 sub-counters on different Redis slots, add negative caching for sold-out shards, and put the waiting room in front so attempts/s are bounded.",
+   "Scale reads: 1M product views/s served from CDN (deal pages with 5-10 s TTL), in-process caches, and Redis/Aerospike; stock shown as a hint ('Few left', 'Sold out') refreshed every 1-2 s, never read from the DB.",
+   "Scale writes: only reservations hit the hot path; order rows are written asynchronously at ~5-10k/s via Kafka consumers into sharded MySQL; the DB conditional update is the final oversell guard.",
+   "Failure: Redis primary failover can lose last writes; preload slightly less than true stock (e.g. 98%), reconcile Redis vs DB every 30 s, and release the buffer later. Payment timeouts reconcile against gateway status APIs.",
+   "Degradation: shed recommendations, reviews, personalised ranking first; then narrow the waiting room admission rate; never drop paid-order confirmation. Circuit breakers per payment gateway with routing to healthy ones.",
+   "Measure: admitted/s vs reservations/s, reservation-to-payment conversion, oversell count (must be 0), Redis vs DB quota delta, payment success rate per gateway/bank, p99 per tier, queue wait time, bot block rate."
+  ],
+  "script": "Let me frame this around the first fifteen minutes of a big Indian sale. I will assume fifty to eighty million users on day one, a few hundred hero deals with tiny stock, about a million page views a second, and hundreds of thousands of buy attempts a second at each deal drop. Correctness means no oversell and every paid order either ships or is refunded. My design has three ideas. First, shape demand: browse is served from CDN and caches, and only deal checkout goes through a virtual waiting room that admits users at the rate checkout and payments can actually absorb. Second, make the hot path tiny: deal quota lives in sharded Redis counters and a Lua script atomically checks the per-user limit and reserves a unit with a ten minute TTL, then order creation and payment go asynchronous through Kafka, with a conditional update in the database as the final guard. Third, prepare: everything is pre-warmed, and we have a degradation ladder with pre-wired flags. In the defend part I will cover hot keys, Redis failover and reconciliation, payment timeouts and what we shed first."
+ },
+ "brd": {
+  "problem": "The annual sale is the year's biggest revenue and brand moment: a large share of annual GMV and new customer acquisition happens in a few days, and the first hour is national news. In 2014 a famous Big Billion Day suffered outages, sold-out errors and pricing glitches that forced the founders to apologise publicly. The business needs the platform to stay up under 50-100x load, to sell limited deals fairly without overselling, and to convert demand into paid, deliverable orders.",
+  "goals": [
+   "Zero downtime of browse, cart, checkout and payment during the sale window.",
+   "Zero oversell of deal quota; every captured payment results in an order or an automatic refund within 30 minutes.",
+   "Fair, bot-resistant access to hero deals with a per-user limit.",
+   "Checkout p99 under 1 s (excluding the user's payment app time) at peak.",
+   "Maximise conversion: payment success rate within 2 points of normal days despite bank throttling.",
+   "Recover released stock (expired reservations, failed payments) back to sale within 2 minutes."
+  ],
+  "non_goals": [
+   "Real-time exact stock counts on every page (hints are fine).",
+   "Dynamic pricing during the drop window (prices are fixed per deal slot).",
+   "Building our own payment network; we integrate gateways and UPI PSPs.",
+   "Global multi-region active-active for every service (India-centric, multi-AZ plus DR)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Customers (metro and tier-2/3, mostly Android, often on 4G)",
+    "needs": "Pages that load, a fair shot at deals, clear 'sold out' signals, payment that works, no charge without an order."
+   },
+   {
+    "who": "Category and sellers",
+    "needs": "Deals sell through exactly to quota, no oversell penalties, accurate sell-through dashboards."
+   },
+   {
+    "who": "Marketing / bank partners",
+    "needs": "Offers (instant bank discounts, EMI) applied correctly with budget caps; campaign traffic does not crash the site."
+   },
+   {
+    "who": "Supply chain / FCs",
+    "needs": "Order flow at a rate warehouses can pick and pack; correct FC allocation; no phantom orders."
+   },
+   {
+    "who": "Engineering leadership / SRE",
+    "needs": "Predictable capacity, rehearsed runbooks, war room dashboards, clear degrade decisions."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Oversold units on deal SKUs",
+    "target": "0"
+   },
+   {
+    "metric": "Availability of critical path (browse, cart, checkout, pay)",
+    "target": "99.99% during sale window"
+   },
+   {
+    "metric": "Paid-without-order cases resolved",
+    "target": "100% within 30 minutes (order or refund)"
+   },
+   {
+    "metric": "Checkout p99 latency",
+    "target": "< 1 s"
+   },
+   {
+    "metric": "Payment success rate",
+    "target": "Within 2 percentage points of BAU"
+   },
+   {
+    "metric": "Bot share of deal purchases",
+    "target": "< 1% (post-sale audit)"
+   }
+  ],
+  "constraints": [
+   "Fixed date known months ahead; capacity procured in advance (private cloud plus burst).",
+   "Payment partners (banks, NPCI UPI rails, card networks) have their own TPS limits and will throttle.",
+   "Mobile-first, variable networks; clients retry aggressively, sometimes multiple times per tap.",
+   "Deal quota and bank-offer budgets are contractual; exceeding them costs real money."
+  ],
+  "risks": [
+   {
+    "risk": "Thundering herd at 00:00 overwhelms origin",
+    "mitigation": "Waiting room, CDN pre-warm, jittered client polling, staged deal drops across the day."
+   },
+   {
+    "risk": "Oversell due to Redis failover or double processing",
+    "mitigation": "Preload buffer, DB conditional update as final gate, idempotency keys, reconciliation every 30 s."
+   },
+   {
+    "risk": "Payment gateway or bank degradation",
+    "mitigation": "Multi-gateway routing with health-based weights, circuit breakers, extended reservation TTL for pending UPI, status reconciliation."
+   },
+   {
+    "risk": "Bots and resellers buy out deals",
+    "mitigation": "Device fingerprinting, account age gates, proof-of-work or CAPTCHA on suspicious sessions, per-user/per-address/per-payment-instrument limits, post-sale cancellation."
+   },
+   {
+    "risk": "A non-critical service cascades into checkout",
+    "mitigation": "Bulkheads (separate pools), timeouts and fallbacks, pre-wired kill switches."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Deal hunter (Rahul, Android, Jaipur)",
+    "needs": "Opens the app at 11:58 pm, wants the Rs 9,999 phone, pays by UPI, needs a fair queue and a clear answer fast."
+   },
+   {
+    "name": "Regular shopper (Meena, Chennai)",
+    "needs": "Browses discounts across categories over 3 days, uses HDFC card offer and no-cost EMI."
+   },
+   {
+    "name": "Category manager",
+    "needs": "Sets deal quota, slot time and per-user limit; watches live sell-through."
+   },
+   {
+    "name": "War room SRE",
+    "needs": "Sees golden signals per tier and can flip degradation levels within seconds."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want to see the deal page instantly at drop time so that I know what is available.",
+   "As a shopper, I want to join a queue with an honest position or wait estimate so that I do not keep refreshing.",
+   "As an admitted shopper, I want my unit held for 10 minutes while I pay so that I am not beaten during payment.",
+   "As a shopper, I want to be told 'sold out' immediately when quota is gone so that I do not waste time.",
+   "As a shopper whose UPI payment succeeded, I want an order confirmation even if the app crashed so that I am not charged for nothing.",
+   "As a category manager, I want deal quota enforced exactly with a 1-per-user limit so that the promotion budget is respected.",
+   "As an SRE, I want to switch off recommendations and reviews with one flag so that I can protect checkout.",
+   "As a bank partner, I want offer budgets enforced so that instant discounts stop at the cap."
+  ],
+  "functional": [
+   "Deal configuration: SKU, deal price, quota, slot start/end, per-user limit, eligible pincodes, bank offers.",
+   "Virtual waiting room for deal checkout with signed, short-lived admission tokens and position/ETA display.",
+   "Atomic reservation of deal units with per-user limit and TTL (10 min; extended to 15 for pending UPI collect).",
+   "Checkout: address, serviceability and delivery promise, offer application, payment options.",
+   "Order creation and payment confirmation with idempotency; automatic release on expiry or failure; refunds for late success.",
+   "Stock hints on PDP and listing ('Only few left', 'Sold out', 'Coming at 12 PM').",
+   "Admin war-room controls: admission rate, degradation level, per-gateway routing weights, emergency deal pause.",
+   "Anti-abuse: bot scoring, device/account limits, address and payment instrument dedupe."
+  ],
+  "non_functional": [
+   {
+    "name": "Availability",
+    "target": "99.99% for browse/cart/checkout/payment during the sale window; graceful degradation for the rest."
+   },
+   {
+    "name": "Latency",
+    "target": "PDP p99 < 300 ms (edge), reserve p99 < 50 ms, checkout p99 < 1 s, waiting room poll < 100 ms."
+   },
+   {
+    "name": "Consistency",
+    "target": "Linearizable decrement per deal quota (no oversell); eventual for stock hints (1-2 s)."
+   },
+   {
+    "name": "Durability",
+    "target": "Captured payments never lost; order intents persisted to Kafka (RF=3, acks=all) before 202."
+   },
+   {
+    "name": "Scalability",
+    "target": "50-100x BAU read traffic, ~300k buy attempts/s on hero SKUs at drop, 10k orders/s sustained."
+   },
+   {
+    "name": "Fairness",
+    "target": "Admission randomized within the opening window; per-user limit 1 per deal; bot share < 1%."
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "Day one: 60M users; first-hour peak 8M concurrent sessions.",
+    "Each session refreshes/loads ~1 page per 8 s at peak -> ~1M page views/s.",
+    "Hero drop: 300 SKUs, total quota 500k units; ~20M users attempt in first 2 minutes.",
+    "Average order 2 KB row + 3 KB items/events; normal-priced SKU orders ~6-10k/s sustained across the sale.",
+    "Reservation-to-payment conversion ~60%; UPI ~70% of prepaid payments."
+   ],
+   "math": [
+    "Page views: 8M sessions / 8 s = 1M req/s; with 95% CDN hit, origin sees ~50k/s plus API calls ~300k/s.",
+    "Buy attempts at drop: 20M users x ~2 taps in 120 s = ~330k/s raw; waiting room caps admission at ~25k/s.",
+    "Reservation ops: 25k/s admitted; 500k units sell out in ~20-40 s of admitted traffic; one Redis shard handles ~100k simple ops/s, so 32 shards per hot SKU group leave ample headroom.",
+    "Orders: 500k deal orders in ~2 minutes = ~4k/s plus BAU ~6k/s = ~10k order writes/s into sharded MySQL (e.g. 64 shards at ~150 writes/s each).",
+    "Payments: ~10k/s initiations at peak; bank/UPI PSP limits per gateway ~2-3k TPS, so 4-5 gateways with weighted routing.",
+    "Kafka: order intents 10k/s x 5 KB = 50 MB/s; trivial for a 12-broker cluster.",
+    "Notifications: ~1M orders/hour -> SMS/push ~300/s each, buffered."
+   ],
+   "summary": "Reads are ~1M/s and must stay at the edge and in caches; buy attempts are ~300k/s but get shaped to ~25k/s admitted; the true hard limits are the per-SKU hot counter and downstream payment TPS of a few thousand per gateway. The design is about bounding every arrow to the slowest dependency behind it."
+  },
+  "out_of_scope": [
+   "Search ranking and recommendation algorithms themselves.",
+   "Warehouse pick/pack and last-mile logistics beyond order handoff.",
+   "Seller onboarding and catalogue ingestion.",
+   "Post-sale returns and refunds processing at scale (only payment-failure refunds are covered)."
+  ]
+ },
+ "hld": {
+  "overview": "Traffic enters through DNS/GSLB to a CDN and edge layer that serves static assets and cached deal and product pages (short TTL), runs WAF and bot scoring, and enforces coarse rate limits. Behind it an API gateway classifies requests by priority (checkout and payment > cart > browse > recommendations) and applies load shedding. Browse and search are read-only and served from Aerospike/Redis and in-process caches pre-warmed before the event. Deal checkout is gated by the Waiting Room service, which issues signed admission tokens at a controlled rate. The Deal Inventory service runs an atomic Lua reservation over sharded Redis counters and writes an order intent to Kafka. Order service consumers create orders in sharded MySQL with a conditional quota update; Payment orchestration routes to multiple gateways; on success the order is confirmed and fulfilment is triggered; on failure or expiry the reservation is released. A reconciliation job keeps Redis quota and the database in agreement. A control plane holds feature flags and the degradation ladder.",
+  "diagram": " Mobile/Web ---> GSLB/DNS ---> CDN + WAF + bot score (static, deal pages TTL 5-10s)\n                                  |\n                                  v\n                      API gateway (priority classes, shed, rate limit)\n        +-----------------+-------+----------+-------------------+-------------+\n        v                 v                  v                   v             v\n  Browse/Search     Cart service      Waiting room svc     Checkout svc   Reco/Reviews\n  (Aerospike,       (sharded KV)      (Redis ZSET, signed       |          (degradable)\n   local cache)                        admission tokens)         |\n                                              | admit            v\n                                              +---------> Deal inventory svc\n                                                          Lua reserve on 32 shards\n                                                          (Redis cluster, per SKU)\n                                                                 | order intent\n                                                                 v\n                                                    Kafka (RF=3, acks=all)\n                                                                 |\n                     +-------------------------+-----------------+-------------+\n                     v                         v                               v\n              Order service            Payment orchestrator             Reservation expiry\n              sharded MySQL            (multi-gateway, UPI/cards,       + Redis<->DB recon\n              UPDATE .. WHERE          circuit breakers, status poll)    (every 30 s)\n              sold < quota                     |\n                     |<------- confirm --------+\n                     v\n        Fulfilment / FC allocation, notifications (async)\n  Control plane: feature flags, degradation level L0-L5, admission rate knob, dashboards\n",
+  "components": [
+   {
+    "name": "CDN + edge (WAF, bot scoring)",
+    "responsibility": "Serve static and short-TTL deal/PDP pages, absorb ~95% of reads, block bad bots, coarse per-IP/device rate limits."
+   },
+   {
+    "name": "API gateway with load shedding",
+    "responsibility": "Authenticate, classify priority, enforce per-user limits, shed low-priority traffic first when backends signal overload."
+   },
+   {
+    "name": "Browse and search tier",
+    "responsibility": "Read-only product, price, offer and serviceability data from Aerospike/Redis and in-process caches; pre-warmed."
+   },
+   {
+    "name": "Waiting room service",
+    "responsibility": "Queue users per deal slot in a Redis sorted set with random scores in the opening window, admit batches at a configured rate, issue signed admission tokens (TTL 10 min, bound to user and device)."
+   },
+   {
+    "name": "Deal inventory service",
+    "responsibility": "Own deal quota; atomic Lua reserve (per-user limit, shard decrement, reservation record with TTL); release; sold-out flags; stock hints."
+   },
+   {
+    "name": "Kafka (order intents, payment events)",
+    "responsibility": "Durable buffer between reservation and order creation; smooths writes into MySQL; replayable."
+   },
+   {
+    "name": "Order service",
+    "responsibility": "Consume intents, create order rows idempotently, final conditional quota update in DB, state machine RESERVED -> PAYMENT_PENDING -> CONFIRMED / CANCELLED."
+   },
+   {
+    "name": "Payment orchestrator",
+    "responsibility": "Route to gateways/PSPs by health and bank, apply bank-offer budgets, handle callbacks and status polling, trigger refunds for late successes."
+   },
+   {
+    "name": "Reservation expiry and reconciliation",
+    "responsibility": "Release expired reservations back to Redis shards; compare Redis vs DB sold counts every 30 s and correct drift; release preload buffer near the end."
+   },
+   {
+    "name": "Control plane and war room",
+    "responsibility": "Feature flags, degradation ladder, admission rate knob, gateway weights, per-tier SLO dashboards, runbooks."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Deal drop purchase (happy path)",
+    "steps": [
+     "T-30 min: deal pages, PDPs, prices, offers pushed to CDN and caches; Redis shards preloaded with 98% of quota split across 32 sub-counters; synthetic traffic warms JVMs and pools.",
+     "T-0: user taps Buy; gateway sees no admission token for this deal; Waiting Room ZADDs the user with a random score (if within the opening window) and returns position/ETA.",
+     "Client polls with jittered interval (3-5 s); admitter ZPOPMINs 25k users/s; user receives signed token {user, deal, exp}.",
+     "Client calls reserve with token and idempotency key; Deal service picks a shard (hash of user), runs Lua: check user not already holding, decrement shard if > 0, else try 2 more shards, write reservation hash with TTL 600 s.",
+     "On success, produce order intent to Kafka (acks=all) and return 202 with reservation id; on sold-out, mark shard empty (negative cache 5 s) and return Sold Out.",
+     "Order service consumes intent, inserts order PAYMENT_PENDING and runs UPDATE deal_quota SET sold = sold + 1 WHERE sku = ? AND sold < quota; 0 rows -> cancel and release.",
+     "User pays (UPI intent/collect or card); gateway callback -> Payment orchestrator verifies signature and amount -> Order CONFIRMED -> reservation marked SOLD -> fulfilment and notifications."
+    ]
+   },
+   {
+    "name": "Payment fails or reservation expires",
+    "steps": [
+     "Payment failure callback or 10-minute TTL with no payment success.",
+     "Order moves to CANCELLED; Deal service INCRs a shard (release) and removes user hold so they can retry if quota remains.",
+     "If a payment success arrives after cancellation (late UPI callback), orchestrator tries to re-reserve; if no quota, triggers automatic refund and notifies the user."
+    ]
+   },
+   {
+    "name": "Overload and degradation",
+    "steps": [
+     "SLO burn alert: checkout p99 > 1 s for 1 minute or error rate > 1%.",
+     "Control plane steps L0 -> L1: disable recommendations, reviews, personalised widgets (serve static fallbacks).",
+     "L2: reduce waiting room admission rate by 30%; increase CDN TTLs for listing pages from 10 s to 60 s.",
+     "L3: disable non-essential APIs (order history, wishlist sync), simplify search to cached top results.",
+     "L4: payments restricted to healthy gateways only; COD and EMI temporarily hidden if they depend on degraded services.",
+     "Each level has an owner, a trigger, and a reverse condition; stepping down happens one level at a time after 10 minutes stable."
+    ]
+   }
+  ],
+  "data_flow": "Reads flow from pre-warmed caches outward to the edge and rarely touch databases. Write demand flows through three valves: the waiting room (users/s), the Lua reservation (units, bounded by quota), and Kafka (orders/s into MySQL). Money flows through payment orchestration with callbacks and polling, and state converges through the order state machine. Reconciliation closes the loop between Redis (fast, possibly lossy on failover) and MySQL (source of truth)."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/deals/{dealId}/queue",
+    "request": "Auth; device fingerprint; bot score header from edge",
+    "response": "{state:'WAITING', position, etaSec, pollAfterMs} or {state:'ADMITTED', token}",
+    "notes": "Idempotent per user; position from ZRANK; pollAfterMs jittered 3-5 s."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/deals/{dealId}/queue/status",
+    "request": "Auth",
+    "response": "Same as above; 'SOLD_OUT' once quota is gone",
+    "notes": "Served from Redis; very cheap; edge-cached negative 'SOLD_OUT' for 5 s."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/deals/{dealId}/reserve",
+    "request": "Admission token; Idempotency-Key; {qty:1, pincode}",
+    "response": "202 {reservationId, expiresAt} | 409 LIMIT_REACHED | 410 SOLD_OUT",
+    "notes": "Token verified by HMAC locally (no DB call); Lua script p99 < 2 ms."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/checkout",
+    "request": "Idempotency-Key; {reservationId | cartId, addressId, paymentMethod, offerId}",
+    "response": "{orderId, paymentIntent:{gateway, upiIntentUrl | redirectUrl}, amount}",
+    "notes": "Applies bank offer with budget check; creates payment intent."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/payments/callback/{gateway}",
+    "request": "Gateway signed payload {txnId, orderId, status, amount}",
+    "response": "200",
+    "notes": "Verify signature, amount and currency; idempotent on txnId; also reconciled by polling."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/admin/sale/degrade",
+    "request": "{level: 0..5, reason}",
+    "response": "{level, appliedAt}",
+    "notes": "Audited; propagates via flag service in < 5 s."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Deal",
+    "store": "MySQL (config) + Redis/Aerospike cache",
+    "fields": [
+     "deal_id",
+     "sku_id",
+     "deal_price",
+     "quota",
+     "per_user_limit",
+     "slot_start",
+     "slot_end",
+     "shards",
+     "preload_pct"
+    ],
+    "keys": "PK deal_id",
+    "notes": "Immutable once slot starts except emergency pause."
+   },
+   {
+    "entity": "DealQuotaShard",
+    "store": "Redis cluster",
+    "fields": [
+     "key deal:{id}:stock:{0..31} -> int",
+     "deal:{id}:soldout:{s} -> flag (TTL 5 s)"
+    ],
+    "keys": "One key per shard; hash tags spread shards across cluster slots",
+    "notes": "Preloaded to floor(quota x 0.98 / shards); remainder kept in a reserve pool released later."
+   },
+   {
+    "entity": "Reservation",
+    "store": "Redis hash + Kafka intent",
+    "fields": [
+     "reservation_id",
+     "deal_id",
+     "user_id",
+     "shard",
+     "created_at",
+     "expires_at",
+     "state"
+    ],
+    "keys": "Key resv:{id}; user hold key deal:{id}:user:{uid} (SET NX, TTL 600 s)",
+    "notes": "Expiry handled by a sweeper scanning a ZSET of expires_at, not keyspace notifications alone."
+   },
+   {
+    "entity": "Order",
+    "store": "MySQL sharded by user_id (Vitess)",
+    "fields": [
+     "order_id",
+     "user_id",
+     "deal_id",
+     "reservation_id",
+     "amount",
+     "state",
+     "payment_txn_id",
+     "created_at",
+     "version"
+    ],
+    "keys": "PK order_id; unique (reservation_id); index (user_id, created_at)",
+    "notes": "Unique reservation_id makes order creation idempotent."
+   },
+   {
+    "entity": "DealQuotaLedger",
+    "store": "MySQL (single row per deal, separate shard for hot deals)",
+    "fields": [
+     "deal_id",
+     "quota",
+     "sold",
+     "released"
+    ],
+    "keys": "PK deal_id",
+    "notes": "UPDATE ... SET sold = sold + 1 WHERE sold < quota is the final oversell guard; batched by order consumers."
+   },
+   {
+    "entity": "PaymentTxn",
+    "store": "MySQL",
+    "fields": [
+     "txn_id",
+     "order_id",
+     "gateway",
+     "method",
+     "amount",
+     "status",
+     "idempotency_key",
+     "updated_at"
+    ],
+    "keys": "PK txn_id; unique (order_id, attempt)",
+    "notes": "Status polled for PENDING > 2 min."
+   }
+  ],
+  "classes": [
+   {
+    "name": "WaitingRoom",
+    "responsibility": "Enqueue, rank and admit users per deal slot.",
+    "methods": [
+     "join(deal, user): Position",
+     "status(deal, user)",
+     "admitBatch(deal, n)",
+     "issueToken(user, deal): SignedToken"
+    ]
+   },
+   {
+    "name": "DealInventory",
+    "responsibility": "Atomic reservation and release over sharded counters.",
+    "methods": [
+     "reserve(deal, user, idemKey): Reservation | SoldOut | LimitReached",
+     "release(reservation)",
+     "markSold(reservation)",
+     "stockHint(deal)"
+    ]
+   },
+   {
+    "name": "OrderIntentConsumer",
+    "responsibility": "Turn intents into orders with DB guard.",
+    "methods": [
+     "onIntent(intent)",
+     "createOrderIdempotent(intent)",
+     "guardQuota(deal): bool"
+    ]
+   },
+   {
+    "name": "PaymentOrchestrator",
+    "responsibility": "Route, track and reconcile payments.",
+    "methods": [
+     "createIntent(order, method)",
+     "route(bank, method): Gateway",
+     "onCallback(payload)",
+     "pollPending()",
+     "refund(txn)"
+    ]
+   },
+   {
+    "name": "DegradationController",
+    "responsibility": "Apply and roll back degradation levels.",
+    "methods": [
+     "evaluateSLOs()",
+     "stepUp(level, reason)",
+     "stepDown()",
+     "isEnabled(feature)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Atomic reservation Lua script (per shard)",
+    "explain": "Runs atomically inside Redis: rejects a second hold by the same user, decrements the shard only if positive, and records the reservation with a TTL in one step, so there is no race between check and decrement. Keys for one call must share a hash slot, so the user-hold key is stored per shard group or checked via a separate SET NX first.",
+    "pseudocode": "-- KEYS[1]=stock shard, KEYS[2]=user hold key, KEYS[3]=expiry zset\n-- ARGV[1]=reservation_id, ARGV[2]=ttl_s, ARGV[3]=now\nif redis.call('EXISTS', KEYS[2]) == 1 then return -2 end   -- limit reached\nlocal s = tonumber(redis.call('GET', KEYS[1]) or '0')\nif s <= 0 then return -1 end                              -- shard empty\nredis.call('DECR', KEYS[1])\nredis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])\nredis.call('ZADD', KEYS[3], ARGV[3] + ARGV[2], ARGV[1])\nreturn 1"
+   },
+   {
+    "name": "Shard selection with fallback and sold-out detection",
+    "explain": "Start at a shard derived from the user id so load spreads evenly; on an empty shard, try a few others; consult negative-cache flags to skip known-empty shards; declare sold out only when all shards report empty.",
+    "pseudocode": "def reserve(deal, user, idem):\n  if cache.get(idem): return cache.get(idem)            # idempotent replay\n  start = hash(user) % N\n  for k in range(N):\n    s = (start + k * 7) % N                             # stride to spread probes\n    if local_soldout[deal][s]: continue\n    r = lua_reserve(deal, s, user, resv_id(), 600)\n    if r == 1: produce_intent(deal, user, s); return cache.put(idem, OK)\n    if r == -2: return LIMIT_REACHED\n    local_soldout[deal][s] = True                       # 5 s TTL\n  return SOLD_OUT"
+   },
+   {
+    "name": "Waiting room admission control",
+    "explain": "Users who arrive in the opening window (e.g. first 60 s) get random scores so script speed gives no advantage; later arrivals get timestamp scores. An admitter pops batches at a rate adjusted by downstream health (AIMD on checkout error rate).",
+    "pseudocode": "def join(deal, user, now):\n  score = random() if now < deal.start + 60 else now - deal.start + 1\n  redis.zadd(f'wr:{deal}', {user: score}, nx=True)\ndef admitter(deal):\n  rate = 25000\n  every 1s:\n    batch = redis.zpopmin(f'wr:{deal}', rate)\n    for u in batch: redis.set(f'adm:{deal}:{u}', sign(u, deal, now+600), ex=600)\n    if checkout_err > 1% or p99 > 1s: rate = int(rate * 0.7)   # multiplicative decrease\n    else: rate = min(rate + 1000, MAX)                          # additive increase\n    if all_shards_empty(deal): broadcast_soldout(deal); stop"
+   }
+  ],
+  "sequence": "App        Edge/GW     WaitingRoom    DealInv(Redis Lua)   Kafka    OrderSvc(MySQL)  PaymentOrch\n |-- Buy ---->|            |                 |               |            |              |\n |            |-- join --->| ZADD rand score |               |            |              |\n |<-- pos 41k, poll 4s ----|                 |               |            |              |\n |-- poll --->|----------->| ZPOPMIN batch   |               |            |              |\n |<-- token (HMAC, 10m) ---|                 |               |            |              |\n |-- reserve(token, idem) ------------------>| EVALSHA ok    |            |              |\n |            |            |                 |-- intent ---->| acks=all   |              |\n |<-- 202 resv, exp 10m ---------------------|               |-- consume->|              |\n |            |            |                 |               | UPDATE sold<quota ok      |\n |-- checkout(resv, UPI) ---------------------------------------------- >|-- intent --->|\n |<-- UPI intent URL -------------------------------------------------------------------|\n |   (user approves in UPI app)                                          |<- callback --|\n |            |            |                 |<-- markSold --|-- CONFIRMED|              |\n |<-- push: order confirmed -----------------------------------------------|             |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Redis primary fails over and the replica missed the last few decrements",
+   "handling": "Preload only 98% of quota; DB conditional update is the final guard; reconciliation every 30 s recomputes remaining = quota - sold - active reservations and corrects shards."
+  },
+  {
+   "case": "User taps Buy five times on a flaky 4G connection",
+   "handling": "Idempotency key per tap-session; per-user hold key in Lua rejects a second reservation; gateway dedupes within 10 s."
+  },
+  {
+   "case": "UPI collect request approved after the 10-minute reservation expired",
+   "handling": "Orchestrator attempts re-reserve; if quota is gone, automatic refund within T+0/T+1 and a clear notification; never silently keep the money."
+  },
+  {
+   "case": "Payment callback never arrives",
+   "handling": "Poll gateway status API for PENDING > 2 minutes with backoff; final state by T+30 minutes; refund or confirm."
+  },
+  {
+   "case": "All shards for a deal are empty but some reservations will expire",
+   "handling": "Sold-out shown as 'Sold out, check back' rather than final; expiry sweeper releases units back to shards and admitter resumes for remaining queue."
+  },
+  {
+   "case": "Bot farms with thousands of new accounts",
+   "handling": "Account-age gate (> 14 days or prior order), device fingerprint and payment instrument limits, edge bot score, proof-of-work for suspicious sessions; post-sale cancellation of linked orders."
+  },
+  {
+   "case": "Same user on two devices",
+   "handling": "Admission token bound to user; per-user hold key is per user not per device; second device gets LIMIT_REACHED."
+  },
+  {
+   "case": "Hot key: all 300k attempts/s for one phone land on one Redis key",
+   "handling": "32 shard keys spread across cluster slots; local negative cache; the waiting room caps attempts so per-shard load is ~1k ops/s."
+  },
+  {
+   "case": "Clock skew between app servers deciding the slot start",
+   "handling": "Slot start enforced by the Deal service using Redis server TIME or a single time source; clients show a countdown but the server gates."
+  },
+  {
+   "case": "Cache stampede when a PDP cache entry expires at peak",
+   "handling": "Pre-warm with long TTL plus background refresh; request coalescing (single flight) per key; serve stale-while-revalidate."
+  },
+  {
+   "case": "Bank offer budget exhausted mid-checkout",
+   "handling": "Offer budget is a separate atomic counter reserved at checkout with the order; if exhausted, show the new price before payment and require re-confirmation."
+  },
+  {
+   "case": "Kafka consumer lag grows to minutes",
+   "handling": "Reservations already hold the units, so correctness holds; scale consumers to partitions; extend reservation TTL proportionally; show 'confirming your order'."
+  },
+  {
+   "case": "Order created but intent replayed after consumer crash",
+   "handling": "Unique constraint on reservation_id in orders; duplicate insert is a no-op and the DB quota update is skipped."
+  },
+  {
+   "case": "Pincode not serviceable for the deal",
+   "handling": "Check serviceability before reserve (cached pincode -> FC map) so quota is not burned on undeliverable reservations."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "CDN (Akamai / Cloudflare / in-house edge)",
+   "layer": "Edge",
+   "overview": "Geographically distributed caches with WAF and bot management.",
+   "why": "Absorb ~95% of 1M req/s, block bots early, serve deal pages with 5-10 s TTL and stale-while-revalidate.",
+   "alternatives": "Origin-only serving (would need 20x more capacity), static pre-rendered pages only (loses freshness)."
+  },
+  {
+   "name": "Redis Cluster (with Lua)",
+   "layer": "Hot inventory and waiting room",
+   "overview": "In-memory key-value store; scripts execute atomically on a single shard.",
+   "why": "Sub-millisecond atomic check-and-decrement at ~100k ops/s per shard; sorted sets for the waiting room.",
+   "alternatives": "Aerospike (strong consistency mode, persistence, used at very large scale in Indian e-commerce), DB row locks (too slow on a hot row)."
+  },
+  {
+   "name": "Aerospike",
+   "layer": "Read caches / session / product data",
+   "overview": "Distributed hybrid-memory KV store with SSD persistence and predictable sub-ms latency.",
+   "why": "Serves product, price and session lookups at tens of millions of QPS with persistence and XDR.",
+   "alternatives": "Redis (simpler, memory-only cost), Cassandra (higher latency)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Async pipeline",
+   "overview": "Partitioned replicated log.",
+   "why": "Buffers order intents and payment events; smooths writes into MySQL; replay for recovery.",
+   "alternatives": "RabbitMQ (fine at this rate, weaker replay), direct synchronous writes (couples users to DB latency)."
+  },
+  {
+   "name": "MySQL with Vitess (sharded)",
+   "layer": "Orders, ledger, payments",
+   "overview": "Relational store with transactions, sharded by a vitess keyspace.",
+   "why": "ACID per order, unique constraints for idempotency, conditional update for quota guard.",
+   "alternatives": "PostgreSQL + Citus, Spanner/CockroachDB (global consistency, higher latency/cost), Cassandra (no transactions)."
+  },
+  {
+   "name": "Feature flag service (LaunchDarkly / in-house)",
+   "layer": "Control plane",
+   "overview": "Runtime flags evaluated in-process, pushed by streaming updates.",
+   "why": "Degradation ladder and kill switches applied fleet-wide within seconds without deploys.",
+   "alternatives": "Config files with redeploys (too slow during an incident)."
+  },
+  {
+   "name": "Kubernetes + pre-provisioned capacity",
+   "layer": "Compute",
+   "overview": "Container orchestration on private cloud with reserved nodes.",
+   "why": "Scale stateless tiers to forecasted peak hours before the sale; HPA as safety net.",
+   "alternatives": "Pure autoscaling (too slow for a step function), bare VMs (slower to rebalance)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Admission control and virtual waiting rooms",
+   "explain": "Admission control limits how much work enters a system so that what is admitted completes within its SLO, instead of letting everything in and having everything time out. The principle comes from queueing theory: as utilisation approaches 100%, queueing delay grows without bound, and in practice systems under overload suffer congestion collapse, where retries and timeouts consume capacity doing work that is then thrown away. A virtual waiting room is admission control made visible to users: arrivals are placed in a queue outside the system, given a position or estimate, and released at a controlled rate. It converts an unbounded burst into a bounded stream. Key design choices are what the queue protects (the whole site or only a scarce resource), how order is decided (strict arrival time rewards bots and low latency connections; randomizing within an opening window is fairer), how admitted users are identified (short-lived signed tokens bound to user and device), and how the admission rate adapts to downstream health, typically with an AIMD loop that backs off multiplicatively when error rates or latency rise.",
+   "in_this_design": "Only deal checkout is gated, so normal browsing and buying of non-deal SKUs is unaffected. Arrivals in the first 60 s get random scores in a Redis ZSET; an admitter ZPOPMINs ~25k users/s and issues HMAC-signed tokens valid for 10 minutes. The rate is cut by 30% when checkout p99 exceeds 1 s or errors exceed 1%, and raised by 1k/s per second when healthy. Once all shards are sold out, the queue is closed and everyone is told immediately.",
+   "key_points": [
+    "Admit only what downstream can finish within SLO; queue the rest outside.",
+    "Gate the scarce resource, not the whole site.",
+    "Randomize within the opening window; strict FIFO rewards bots.",
+    "Signed, short-lived tokens bound to user; verify without a DB call.",
+    "Adapt the rate with AIMD on downstream health."
+   ],
+   "qa": [
+    {
+     "q": "Why not just autoscale checkout to handle 300k/s?",
+     "a": "The real limits are the hot inventory key and payment partner TPS, which do not autoscale. More checkout pods would just push overload downstream."
+    },
+    {
+     "q": "How do you stop users bypassing the queue by calling reserve directly?",
+     "a": "Reserve requires a valid HMAC token tied to user, deal and expiry; the edge rejects calls without it."
+    },
+    {
+     "q": "What do users see if the deal sells out while they are at position 2 million?",
+     "a": "The admitter detects all shards empty and broadcasts SOLD_OUT; the status endpoint (edge-cached) returns it on the next poll, with a 'reservations may free up' note."
+    }
+   ]
+  },
+  {
+   "name": "Hot keys and counter sharding",
+   "explain": "In a partitioned store, load is spread by key, so a single extremely popular key lands on one shard no matter how many shards exist. That shard's CPU, network or lock becomes the system's ceiling: a classic hot partition. For counters, the standard technique is to split one logical counter into N sub-counters stored under different keys that hash to different shards; writers pick one sub-counter (randomly or by hashing the user), and readers sum them when they need the total. For a decrementing stock counter, each sub-counter holds a slice of the quota; a request that finds its slice empty probes others, and the item is sold out only when all slices are empty. The trade-offs are uneven drain (some slices empty early), more probes near the end, and slightly fuzzier totals. Complementary defences are local in-process caches of 'this slice is empty' flags with short TTLs (negative caching), request coalescing, and above all limiting the arrival rate upstream so even the hottest key sees bounded traffic.",
+   "in_this_design": "Each hero deal's quota is split across 32 Redis keys with hash tags that land on different cluster slots and nodes. Users start at hash(user) mod 32 and probe with a stride; empty slices are cached locally for 5 s. With ~25k admitted reservations/s per deal, each slice sees under 1k ops/s, far below Redis limits, and no single node is a hotspot.",
+   "key_points": [
+    "A hot key caps throughput at one shard regardless of cluster size.",
+    "Split counters into N slices on different nodes; sum for reads.",
+    "Probe other slices when one is empty; sold out only when all are.",
+    "Negative-cache empty slices locally to avoid probe storms.",
+    "Upstream admission control is the strongest hot-key defence."
+   ],
+   "qa": [
+    {
+     "q": "How do you choose N?",
+     "a": "Peak ops/s per deal divided by a safe per-shard budget (say 20k ops/s), rounded up to a power of two; 16-64 is typical."
+    },
+    {
+     "q": "Doesn't sharding risk overselling?",
+     "a": "No, each slice is decremented atomically and slices partition the quota; the sum can never go below zero. The risk is underselling briefly when slices drain unevenly, fixed by rebalancing near the end."
+    },
+    {
+     "q": "What about read hot keys like the deal PDP?",
+     "a": "Replicate the value: CDN and per-process caches with short TTL, or multiple copies of the key with a random suffix."
+    }
+   ]
+  },
+  {
+   "name": "Atomic check-and-set: Lua scripts, conditional updates and optimistic concurrency",
+   "explain": "Overselling is a race: two requests read 'stock = 1', both decide to sell, both decrement. The fix is to make check and update a single atomic operation. Options include pessimistic locks (SELECT ... FOR UPDATE) that serialise all buyers on one row, correct but limited to hundreds of operations per second under contention; optimistic concurrency, where the update is conditional (UPDATE ... SET sold = sold + 1 WHERE sold < quota, or compare-and-swap on a version), succeeds without locks when uncontended and simply reports 0 rows when it would violate the invariant; and server-side atomic scripts, as in Redis Lua, which execute the read, decision and write as one command because Redis runs commands one at a time per shard. Lua scripts must be short and deterministic, since they block the shard while running, and all keys must live in the same hash slot in a cluster. A layered design uses the fast in-memory atomic as the gate that rejects most requests, and the database conditional update as the final guard that guarantees the invariant even if the cache misbehaves.",
+   "in_this_design": "The Lua script checks the per-user hold, decrements the slice only if positive, and records the reservation with TTL in one atomic step. The order consumer then runs UPDATE deal_quota_ledger SET sold = sold + 1 WHERE deal_id = ? AND sold < quota; zero rows means cancel and refund if needed. Payment state transitions use a version column so concurrent callbacks and polls cannot both apply.",
+   "key_points": [
+    "Oversell is a check-then-act race; make check and act one atomic step.",
+    "Pessimistic row locks are correct but serialise to hundreds/s on a hot row.",
+    "Conditional updates (WHERE sold < quota) give lock-free safety.",
+    "Redis Lua is atomic per shard; keep it tiny, keys in one slot.",
+    "Fast gate in memory, final guard in the durable store."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use the database conditional update and skip Redis?",
+     "a": "A single hot row sustains roughly 5-10k conditional updates/s at best with contention and retries; our attempt rate is much higher. Redis rejects the excess cheaply; the DB sees only winners."
+    },
+    {
+     "q": "Can a Lua script be partially applied?",
+     "a": "No, Redis runs it atomically; but if the primary fails after the script and before replication, the replica may miss it, which is why we keep the DB guard and reconciliation."
+    },
+    {
+     "q": "Why put the per-user limit inside the same script?",
+     "a": "Checking it separately reintroduces a race where two concurrent taps by the same user both pass the check."
+    }
+   ]
+  },
+  {
+   "name": "Reservations with TTL and the saga pattern",
+   "explain": "A purchase spans several systems that cannot share a transaction: inventory, orders, payment gateways, banks. A saga models the workflow as a sequence of local transactions, each with a compensating action that undoes it if a later step fails: reserve stock (compensate: release), create order (compensate: cancel), capture payment (compensate: refund). The state of the saga is recorded durably, often as an order state machine, so a crash can resume or compensate. Reservations with a time-to-live are a special case: they hold a scarce resource provisionally and release it automatically if the next step does not happen in time, which prevents abandoned checkouts from locking stock forever. TTL choice is a trade-off between giving users enough time to pay and returning unsold stock quickly. Late events, such as a payment success arriving after the hold expired, are the nasty case and need explicit handling: try to re-acquire, otherwise compensate.",
+   "in_this_design": "Reservation TTL is 10 minutes (15 for pending UPI collect). The order state machine RESERVED -> PAYMENT_PENDING -> CONFIRMED / CANCELLED is the saga log. A sweeper reads a ZSET of expiries every second and releases units; a late payment success triggers re-reserve or automatic refund. Every transition is idempotent and keyed by order id.",
+   "key_points": [
+    "Sagas replace distributed transactions with local steps plus compensations.",
+    "Persist saga state (order state machine) so crashes resume cleanly.",
+    "TTL reservations stop abandoned checkouts from locking stock.",
+    "Plan for late events: re-acquire or compensate, never ignore.",
+    "Every step and compensation must be idempotent."
+   ],
+   "qa": [
+    {
+     "q": "Why not hold the unit until payment succeeds no matter how long?",
+     "a": "Abandoned checkouts would lock deal stock; for a 1,000-unit deal, even 20% abandonment means 200 units unsold for the slot."
+    },
+    {
+     "q": "How do you release on expiry reliably?",
+     "a": "A sweeper over a sorted set of expiry times, not only Redis key expiry notifications, which are best effort and can be missed."
+    },
+    {
+     "q": "What if the refund call fails?",
+     "a": "Refund is itself a retried, idempotent step with its own state; it retries with backoff and escalates to ops if pending beyond SLA."
+    }
+   ]
+  },
+  {
+   "name": "Cache warming, stampede protection and stale-while-revalidate",
+   "explain": "Caches make reads cheap only when they are warm. At a sale start, cold caches mean every request misses and goes to origin simultaneously, and even a warm cache can trigger a stampede when a popular key expires and thousands of requests miss at once and recompute the same value. Defences come in layers. Pre-warming loads known-hot keys (deal pages, prices, offers, serviceability, images) into CDN and caches before traffic arrives, often by replaying a synthetic crawl. Request coalescing (single-flight) lets only one request per key recompute while others wait for its result. Stale-while-revalidate serves the old value while one background refresh runs. Jittered TTLs avoid synchronized expiry. Early refresh (probabilistic or scheduled) renews hot keys before they expire. Runtime warm-up matters too: JIT compilation, connection pools, TLS session caches and DNS lookups all need traffic before peak.",
+   "in_this_design": "From T-60 to T-30 minutes, a warmer job pushes 300 deal PDPs, top 1M product pages, price and offer snapshots and pincode-FC maps into CDN, Aerospike/Redis and local caches; app fleets receive synthetic traffic to warm JVMs and pools. Deal pages use 5-10 s TTL with stale-while-revalidate; cache clients use single-flight and TTL jitter of +/-20%.",
+   "key_points": [
+    "Pre-warm known hot keys and runtimes before the step function.",
+    "Single-flight: one recompute per key, others wait.",
+    "Serve stale while revalidating in the background.",
+    "Jitter TTLs; refresh hot keys early.",
+    "Warm JIT, pools, TLS and DNS, not just data."
+   ],
+   "qa": [
+    {
+     "q": "A price change for a deal must go live at 12:00 exactly. How with caches?",
+     "a": "Pre-publish both versions with an effective-from timestamp; clients and edge select by server time, so no cache flush is needed at 12:00."
+    },
+    {
+     "q": "Why not just set very long TTLs?",
+     "a": "Stock hints and prices would be stale; we use short TTLs with SWR plus explicit purge for errors."
+    },
+    {
+     "q": "How do you know the warming worked?",
+     "a": "Measure cache hit ratio and origin QPS during the final rehearsal and at T-5 minutes; alert if hit ratio is below target."
+    }
+   ]
+  },
+  {
+   "name": "Load shedding, bulkheads and the degradation ladder",
+   "explain": "When demand exceeds capacity, something must give, and the question is whether you choose what or the system chooses randomly by timing out. Load shedding rejects some requests early and cheaply so the rest succeed, ideally by priority: payment and checkout matter more than recommendations. Bulkheads isolate resources (thread pools, connection pools, clusters) per dependency or feature so that one slow dependency cannot exhaust shared resources and take everything down. Circuit breakers stop calling a failing dependency for a cool-off period and return a fallback. Timeouts must be tight and budgets propagated so callers do not wait longer than their own SLO. A degradation ladder packages these into pre-agreed levels: each level lists which features are turned off or simplified, the trigger to enter, the owner who approves, and the condition to exit. Because the ladder is designed and rehearsed before the event, the war room can act in seconds rather than debating under pressure.",
+   "in_this_design": "Levels: L0 normal; L1 disable recommendations, reviews, personalised widgets; L2 cut waiting room admission by 30%, raise listing TTLs to 60 s; L3 disable order history, wishlist sync, non-critical search features; L4 restrict payments to healthy gateways and hide dependent options; L5 static deal pages and checkout only. The gateway sheds by priority class, each downstream has its own bulkhead pool, and payment gateways have per-gateway circuit breakers.",
+   "key_points": [
+    "Choose what fails: shed low-priority work early and cheaply.",
+    "Bulkheads stop one slow dependency from exhausting shared pools.",
+    "Circuit breakers plus fallbacks contain failing dependencies.",
+    "Pre-wired, rehearsed ladder with triggers, owners and exit criteria.",
+    "Step down one level at a time after stability."
+   ],
+   "qa": [
+    {
+     "q": "What do you shed first and why?",
+     "a": "Features that do not change whether a user can buy: recommendations, reviews, personalisation. They are expensive and their absence costs little conversion."
+    },
+    {
+     "q": "How do you avoid flapping between levels?",
+     "a": "Hysteresis: different enter and exit thresholds and a minimum dwell time (e.g. 10 minutes) before stepping down."
+    },
+    {
+     "q": "How fast must a level change propagate?",
+     "a": "Seconds: flags are streamed to in-process SDKs; we test propagation time in rehearsals."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and exactly-once effects across retries",
+   "explain": "Mobile clients on unreliable networks retry, gateways retry, consumers redeliver. Without care, retries create duplicate reservations, duplicate orders and double charges. Idempotency means applying the same request twice has the same effect as once. The client generates an idempotency key per user intent (one tap on Pay) and sends it with every retry; the server stores key -> outcome atomically with the effect and returns the stored outcome for repeats. Downstream, natural keys enforce the same: a unique constraint on reservation_id in orders, a unique transaction id for payment callbacks. Message queues give at-least-once delivery, so consumers must be idempotent too. The outbox pattern ensures a DB change and the event announcing it are not split: write both in one local transaction, then relay the outbox to Kafka.",
+   "in_this_design": "Reserve, checkout and pay all require Idempotency-Key headers stored for 1 hour; orders have unique reservation_id; payment callbacks are deduped on gateway txn id; order state changes emit events through an outbox table relayed to Kafka, so fulfilment never misses or doubles an order.",
+   "key_points": [
+    "Clients retry; servers must make retries harmless.",
+    "Store key -> outcome atomically with the effect.",
+    "Unique constraints on natural keys are the last line of defence.",
+    "Consumers must be idempotent under at-least-once delivery.",
+    "Outbox keeps state change and event publication consistent."
+   ],
+   "qa": [
+    {
+     "q": "A user's Pay request times out and they tap again. What prevents a double charge?",
+     "a": "Same idempotency key from the client for that checkout; the server returns the existing payment intent rather than creating a new one; the gateway also dedupes on our order id."
+    },
+    {
+     "q": "How long should idempotency keys live?",
+     "a": "Longer than the maximum retry horizon of the client and gateway, e.g. 1 hour for API keys and days for payment txn ids."
+    },
+    {
+     "q": "Why the outbox instead of writing to DB and then producing to Kafka?",
+     "a": "A crash between the two leaves an order without an event or an event without an order; the outbox makes it one local transaction."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Where to enforce the quota",
+   "options": "DB row lock / DB conditional update only / Redis atomic gate + DB guard / pre-minted tokens",
+   "choice": "Redis Lua gate on sharded counters plus DB conditional update",
+   "why": "Redis handles the attempt rate; the DB guarantees no oversell even if Redis loses writes on failover."
+  },
+  {
+   "decision": "Waiting room scope",
+   "options": "Whole site / deal checkout only",
+   "choice": "Deal checkout only",
+   "why": "Most traffic is browsing and buying non-deal items; queueing them would hurt GMV for no reason."
+  },
+  {
+   "decision": "Queue fairness",
+   "options": "Strict FIFO by arrival / randomized in opening window / lottery",
+   "choice": "Randomized for the first 60 s, FIFO after",
+   "why": "Removes the advantage of bots and low-latency connections at the moment of drop while staying intuitive later."
+  },
+  {
+   "decision": "Sync vs async order creation",
+   "options": "Synchronous DB write in request / async via Kafka",
+   "choice": "Async via Kafka after reservation",
+   "why": "Keeps user latency at Redis speed; smooths DB writes; reservation already guarantees the unit."
+  },
+  {
+   "decision": "Preload buffer",
+   "options": "Preload 100% / preload 98% and release later",
+   "choice": "98% with reconciliation",
+   "why": "Absorbs Redis-DB drift from failovers; the 2% is released near the end, trading tiny delay for zero oversell."
+  },
+  {
+   "decision": "Reservation TTL",
+   "options": "2 min / 10 min / until payment",
+   "choice": "10 min (15 for UPI collect pending)",
+   "why": "Enough to complete UPI or card 3DS; short enough to recycle abandoned units within the slot."
+  },
+  {
+   "decision": "Capacity strategy",
+   "options": "Reactive autoscale / pre-provision forecast peak + autoscale",
+   "choice": "Pre-provision plus autoscale safety net",
+   "why": "The spike is a known step function; boot and warm times are longer than the ramp."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Redis shard primary failover",
+   "behavior": "Reservations on that shard fail for ~1-2 s and retry on other shards; possible lost decrements caught by DB guard and reconciliation; no oversell."
+  },
+  {
+   "failure": "Payment gateway degraded (success rate drops from 90% to 40%)",
+   "behavior": "Circuit breaker opens; orchestrator shifts weight to healthy gateways per bank/method; reservations extended 5 min for affected users."
+  },
+  {
+   "failure": "Kafka order consumer lag",
+   "behavior": "Users see 'confirming'; reservations still hold units; consumers scaled; TTL extended; no lost orders because intents are durable."
+  },
+  {
+   "failure": "Recommendation service latency spike",
+   "behavior": "Bulkhead and 50 ms timeout return a static fallback; L1 disables it if it persists; checkout unaffected."
+  },
+  {
+   "failure": "CDN partial outage in a region",
+   "behavior": "GSLB shifts traffic to another CDN or POP; origin protected by shedding of low-priority classes; waiting room keeps admission bounded."
+  },
+  {
+   "failure": "Order DB shard down",
+   "behavior": "Writes for users on that shard queue in Kafka; reads of their order history degrade; reservations hold; after recovery, consumers drain."
+  },
+  {
+   "failure": "Bot attack floods the queue join endpoint",
+   "behavior": "Edge WAF and bot scoring drop most; per-device and per-IP limits; proof-of-work challenges; queue capacity soft-capped."
+  }
+ ],
+ "metrics": [
+  "Admitted users/s vs reservation attempts/s vs successful reservations/s per deal.",
+  "Remaining quota per deal (Redis sum) vs DB ledger delta; alert on any negative or drift > 0.5%.",
+  "Oversell count (must be 0) and paid-without-order count with age.",
+  "Reservation-to-payment conversion and expiry rate.",
+  "Payment success rate and latency per gateway, bank and method (UPI, cards, EMI).",
+  "p50/p99 latency and error rate per tier; CDN hit ratio and origin QPS.",
+  "Kafka consumer lag per topic; DB write latency per shard.",
+  "Waiting room size, admit rate, average wait, abandonment; bot block rate.",
+  "Current degradation level and time spent per level."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not pre-mint N tokens instead of counters?",
+   "a": "Pre-minted tokens (a list of N unit tokens, LPOP to buy) also prevent oversell and make winners countable, but release and per-user limits are more awkward and a corrupted list is hard to fix. Sharded counters with reservations are more flexible; for very small quotas (e.g. 100 units), tokens are attractive."
+  },
+  {
+   "q": "How do you handle deal stock that is spread across warehouses?",
+   "a": "Deal quota is a national pool for the sale; FC allocation happens after confirmation using normal inventory with serviceability checked before reserve. If allocation fails, the order is fulfilled from another FC or cancelled with refund; quota sizes are set below sum of allocable stock."
+  },
+  {
+   "q": "How do you rehearse for the sale?",
+   "a": "Game days with production-like load (shadow or synthetic) at 1.5x forecast, chaos tests (kill Redis primaries, slow a gateway), runbook drills for each degradation level, and freeze on risky changes a week before."
+  },
+  {
+   "q": "What if the business wants strict first-come-first-served?",
+   "a": "Use arrival timestamp at the edge (server-side) as the score, accept that bots and latency matter more, and invest more in bot defence; explain the fairness trade-off."
+  },
+  {
+   "q": "How do bank offers with budgets fit in?",
+   "a": "Offer budget is another hot counter reserved atomically at checkout alongside the order and released on failure; same sharding and reconciliation."
+  },
+  {
+   "q": "How would you make this multi-region?",
+   "a": "Inventory for a deal stays single-homed (one region owns its counters) to avoid cross-region consensus on the hot path; browse is served from all regions; DR region has warm replicas and can take over deal ownership with a quota handoff."
+  },
+  {
+   "q": "What is your single most important metric during the first 10 minutes?",
+   "a": "Successful reservations per second against admitted users per second, alongside payment success rate; if the gap widens, the bottleneck has moved and admission must adapt."
+  }
+ ],
+ "key_points": [
+  "Shape demand before it reaches inventory: CDN for reads, waiting room only for deal checkout.",
+  "Bound every arrow to the slowest dependency behind it: hot key, then payment TPS.",
+  "Atomic Lua reserve on sharded counters, per-user limit inside the script.",
+  "Fast gate in Redis, final guard in the DB: UPDATE ... WHERE sold < quota.",
+  "Preload ~98% and reconcile every 30 s to survive Redis failover without oversell.",
+  "Reservations with TTL plus a saga; late payment success means re-reserve or auto refund.",
+  "Async order creation through Kafka with idempotency keys and unique reservation_id.",
+  "Pre-warm data and runtimes; single-flight and stale-while-revalidate against stampedes.",
+  "Rehearsed degradation ladder with owners and triggers; shed recommendations before anything else.",
+  "Multi-gateway payment routing with circuit breakers; payment partners are the real ceiling."
+ ],
+ "quiz": [
+  {
+   "q": "Two buyers read stock = 1 and both decrement. What is the most scalable correct fix for a hero deal?",
+   "options": [
+    "SELECT ... FOR UPDATE on the stock row",
+    "Atomic check-and-decrement in a Redis Lua script on sharded counters, with a DB conditional update as final guard",
+    "Read stock from cache before decrementing",
+    "Retry on conflict in the application"
+   ],
+   "answer": 1,
+   "why": "Atomic server-side check-and-decrement removes the race at high throughput. Row locks are also correct but serialise everyone to a few hundred per second on one hot row."
+  },
+  {
+   "q": "Why put the waiting room only in front of deal checkout?",
+   "options": [
+    "Browse and normal purchases are not capacity-limited by the scarce resource; queuing them would lose GMV",
+    "It is cheaper to build",
+    "CDNs cannot serve queue pages",
+    "Regulations require it"
+   ],
+   "answer": 0,
+   "why": "Gate the scarce resource only. CDNs serve queue pages fine; the reason is avoiding unnecessary friction on non-deal traffic."
+  },
+  {
+   "q": "A hero deal gets 25k reservations/s. With 32 sub-counters, roughly what does each shard see?",
+   "options": [
+    "About 25k ops/s",
+    "About 8k ops/s",
+    "About 100k ops/s",
+    "Under 1k ops/s"
+   ],
+   "answer": 3,
+   "why": "25,000 / 32 is about 780 ops/s. 25k/s is the tempting answer if you forget that load spreads across slices."
+  },
+  {
+   "q": "Why preload Redis with 98% of quota instead of 100%?",
+   "options": [
+    "To create artificial scarcity",
+    "Because Redis cannot store exact numbers",
+    "To absorb decrements lost during a failover so the DB guard rarely rejects paid orders",
+    "To save memory"
+   ],
+   "answer": 2,
+   "why": "Async replication can lose the last writes on failover; the buffer plus reconciliation keeps oversell at zero. Artificial scarcity is not the goal; the buffer is released later."
+  },
+  {
+   "q": "A UPI payment succeeds 12 minutes after the 10-minute reservation expired. Best handling?",
+   "options": [
+    "Ignore the payment",
+    "Try to re-reserve; if quota is gone, auto-refund and notify",
+    "Confirm the order anyway",
+    "Extend all reservations to 1 hour"
+   ],
+   "answer": 1,
+   "why": "Late events need explicit compensation. Confirming anyway risks oversell; ignoring keeps the user's money."
+  },
+  {
+   "q": "Which queue ordering best resists bots at the moment of a drop?",
+   "options": [
+    "Random scores for arrivals in the opening window",
+    "Strict FIFO by client timestamp",
+    "Strict FIFO by server arrival time",
+    "Priority to users with the most past orders"
+   ],
+   "answer": 0,
+   "why": "Random ordering in the window removes the speed advantage of scripts. Server-arrival FIFO is the tempting fair option but still rewards bots with fast connections and many retries."
+  },
+  {
+   "q": "During peak, checkout p99 crosses 1 s. What is the first rung of a sensible degradation ladder?",
+   "options": [
+    "Disable payments",
+    "Close the waiting room",
+    "Turn off the CDN",
+    "Disable recommendations, reviews and personalisation widgets"
+   ],
+   "answer": 3,
+   "why": "Shed features that do not affect the ability to buy. Closing the waiting room halts sales; cutting admission rate comes later."
+  },
+  {
+   "q": "Roughly how many page views/s from 8M concurrent sessions each loading a page every 8 s?",
+   "options": [
+    "10k/s",
+    "100k/s",
+    "1M/s",
+    "10M/s"
+   ],
+   "answer": 2,
+   "why": "8,000,000 / 8 = 1,000,000 per second."
+  },
+  {
+   "q": "Why create orders asynchronously through Kafka after the reservation?",
+   "options": [
+    "Kafka is faster than MySQL at transactions",
+    "The reservation already guarantees the unit; async creation keeps user latency low and smooths DB writes",
+    "MySQL cannot handle 10k writes/s",
+    "To avoid idempotency"
+   ],
+   "answer": 1,
+   "why": "The hot path stays at Redis speed. Sharded MySQL can handle 10k/s; the point is decoupling bursts."
+  },
+  {
+   "q": "Expired reservations should be released by...",
+   "options": [
+    "A sweeper over a sorted set of expiry times, idempotently",
+    "Relying only on Redis key expiry notifications",
+    "Users cancelling manually",
+    "Nightly batch job"
+   ],
+   "answer": 0,
+   "why": "Keyspace notifications are best effort and can be missed during failover; a sweeper is reliable. Nightly is far too slow for a 2-minute recovery goal."
+  },
+  {
+   "q": "Why must the per-user limit be checked inside the same Lua script as the decrement?",
+   "options": [
+    "Lua is faster",
+    "Redis requires it",
+    "To save network bandwidth only",
+    "A separate check reintroduces a race where two concurrent taps both pass"
+   ],
+   "answer": 3,
+   "why": "Atomicity must cover the whole invariant. Speed is a side benefit, not the reason."
+  },
+  {
+   "q": "A gateway's success rate drops from 90% to 40% at peak. Best response?",
+   "options": [
+    "Retry each payment five times on the same gateway",
+    "Pause the sale",
+    "Open its circuit breaker and shift weight to healthy gateways per bank/method",
+    "Disable UPI entirely"
+   ],
+   "answer": 2,
+   "why": "Routing around a sick dependency preserves conversion. Hammering retries worsens the gateway and user wait."
+  },
+  {
+   "q": "What prevents a duplicate order when a Kafka intent is redelivered after a consumer crash?",
+   "options": [
+    "Kafka exactly-once delivery to MySQL",
+    "Unique constraint on reservation_id in the orders table",
+    "Consumer sleeping before commit",
+    "Larger partitions"
+   ],
+   "answer": 1,
+   "why": "The natural key makes the insert idempotent. Kafka transactions do not extend into MySQL."
+  },
+  {
+   "q": "A popular PDP cache key expires and 50k requests miss at once. Best mitigation?",
+   "options": [
+    "Single-flight recompute plus stale-while-revalidate and jittered TTLs",
+    "Shorter TTL",
+    "Increase DB pool size",
+    "Disable caching for that page"
+   ],
+   "answer": 0,
+   "why": "Coalescing and serving stale stops the stampede. A bigger DB pool just lets more duplicate work through."
+  },
+  {
+   "q": "Why pre-scale capacity before the sale instead of relying on autoscaling?",
+   "options": [
+    "Autoscaling is unreliable in Kubernetes",
+    "Pre-scaling is always cheaper",
+    "Autoscaling breaks Redis",
+    "Load arrives as a step function in seconds while nodes take minutes to boot and warm"
+   ],
+   "answer": 3,
+   "why": "Ramp time beats boot time. Pre-scaling costs more, but autoscaling cannot react fast enough."
+  },
+  {
+   "q": "Which metric best shows that the bottleneck has moved downstream of admission?",
+   "options": [
+    "CDN hit ratio rising",
+    "Queue size growing",
+    "Admitted users/s stays flat while successful reservations or payments per second fall",
+    "CPU on browse pods"
+   ],
+   "answer": 2,
+   "why": "A widening gap between admitted and completed means something after admission is choking. Queue growth is expected at a drop."
+  },
+  {
+   "q": "For a deal of only 100 units with extreme demand, which approach is especially attractive?",
+   "options": [
+    "Pessimistic DB lock",
+    "Pre-minted unit tokens popped atomically",
+    "No limit, cancel extras later",
+    "Client-side stock check"
+   ],
+   "answer": 1,
+   "why": "Token lists make the winner count exactly N and are easy at tiny quotas. Cancelling extras later is overselling with apologies."
+  },
+  {
+   "q": "Bank offer budgets (instant 10% off) should be enforced by...",
+   "options": [
+    "An atomic budget counter reserved at checkout with release on failure",
+    "Checking the total nightly",
+    "Trusting the gateway",
+    "Applying the discount after delivery"
+   ],
+   "answer": 0,
+   "why": "Budgets are another hot counter needing the same atomic reserve/release pattern. Nightly checks allow large overruns."
+  },
+  {
+   "q": "A user on flaky 4G taps Reserve three times. What makes this safe?",
+   "options": [
+    "Rate limiting alone",
+    "Shorter TTL",
+    "Client-side debounce only",
+    "Idempotency key plus the per-user hold key in the Lua script"
+   ],
+   "answer": 3,
+   "why": "Server-side idempotency and the hold key make duplicates harmless. Client debounce helps but cannot be trusted."
+  },
+  {
+   "q": "To prevent flapping between degradation levels, you should...",
+   "options": [
+    "Change levels every minute based on CPU",
+    "Let each service decide independently",
+    "Use hysteresis: separate enter/exit thresholds and a minimum dwell time",
+    "Only degrade manually after the sale"
+   ],
+   "answer": 2,
+   "why": "Hysteresis gives stability. Independent decisions per service produce inconsistent user experiences."
+  },
+  {
+   "q": "Why is the deal quota for one SKU kept single-homed in one region?",
+   "options": [
+    "Regions cannot run Redis",
+    "Cross-region consensus on every decrement would add tens of ms and failure coupling on the hottest path",
+    "To save cost",
+    "For data residency"
+   ],
+   "answer": 1,
+   "why": "Avoid distributed consensus on the hot key; failover hands off ownership instead. Cost is a minor factor."
+  }
+ ],
+ "references": [
+  {
+   "title": "System Design: Flash Sale - High-Concurrency Inventory, Queue-Based Purchase, and Oversell Prevention (techinterview.org)",
+   "url": "https://techinterview.org/system-design-flash-sale/"
+  },
+  {
+   "title": "How to design a flash sale system that doesn't oversell (HackerNoon)",
+   "url": "https://hackernoon.com/how-to-design-a-flash-sale-system-that-doesnt-oversell"
+  },
+  {
+   "title": "Flipkart's journey to 90 million QPS (Aerospike blog)",
+   "url": "https://aerospike.com/blog/flipkart-journey-90-million-qps"
+  },
+  {
+   "title": "Flipkart says sorry for sale day glitches (Quartz India)",
+   "url": "https://qz.com/india/277457/flipkart-says-sorry-for-sale-day-glitches-but-just-look-at-these-traffic-numbers"
+  },
+  {
+   "title": "Flash sale system design (singhajit.com)",
+   "url": "https://singhajit.com/flash-sale-system-design/"
+  },
+  {
+   "title": "Flipkart Big Billion Days tech blog (DEV Community)",
+   "url": "https://dev.to/zeeshanali0704/flipkart-big-billion-days-techblog-1b4j"
+  }
+ ]
+}

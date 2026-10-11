@@ -1,0 +1,1194 @@
+{
+ "slug": "graceful-degradation",
+ "title": "Design graceful degradation when a dependency fails",
+ "prompt": "Design graceful degradation when a dependency fails.",
+ "group": "reliability",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "Graceful degradation is a product decision expressed in architecture: decide in advance which features are essential, which can be served stale, and which can simply disappear, then build the detection, fallbacks and switches that make that happen automatically. The core tension is that fallback code paths are rarely exercised and can themselves cause outages, so the best degradations are static (precomputed, always-on) rather than clever emergency modes.",
+ "framework": {
+  "clarify": [
+   "Which product surface? Assume an e-commerce product page and checkout at 50k RPS peak page views, assembled from about 12 backend dependencies.",
+   "Which dependencies are hard requirements for the core job (view product, add to cart, pay) versus enrichments (recommendations, reviews, ads, personalization)?",
+   "For each dependency, what is an acceptable degraded answer: stale data (how stale), a generic default, omission of the widget, or a deferred action?",
+   "What are the correctness red lines? Never show a wrong price at payment, never oversell scarce stock beyond an agreed threshold, never confirm an unpaid order.",
+   "How is failure detected today and how fast must we react? Assume degrade within 10 s automatically, with manual kill switches as a backstop.",
+   "Is the failure a dependency being down, slow, or wrong? Slow and wrong are harder and more common than down.",
+   "Do we degrade per request (circuit breaker) or system wide (brownout mode under overload), or both?",
+   "What do users see? Do we tell them (banner: 'reviews temporarily unavailable') or silently hide?"
+  ],
+  "design": [
+   "Baseline: classify every dependency into tiers: T0 critical (catalog core, cart, pricing at checkout, payment), T1 important but substitutable (inventory display, delivery estimate, search ranking), T2 optional (recommendations, reviews, ads, personalization, recently viewed).",
+   "Page assembly service (BFF) calls dependencies in parallel with per-dependency timeouts and breakers; each widget has a declared degraded mode; T2 widgets render as empty slots or generic content if they miss the deadline.",
+   "Static stability: precomputed fallbacks always available locally (top-sellers list per category refreshed hourly, last-known prices and stock bands in a local cache, static product snapshot in CDN) so no new dependency is needed during failure.",
+   "Feature flag and kill switch service with criticality levels: on-call or automation can shed T2 then T1 features fleet wide in seconds (brownout), with a local cached copy of flags.",
+   "Write-path degradation: accept intent and process asynchronously (queue orders when the fulfillment system is down, take payment authorization now and capture later, buffer reviews), with idempotent consumers.",
+   "Observability and UX contract: every degraded response is tagged (degraded=reviews,recs), counted, and the client shows honest messaging where it matters."
+  ],
+  "defend": [
+   "Bottleneck: the critical path is only T0 calls; enrichment latency never blocks the page because T2 calls have a 100 ms budget and are dropped on miss.",
+   "Scale reads under failure: serve stale from multi-layer cache (CDN, Redis, in-process) with stale-if-error windows so a dead catalog DB still serves product pages for hours.",
+   "Scale writes under failure: queue-based load leveling absorbs order spikes when downstream fulfillment is slow; consumers drain at their own rate with backpressure.",
+   "Failure behaviour: timeouts and breakers detect; fallbacks are static and continuously exercised; load shedding drops low-priority traffic first; kill switches let humans force degraded mode.",
+   "Measure: degraded-response ratio per feature, revenue per session in degraded mode, stale-data age, fallback invocation rate, and SLO for T0 flows separately from full-fidelity page SLO.",
+   "Prove it: weekly chaos experiments that kill each T1/T2 dependency in a canary cell and assert that checkout conversion stays within 2% of control."
+  ],
+  "script": "I would start by separating what the user must be able to do from what makes the experience nicer. On a product page at 50k RPS with a dozen dependencies, only catalog, cart, price and payment are truly critical; reviews, recommendations, ads and personalization are optional. So step one is a dependency criticality map with a declared degraded mode for each: stale, default, hidden or deferred. The architecture follows: a page assembly layer that fans out in parallel with tight per-dependency timeouts and circuit breakers, so optional widgets drop out instead of slowing the page; statically stable fallbacks such as precomputed bestseller lists and last-known prices held locally, because a fallback that calls another service is just a new failure; a feature-flag kill switch to brown out whole tiers under overload; and an async path that accepts orders into a durable queue when fulfillment is down. Then I would defend the correctness red lines, like never charging a stale price, and show how we continuously test the degraded paths so they work on the day we need them."
+ },
+ "brd": {
+  "problem": "A product page depends on about 12 services. When any one of them fails today, the page often fails entirely: a recommendations outage last quarter caused a 9-minute product-page outage because the page waited on it synchronously with a 5 s timeout, and the error was propagated as a 500. Each minute of product-page downtime at sale peak costs significant GMV. The business wants failures in non-essential features to be invisible or nearly so, and failures in essential ones to degrade safely rather than catastrophically.",
+  "goals": [
+   "Keep browse-to-checkout working when any single T1 or T2 dependency is down.",
+   "Keep product pages viewable (possibly stale) for at least 4 hours of catalog database outage.",
+   "Make degraded modes explicit, owned and tested continuously rather than ad-hoc.",
+   "Give on-call one-click brownout controls to shed optional features under overload.",
+   "Never violate correctness red lines (price charged, payment status, order confirmation) while degraded."
+  ],
+  "non_goals": [
+   "Full multi-region disaster recovery (separate design).",
+   "Making every feature work perfectly during every failure.",
+   "Building a generic rules engine for arbitrary degradations in v1.",
+   "Degrading third-party seller portals and internal tools."
+  ],
+  "stakeholders": [
+   {
+    "who": "Customers",
+    "needs": "Pages load fast and checkout works even if some widgets are missing."
+   },
+   {
+    "who": "Product managers per widget",
+    "needs": "Agree on and own the degraded experience for their feature."
+   },
+   {
+    "who": "SRE / on-call",
+    "needs": "Kill switches, dashboards of degraded state, runbooks."
+   },
+   {
+    "who": "Finance and Legal",
+    "needs": "No mispriced orders, no oversold commitments beyond policy, auditable decisions."
+   },
+   {
+    "who": "Service owners",
+    "needs": "Their outage does not get blamed for a site-wide outage; protection from retry storms."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Checkout availability when any single T1/T2 dependency is down",
+    "target": ">= 99.9%"
+   },
+   {
+    "metric": "Product page p99 latency with T2 dependency slow",
+    "target": "< 600 ms (unchanged from healthy)"
+   },
+   {
+    "metric": "Conversion drop in degraded mode vs control",
+    "target": "< 5% for T2 loss, < 15% for T1 loss"
+   },
+   {
+    "metric": "Time to brownout via kill switch",
+    "target": "< 30 s fleet wide"
+   },
+   {
+    "metric": "Mispriced orders during degraded mode",
+    "target": "0"
+   }
+  ],
+  "constraints": [
+   "Peak traffic 10x normal on sale days; degradation must work at peak, not just at normal load.",
+   "Mobile apps on older versions must handle missing fields without crashing.",
+   "Prices and stock have regulatory and customer-trust constraints.",
+   "Teams own their services independently; the contract must be simple."
+  ],
+  "risks": [
+   {
+    "risk": "Fallback paths are rarely executed and broken when needed",
+    "mitigation": "Run fallbacks continuously (a small % of traffic or a canary cell always degraded) and in weekly game days."
+   },
+   {
+    "risk": "Fallback calls another dependency and cascades",
+    "mitigation": "Rule: fallbacks must be local or precomputed (static stability); review in design checklist."
+   },
+   {
+    "risk": "Stale data causes business harm (price changed)",
+    "mitigation": "Stale allowed for display only; re-validate at checkout; staleness limits per data type."
+   },
+   {
+    "risk": "Kill switch misuse or a flag service outage",
+    "mitigation": "Audited, role-based switches with TTL; clients cache flags and default to last known."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Shopper on mobile",
+    "needs": "Fast page, add to cart and pay, even on a bad day."
+   },
+   {
+    "name": "On-call SRE",
+    "needs": "Know what is degraded, switch features off, see impact."
+   },
+   {
+    "name": "Feature owner (e.g. reviews PM)",
+    "needs": "Define an acceptable degraded experience and see how often it is served."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want the product page to load even if reviews are down so that I can still buy.",
+   "As a shopper, I want to see a clear message if delivery estimates are unavailable so that I am not misled.",
+   "As a shopper, I want my order accepted even if the warehouse system is slow so that I do not lose the deal.",
+   "As an on-call SRE, I want to turn off recommendations and ads across the site in one action so that I free capacity for checkout during overload.",
+   "As an on-call SRE, I want a dashboard of which features are currently degraded and why so that I can communicate status.",
+   "As a reviews PM, I want to define that my widget hides itself when unavailable so that the page layout is not broken.",
+   "As a finance owner, I want checkout to re-validate price against the source of truth so that stale display prices never get charged.",
+   "As a mobile engineer, I want the API to mark fields as degraded so that the app can render placeholders instead of crashing."
+  ],
+  "functional": [
+   "Dependency registry with tier (T0/T1/T2), degraded mode, timeout budget, owner and staleness limit per dependency.",
+   "Page assembly (BFF) with parallel fan-out, per-call timeouts, circuit breakers and per-widget fallbacks.",
+   "Response envelope with a degraded list and per-field freshness timestamps.",
+   "Precomputed fallback datasets (bestsellers by category, default banners, product snapshots) refreshed on schedule and stored locally and in CDN.",
+   "Serve-stale caching with stale-while-revalidate and stale-if-error windows per data type.",
+   "Feature flag service supporting criticality-level kill switches and automatic brownout triggers based on load.",
+   "Async write path: durable queue for orders and events when downstream is unavailable, idempotent consumers, customer notifications on completion.",
+   "Checkout guardrails: re-price and re-check stock against source of truth; if unavailable, block with a clear message rather than guess."
+  ],
+  "non_functional": [
+   {
+    "name": "Product page latency",
+    "target": "p99 < 600 ms healthy and degraded"
+   },
+   {
+    "name": "T0 availability",
+    "target": "99.95% monthly"
+   },
+   {
+    "name": "Degrade reaction time",
+    "target": "Automatic within 10 s; manual kill switch within 30 s"
+   },
+   {
+    "name": "Staleness bounds",
+    "target": "Display price <= 5 min stale, stock band <= 2 min, catalog content <= 24 h"
+   },
+   {
+    "name": "Flag propagation",
+    "target": "99% of instances within 10 s; works when flag service is down (cached)"
+   },
+   {
+    "name": "Correctness",
+    "target": "0 orders charged at a price not validated within the last 60 s"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "Peak 50k product page RPS, 5k add-to-cart RPS, 1.5k orders/s at sale peak.",
+    "Product page fans out to 12 dependencies; 4 are T0/T1, 8 are T2.",
+    "Catalog of 150M SKUs; hot set of 2M SKUs accounts for 90% of views.",
+    "Average product snapshot 8 KB compressed."
+   ],
+   "math": [
+    "Fan-out: 50k x 12 = 600k backend calls/s at peak. Dropping all T2 calls under brownout removes 50k x 8 = 400k calls/s, about two thirds of backend load.",
+    "Local hot cache: 2M SKUs x 8 KB = 16 GB, too big per pod; use a shared Redis tier (16 GB x 3 replicas) plus a per-pod LRU of the top 50k SKUs (400 MB).",
+    "Full snapshot fallback: 150M x 8 KB = 1.2 TB in object storage plus CDN; serves pages if catalog DB is down.",
+    "Bestseller fallback lists: 20k categories x 50 items x 100 bytes = 100 MB, refreshed hourly, shipped to every pod.",
+    "Order queue during a 30 min fulfillment outage: 1.5k orders/s x 1800 s = 2.7M messages x 4 KB = about 11 GB, well within a Kafka topic with 7-day retention.",
+    "Latency budget: page 600 ms p99 = 50 ms edge + 400 ms parallel fan-out (T0 300 ms, T2 100 ms cut-off) + 150 ms render/serialize."
+   ],
+   "summary": "Optional dependencies are two thirds of backend load, so shedding them is the cheapest capacity in a crisis; fallback data is small enough to keep locally (hundreds of MB) or in CDN (about 1 TB); and a 30-minute async backlog of orders is only about 11 GB."
+  },
+  "out_of_scope": [
+   "Regional failover and data replication across regions.",
+   "Search index rebuild strategy.",
+   "Seller and ops back-office degradation.",
+   "Third-party payment provider routing (covered in payments design)."
+  ]
+ },
+ "hld": {
+  "overview": "Clients hit a CDN and an API gateway, then a Backend-for-Frontend (page assembly) service that fans out to dependencies through a resilience layer (timeouts, breakers, bulkheads). Every dependency is registered with a tier and a degraded mode. Fallback data is precomputed and held locally or at the CDN so that degrading never requires a new network call to a possibly unhealthy system. A flag service distributes kill switches and brownout levels, and a load monitor can raise the brownout level automatically. Writes that cannot complete synchronously are accepted into a durable queue and processed later by idempotent workers.",
+  "diagram": "  Mobile/Web --> CDN (stale-if-error product snapshots) --> API Gateway (priority, shedding)\n                                                             |\n                                                             v\n   Flag/Kill-switch svc --cache--> +--------- Page Assembly (BFF) ---------+\n   Load monitor (brownout lvl) --> | dep registry: tier, timeout, fallback |\n                                   | resilience: timeout/breaker/bulkhead  |\n                                   | local fallbacks: bestsellers, LRU     |\n                                   +--+-------+-------+-------+-------+----+\n                       T0             |       |       |       |       |   T2\n                 +---------+    +-------+ +-------+ +------+ +------+ +-----+\n                 | Catalog |    |Pricing| | Cart  | |Stock | |Recos | |Revws|\n                 +----+----+    +-------+ +---+---+ +------+ +------+ +-----+\n                      |                       |\n                Redis cache (serve stale)     v\n                                         Checkout --> Payment\n                                              |\n                                              v  (fulfillment down)\n                                        Kafka orders topic --> Fulfillment workers\n",
+  "components": [
+   {
+    "name": "Dependency registry",
+    "responsibility": "Declares tier, timeout, degraded mode, staleness limit and owner for every dependency; consumed by BFF and reviewed in design reviews."
+   },
+   {
+    "name": "Page assembly service (BFF)",
+    "responsibility": "Parallel fan-out, per-widget deadlines, assembles response with degraded markers, applies brownout level."
+   },
+   {
+    "name": "Resilience layer",
+    "responsibility": "Timeouts, circuit breakers, bulkheads per dependency; triggers fallbacks on failure or open breaker."
+   },
+   {
+    "name": "Fallback store",
+    "responsibility": "Precomputed datasets (bestsellers, default banners, generic delivery promise text) shipped to every pod; last-known-good LRU of responses."
+   },
+   {
+    "name": "Serve-stale cache tier",
+    "responsibility": "Redis and CDN with stale-while-revalidate and stale-if-error; holds product snapshots and price/stock bands."
+   },
+   {
+    "name": "Flag and kill-switch service",
+    "responsibility": "Feature flags with criticality levels; push to clients with local cache; audited changes with TTL."
+   },
+   {
+    "name": "Load monitor / brownout controller",
+    "responsibility": "Watches CPU, queueing delay and error rates; raises brownout level (shed T2, then T1 enrichments) automatically with hysteresis."
+   },
+   {
+    "name": "API gateway load shedder",
+    "responsibility": "Priority classes (checkout > cart > PDP > browse > prefetch/bots), sheds lowest first under overload."
+   },
+   {
+    "name": "Async order pipeline",
+    "responsibility": "Durable Kafka topic for accepted orders, idempotent fulfillment workers, customer notification when processed."
+   },
+   {
+    "name": "Checkout guard",
+    "responsibility": "Re-validates price and stock at the source of truth before charging; blocks safely if they are unavailable."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Product page with recommendations down",
+    "steps": [
+     "Request arrives; BFF reads brownout level 0 and flags from local cache.",
+     "BFF fans out to Catalog, Pricing, Stock (T0/T1, 300 ms budget) and Recos, Reviews, Ads (T2, 100 ms budget) in parallel.",
+     "Recos breaker is OPEN after repeated failures; call short-circuits in under 1 ms.",
+     "Fallback: bestsellers list for the product's category from the local fallback store.",
+     "Response returned with degraded=['recos'] and the widget title switched to 'Popular in this category'.",
+     "Metrics: degraded_response_total{feature=recos} increments; no user-visible error."
+    ]
+   },
+   {
+    "name": "Catalog database outage",
+    "steps": [
+     "Catalog service errors; BFF's catalog calls fail or time out.",
+     "Redis tier serves product data in stale-if-error mode (up to 24 h for content, price shown with 'price may change' if older than 5 min).",
+     "Cache misses for cold SKUs are served from the CDN/object-store snapshot.",
+     "Add to cart allowed; checkout guard re-validates price at Pricing service (separate store); if Pricing also fails, checkout shows 'try again shortly' rather than charging.",
+     "When catalog recovers, caches revalidate in the background; no stampede because of request coalescing."
+    ]
+   },
+   {
+    "name": "Overload brownout",
+    "steps": [
+     "Sale starts; load monitor sees CPU 85% and p99 queueing delay above 20 ms for 30 s.",
+     "Controller raises brownout level to 1: T2 widgets disabled (no calls made), saving about two thirds of backend calls.",
+     "If still hot, level 2: disable T1 enrichments (personalized delivery estimates, rich search ranking) and serve defaults.",
+     "Gateway sheds bot and prefetch traffic first, then browse, never checkout until last.",
+     "Levels drop one step at a time after 5 minutes of healthy signals (hysteresis) to avoid flapping."
+    ]
+   },
+   {
+    "name": "Order accepted while fulfillment is down",
+    "steps": [
+     "Payment authorized; order record written with status ACCEPTED in the order DB.",
+     "Fulfillment call fails; order event published to Kafka via the outbox.",
+     "User sees 'Order placed, confirmation details shortly'.",
+     "Workers consume when fulfillment recovers, idempotently by order id; status moves to CONFIRMED and the user is notified.",
+     "If not processable within 24 h (e.g. stock gone), automated cancel and refund with apology credit."
+    ]
+   }
+  ],
+  "data_flow": "Reads flow CDN -> gateway -> BFF -> caches -> services, with every layer able to answer stale. Precomputed fallback data is produced by batch jobs (hourly) into object storage and synced to pods. Flags flow from the flag service to in-memory caches by push. Writes flow BFF -> checkout -> payment, then to the order DB and an outbox that publishes to Kafka for asynchronous fulfillment. Degraded markers flow back to clients and into metrics."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/pdp/{sku}",
+    "request": "sku, user context, app version",
+    "response": "{product, price{value, as_of, validated}, stock_band, widgets{recos, reviews, ads}, degraded:[...]} ",
+    "notes": "Never 500 because of a T2 failure; degraded list is mandatory in the envelope."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/checkout",
+    "request": "cart_id, idempotency_key, payment_token",
+    "response": "200 {order_id, status ACCEPTED|CONFIRMED} or 409/503 with retry hint",
+    "notes": "Re-prices against source of truth; refuses to charge on stale price."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/flags?service=bff&since=v",
+    "request": "service, last version",
+    "response": "flags, brownout_level, version",
+    "notes": "Long poll/stream; clients use cached flags if this fails."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/killswitch/{feature}",
+    "request": "state off|on, ttl_minutes, reason",
+    "response": "version",
+    "notes": "RBAC, audited, auto-expires so a forgotten switch does not degrade forever."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/brownout",
+    "request": "level 0-3, ttl, reason",
+    "response": "ack",
+    "notes": "Manual override of the automatic controller."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/degradation/status",
+    "request": "none",
+    "response": "per-feature degraded %, breaker states, brownout level",
+    "notes": "Feeds status page and incident channel."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "DependencyPolicy",
+    "store": "Registry (Git-backed config, served via config service)",
+    "fields": [
+     "dependency",
+     "tier T0|T1|T2",
+     "timeout_ms",
+     "degraded_mode stale|default|hide|defer|block",
+     "staleness_limit_s",
+     "fallback_source",
+     "owner",
+     "ux_message_key"
+    ],
+    "keys": "PK dependency",
+    "notes": "Changes go through review like code."
+   },
+   {
+    "entity": "ProductSnapshot",
+    "store": "Redis cluster + object store/CDN",
+    "fields": [
+     "sku",
+     "title",
+     "images",
+     "attributes",
+     "display_price",
+     "price_as_of",
+     "stock_band",
+     "version",
+     "updated_at"
+    ],
+    "keys": "Redis key pdp:{sku}; sharded by hash slot; object path snapshots/{sku_prefix}/{sku}.json",
+    "notes": "Soft TTL 60 s (revalidate), hard TTL 24 h (stale-if-error)."
+   },
+   {
+    "entity": "FallbackList",
+    "store": "Local file/memory on each pod, refreshed hourly from object store",
+    "fields": [
+     "category_id",
+     "sku_list[50]",
+     "generated_at"
+    ],
+    "keys": "category_id",
+    "notes": "Never fetched on the failure path; already in memory."
+   },
+   {
+    "entity": "Flag",
+    "store": "Flag service DB (Postgres) + in-memory client cache",
+    "fields": [
+     "name",
+     "criticality_level",
+     "state",
+     "ttl_expires_at",
+     "changed_by",
+     "reason",
+     "version"
+    ],
+    "keys": "PK name; global version counter",
+    "notes": "Clients persist last version to disk for cold starts."
+   },
+   {
+    "entity": "OrderEvent",
+    "store": "Order DB outbox table + Kafka topic orders.accepted",
+    "fields": [
+     "order_id",
+     "user_id",
+     "items",
+     "amount",
+     "payment_auth_id",
+     "status",
+     "created_at"
+    ],
+    "keys": "Kafka key order_id (ordering per order); 64 partitions",
+    "notes": "Consumers idempotent on order_id."
+   }
+  ],
+  "classes": [
+   {
+    "name": "PageAssembler",
+    "responsibility": "Fan-out and assemble the PDP within a deadline.",
+    "methods": [
+     "assemble(sku, ctx) -> PdpResponse",
+     "widgetsFor(level) -> list",
+     "markDegraded(feature, reason)"
+    ]
+   },
+   {
+    "name": "DegradationPolicy",
+    "responsibility": "Looks up tier and degraded mode for a dependency at the current brownout level.",
+    "methods": [
+     "shouldCall(dep, level) -> bool",
+     "fallbackFor(dep) -> Fallback",
+     "budgetFor(dep) -> ms"
+    ]
+   },
+   {
+    "name": "Fallback (interface)",
+    "responsibility": "Produces a degraded answer locally.",
+    "methods": [
+     "get(key, ctx) -> Result",
+     "freshness() -> age"
+    ]
+   },
+   {
+    "name": "StaleCache",
+    "responsibility": "Serve-stale cache with soft and hard TTL and request coalescing.",
+    "methods": [
+     "get(key, loader) -> (value, age)",
+     "revalidateAsync(key)"
+    ]
+   },
+   {
+    "name": "BrownoutController",
+    "responsibility": "Computes brownout level from load signals with hysteresis.",
+    "methods": [
+     "observe(signals)",
+     "level() -> int",
+     "override(level, ttl)"
+    ]
+   },
+   {
+    "name": "CheckoutGuard",
+    "responsibility": "Validates price and stock at source of truth before charging.",
+    "methods": [
+     "validate(cart) -> ok|reject(reason)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Deadline-bounded fan-out with per-widget fallback",
+    "explain": "All calls start together; the page waits for T0 up to its budget and for optional widgets only up to their shorter budget. Anything not back in time is replaced by its fallback.",
+    "pseudocode": "def assemble(sku, ctx):\n    level = brownout.level()\n    futures = {}\n    for dep in registry.deps_for('pdp'):\n        if not policy.shouldCall(dep, level):\n            mark_degraded(dep, 'brownout'); continue\n        futures[dep] = client.call_async(dep, sku, timeout=policy.budgetFor(dep))\n    out = {}\n    for dep, f in futures.items():\n        try:\n            out[dep] = f.result(timeout=remaining(ctx, dep))\n        except (Timeout, CircuitOpen, Error):\n            if dep.tier == 'T0' and dep.degraded_mode == 'block':\n                return error_page_or_snapshot(sku)\n            out[dep] = policy.fallbackFor(dep).get(sku, ctx)\n            mark_degraded(dep, 'fallback')\n    return render(out, degraded_list())\n"
+   },
+   {
+    "name": "Serve-stale cache with coalescing",
+    "explain": "Fresh entries are returned directly; soft-expired entries are returned while one background refresh runs; if the loader fails, the entry is served until the hard TTL.",
+    "pseudocode": "def get(key, loader):\n    e = cache.get(key)\n    if e and e.age < SOFT_TTL: return e.value, e.age\n    if e and e.age < HARD_TTL:\n        if lock.try_acquire(key):          # single-flight\n            spawn(refresh, key, loader)\n        return e.value, e.age              # stale-while-revalidate\n    try:\n        v = single_flight(key, loader)\n        cache.put(key, v); return v, 0\n    except Error:\n        if e: return e.value, e.age        # stale-if-error past soft TTL\n        raise\n"
+   },
+   {
+    "name": "Brownout controller with hysteresis",
+    "explain": "Raise the level quickly when signals are bad for 30 s; lower it slowly, one step after 5 minutes of good signals, so the system does not oscillate.",
+    "pseudocode": "def observe(s):\n    hot = s.cpu > 0.85 or s.queue_delay_p99 > 20ms or s.t0_error_rate > 0.01\n    if hot: bad_for += tick; good_for = 0\n    else:   good_for += tick; bad_for = 0\n    if bad_for >= 30s and level < 3: level += 1; bad_for = 0\n    if good_for >= 300s and level > 0: level -= 1; good_for = 0\n"
+   }
+  ],
+  "sequence": "Client      BFF            Flags   Catalog/Cache   Recos(DOWN)   FallbackStore\n  | GET /pdp  |              |          |               |               |\n  |---------->| level?       |          |               |               |\n  |           |------------->| 0 (cached)               |               |\n  |           | fan-out t=300ms         |               |               |\n  |           |------------------------>|               |               |\n  |           | fan-out t=100ms (breaker OPEN)          |               |\n  |           |---------------------------------------->x fast-fail     |\n  |           | bestsellers(category) ----------------------------------->|\n  |           |<------------------------------------------------- list ---|\n  |           |<--------- product (fresh 12s) |         |               |\n  |<----------| 200 degraded=[recos], 180ms  |         |               |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Dependency is slow, not down: p99 goes from 50 ms to 4 s",
+   "handling": "Per-widget deadline (100 ms for T2) drops it from the page; slow-call breaker opens; the page never waits longer than its own budget."
+  },
+  {
+   "case": "Dependency returns 200 with wrong or empty data (e.g. price 0)",
+   "handling": "Response validation (sanity checks, price > 0, within 50% of last known) treats it as failure and uses fallback; alert content anomalies."
+  },
+  {
+   "case": "Fallback itself calls a service that depends on the failed one",
+   "handling": "Design rule: fallbacks are local or precomputed; dependency graph reviewed so fallbacks do not share fate with the primary."
+  },
+  {
+   "case": "Stale price shown on PDP differs from current price",
+   "handling": "Display-only staleness with 'price may change' note when older than 5 min; checkout re-validates and shows the new price before charging."
+  },
+  {
+   "case": "Stock shown as available from cache but item sold out",
+   "handling": "Show stock bands not exact counts; checkout reserves against inventory source of truth; small oversell buffer for low-risk items only, refund with apology if it happens."
+  },
+  {
+   "case": "Kill switch left on after the incident",
+   "handling": "Every switch has a TTL and an owner; dashboard shows active switches; automatic expiry with notification."
+  },
+  {
+   "case": "Flag service down at the moment we need to brown out",
+   "handling": "Local controller can raise brownout level from local signals; flags cached; emergency env-var override as last resort."
+  },
+  {
+   "case": "Old mobile app crashes on missing reviews field",
+   "handling": "API contract keeps fields present with empty values and a degraded marker; contract tests against the oldest supported app version."
+  },
+  {
+   "case": "Cache stampede when catalog recovers and all soft TTLs expire",
+   "handling": "Single-flight per key, jittered TTLs, and background revalidation rather than synchronous reloads."
+  },
+  {
+   "case": "Brownout flapping between levels every minute",
+   "handling": "Hysteresis: fast up, slow down (30 s vs 5 min), and require sustained signals."
+  },
+  {
+   "case": "Queued orders during fulfillment outage now exceed available stock",
+   "handling": "Process in FIFO by order time; reserve stock at acceptance where possible; auto-cancel and refund unprocessable orders with communication."
+  },
+  {
+   "case": "Personalization down makes everyone see the same homepage, shifting load onto a few popular SKUs (hot keys)",
+   "handling": "Pre-warm caches for the fallback lists, replicate hot keys across Redis shards, and rotate among several fallback lists."
+  },
+  {
+   "case": "Bots and crawlers keep hitting expensive pages during overload",
+   "handling": "Gateway priority classes shed bots and prefetch first; serve cached snapshots to crawlers."
+  },
+  {
+   "case": "Partial failure of a T0 dependency (one shard of pricing down)",
+   "handling": "Shard-aware degradation: only SKUs on that shard show 'price unavailable, cannot buy now'; rest of the catalog works."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Backend-for-Frontend service (Java/Go, async I/O)",
+   "layer": "Page assembly",
+   "overview": "A service that composes downstream APIs into one client-shaped response.",
+   "why": "Central place to apply per-widget deadlines, fallbacks and degraded markers instead of every client doing it.",
+   "alternatives": "GraphQL gateway with per-field resolvers and nullability (good fit, similar ideas); client-side composition (moves failure handling to devices, harder to control)."
+  },
+  {
+   "name": "Resilience4j / Envoy",
+   "layer": "Resilience layer",
+   "overview": "Circuit breakers, timeouts, bulkheads, outlier detection.",
+   "why": "Detects failure fast and triggers fallbacks without blocking threads.",
+   "alternatives": "Custom wrappers; Hystrix (maintenance mode); mesh-only (lacks business fallbacks)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Serve-stale cache",
+   "overview": "In-memory key-value store with replication and sharding.",
+   "why": "Low-latency product and price snapshots with soft and hard TTL metadata for stale serving.",
+   "alternatives": "Memcached (simpler, no replication); in-process caches only (no sharing, cold starts)."
+  },
+  {
+   "name": "CDN (Akamai/CloudFront/Fastly) with stale-if-error",
+   "layer": "Edge",
+   "overview": "Edge caching of pages, images and JSON with HTTP cache-control extensions.",
+   "why": "stale-while-revalidate and stale-if-error let the edge serve product pages even if origin is down.",
+   "alternatives": "Origin-only caching (less resilient); full static site generation for top SKUs (complementary)."
+  },
+  {
+   "name": "LaunchDarkly / Unleash / in-house flag service",
+   "layer": "Feature flags and kill switches",
+   "overview": "Runtime toggles with targeting, audit and streaming updates.",
+   "why": "Seconds-level brownout of features fleet wide; local caching keeps it working if the flag service fails.",
+   "alternatives": "Config redeploys (minutes, risky during incidents); env vars (no targeting)."
+  },
+  {
+   "name": "Apache Kafka",
+   "layer": "Async decoupling",
+   "overview": "Durable, partitioned log for events.",
+   "why": "Absorbs orders when fulfillment is down; replay; per-order ordering via key; days of retention.",
+   "alternatives": "SQS/RabbitMQ (simpler queues, less replay); DB-backed job table (fine at lower volume)."
+  },
+  {
+   "name": "Object storage (S3/GCS) + batch jobs (Spark/Airflow)",
+   "layer": "Precomputed fallbacks",
+   "overview": "Cheap durable storage and scheduled batch compute.",
+   "why": "Generates bestseller lists and product snapshots hourly that pods load locally.",
+   "alternatives": "Computing fallbacks on demand (shares fate with failing systems)."
+  },
+  {
+   "name": "Chaos engineering tools (Chaos Monkey, Gremlin, Litmus)",
+   "layer": "Verification",
+   "overview": "Inject failures into production or staging.",
+   "why": "Keeps degraded paths exercised and proves the contract before peak events.",
+   "alternatives": "Manual game days only; staging-only tests."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Dependency criticality tiers and failure-mode mapping",
+   "explain": "Graceful degradation starts with a decision, not with code: for every dependency, what is the impact if it is unavailable, and what should the system do instead? Teams typically classify dependencies into tiers. A hard dependency is one without which the core user job cannot be done safely (for checkout: cart, price validation, payment). A soft dependency enriches the experience but is not required (recommendations, reviews, ads). Some are in between: delivery estimates can fall back to a generic promise. The output is a table listing the dependency, its tier, its timeout budget, its degraded mode (serve stale, use a default, hide the feature, defer the work, or block safely), and who owns the decision. This mapping also exposes hidden coupling: a soft dependency called synchronously on the critical path with a long timeout is effectively hard, because its slowness becomes your slowness. The aim is to keep the set of hard dependencies small and to make every soft dependency truly optional at runtime. The mapping should be revisited whenever architecture changes, because new calls creep into critical paths over time. Failure mode and effects analysis (FMEA) is the formal version of this exercise: list each failure, its effect, its detection and its mitigation.",
+   "in_this_design": "The dependency registry encodes T0/T1/T2, timeout, degraded mode and owner. The BFF reads it to decide budgets and fallbacks; brownout levels shed by tier; design reviews block new synchronous T2 calls on the checkout path.",
+   "key_points": [
+    "Decide degraded behaviour per dependency in advance, with the product owner.",
+    "Keep hard dependencies few; make soft ones truly optional at runtime.",
+    "A soft dependency with a long synchronous timeout is effectively hard.",
+    "Modes: stale, default, hide, defer, or block safely.",
+    "Revisit the map as the architecture changes."
+   ],
+   "qa": [
+    {
+     "q": "How do you decide whether a dependency is hard or soft?",
+     "a": "Ask whether the core user job can be completed safely and correctly without it. If yes, it is soft and gets a fallback and a short timeout. If no, it is hard and the design focuses on making it highly available and failing safely."
+    },
+    {
+     "q": "Who owns the degraded experience?",
+     "a": "The product owner of the feature, jointly with engineering. It is a product decision (hide reviews vs show cached) and it must be agreed before incidents, not improvised during one."
+    },
+    {
+     "q": "How do you find hidden hard dependencies?",
+     "a": "Trace analysis of critical paths, chaos experiments that disable each dependency, and reviewing timeouts: anything on the critical path whose failure breaks the page is hard regardless of its label."
+    }
+   ]
+  },
+  {
+   "name": "Fallback strategies and the risk of fallback",
+   "explain": "A fallback is what you do when the primary path fails. Common options are: return cached or last-known data; return a static default (generic banner, bestseller list); return a reduced result (fewer fields); omit the feature; queue the request for later; or fail fast with a clear message. Fallbacks feel safe but carry risk. Amazon's Builders' Library argues that many fallbacks are dangerous because they are rarely exercised, so bugs hide in them until the worst moment; they often have different load characteristics, so switching a whole fleet to the fallback can overload whatever it depends on; and they can turn a partial failure into a wider one. The safer patterns are: make the primary path more reliable (retries, redundancy); use fallbacks that are local and precomputed so they need nothing during failure; and run the fallback path continuously, for example by always serving a fraction of traffic through it or by pushing data so that 'fallback' and 'normal' are the same code. Good fallbacks are also honest: degraded data is marked so that clients and users are not misled, and fallbacks never fabricate facts that cost money or trust, such as a price or a payment outcome.",
+   "in_this_design": "Recos fall back to a local bestseller list, reviews hide, delivery estimate shows a generic promise, catalog serves stale snapshots, orders defer to a queue, payment and price validation block safely. No fallback makes a network call to a system that shares fate with the primary.",
+   "key_points": [
+    "Fallback options: stale, default, reduced, omit, defer, fail fast.",
+    "Untested fallbacks fail when you need them; exercise them continuously.",
+    "Fallbacks must not depend on the failing system or overload another.",
+    "Prefer local, precomputed fallbacks.",
+    "Never fabricate prices or payment results."
+   ],
+   "qa": [
+    {
+     "q": "Why might a fallback make an outage worse?",
+     "a": "It may shift the entire load onto a system not sized for it (for example falling back from cache to the database), it may contain latent bugs, and it may introduce new dependencies. If the fallback is used fleet wide at once, these risks materialise together."
+    },
+    {
+     "q": "How do you keep a fallback path healthy?",
+     "a": "Execute it constantly: serve a small percent of traffic through it, generate fallback data on a schedule and validate it, and run chaos experiments that force it in a canary cell."
+    },
+    {
+     "q": "When is failing fast better than falling back?",
+     "a": "When any fallback would be wrong in a way that harms users or the business: charging an unvalidated price, confirming a payment that may not exist, or showing medical or legal data that may be outdated."
+    }
+   ]
+  },
+  {
+   "name": "Static stability",
+   "explain": "A system is statically stable if it keeps working in its current state when a dependency fails, without needing to make any new decision or change. The idea, emphasised in AWS's design guidance, is that the moment of failure is the worst time to do something new: call a control plane, launch instances, fetch configuration or compute a fallback. Instead, pre-provision and precompute. Examples: run enough capacity in each availability zone that losing one zone needs no scaling; push configuration to data-plane hosts so they keep the last known good copy if the config service is down; precompute fallback datasets so that degraded mode reads local memory. Static stability is often achieved by making the data plane independent of the control plane: the control plane changes things, the data plane serves traffic, and the data plane can keep serving with stale control-plane state. A closely related idea is constant work: do the same amount of work whether healthy or not (for example, always refresh the full config file rather than deltas), so that a failure does not cause a load spike. The cost is some redundancy and staleness, accepted in exchange for predictable behaviour under failure.",
+   "in_this_design": "Bestseller lists and product snapshots are produced hourly and shipped to pods and the CDN; flags and the dependency registry are cached locally and persisted for cold starts; the brownout controller can act on local signals if the flag service is unreachable.",
+   "key_points": [
+    "Do not need anything new at failure time.",
+    "Precompute fallbacks; pre-provision capacity.",
+    "Data plane keeps serving with last known control-plane state.",
+    "Constant work avoids failure-time load spikes.",
+    "Trade some staleness and cost for predictability."
+   ],
+   "qa": [
+    {
+     "q": "Give an example of a design that is not statically stable.",
+     "a": "A service that, when its cache cluster fails, fetches fallback recommendations from a separate ML service that itself reads the same database. The fallback creates new load and new dependencies exactly when things are failing."
+    },
+    {
+     "q": "How does static stability relate to control plane vs data plane?",
+     "a": "The data plane serves requests with the state it already has; the control plane changes that state. If the control plane fails, a statically stable data plane keeps serving with the last known good state."
+    },
+    {
+     "q": "What is the cost?",
+     "a": "Over-provisioned capacity, storage for precomputed data, and staleness. For most user-facing reads, hours-old fallback data is far better than an outage."
+    }
+   ]
+  },
+  {
+   "name": "Serve-stale caching (stale-while-revalidate, stale-if-error)",
+   "explain": "Caching normally improves latency, but it is also a powerful degradation tool. HTTP standardises two cache-control extensions (RFC 5861). stale-while-revalidate allows a cache to return an expired entry immediately while it fetches a fresh one in the background, hiding origin latency. stale-if-error allows a cache to return an expired entry when the origin returns an error or is unreachable, up to a configured age. The same ideas apply in application caches by storing two TTLs per entry: a soft TTL after which the entry should be refreshed, and a hard TTL after which it must not be served at all. Combined with request coalescing (single-flight), only one refresh per key goes to the origin at a time, which prevents a stampede when many entries expire together or when the origin recovers. The design questions are: how stale is acceptable for each data type, how do we tell users and downstream logic that the data is stale, and which operations must always re-validate against the source of truth? A product description can be a day old; a display price perhaps a few minutes; a charged price must be fresh.",
+   "in_this_design": "Product snapshots: soft TTL 60 s, hard TTL 24 h. Display prices: show with a warning after 5 min stale, never charged without re-validation. CDN uses stale-if-error for PDP JSON so the edge serves pages if the origin is down.",
+   "key_points": [
+    "Two TTLs: soft (refresh) and hard (stop serving).",
+    "stale-while-revalidate hides latency; stale-if-error hides outages.",
+    "Single-flight refresh prevents stampedes.",
+    "Staleness limits are per data type and a business decision.",
+    "Critical writes always re-validate against the source of truth."
+   ],
+   "qa": [
+    {
+     "q": "How do you prevent a stampede when the origin recovers?",
+     "a": "Coalesce refreshes per key (single-flight), jitter TTLs so entries do not expire together, and refresh in the background rather than on the request path."
+    },
+    {
+     "q": "What is the risk of serving stale prices?",
+     "a": "Customers may see a lower price than current and be charged a higher one, or vice versa. Mitigate by marking staleness, bounding it, and re-pricing at checkout with clear messaging."
+    },
+    {
+     "q": "Cold keys are not in cache. What then?",
+     "a": "Use a deeper fallback layer such as full snapshots in object storage/CDN, or show a minimal page with the core info; accept that the long tail may be degraded more."
+    }
+   ]
+  },
+  {
+   "name": "Feature flags, kill switches and brownout",
+   "explain": "Feature flags are runtime switches that change behaviour without a deploy. For resilience, the useful ones are kill switches: flags that turn off a feature or a dependency call entirely, instantly and fleet wide. When a system is overloaded or a dependency is sick, disabling optional work is the fastest way to free capacity, because the cheapest request is the one you never make. Brownout generalises this: instead of on/off per feature, the system has degradation levels, each disabling a larger set of optional features, raised manually or automatically from load signals such as CPU, queueing delay or error rate. Academic work on brownout for cloud applications showed that dynamically switching off optional content keeps response times stable under load spikes with modest loss of value. Operationally, flags need to be safe: changes are audited, have owners and expiry, and clients cache them so a flag-service outage does not change behaviour. The automatic controller needs hysteresis so it does not oscillate, and humans need an override.",
+   "in_this_design": "Each T1/T2 feature has a kill switch; brownout level 1 disables T2, level 2 disables T1 enrichments, level 3 serves static snapshots for browse. The controller raises levels after 30 s of hot signals and lowers one step after 5 min of healthy signals.",
+   "key_points": [
+    "The cheapest request is the one never made.",
+    "Kill switches give seconds-level, fleet-wide degradation.",
+    "Brownout levels shed optional work progressively.",
+    "Hysteresis: fast to degrade, slow to recover.",
+    "Flags are cached locally, audited and expire."
+   ],
+   "qa": [
+    {
+     "q": "Why not auto-scale instead of brownout?",
+     "a": "Scaling takes minutes and may itself depend on a control plane under stress; brownout acts in seconds and needs nothing new. Use both: brownout buys time while scaling catches up."
+    },
+    {
+     "q": "How do you test kill switches?",
+     "a": "Flip them regularly in a canary cell and in game days; track the expected load drop; ensure the UI handles each off state."
+    },
+    {
+     "q": "What if the flag service is the thing that is down?",
+     "a": "Clients keep the last known flags; the local brownout controller can act from local signals; an emergency override via environment or config file exists."
+    }
+   ]
+  },
+  {
+   "name": "Priority-based load shedding",
+   "explain": "When demand exceeds capacity, something will fail; the only question is what. Without a policy, the system fails randomly and usually completely, as queues fill and every request times out. Load shedding deliberately rejects some work early so the rest completes. Prioritised shedding classifies requests (for example: checkout and payment highest, cart next, product pages, then browse, then prefetch, bots and analytics lowest) and drops the lowest class first. The classification can come from the endpoint, a header set by the client or gateway, or user state. Shedding should happen as early and cheaply as possible, ideally at the gateway or the first service, because rejecting late wastes the work already done. Good signals for when to shed are concurrency or queueing delay rather than raw CPU. Rejected requests should get a fast, explicit response (HTTP 503 or 429 with Retry-After) so clients back off rather than retry immediately. Google's SRE practice also uses request criticality propagated through the call graph so that every backend can shed by the same priority, keeping the system's behaviour consistent end to end.",
+   "in_this_design": "The gateway tags requests with a criticality class; under overload it sheds bots and prefetch, then browse, then PDP, and protects checkout. Criticality is propagated as a header so downstream services shed consistently.",
+   "key_points": [
+    "Decide what fails first; otherwise everything fails.",
+    "Shed early and cheaply, lowest priority first.",
+    "Propagate criticality through the call graph.",
+    "Use queueing delay or concurrency as the trigger.",
+    "Respond fast with Retry-After so clients back off."
+   ],
+   "qa": [
+    {
+     "q": "Why shed at the gateway rather than deep in the stack?",
+     "a": "Rejecting late wastes all the work done upstream and still consumes resources; the gateway can reject in microseconds before any fan-out."
+    },
+    {
+     "q": "How do you prevent abuse of the priority header?",
+     "a": "Set priority at trusted boundaries (gateway, based on route and auth), strip client-supplied values, and audit."
+    },
+    {
+     "q": "Is FIFO the right queue discipline under overload?",
+     "a": "Often not; older requests are likely already timed out by the caller. LIFO or dropping requests whose deadline has passed improves goodput."
+    }
+   ]
+  },
+  {
+   "name": "Asynchronous decoupling (queue-based load leveling)",
+   "explain": "Synchronous calls couple the availability of caller and callee: if the callee is down, the caller fails. For work that does not need an immediate answer, the caller can instead write a durable message to a queue or log and return. The callee processes messages at its own pace. This is queue-based load leveling: the queue absorbs bursts and outages, converting a hard dependency into a soft one with delayed completion. The trade-offs are eventual consistency (the user sees 'accepted' rather than 'done'), the need for idempotent consumers because messages may be redelivered, and the need to handle work that ultimately cannot be completed (compensations, refunds, notifications). To publish reliably together with a database write, the transactional outbox pattern writes the event into an outbox table in the same transaction as the business record; a relay publishes it to the log. Backpressure matters too: monitor queue depth and age, and shed or slow producers if the backlog grows beyond what can be processed within the business deadline.",
+   "in_this_design": "Orders are accepted after payment authorization, written to the order DB with an outbox event, and processed by fulfillment workers from Kafka (key order_id). A 30-minute fulfillment outage builds about 2.7M messages that drain after recovery; unprocessable orders are auto-cancelled within 24 h.",
+   "key_points": [
+    "A queue turns a hard synchronous dependency into delayed completion.",
+    "Consumers must be idempotent (at-least-once delivery).",
+    "Use an outbox to publish atomically with the DB write.",
+    "Monitor queue age, not just depth.",
+    "Plan compensation for work that can never complete."
+   ],
+   "qa": [
+    {
+     "q": "Why not just retry the fulfillment call synchronously?",
+     "a": "The user would wait and the outage could last minutes; retries also add load to a struggling system. Accepting into a durable queue decouples user experience from fulfillment availability."
+    },
+    {
+     "q": "What does the user see?",
+     "a": "An honest 'order placed, confirmation shortly' message and a notification when processing completes or fails, with an automatic refund path."
+    },
+    {
+     "q": "How do you avoid duplicate fulfillment?",
+     "a": "Idempotent consumers keyed by order_id, storing processed ids or using conditional state transitions (ACCEPTED -> CONFIRMED only once)."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Hide vs show stale for reviews",
+   "options": "Hide widget vs show cached reviews",
+   "choice": "Show cached reviews up to 24 h, hide if none cached.",
+   "why": "Reviews change slowly and drive conversion; stale reviews are almost as valuable as fresh."
+  },
+  {
+   "decision": "Display price staleness",
+   "options": "Block PDP vs show stale price with note vs show no price",
+   "choice": "Show stale up to 5 min silently, up to 1 h with 'price may change', validate at checkout.",
+   "why": "Keeps browsing alive; correctness enforced at the moment of money movement."
+  },
+  {
+   "decision": "Fallback data location",
+   "options": "Computed on demand vs precomputed and local",
+   "choice": "Precomputed and local.",
+   "why": "Static stability: no new dependency at failure time; small data size (100 MB) makes it cheap."
+  },
+  {
+   "decision": "Who triggers brownout",
+   "options": "Manual only vs automatic only vs automatic with manual override",
+   "choice": "Automatic with manual override and hysteresis.",
+   "why": "Automation reacts in seconds; humans can correct false positives and force modes during incidents."
+  },
+  {
+   "decision": "Order processing when fulfillment is down",
+   "options": "Reject checkout vs accept and queue",
+   "choice": "Accept and queue with honest messaging and auto-cancel after 24 h.",
+   "why": "Keeps revenue and trust; risk of cancellations is small and handled with compensation."
+  },
+  {
+   "decision": "Degraded markers in API",
+   "options": "Silent degradation vs explicit degraded list",
+   "choice": "Explicit list and freshness timestamps.",
+   "why": "Clients can render appropriately; observability counts degraded responses; prevents silent wrong data."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Recommendations service down",
+   "behavior": "Breaker opens; local bestseller list fills the slot; degraded=recos; no impact on latency or checkout."
+  },
+  {
+   "failure": "Catalog DB down",
+   "behavior": "Redis and CDN serve stale snapshots up to 24 h; cold SKUs from object store snapshots; editing and new listings paused."
+  },
+  {
+   "failure": "Pricing service down",
+   "behavior": "PDP shows stale prices with a note; checkout blocked with 'try again shortly' because price cannot be validated; alert as T0 incident."
+  },
+  {
+   "failure": "Fulfillment system down",
+   "behavior": "Orders accepted and queued; users told confirmation will follow; backlog drains on recovery."
+  },
+  {
+   "failure": "Overload at sale start",
+   "behavior": "Brownout levels 1-2 drop optional calls; gateway sheds bots and prefetch; checkout protected."
+  },
+  {
+   "failure": "Flag service down",
+   "behavior": "Clients use cached flags; local brownout controller still acts; no behaviour change by itself."
+  },
+  {
+   "failure": "Fallback dataset job fails for 6 hours",
+   "behavior": "Pods keep last good file; alert on fallback age > 3 h; fallbacks remain usable though older."
+  }
+ ],
+ "metrics": [
+  "Degraded response ratio per feature and per page.",
+  "T0 flow availability and latency (add-to-cart, checkout) separate from full page SLO.",
+  "Conversion rate and revenue per session in degraded vs normal mode.",
+  "Fallback invocation rate and age of data served (staleness distribution).",
+  "Breaker states and timeouts per dependency.",
+  "Brownout level over time and load shed rate by priority class.",
+  "Active kill switches count and age.",
+  "Order queue depth and oldest message age; auto-cancel count.",
+  "Checkout price-revalidation mismatches."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you know your degraded mode actually works?",
+   "a": "We run it continuously: a canary cell always has one T2 dependency disabled on a rotation, weekly game days disable T1 dependencies, and we compare conversion to control. Fallback data freshness is monitored like any other SLO."
+  },
+  {
+   "q": "Isn't showing stale prices a legal risk?",
+   "a": "Display staleness is bounded and labelled; the charged price is always re-validated at checkout and shown to the customer before payment. If validation is impossible, we block checkout rather than guess."
+  },
+  {
+   "q": "What if the dependency is not down but returning wrong data?",
+   "a": "Response validation (schema, ranges, comparison to last known) treats implausible responses as failures. Wrong-but-plausible data is the hardest case; we add canary checks and anomaly detection on business metrics."
+  },
+  {
+   "q": "How do you stop teams from adding new synchronous hard dependencies?",
+   "a": "The dependency registry is required for any new call (enforced by the client library), design reviews check tiers, and chaos tests in CI disable new dependencies to verify the page still renders."
+  },
+  {
+   "q": "How is this different from circuit breakers?",
+   "a": "Breakers are the detection and short-circuit mechanism; graceful degradation is the overall product and architecture policy of what happens next: fallbacks, brownout levels, async paths and UX."
+  },
+  {
+   "q": "How would you roll this out?",
+   "a": "Start with the dependency map and BFF timeouts for T2 (biggest win, lowest risk), then serve-stale caching, then kill switches, then automatic brownout, then async order path. Each step validated with a game day."
+  },
+  {
+   "q": "What happens if many features degrade at once?",
+   "a": "Brownout level 3 serves a static, cacheable product page with buy button; we accept a basic experience to protect the core flow, and status pages communicate it."
+  }
+ ],
+ "key_points": [
+  "Degradation is a product decision first: map every dependency to a tier and a degraded mode, with owners.",
+  "Keep hard dependencies few and make soft ones truly optional with short budgets on the page.",
+  "Prefer static stability: precomputed, local fallbacks that need nothing at failure time.",
+  "Serve stale with soft and hard TTLs; re-validate at the moment money moves.",
+  "Kill switches and brownout levels shed optional work in seconds; fast up, slow down.",
+  "Shed by priority at the edge so checkout survives overload.",
+  "Turn hard synchronous writes into queued work where the business allows, with idempotent consumers.",
+  "Untested fallbacks are liabilities; exercise them continuously and measure conversion in degraded mode.",
+  "Be honest in the API and UI: mark degraded fields and their freshness."
+ ],
+ "quiz": [
+  {
+   "q": "Recommendations are called synchronously with a 5 s timeout on the PDP. Recos becomes very slow. What is the effect?",
+   "options": [
+    "No effect because recos is optional",
+    "Only the recos widget is slow",
+    "The PDP becomes slow or fails, making recos effectively a hard dependency",
+    "The CDN hides it"
+   ],
+   "answer": 2,
+   "why": "A soft dependency on a synchronous path with a long timeout transfers its slowness to the page. 'No effect because optional' is the tempting label-based answer; the runtime wiring is what matters."
+  },
+  {
+   "q": "Which fallback is most statically stable for the recommendations widget?",
+   "options": [
+    "Call a backup ML service",
+    "A precomputed bestseller list loaded in memory on each pod",
+    "Query the orders DB for popular items at request time",
+    "Retry recos 5 times"
+   ],
+   "answer": 1,
+   "why": "Precomputed local data needs nothing new at failure time. Querying the orders DB at request time creates new load on a shared system exactly when things are failing."
+  },
+  {
+   "q": "What does stale-if-error allow a cache to do?",
+   "options": [
+    "Serve an expired entry when the origin errors, up to a limit",
+    "Serve an expired entry while revalidating in the background",
+    "Cache error responses",
+    "Ignore TTLs entirely"
+   ],
+   "answer": 0,
+   "why": "stale-if-error covers origin failures. Serving while revalidating is stale-while-revalidate, a related but different directive."
+  },
+  {
+   "q": "Price service is down. What should checkout do?",
+   "options": [
+    "Charge the cached display price",
+    "Charge the last price seen by the user",
+    "Charge a default price",
+    "Block checkout with a clear retry message"
+   ],
+   "answer": 3,
+   "why": "Money movement requires validated prices; blocking is the safe degraded mode. Charging the user's last-seen price feels customer friendly but can be wrong and is unauditable."
+  },
+  {
+   "q": "Under overload, which traffic should the gateway shed first?",
+   "options": [
+    "Checkout",
+    "Add to cart",
+    "Bots, prefetch and analytics beacons",
+    "Product page views"
+   ],
+   "answer": 2,
+   "why": "Lowest business value goes first. Product page views matter for conversion; shedding them before bots wastes value."
+  },
+  {
+   "q": "Why use hysteresis in a brownout controller?",
+   "options": [
+    "To make degradation slower",
+    "To avoid oscillating between levels when signals hover near thresholds",
+    "To reduce CPU usage of the controller",
+    "To meet legal requirements"
+   ],
+   "answer": 1,
+   "why": "Fast-up, slow-down prevents flapping. Making degradation slower would be harmful; hysteresis typically keeps degradation fast and recovery slow."
+  },
+  {
+   "q": "Brownout level 1 disables 8 of 12 dependency calls on a 50k RPS page. Roughly how many backend calls/s are saved?",
+   "options": [
+    "400k",
+    "50k",
+    "8k",
+    "600k"
+   ],
+   "answer": 0,
+   "why": "50k x 8 = 400k calls/s. 600k is the total fan-out, not the saving."
+  },
+  {
+   "q": "Which is the primary argument in AWS's 'avoiding fallback' guidance?",
+   "options": [
+    "Fallbacks are always better than retries",
+    "Fallbacks are only for databases",
+    "Fallbacks should call the control plane",
+    "Rarely exercised fallbacks hide bugs and can shift load, worsening outages"
+   ],
+   "answer": 3,
+   "why": "Untested and load-shifting fallbacks are the risk; the advice is to improve the primary path or make fallbacks continuously exercised. Calling the control plane at failure time is the opposite of static stability."
+  },
+  {
+   "q": "An order is accepted while fulfillment is down and queued in Kafka. What property must the fulfillment consumer have?",
+   "options": [
+    "Exactly-once delivery from Kafka by default",
+    "Synchronous ack to the user",
+    "Idempotency keyed by order id",
+    "Strict global ordering of all orders"
+   ],
+   "answer": 2,
+   "why": "At-least-once delivery means duplicates are possible; idempotent processing by order_id is required. Global ordering is unnecessary; per-order ordering via key suffices."
+  },
+  {
+   "q": "A kill switch for ads was turned on during an incident and forgotten for 3 weeks. Which control prevents this?",
+   "options": [
+    "More dashboards",
+    "TTL and owner on every switch with automatic expiry",
+    "Removing kill switches",
+    "Requiring a deploy to change flags"
+   ],
+   "answer": 1,
+   "why": "Expiry and ownership address the root cause. Requiring deploys would slow incident response, defeating the purpose of switches."
+  },
+  {
+   "q": "Which signal is best for triggering load shedding?",
+   "options": [
+    "Queueing delay or concurrency in the service",
+    "Disk usage",
+    "Number of deploys today",
+    "Memory of the cache cluster"
+   ],
+   "answer": 0,
+   "why": "Queueing delay directly reflects overload harm to callers. Memory of a cache cluster is unrelated to request overload."
+  },
+  {
+   "q": "What makes a soft TTL and hard TTL pair useful?",
+   "options": [
+    "Soft TTL is for CDN, hard TTL for Redis",
+    "They make caches use less memory",
+    "Hard TTL is for writes only",
+    "Soft TTL triggers refresh; hard TTL bounds maximum staleness when refresh fails"
+   ],
+   "answer": 3,
+   "why": "The pair enables both stale-while-revalidate and stale-if-error behaviour with a limit. They are not tied to specific layers."
+  },
+  {
+   "q": "The catalog DB recovers and all cached entries are expired. What prevents a stampede?",
+   "options": [
+    "Increase DB size",
+    "Disable the cache",
+    "Single-flight refresh per key plus jittered TTLs",
+    "Use a longer timeout"
+   ],
+   "answer": 2,
+   "why": "Coalescing ensures one refresh per key, and jitter spreads expirations. Longer timeouts would just make more requests wait on the DB."
+  },
+  {
+   "q": "Which statement best describes static stability?",
+   "options": [
+    "The system scales automatically in failure",
+    "The system keeps working in its current state without new actions when a dependency fails",
+    "The system never changes config",
+    "The system has no dependencies"
+   ],
+   "answer": 1,
+   "why": "It is about not needing new decisions at failure time. Auto-scaling during failure is precisely a 'new action' that static stability avoids relying on."
+  },
+  {
+   "q": "Personalization fails, so every user sees the same homepage. What new risk appears?",
+   "options": [
+    "Hot keys on a few SKUs in caches and services",
+    "Higher personalization cost",
+    "Fewer cache hits",
+    "Lower CDN usage"
+   ],
+   "answer": 0,
+   "why": "Uniform content concentrates traffic on few items, creating hot keys. Cache hit rates actually rise, which is the tempting wrong answer."
+  },
+  {
+   "q": "Which API design best supports degraded responses for old mobile apps?",
+   "options": [
+    "Remove fields when degraded",
+    "Return HTTP 206 for degraded pages",
+    "Return 500 so apps retry",
+    "Keep fields present with empty values plus a degraded list and freshness timestamps"
+   ],
+   "answer": 3,
+   "why": "Stable schema avoids crashes, and markers let new apps render properly. Removing fields is what crashes older clients."
+  },
+  {
+   "q": "A 30 minute fulfillment outage at 1.5k orders/s with 4 KB messages accumulates roughly:",
+   "options": [
+    "110 GB",
+    "1.1 GB",
+    "11 GB",
+    "270 MB"
+   ],
+   "answer": 2,
+   "why": "1.5k x 1800 = 2.7M messages x 4 KB = about 11 GB. 1.1 GB comes from dropping a factor of ten."
+  },
+  {
+   "q": "Why should criticality be propagated as a header through the call graph?",
+   "options": [
+    "To authenticate users",
+    "So backends can shed consistently by the same priority",
+    "To route to different regions",
+    "To compress payloads"
+   ],
+   "answer": 1,
+   "why": "Consistent end-to-end priority prevents a backend from shedding checkout while serving prefetch. Authentication is a separate concern and the header should be set by trusted boundaries anyway."
+  },
+  {
+   "q": "Which is the best way to test graceful degradation?",
+   "options": [
+    "Continuous fault injection in a canary cell plus game days measuring conversion",
+    "Code review of fallback functions",
+    "Unit tests only",
+    "Wait for a real outage"
+   ],
+   "answer": 0,
+   "why": "Exercising fallbacks in production-like conditions proves they work. Code review alone misses load and integration effects."
+  },
+  {
+   "q": "Stock shown on PDP comes from a cache. What is a sensible degraded representation?",
+   "options": [
+    "Exact count from cache",
+    "Hide the buy button",
+    "Always show in stock",
+    "Stock bands (in stock / few left / out) with reservation at checkout"
+   ],
+   "answer": 3,
+   "why": "Bands tolerate staleness and checkout enforces truth. Always showing in stock invites oversell; hiding the buy button over-degrades."
+  },
+  {
+   "q": "What is the main downside of queue-based load leveling for order fulfillment?",
+   "options": [
+    "It loses data",
+    "It requires synchronous calls",
+    "Users get eventual rather than immediate confirmation, and some accepted orders may need cancellation",
+    "It cannot handle bursts"
+   ],
+   "answer": 2,
+   "why": "The trade-off is eventual consistency and compensations. Durable logs do not lose data, and absorbing bursts is the queue's strength."
+  },
+  {
+   "q": "A dependency returns 200 with price = 0 for many SKUs. What catches this?",
+   "options": [
+    "Circuit breaker on 5xx",
+    "Response validation treating implausible data as failure",
+    "Retry with jitter",
+    "Load shedding"
+   ],
+   "answer": 1,
+   "why": "Status-code-based breakers see success. Semantic validation is required to detect wrong data."
+  },
+  {
+   "q": "Which mode fits payment authorization when the payment gateway is down?",
+   "options": [
+    "Block safely (fail fast with clear message) or route to an alternate provider",
+    "Use default",
+    "Hide",
+    "Serve stale"
+   ],
+   "answer": 0,
+   "why": "Payment outcomes cannot be faked or stale. Alternate provider routing is acceptable because it is another primary path, not a fabricated result."
+  },
+  {
+   "q": "During incident, the flag service is down and on-call needs brownout. Best design?",
+   "options": [
+    "Wait for the flag service",
+    "Deploy new code",
+    "Restart all pods",
+    "Local controller acting on local signals plus emergency config override"
+   ],
+   "answer": 3,
+   "why": "Statically stable control means degradation still works without the flag service. Restarting pods would lose caches and worsen the incident."
+  }
+ ],
+ "references": [
+  {
+   "title": "AWS Builders' Library: Avoiding fallback in distributed systems",
+   "url": "https://aws.amazon.com/en/builders-library/avoiding-fallback-in-distributed-systems"
+  },
+  {
+   "title": "Google SRE book: Addressing Cascading Failures",
+   "url": "https://sre.google/sre-book/addressing-cascading-failures/"
+  },
+  {
+   "title": "Google SRE: Handling Overload",
+   "url": "https://sre.google/resources/book-update/handling-overload/"
+  },
+  {
+   "title": "Netflix Hystrix wiki: How it works",
+   "url": "https://github.com/Netflix/Hystrix/wiki/Architecture"
+  }
+ ]
+}

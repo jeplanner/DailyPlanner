@@ -1,0 +1,1215 @@
+{
+ "slug": "ecommerce-search",
+ "title": "Design E-commerce Catalog Search (product search)",
+ "prompt": "Design search for an e-commerce catalog.",
+ "group": "search",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "Product search is not document search: queries are short and ambiguous ('red shoes under 1000'), the catalog is structured (brand, size, price, seller offers), price and stock change thousands of times a second, and the objective is conversion and revenue rather than text relevance. The design is a multi-stage funnel: query understanding, hybrid lexical plus semantic retrieval over a sharded index, learning-to-rank on behavioural signals, and facets, all under about 200 ms, while keeping fast-changing availability and price fresh without reindexing whole products.",
+ "framework": {
+  "clarify": [
+   "Catalog size and shape: assume 200 million products (parent listings) with 1 billion variants/offers across sellers, in a marketplace like Flipkart or Amazon India.",
+   "Traffic: assume 100 million searches per day normally, 10x spikes on sale days (Big Billion Days), so 1,200 QPS average and about 15,000 to 20,000 QPS peak.",
+   "Features: keyword search, filters/facets (brand, price, size, rating, delivery-by), sort (relevance, price, newest), spell correction, synonyms, multilingual and transliterated queries. Autocomplete is a separate service.",
+   "Freshness: price and stock must reflect within about 1 minute (never show out-of-stock items at the top), new listings within 15 minutes.",
+   "What is relevance optimizing: purchase conversion and GMV with guardrails for customer experience; are sponsored results in scope? I will treat ads as a separate auction blended in.",
+   "Personalization and location: does pincode affect results (serviceability, delivery promise)? Yes; results must be filtered or demoted by deliverability to the user's pincode.",
+   "Latency: p99 under 250 ms server side, including ranking; mobile-first.",
+   "Is the catalog multi-tenant (sellers) with seller quality signals? Yes; the best offer per product is chosen by a buy-box service."
+  ],
+  "design": [
+   "Baseline: one Elasticsearch-style index of product documents with analyzed title/brand/category fields and structured filter fields, BM25 plus business boosts, facets via aggregations; good for a few million products.",
+   "Query understanding service: normalize, spell-correct, transliterate, detect category and attributes (brand=Nike, color=red, price<1000), and rewrite into a structured query.",
+   "Retrieval: hybrid. Lexical retrieval on the inverted index (top 1,000) plus semantic retrieval with query and product embeddings in an ANN (HNSW) index (top 500), unioned and deduped.",
+   "Ranking: multi-stage. L1 cheap scoring on all candidates, L2 learning-to-rank model (gradient boosted trees or a small neural ranker) on the top 500 using text match, CTR, conversion, price competitiveness, rating, delivery speed, seller quality; L3 business rules and diversity on the final page.",
+   "Indexing: catalog service emits product changes via CDC to Kafka; a full-document indexer for slow fields and a separate fast-path updater for price and stock that does partial updates or writes to an in-memory availability store used at query time.",
+   "Facets: computed with aggregations on the filtered candidate set (doc values), with category-specific facet configuration; counts can be approximate on large result sets.",
+   "APIs: GET /search?q=&filters=&sort=&pincode=&page_token= returning products, facets, applied query interpretation and a 'did you mean'."
+  ],
+  "defend": [
+   "Bottleneck: the ranking stage CPU and fan-out across shards at 20K QPS sale peaks; mitigate with replicas, pre-warmed capacity, caching popular queries (head queries are about 20% of distinct queries but most traffic) and cheaper L1 on cold paths.",
+   "Scaling reads: replicas per shard (5+ during sales), query result cache keyed by normalized query + filters + pincode cluster, embeddings and features cached in memory on rankers.",
+   "Scaling writes: price/stock updates (tens of thousands per second during sales) must not trigger full reindexing; separate fast fields (in-memory availability store or partial updates with low refresh) from slow fields (title, attributes).",
+   "Failure behaviour: if the ML ranker or feature store times out, fall back to L1 score; if the semantic retriever is down, serve lexical only; if the availability store is stale, filter using last known stock plus a post-check at product page and cart.",
+   "Relevance safety: offline NDCG on judged queries and online A/B with conversion, zero-result rate, null-and-low recall rate; guardrails on latency.",
+   "Measure: search conversion rate, CTR@k, zero-result rate, revenue per search, p99 latency per stage, out-of-stock-in-top-10 rate, index freshness lag."
+  ],
+  "script": "First, scope: a marketplace catalog of about 200 million products and a billion offers, 100 million searches a day with 10x sale-day peaks, filters and facets, pincode-aware delivery, p99 under 250 ms, and price and stock fresh within a minute. The goal is conversion, not just text match. I would design a funnel. Query understanding turns 'red nike shoes under 2000' into a category, brand, color and price filter plus a text query. Retrieval is hybrid: BM25 on a sharded inverted index plus embedding-based ANN for semantic matches, giving about 1,500 candidates. Then a learning-to-rank model scores the top few hundred using behavioural, price, rating and delivery features, and a final layer applies business rules and diversity. Facets come from aggregations on the filtered set. To defend it: catalog text changes slowly but price and stock change constantly, so I split fast fields into an availability store instead of reindexing documents. Reads scale with replicas and caching of head queries; each stage has a timeout and a fallback, so if the ranker fails we still serve lexical results. I would measure conversion, zero-result rate, out-of-stock in the top ten, and per-stage latency."
+ },
+ "brd": {
+  "problem": "Search drives the majority of e-commerce purchases, yet shoppers type short, misspelt, mixed-language queries and the catalog is huge and noisy. Poor search shows irrelevant or out-of-stock items, returns zero results for valid intents, and loses sales to competitors, especially during sale events when traffic spikes 10x and every second of latency costs conversion.",
+  "goals": [
+   "Increase search-to-purchase conversion by at least 5% relative.",
+   "Keep p99 search latency under 250 ms at 20,000 QPS peak.",
+   "Reduce zero-result rate below 3% of searches.",
+   "Never show out-of-stock or undeliverable items in the top 10 (target < 0.5%).",
+   "Reflect price and stock changes within 60 seconds.",
+   "Support Hindi, Hinglish and regional transliterated queries."
+  ],
+  "non_goals": [
+   "Ad auction and sponsored listing ranking (separate ads system, blended by contract).",
+   "Recommendations on the home page.",
+   "Autocomplete (separate typeahead service).",
+   "Visual and voice search in v1."
+  ],
+  "stakeholders": [
+   {
+    "who": "Shoppers",
+    "needs": "Relevant, available, affordable products quickly, with useful filters."
+   },
+   {
+    "who": "Sellers and brands",
+    "needs": "Fair visibility, quick indexing of new listings, transparency on ranking factors."
+   },
+   {
+    "who": "Category and business teams",
+    "needs": "Ability to boost campaigns during sales within guardrails; GMV growth."
+   },
+   {
+    "who": "Search relevance / ML team",
+    "needs": "Features, training data, experimentation platform."
+   },
+   {
+    "who": "SRE / platform",
+    "needs": "Predictable scaling for sale days, safe deploys, graceful degradation."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Search conversion (purchases / searches)",
+    "target": "+5% relative YoY"
+   },
+   {
+    "metric": "Zero-result rate",
+    "target": "< 3%"
+   },
+   {
+    "metric": "CTR on first 4 results",
+    "target": "> 40% of searches"
+   },
+   {
+    "metric": "Out-of-stock in top 10",
+    "target": "< 0.5% of impressions"
+   },
+   {
+    "metric": "p99 latency",
+    "target": "< 250 ms server, < 1 s page render on 4G"
+   },
+   {
+    "metric": "Price/stock freshness",
+    "target": "p95 < 60 s"
+   }
+  ],
+  "constraints": [
+   "Must integrate with existing catalog, pricing, inventory and logistics (serviceability) services.",
+   "Sale-day capacity must be pre-provisioned; autoscaling search clusters takes too long.",
+   "Ranking must comply with marketplace fairness and regulatory norms (no undisclosed self-preferencing).",
+   "Infrastructure in Indian data centers / regions."
+  ],
+  "risks": [
+   {
+    "risk": "Sale-day traffic overwhelms clusters",
+    "mitigation": "Load tests at 1.5x forecast, pre-scaled replicas, degraded modes (disable semantic retrieval, cap facets)."
+   },
+   {
+    "risk": "Ranking model optimizes clicks on clickbait or cheap low-quality items",
+    "mitigation": "Optimize for purchases and returns-adjusted conversion; quality guardrails."
+   },
+   {
+    "risk": "Stale stock leads to cancellations",
+    "mitigation": "Fast availability path, post-filter on cart, freshness SLO alerting."
+   },
+   {
+    "risk": "Catalog data quality (wrong attributes) hurts filters",
+    "mitigation": "Attribute extraction and normalization pipeline, seller feedback loops."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Mobile shopper on 4G",
+    "needs": "Finds 'boat earphones under 1000' fast, filters by rating and delivery date."
+   },
+   {
+    "name": "Brand loyal shopper",
+    "needs": "Typing a brand shows that brand's catalog, not lookalikes."
+   },
+   {
+    "name": "Hinglish shopper",
+    "needs": "Types 'ladies kurti cotton sasta' and gets relevant cheap cotton kurtis."
+   },
+   {
+    "name": "Category manager",
+    "needs": "Pins campaign products for sale events and sees search performance."
+   },
+   {
+    "name": "Relevance scientist",
+    "needs": "Trains and A/B tests ranking models with reliable logged features."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want relevant products for short queries so that I can buy without browsing categories.",
+   "As a shopper, I want to filter by brand, price, size, rating and delivery date so that I see only what fits me.",
+   "As a shopper, I want facet counts so that I know how many options each filter leaves.",
+   "As a shopper, I want spelling mistakes corrected ('samsang') so that I still find products.",
+   "As a shopper, I want only items deliverable to my pincode so that I do not waste time.",
+   "As a shopper, I want to sort by price or newest so that I control ordering.",
+   "As a seller, I want my new listing searchable within 15 minutes so that I can start selling.",
+   "As a category manager, I want to boost sale products within limits so that campaigns perform.",
+   "As a relevance scientist, I want features logged at serving time so that training matches serving."
+  ],
+  "functional": [
+   "Keyword search over title, brand, category, attributes and description with field boosts.",
+   "Query understanding: spell correction, synonyms, transliteration, category and attribute extraction, price intent parsing.",
+   "Hybrid retrieval: lexical and semantic (embedding) retrieval with result fusion.",
+   "Learning-to-rank with behavioural, product quality, price and delivery features.",
+   "Filters and facets with counts, category-specific facet sets, range facets for price.",
+   "Sorts: relevance, price asc/desc, newest, rating, discount.",
+   "Pincode-aware deliverability filtering and delivery-date facet.",
+   "Variant grouping: one result per parent product with the best matching variant and buy-box offer.",
+   "Merchandising rules: pins, boosts, burying, with expiry and caps.",
+   "Logging of impressions, clicks, add-to-cart and purchases with feature snapshots."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "p50 < 100 ms, p99 < 250 ms server side"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95%; 99.99% during sale events with degraded modes"
+   },
+   {
+    "name": "Throughput",
+    "target": "1,200 QPS average, 20,000 QPS sale peak"
+   },
+   {
+    "name": "Freshness",
+    "target": "Price/stock p95 < 60 s; new listings < 15 min; catalog edits < 15 min"
+   },
+   {
+    "name": "Consistency",
+    "target": "Eventual; cart and checkout re-verify price and stock as source of truth"
+   },
+   {
+    "name": "Relevance",
+    "target": "NDCG@10 non-regression on judged set for every model release"
+   },
+   {
+    "name": "Scalability",
+    "target": "Catalog growth to 500M products without re-architecture"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "200 million parent products, 1 billion offers/variants.",
+    "Indexed product document about 4 KB (title, attributes, description excerpt, numeric fields).",
+    "100 million searches/day, 10x peak during sales; each search page = 1 search request plus 0.5 facet refinements.",
+    "Price/stock updates: 50 million per day normally, 20,000 per second peak during sale start.",
+    "Embeddings: 256-dim float vectors per product, 8-bit quantized for serving."
+   ],
+   "math": [
+    "Search QPS: 100e6 x 1.5 / 86,400 = about 1,700 QPS average; sale peak 10x = about 17,000 to 20,000 QPS.",
+    "Lexical index: 200M x 4 KB = 800 GB raw; index with doc values about 1 TB per copy.",
+    "Shards: 1 TB / 30 GB = about 32 to 40; choose 48 primary shards (about 4M products each).",
+    "Replicas: every search hits all 48 shards, so each shard sees the full 20K QPS; at about 3,000 filtered shard-queries/s per copy that needs 7 copies, i.e. 1 primary + 6 replicas on sale days (48 x 7 = 336 shard copies on about 170 nodes, 2 per node).",
+    "Vectors: 200M x 256 dims x 1 byte = 51 GB quantized, plus HNSW graph links (32 neighbours x 4 bytes = 128 B/vector = 26 GB), about 80 GB per copy; shard into 8 partitions of 10 GB.",
+    "Ranking: 20K QPS x 500 candidates = 10M model scorings/s; GBDT with 300 trees at about 5 microseconds per doc = 50 core-seconds per second, about 50 cores plus feature fetch; provision 200 cores for headroom.",
+    "Availability updates: 20K/s x 50 bytes = 1 MB/s; easily handled by an in-memory key-value store."
+   ],
+   "summary": "About 1 TB of lexical index in 48 shards and about 80 GB of vectors, replicated 6 to 7 times for sale peaks of 20K QPS, plus a ranking tier scoring about 10 million candidate-products per second. Price and stock are a high-rate, tiny-payload stream best kept outside the inverted index."
+  },
+  "out_of_scope": [
+   "Ads auction and pricing.",
+   "Cart, checkout and payment.",
+   "Product detail page rendering.",
+   "Visual search and voice search.",
+   "Seller onboarding and catalog QC workflows."
+  ]
+ },
+ "hld": {
+  "overview": "The search request flows through a Search Orchestrator that calls Query Understanding, then runs lexical and vector retrieval in parallel, merges candidates, fetches features, ranks with an LTR model, applies availability and business rules, computes facets and returns a page. The indexing side consumes catalog CDC and price/inventory streams: slow-changing fields go to a full-document indexer with alias-based rebuilds; fast-changing fields go to an availability store and to partial updates for filterable fields such as in_stock and price buckets. Logs of impressions and purchases feed offline training and the feature store.",
+  "diagram": " Client (app/web, pincode)\n   |\n [API Gateway] -> [Search Orchestrator] --cache--> [Redis query cache]\n                    |  1. understand\n                    +--> [Query Understanding: spell, translit, NER, category clf]\n                    |  2. retrieve (parallel)\n                    +--> [Lexical index: 48 shards x 7 copies] (BM25 + filters)\n                    +--> [Vector index: HNSW, 8 parts]          (semantic ANN)\n                    |  3. features + rank\n                    +--> [Feature store (online)] -> [Ranker: LTR GBDT/NN]\n                    |  4. availability, buy-box, rules, facets\n                    +--> [Availability store: pincode x sku] [Merch rules]\n                    v\n                 response -> client;  impressions/clicks -> [Kafka] -> [Lake] -> training\n\n [Catalog DB] -CDC-> [Kafka: catalog] -> [Doc Indexer] -> lexical + vector (embed svc)\n [Pricing/Inventory] -> [Kafka: price-stock] -> [Fast Updater] -> availability store\n                                                     \\-> partial update in_stock/price",
+  "components": [
+   {
+    "name": "Search Orchestrator",
+    "responsibility": "Owns the request budget; calls stages in parallel where possible with per-stage timeouts and fallbacks; assembles response."
+   },
+   {
+    "name": "Query Understanding (QU)",
+    "responsibility": "Normalization, spell correction, transliteration, synonym expansion, category classification, attribute and price-intent extraction."
+   },
+   {
+    "name": "Lexical index cluster",
+    "responsibility": "Elasticsearch/OpenSearch/Solr-style inverted index with BM25, filters on structured fields, aggregations for facets."
+   },
+   {
+    "name": "Vector index",
+    "responsibility": "HNSW ANN over product embeddings for semantic recall (synonyms, vague intent, cross-language)."
+   },
+   {
+    "name": "Embedding service",
+    "responsibility": "Encodes queries online (cached for head queries) and products offline with a two-tower model."
+   },
+   {
+    "name": "Feature store",
+    "responsibility": "Online key-value features per product and per query-product (CTR, conversion, rating, returns rate, price competitiveness) with offline parity."
+   },
+   {
+    "name": "Ranker",
+    "responsibility": "Learning-to-rank model (LambdaMART/GBDT, later neural) scoring top 500 candidates under about 30 ms."
+   },
+   {
+    "name": "Availability store",
+    "responsibility": "In-memory store of stock and serviceability by sku and pincode cluster; updated within seconds from inventory events."
+   },
+   {
+    "name": "Buy-box service",
+    "responsibility": "Chooses the best offer (seller, price, delivery) per product for display."
+   },
+   {
+    "name": "Merchandising rules engine",
+    "responsibility": "Applies pins, boosts and burying with caps and expiry; logs every application."
+   },
+   {
+    "name": "Indexing pipeline",
+    "responsibility": "CDC consumer, document builder (joins catalog, attributes, ratings), bulk indexer, alias management for rebuilds."
+   },
+   {
+    "name": "Experimentation and logging",
+    "responsibility": "Assigns A/B buckets, logs features and outcomes for training and metrics."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Search request",
+    "steps": [
+     "Client sends GET /search?q=red nike shoes under 2000&pincode=600042.",
+     "Orchestrator checks Redis for key (normalized query, filters, pincode cluster, experiment bucket); miss.",
+     "QU returns: category=men's/women's sports shoes (probabilities), brand=Nike, color=red, price<=2000, text='shoes'.",
+     "In parallel: lexical query with filters brand:nike, color:red, price<=2000, in_stock:true to all 48 shards (top 1,000), and vector ANN with query embedding plus the same filters (top 500).",
+     "Merge and dedupe candidates by product_id (about 1,200), fetch features in one batched call (10 ms budget).",
+     "Ranker scores top 500 after an L1 cut; availability store filters undeliverable SKUs for pincode cluster; buy-box picks offers.",
+     "Rules engine applies campaign boosts within caps and diversity (max 3 per seller in top 10).",
+     "Facets computed via aggregations from the lexical query on the filtered set; response with 24 products, facets, applied interpretation; cache for 60 s."
+    ]
+   },
+   {
+    "name": "Price/stock update",
+    "steps": [
+     "Inventory service emits stock change for sku S in warehouse W; pricing emits price change.",
+     "Fast Updater consumes Kafka (keyed by sku), updates availability store (sku -> stock by warehouse, serviceable pincode clusters) within 1 to 2 s.",
+     "If in_stock flips or price crosses a price-bucket boundary, issue a partial update to the lexical index (refresh 5 s) so filters and sorts stay correct.",
+     "At query time the availability store is the final authority for deliverability; cart re-verifies."
+    ]
+   },
+   {
+    "name": "New listing",
+    "steps": [
+     "Seller creates listing; catalog QC approves; CDC event emitted.",
+     "Doc Indexer joins attributes, category, seller rating; embedding service encodes title and attributes.",
+     "Bulk index into lexical and vector indexes; visible within 15 minutes; cold-start features use category priors."
+    ]
+   }
+  ],
+  "data_flow": "Catalog DB -> CDC -> Kafka -> document builder -> lexical and vector indexes (with alias swaps for full rebuilds). Pricing/inventory -> Kafka -> fast updater -> availability store and partial index updates. Requests: client -> orchestrator -> QU -> parallel retrieval -> features -> ranker -> availability/buy-box/rules -> facets -> client. Behavioural logs -> Kafka -> lake -> feature computation (daily and streaming) -> feature store and model training."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/search",
+    "request": "q, filters (brand[], price_min, price_max, size[], rating_gte, delivery_by), sort, pincode, page_size<=48, page_token",
+    "response": "{interpretation{category, filters_applied, corrected_q}, products[{product_id, title, image, price, mrp, rating, offer_id, delivery_eta, badges}], facets[{name, values[{v,count}]}], next_page_token, request_id}",
+    "notes": "request_id joins impressions to clicks/purchases; page_token pins candidate set to avoid duplicates across pages."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/search/events",
+    "request": "{request_id, type: impression|click|add_to_cart|purchase, product_id, position}",
+    "response": "204",
+    "notes": "Async, batched; purchases joined server-side from order events too."
+   },
+   {
+    "method": "PUT",
+    "path": "/internal/products/{product_id}",
+    "request": "full product document",
+    "response": "200 {version}",
+    "notes": "Used by indexer; external version from catalog."
+   },
+   {
+    "method": "PATCH",
+    "path": "/internal/availability/{sku}",
+    "request": "{stock_by_wh, price, version}",
+    "response": "200",
+    "notes": "Fast path; idempotent by version."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/admin/merch-rules",
+    "request": "{query_pattern|category, action: pin|boost|bury, product_ids, weight, cap, starts_at, ends_at}",
+    "response": "201 {rule_id}",
+    "notes": "Requires approval; caps enforce fairness."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/search/facets",
+    "request": "same as search",
+    "response": "{facets}",
+    "notes": "Optional lazy load of expensive facets on mobile."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Product search document",
+    "store": "Lexical index (OpenSearch/Elasticsearch)",
+    "fields": [
+     "product_id",
+     "title text (en, translit)",
+     "brand keyword",
+     "category_path keyword[]",
+     "attributes nested/flattened (color, size, material)",
+     "price_min float",
+     "price_bucket keyword",
+     "rating float",
+     "in_stock boolean",
+     "seller_ids keyword[]",
+     "popularity rank_feature",
+     "created_at date"
+    ],
+    "keys": "_id = product_id; routing hash(product_id) over 48 shards; alias products_current",
+    "notes": "Variants collapsed under parent; doc values for facets and sorts."
+   },
+   {
+    "entity": "Product embedding",
+    "store": "Vector index (HNSW in OpenSearch k-NN / Vespa / Milvus)",
+    "fields": [
+     "product_id",
+     "vector int8[256]",
+     "category_id",
+     "in_stock"
+    ],
+    "keys": "partitioned by hash(product_id) into 8 partitions",
+    "notes": "Filtered ANN by category and stock; rebuilt weekly, upserts daily."
+   },
+   {
+    "entity": "Availability",
+    "store": "Aerospike/Redis cluster",
+    "fields": [
+     "sku",
+     "stock_by_warehouse map",
+     "serviceable_pincode_clusters bitmap",
+     "price",
+     "version"
+    ],
+    "keys": "sku (hash partitioned)",
+    "notes": "Source events from inventory; version guards ordering."
+   },
+   {
+    "entity": "Online features",
+    "store": "Feature store (Redis/Cassandra online, lake offline)",
+    "fields": [
+     "product_id",
+     "ctr_7d",
+     "cvr_30d",
+     "rating",
+     "return_rate",
+     "price_index_vs_category",
+     "query_product_ctr (q_hash, product_id)"
+    ],
+    "keys": "product_id; (query_hash, product_id) for pair features",
+    "notes": "Point-in-time correct offline copies for training."
+   },
+   {
+    "entity": "Search event log",
+    "store": "Kafka -> lake (Parquet/Iceberg)",
+    "fields": [
+     "request_id",
+     "user_hash",
+     "q",
+     "interpretation",
+     "shown[product_id, position, features]",
+     "event_type",
+     "ts"
+    ],
+    "keys": "partitioned by date; joined on request_id",
+    "notes": "Feature logging at serve time avoids training/serving skew."
+   }
+  ],
+  "classes": [
+   {
+    "name": "SearchOrchestrator",
+    "responsibility": "Run the stage pipeline within a 220 ms deadline with fallbacks.",
+    "methods": [
+     "search(req) -> SearchResponse",
+     "with_deadline(stage, ms, fallback)"
+    ]
+   },
+   {
+    "name": "QueryUnderstanding",
+    "responsibility": "Turn text into structured intent.",
+    "methods": [
+     "normalize(q)",
+     "spell_correct(q)",
+     "classify_category(q) -> [(cat, p)]",
+     "extract_attributes(q) -> filters"
+    ]
+   },
+   {
+    "name": "HybridRetriever",
+    "responsibility": "Lexical plus vector retrieval and fusion.",
+    "methods": [
+     "lexical(q, filters, k)",
+     "semantic(qvec, filters, k)",
+     "fuse(lists) -> candidates"
+    ]
+   },
+   {
+    "name": "Ranker",
+    "responsibility": "Feature assembly and model scoring.",
+    "methods": [
+     "features(q, candidates)",
+     "score(feature_matrix) -> scores",
+     "fallback_score(candidates)"
+    ]
+   },
+   {
+    "name": "ResultPolicy",
+    "responsibility": "Availability, buy-box, merch rules, diversity and pagination.",
+    "methods": [
+     "filter_deliverable(cands, pincode)",
+     "apply_rules(ranked)",
+     "diversify(ranked, max_per_seller=3)"
+    ]
+   },
+   {
+    "name": "FastAvailabilityUpdater",
+    "responsibility": "Consume price/stock events and update stores idempotently.",
+    "methods": [
+     "on_event(evt)",
+     "maybe_partial_index_update(sku)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Reciprocal rank fusion (hybrid retrieval)",
+    "explain": "Lexical and vector scores are on different scales, so instead of mixing scores we mix ranks: each list contributes 1/(k + rank) with k about 60. Robust and needs no calibration; a learned ranker later reorders anyway.",
+    "pseudocode": "def rrf(lists, k=60):\n    score = defaultdict(float)\n    for lst in lists:                     # each sorted best-first\n        for rank, pid in enumerate(lst, start=1):\n            score[pid] += 1.0 / (k + rank)\n    return sorted(score, key=score.get, reverse=True)"
+   },
+   {
+    "name": "Multi-stage ranking with deadline fallback",
+    "explain": "L1 is a cheap linear score (BM25, popularity, rating) on all candidates; L2 is the LTR model on the top 500; L3 applies rules. If features or the model miss the deadline, L1 order is used.",
+    "pseudocode": "def rank(q, cands, deadline):\n    l1 = sorted(cands, key=lambda c: w1*c.bm25 + w2*c.pop + w3*c.rating, reverse=True)[:500]\n    try:\n        F = feature_store.batch_get(q, l1, timeout=min(15, deadline.left()))\n        s = model.predict(F, timeout=min(30, deadline.left()))\n        l2 = [c for _, c in sorted(zip(s, l1), reverse=True)]\n    except Timeout:\n        metrics.inc('ranker_fallback'); l2 = l1\n    return policy.apply(l2)"
+   },
+   {
+    "name": "LambdaMART training objective (sketch)",
+    "explain": "Gradient boosted trees trained on query groups with graded labels (purchase=3, add-to-cart=2, click=1, skip=0). Lambda gradients weight each pair swap by the change in NDCG, so mistakes at the top of the list matter most. Position bias is corrected with inverse propensity weights.",
+    "pseudocode": "for each boosting round:\n    for each query group g:\n        for pairs (i, j) with label_i > label_j:\n            rho = 1 / (1 + exp(s_i - s_j))\n            delta = |NDCG(swap i,j) - NDCG|\n            lambda_i += rho * delta * ipw(pos_i); lambda_j -= rho * delta * ipw(pos_j)\n    fit regression tree to lambdas; s += lr * tree(x)"
+   },
+   {
+    "name": "Fast availability update with version guard",
+    "explain": "Inventory events can be duplicated or reordered; apply only newer versions and touch the inverted index only when a filterable field changes state.",
+    "pseudocode": "def on_event(e):\n    cur = avail.get(e.sku)\n    if cur and e.version <= cur.version: return\n    avail.put(e.sku, e)\n    if cur is None or cur.in_stock != e.in_stock or bucket(cur.price) != bucket(e.price):\n        index.partial_update(e.product_id, in_stock=any_stock(e.product_id),\n                             price_min=min_price(e.product_id), version=e.version)"
+   }
+  ],
+  "sequence": "Client  Orchestr.   QU     Lexical(48)  Vector   FeatStore  Ranker  Avail/Rules\n  |q,pin  |          |         |           |          |         |         |\n  |------>| parse    |         |           |          |         |         |\n  |       |--------->|         |           |          |         |         |\n  |       |<---------| intent+filters      |          |         |         |\n  |       |---- parallel ----->|           |          |         |         |\n  |       |--------------------------------->|        |         |         |\n  |       |<-------------------| top1000   |          |         |         |\n  |       |<---------------------------------| top500 |         |         |\n  |       | RRF merge, L1 cut 500          |          |         |         |\n  |       |------------------------------------------>|         |         |\n  |       |<------------------------------------------| feats   |         |\n  |       |---------------------------------------------------->| score   |\n  |       |<----------------------------------------------------|         |\n  |       |-------------------------------------------------------------->|\n  |       |<--------------------------------------------------------------|\n  |<------| 24 products + facets (facets from lexical aggs)     |         |"
+ },
+ "edge_cases": [
+  {
+   "case": "Item goes out of stock seconds after indexing during a flash sale",
+   "handling": "Availability store checked at query time; in_stock partial update with 5 s refresh; cart re-verifies; out-of-stock-in-top-10 metric alerts."
+  },
+  {
+   "case": "Price-intent query 'phones under 15000'",
+   "handling": "QU extracts price<=15000 as a filter and removes 'under 15000' from text; if parse confidence low, apply as boost instead of hard filter."
+  },
+  {
+   "case": "Brand query for a brand we do not carry",
+   "handling": "Do not return zero; show category substitutes with a 'showing similar' banner via semantic retrieval."
+  },
+  {
+   "case": "Ambiguous query 'apple' (fruit vs phones)",
+   "handling": "Category classifier returns a distribution; mix top categories proportionally and let click data refine; show category chips."
+  },
+  {
+   "case": "Hot head query on sale day ('iphone 15') at 2K QPS",
+   "handling": "Result cache with 30-60 s TTL plus request coalescing; availability overlay applied per pincode cluster on cached candidates."
+  },
+  {
+   "case": "Variant explosion (a t-shirt with 40 size/color variants)",
+   "handling": "Index parent documents with nested or collapsed variants; show best matching variant (red, size M if filtered)."
+  },
+  {
+   "case": "Seller keyword stuffing titles",
+   "handling": "BM25 saturation, title length normalization, quality model penalties, catalog QC rules."
+  },
+  {
+   "case": "Facet counts expensive on broad queries ('shoes' matches 5M items)",
+   "handling": "Approximate counts via sampling or shard-level top terms, cap facet sizes, lazy-load secondary facets."
+  },
+  {
+   "case": "Duplicate products across pages as index refreshes",
+   "handling": "Point-in-time snapshot or cached candidate list per request_id for pagination."
+  },
+  {
+   "case": "Reordered or duplicate inventory events",
+   "handling": "Version guard per sku; idempotent updates."
+  },
+  {
+   "case": "Cold-start products with no behavioural data",
+   "handling": "Use category priors and content features; reserve exploration slots (e.g. positions 8-10) with bandit-style allocation."
+  },
+  {
+   "case": "Hinglish and transliteration ('jute chappal', 'mobile ka cover')",
+   "handling": "Transliteration and query rewriting models, multilingual embeddings for semantic recall."
+  },
+  {
+   "case": "Adversarial queries (very long, wildcard heavy)",
+   "handling": "Truncate to 200 chars, disallow leading wildcards, cap boolean clauses."
+  },
+  {
+   "case": "Pincode not serviceable for most results",
+   "handling": "Show deliverable first; offer toggle to include non-deliverable with clear labels rather than zero results."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Elasticsearch / OpenSearch (or Solr)",
+   "layer": "Lexical retrieval and facets",
+   "overview": "Distributed Lucene-based engine with BM25, filters, aggregations and rank_feature fields.",
+   "why": "Mature filters and faceting on structured fields; huge ecosystem; k-NN plugin available.",
+   "alternatives": "Vespa (native hybrid retrieval and on-node ranking, more complex); Solr (similar Lucene core); Algolia (managed, costly at this scale)."
+  },
+  {
+   "name": "HNSW vector index (OpenSearch k-NN, Vespa, Milvus or FAISS)",
+   "layer": "Semantic retrieval",
+   "overview": "Approximate nearest neighbour graph index over embeddings.",
+   "why": "Recall for vague or cross-language queries with millisecond latency at 95%+ recall.",
+   "alternatives": "IVF-PQ in FAISS (less memory, lower recall); ScaNN; brute force on GPUs for small catalogs."
+  },
+  {
+   "name": "Kafka + Debezium CDC",
+   "layer": "Change streams",
+   "overview": "Log-based change capture from catalog DB into Kafka topics.",
+   "why": "Ordered, replayable changes keyed by product_id; separate topics for slow and fast fields.",
+   "alternatives": "Application-level outbox; batch exports (too slow for freshness)."
+  },
+  {
+   "name": "Aerospike / Redis",
+   "layer": "Availability store and caches",
+   "overview": "Low-latency in-memory (Aerospike hybrid SSD) key-value stores.",
+   "why": "Millions of reads per second for stock/serviceability at sub-millisecond latency.",
+   "alternatives": "Cassandra (higher latency); keeping stock only in the inverted index (needs constant reindexing)."
+  },
+  {
+   "name": "Feature store (Feast-like on Redis + lake)",
+   "layer": "Ranking features",
+   "overview": "Consistent online and offline feature definitions.",
+   "why": "Prevents training/serving skew; batched lookups under 10 ms.",
+   "alternatives": "Features embedded in index docs (stale, reindex-heavy); ad hoc caches."
+  },
+  {
+   "name": "LightGBM / XGBoost LambdaMART, later TF/PyTorch rankers",
+   "layer": "Learning to rank",
+   "overview": "Gradient boosted decision trees optimizing ranking metrics.",
+   "why": "Strong baseline on tabular features, fast CPU inference.",
+   "alternatives": "Neural rankers or cross-encoders (better semantics, need GPUs and tighter budgets)."
+  },
+  {
+   "name": "Spark + Airflow",
+   "layer": "Offline pipelines",
+   "overview": "Batch compute and orchestration.",
+   "why": "Daily features, training data generation, full reindex builds.",
+   "alternatives": "Flink for streaming features; BigQuery/Presto for SQL-based pipelines."
+  },
+  {
+   "name": "Two-tower embedding model",
+   "layer": "Semantic representations",
+   "overview": "Separate encoders for queries and products trained on query-purchase pairs.",
+   "why": "Product vectors precomputed; only query encoded online in a few ms.",
+   "alternatives": "Cross-encoders (too slow for retrieval); off-the-shelf sentence embeddings (weaker on catalog vocabulary)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Query understanding: intent, attribute extraction and query rewriting",
+   "explain": "Shoppers type short, underspecified queries, so the system must infer what they mean before retrieving anything. Query understanding is a pipeline of small models and dictionaries. Normalization lowercases, strips punctuation, unifies units ('1tb' and '1 tb'). Spell correction uses edit distance against a vocabulary weighted by query logs, with context (a noisy-channel model picks the correction most likely given both the typo probability and the language model). Transliteration maps Roman-script Hindi to a canonical form. Category classification predicts a probability distribution over the category tree from the text ('apple' -> 60% phones, 25% fruits, 15% accessories), trained on click and purchase logs. Named entity or attribute extraction tags spans as brand, color, size, material or price ('under 2000' -> price <= 2000). Synonym and rewrite rules expand 'tee' to 't-shirt' or relax a query that would otherwise return zero results by dropping the least important term. The output is a structured query: free text plus hard filters, soft boosts and a category prior. The key design choice is how aggressively to turn interpretations into hard filters; a wrong hard filter causes empty or wrong results, while a soft boost is forgiving but less precise. Confidence thresholds decide which to use, and the interpretation is shown to the user (chips) so they can undo it.",
+   "in_this_design": "The QU service runs in about 15 ms: spell correction, transliteration, a category classifier, a CRF/transformer tagger for brand/color/size/price, then rewrites. High-confidence brand and price become filters; lower-confidence ones become boosts. Zero-result queries trigger progressive relaxation.",
+   "key_points": [
+    "Turn text into structured intent: text, filters, boosts, category prior.",
+    "Confidence decides hard filter versus soft boost.",
+    "Spell correction is context- and log-aware, not just edit distance.",
+    "Query relaxation fights zero results.",
+    "Show the interpretation so users can undo it."
+   ],
+   "qa": [
+    {
+     "q": "How do you prevent 'iphone case' from returning iPhones?",
+     "a": "The category classifier assigns accessories, and head-noun detection treats 'case' as the product type and 'iphone' as a compatibility attribute, so category filter or boost targets cases."
+    },
+    {
+     "q": "When would you not apply an extracted filter?",
+     "a": "When confidence is low or applying it yields too few results; then use it as a boost and show a chip the user can click to apply strictly."
+    },
+    {
+     "q": "How is spell correction trained?",
+     "a": "From query reformulation logs (user typed X, then Y, then purchased), building a candidate set by edit distance and phonetic similarity, ranked by a language model and log frequency, with a whitelist for brand names that look like typos."
+    }
+   ]
+  },
+  {
+   "name": "Hybrid retrieval: lexical (BM25) plus semantic (dense embeddings and ANN)",
+   "explain": "Lexical retrieval matches exact tokens through an inverted index. It is precise, explainable, great for model numbers and brands ('SM-S918B') and supports filters cheaply, but it fails on vocabulary mismatch: 'sofa' versus 'couch', 'running shoes' versus 'sports sneakers', or a Hinglish query. Semantic retrieval encodes the query and each product into dense vectors with a neural model, typically a two-tower network trained so that queries and the products people bought after them land close together. Retrieval then becomes nearest-neighbour search in vector space. Exact search over 200 million vectors is too slow, so approximate nearest neighbour (ANN) indexes are used. HNSW (hierarchical navigable small world) builds a layered proximity graph: a search starts at a sparse top layer and greedily moves closer to the query, descending layers, giving logarithmic-like search time and high recall; parameters M (links per node) and ef (search breadth) trade memory and latency for recall. IVF-PQ clusters vectors and compresses them with product quantization for lower memory. Because dense retrieval can return items that are semantically close but wrong for exact intents, production systems use hybrid retrieval: run both, fuse the candidate lists (reciprocal rank fusion or a learned blend), and let the ranker sort it out. Amazon's semantic product search paper reported dense retrieval added to lexical matching improved recall and online conversion.",
+   "in_this_design": "Lexical retrieval returns up to 1,000 candidates from 48 shards with filters; an HNSW index of int8 256-dim product vectors (about 80 GB, 8 partitions) returns 500 with category and stock filters. RRF fuses them before ranking. Head query embeddings are cached; tail queries are encoded online in about 5 ms.",
+   "key_points": [
+    "Lexical: precise, filterable, explainable; misses synonyms and paraphrases.",
+    "Dense: handles vocabulary mismatch and multilingual queries; weak on exact codes.",
+    "ANN (HNSW, IVF-PQ) trades a little recall for orders of magnitude speed.",
+    "Fuse by rank (RRF) because scores are not comparable.",
+    "Filtered ANN must be handled carefully to avoid empty results."
+   ],
+   "qa": [
+    {
+     "q": "Why not replace BM25 entirely with vector search?",
+     "a": "Dense models blur exact attributes like model numbers, sizes and brands, are harder to debug and filter, and cost more memory. Hybrid keeps lexical precision and adds semantic recall."
+    },
+    {
+     "q": "What does HNSW's ef_search parameter control?",
+     "a": "The size of the candidate list explored at query time; higher ef increases recall and latency. Typical values 64 to 256 give 95%+ recall within a few milliseconds."
+    },
+    {
+     "q": "How do you apply filters like in_stock or category to ANN?",
+     "a": "Pre-filtering with filtered HNSW traversal, partitioning the vector index by top-level category, or over-fetching and post-filtering. Post-filtering alone can leave too few results for selective filters, so we partition and over-fetch."
+    }
+   ]
+  },
+  {
+   "name": "Learning to rank and multi-stage ranking",
+   "explain": "Retrieval maximizes recall; ranking maximizes the quality of the few results users actually see. Hand-tuned formulas (BM25 times popularity times rating) break down once there are dozens of signals, so teams use learning to rank (LTR): a model learns how to combine features from labelled data. Labels come from human judgments or, at e-commerce scale, from behaviour: purchases, add-to-carts and clicks, with graded relevance. Three families exist. Pointwise models predict each item's relevance independently. Pairwise models learn which of two items should rank higher. Listwise models optimize a list metric like NDCG directly; LambdaMART, gradient boosted trees with lambda gradients, is the classic strong baseline. Behavioural labels are biased: items at position 1 get clicked because they are at position 1. Position bias is corrected with randomization experiments or inverse propensity weighting. Because good models are expensive, ranking is staged: a cheap first stage scores thousands of candidates, a heavier model scores hundreds, and maybe a cross-encoder or business layer handles the top dozens. Two engineering traps dominate: training/serving skew (features computed differently offline and online, solved by logging features at serving time) and feedback loops (the model only learns about items it already shows, solved with exploration).",
+   "in_this_design": "L1 linear score cuts about 1,200 candidates to 500; L2 is a LambdaMART model with about 150 features (text match per field, CTR and conversion by query-category, price index, rating, return rate, delivery ETA, seller quality) scoring in about 20 ms; L3 applies rules and diversity. Features are logged with each impression for training.",
+   "key_points": [
+    "Pointwise, pairwise, listwise; LambdaMART is the workhorse.",
+    "Labels from purchases and clicks need position-bias correction.",
+    "Stage the cost: cheap on many, expensive on few.",
+    "Log features at serving time to kill training/serving skew.",
+    "Reserve exploration slots to break feedback loops."
+   ],
+   "qa": [
+    {
+     "q": "Why optimize purchases rather than clicks?",
+     "a": "Clicks reward attractive thumbnails and low prices that may not convert or may be returned. Purchase and returns-adjusted labels align with revenue and customer satisfaction; clicks are still useful as a weaker graded label."
+    },
+    {
+     "q": "How do you detect training/serving skew?",
+     "a": "Compare distributions of features logged at serve time against offline-computed features for the same requests; alert on divergence; ideally train only on logged features."
+    },
+    {
+     "q": "Ranking latency budget is blown during a sale. What do you do?",
+     "a": "Shrink L2 candidate count (500 to 200), use a smaller tree ensemble, cache scores for head queries, or fall back to L1 for a traffic slice, all controlled by feature flags."
+    }
+   ]
+  },
+  {
+   "name": "Faceted search and aggregations",
+   "explain": "Facets are the filters on the left of a results page with counts: Brand (Nike 1,240, Puma 830), Price ranges, Size. Computing them means, for the set of documents matching the query and current filters, counting documents per value of each facet field. Search engines do this with columnar per-field storage (doc values in Lucene): for each matching doc id, read the field's value ordinal and increment a counter. Cost is proportional to the number of matching documents times the number of facets, which is why broad queries ('shoes' with 5 million hits) are expensive. In a sharded index each shard computes its top values and the coordinator merges them, so counts for long-tail values can be approximate (a value that is top on no single shard may be missed); requesting a larger shard_size improves accuracy. Multi-select facets add a subtlety: when the user selects Brand=Nike, the Brand facet should still show counts for other brands (as if Brand were not filtered) while other facets reflect the Nike filter; this is done with post-filters or per-facet filter exclusion. Facet sets differ by category (size for shoes, RAM for phones), so a category-to-facet configuration drives which aggregations to request. Range facets for price use buckets or dynamic ranges based on the result distribution.",
+   "in_this_design": "Aggregations run on the lexical query's filtered result set using doc values; the category predicted by QU selects the facet config (shoes: brand, size, color, price, rating, delivery-by). Multi-select uses post_filter so selected facets keep sibling counts. For very broad queries we cap shard_size and lazy-load secondary facets.",
+   "key_points": [
+    "Facet counts come from columnar doc values over the matching set.",
+    "Cost scales with match count times number of facets.",
+    "Sharded counts are approximate for the long tail; shard_size trades accuracy and cost.",
+    "Multi-select facets need per-facet filter exclusion (post_filter).",
+    "Facets are category-specific configuration."
+   ],
+   "qa": [
+    {
+     "q": "Why might a facet count be slightly off?",
+     "a": "Each shard returns only its top N values; values not in a shard's top N are missed or undercounted when merged. Larger shard_size reduces the error at higher cost."
+    },
+    {
+     "q": "How do you keep Brand counts useful after the user selects Nike?",
+     "a": "Apply the brand filter as a post_filter for hits and to other facets, but compute the Brand facet without the brand filter so other brands still show counts."
+    },
+    {
+     "q": "How do you make facets fast for 'shoes' with 5 million matches?",
+     "a": "Restrict to the predicted category, use sampler aggregations on top-scoring docs, cap facets shown initially, cache facet results for head queries, and lazy-load the rest."
+    }
+   ]
+  },
+  {
+   "name": "Separating fast-changing and slow-changing data (CQRS-style read models)",
+   "explain": "CQRS, Command Query Responsibility Segregation, separates the model used for writes from the models used for reads. The source of truth for a product, its price and its stock lives in transactional services optimized for correctness; search keeps a denormalized read model optimized for queries, updated asynchronously from change events. Read models are eventually consistent, so the design must decide which staleness is acceptable where. Different fields have very different change rates: a product title changes rarely, while stock for a hot SKU can change every second during a sale and price can change thousands of times an hour across the catalog. Updating an inverted index document is expensive because Lucene segments are immutable: an update is a delete plus a full re-add and later merge. So pushing every stock change into the index causes write amplification, merge storms and refresh pressure that hurts query latency. The usual pattern splits the read model: slow fields in the inverted index, fast fields in a key-value store that is joined at query time for the candidate set (a few hundred lookups), with the index updated only when a field crosses a boundary relevant to filtering or sorting (in_stock flips, price bucket changes). Transactional paths such as cart and checkout always read the source of truth.",
+   "in_this_design": "Price and stock events flow to an availability store (Aerospike/Redis) within 1 to 2 s and are joined for the ranked candidates; the inverted index only gets partial updates when in_stock or price bucket changes, refreshing every 5 s. Cart re-verifies price and stock.",
+   "key_points": [
+    "Search is a read model, eventually consistent with the source of truth.",
+    "Lucene updates are delete-plus-add; high-rate field updates cause merge storms.",
+    "Keep fast fields in a KV store and join at query time for candidates.",
+    "Update the index only on state changes that affect filters or sorts.",
+    "Transactions (cart, checkout) always read the source of truth."
+   ],
+   "qa": [
+    {
+     "q": "Why not just update stock in the search index on every change?",
+     "a": "At 20K updates/s each one rewrites a whole document and creates segment churn, forcing merges and frequent refreshes that raise query latency. Most stock changes do not change in_stock status, so they do not need to touch the index."
+    },
+    {
+     "q": "What if a user sorts by price and prices changed in the KV store but not the index?",
+     "a": "Index stores price_min updated on bucket changes and periodically; the final page re-sorts using fresh KV prices for the retrieved candidates, accepting small ordering inaccuracies across pages."
+    },
+    {
+     "q": "How fresh is fresh enough?",
+     "a": "For stock, seconds at the top of results, since showing an OOS item costs a click and trust; for title edits, minutes. Cart is the final consistency check."
+    }
+   ]
+  },
+  {
+   "name": "Sharding, replication and capacity planning for spiky traffic",
+   "explain": "A product index is split into shards so each holds a manageable slice and work runs in parallel, and each shard is replicated so reads can be served by many copies and survive node loss. Primary shard count is fixed at index creation in Lucene-based systems (changing it means split or reindex), so choose it from projected size: commonly 20 to 50 GB per shard. Replica count is the elastic dial for read throughput: doubling replicas roughly doubles QPS capacity. E-commerce has extreme scheduled peaks (sale launches at midnight) and search clusters cannot autoscale quickly because new replicas must copy tens of gigabytes before serving. So capacity is planned: forecast peak QPS, load test at about 1.5x, add replicas days ahead, warm caches, and prepare degradation levers (turn off semantic retrieval, reduce ranking depth, simplify facets, increase cache TTL). Routing matters: hash routing spreads load evenly; category-based routing can cut fan-out for category-scoped queries but risks hot shards for popular categories like mobiles. Zone-aware allocation places copies of a shard in different availability zones. Read-heavy, write-light indexes can also use blue/green index versions: build a new index, test, swap an alias.",
+   "in_this_design": "48 primary shards of about 20 GB; 2 replicas normally, 6 replicas on sale days, pre-scaled 3 days ahead; vector index in 8 partitions with similar replication; degradation flags ready; alias swap for full rebuilds weekly or on mapping change.",
+   "key_points": [
+    "Primaries fixed by size; replicas scale reads.",
+    "Search clusters scale slowly; pre-scale for known peaks.",
+    "Load test at 1.5x forecast; keep kill switches for expensive features.",
+    "Hash routing for balance; category routing only with care.",
+    "Blue/green index versions with alias swaps."
+   ],
+   "qa": [
+    {
+     "q": "Why not autoscale the search cluster when the sale starts?",
+     "a": "New replicas must copy 20 GB shards and warm caches, taking tens of minutes; the spike arrives in seconds. Pre-scale and use stateless tiers (orchestrator, ranker) for autoscaling."
+    },
+    {
+     "q": "What degradation would you apply first at 2x forecast traffic?",
+     "a": "Increase result cache TTL for head queries, drop semantic retrieval for head queries (lexical is good there), reduce L2 depth, lazy-load facets; keep correctness features like availability."
+    },
+    {
+     "q": "How do you choose 48 shards?",
+     "a": "About 1 TB per copy divided by about 20 GB target gives 50; 48 divides nicely for splits and node counts and keeps per-shard query latency low."
+    }
+   ]
+  },
+  {
+   "name": "Caching with personalization and locality (cache key design)",
+   "explain": "Search traffic follows a power law: a small set of head queries ('iphone', 'saree', 'shoes') accounts for a large share of requests, especially during sales. Caching full results for those queries removes most of the work. The difficulty is that results depend on more than the query string: filters, sort, user location (deliverability), experiment bucket and personalization. If every dimension goes into the cache key, the hit rate collapses; if a dimension is left out, users see wrong results. The art is to cache the expensive, shared part and compute the cheap, specific part per request. For example, cache the ranked candidate list for (normalized query, filters, sort, experiment bucket) and then apply the availability and pincode overlay per request using the fast KV store, which is cheap for a few hundred items. Locations can be bucketed into pincode clusters served by the same warehouses to reduce cardinality. TTLs should be short (30 to 60 s) because prices and stock drift, and caches must coalesce concurrent misses to avoid a stampede when a hot key expires at sale start. Personalized re-ranking, if used, is applied as a light final step after the shared cache.",
+   "in_this_design": "Redis caches the ranked top 200 candidates for (normalized query, filters, sort, bucket) with a 60 s TTL and request coalescing; per request we overlay availability for the user's pincode cluster and buy-box offers. Head-query hit ratio target is above 60% during sales.",
+   "key_points": [
+    "Head queries dominate traffic; cache them.",
+    "Cache the expensive shared part; overlay cheap per-user parts.",
+    "Bucket high-cardinality dimensions like pincode.",
+    "Short TTLs for price/stock-sensitive data.",
+    "Coalesce misses to prevent stampedes at sale start."
+   ],
+   "qa": [
+    {
+     "q": "Why not include pincode in the cache key?",
+     "a": "India has about 19,000 pincodes; including them divides the hit rate massively. Cache the ranked candidates without location and apply deliverability per request from the availability store."
+    },
+    {
+     "q": "How do experiments interact with caching?",
+     "a": "Experiment bucket must be in the key for any experiment that changes ranking, otherwise treatments leak. Limit concurrent ranking experiments to keep key cardinality manageable."
+    },
+    {
+     "q": "Cache hit rate dropped from 60% to 20% after a release. Likely cause?",
+     "a": "A new dimension entered the key or normalization changed (e.g. not lowercasing or not sorting filter params). Check key composition and normalization."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Hybrid vs lexical-only retrieval",
+   "options": "BM25 only; dense only; hybrid",
+   "choice": "Hybrid with RRF",
+   "why": "Lexical precision for brands and model numbers plus semantic recall for vague and Hinglish queries."
+  },
+  {
+   "decision": "Where price/stock live",
+   "options": "In the index with frequent updates; KV store joined at query time; both",
+   "choice": "KV store authoritative, index updated on state changes",
+   "why": "Freshness without merge storms."
+  },
+  {
+   "decision": "Ranking model",
+   "options": "Hand-tuned formula; GBDT LambdaMART; neural ranker",
+   "choice": "GBDT now, neural later",
+   "why": "Strong on tabular features, CPU-cheap, interpretable; neural adds semantic depth at higher cost."
+  },
+  {
+   "decision": "Hard filters vs soft boosts from query understanding",
+   "options": "Always filter; always boost; confidence-based",
+   "choice": "Confidence-based with visible chips",
+   "why": "Wrong hard filters cause zero or wrong results; boosts alone are imprecise."
+  },
+  {
+   "decision": "Search engine platform",
+   "options": "Elasticsearch/OpenSearch; Vespa; Solr",
+   "choice": "OpenSearch/Elasticsearch plus separate ranker",
+   "why": "Team familiarity and ecosystem; Vespa is strong for on-node ranking but higher learning curve."
+  },
+  {
+   "decision": "Facet accuracy",
+   "options": "Exact counts; approximate with shard_size; sampled",
+   "choice": "Approximate for broad queries, exact for narrow",
+   "why": "Exact counts on millions of hits are costly and users rarely need precise long-tail counts."
+  },
+  {
+   "decision": "Capacity for sales",
+   "options": "Autoscale; pre-provision; degrade",
+   "choice": "Pre-provision plus degradation levers",
+   "why": "Stateful search tiers cannot scale in seconds."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Ranker or feature store timeouts",
+   "behavior": "Fallback to L1 ordering for affected requests; metric ranker_fallback alerts; results still relevant though less optimized."
+  },
+  {
+   "failure": "Vector index unavailable",
+   "behavior": "Serve lexical-only retrieval; slight recall drop on vague queries; zero-result relaxation still applies."
+  },
+  {
+   "failure": "Availability store lag",
+   "behavior": "Use last-known stock; increase cart re-verification; alert on freshness SLO; temporarily demote low-stock items."
+  },
+  {
+   "failure": "Lexical shard copy lost",
+   "behavior": "Other replicas serve; master reallocates; with 6 replicas on sale day, capacity loss is small."
+  },
+  {
+   "failure": "Query understanding service down",
+   "behavior": "Bypass with raw text query and default boosts; filters only from explicit UI selections."
+  },
+  {
+   "failure": "Bad model deployed (conversion drops)",
+   "behavior": "Canary with online metrics; automatic rollback on guardrail breach; previous model kept warm."
+  },
+  {
+   "failure": "Catalog CDC pipeline stalled",
+   "behavior": "Search serves existing index; new listings delayed; lag alert; replay from Kafka offsets on recovery."
+  },
+  {
+   "failure": "Traffic 2x above forecast",
+   "behavior": "Progressive degradation: longer cache TTL, disable semantic retrieval for head queries, reduce ranking depth, lazy facets, then load shedding of bot traffic first."
+  }
+ ],
+ "metrics": [
+  "Search conversion rate, revenue per search, add-to-cart rate from search.",
+  "CTR@4, mean reciprocal rank of first click, zero-result rate, low-result rate, reformulation rate.",
+  "Out-of-stock-in-top-10 rate and undeliverable-in-top-10 rate.",
+  "Latency p50/p99 per stage (QU, lexical, vector, features, ranker, facets) and end to end.",
+  "Ranker fallback rate, cache hit ratio, shard rejection counts.",
+  "Index freshness: CDC lag, availability update lag p95.",
+  "Offline NDCG@10 per model release; training/serving feature skew."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do sponsored products fit in?",
+   "a": "The ads system runs its own auction on the same query understanding output and returns candidate ads; the page composer blends them into reserved slots with labels and relevance floors so ads do not degrade experience."
+  },
+  {
+   "q": "How do you personalize results?",
+   "a": "Add user features (brand affinity, price band, size history) as ranker features or a light re-rank on the top 50; keep the shared cache for the candidate set."
+  },
+  {
+   "q": "How do you handle a new category with no behavioural data?",
+   "a": "Use content-based features, category priors from similar categories, human relevance judgments, and exploration slots until enough interactions accumulate."
+  },
+  {
+   "q": "How would you add an LLM to search?",
+   "a": "Offline: generate relevance labels and attribute enrichment for products and query rewrites (as Etsy reported doing for relevance); online: limit to cached query rewrites for tail queries due to latency and cost."
+  },
+  {
+   "q": "How do you test relevance changes?",
+   "a": "Offline NDCG on human-judged queries, then interleaving for sensitivity, then A/B with conversion and guardrails, with a hold-out for long-term effects."
+  },
+  {
+   "q": "How do you prevent sellers gaming the ranking?",
+   "a": "Use outcome-based features (conversion, returns, ratings from verified buyers) rather than self-declared text, detect click fraud, penalize stuffing, and audit sudden rank jumps."
+  },
+  {
+   "q": "How do you guarantee fairness to sellers?",
+   "a": "Diversity constraints (max per seller in top 10), documented ranking factors, audits that sponsored and owned-brand products follow the same organic rules."
+  }
+ ],
+ "key_points": [
+  "Product search optimizes conversion, not text relevance; frame metrics accordingly.",
+  "Pipeline: query understanding -> hybrid retrieval -> multi-stage LTR -> availability, rules, facets.",
+  "Query understanding turns 'red nike shoes under 2000' into filters plus text with confidence thresholds.",
+  "Hybrid retrieval: BM25 for exactness plus HNSW embeddings for semantics, fused with RRF.",
+  "LambdaMART on purchase-graded labels with position-bias correction; log features at serve time.",
+  "Fast fields (price, stock) live in a KV store and are joined at query time; index updated only on state changes.",
+  "Facets via doc-value aggregations, approximate on broad queries, multi-select with post_filter.",
+  "Sale peaks are pre-provisioned with replicas and degradation levers, not autoscaled.",
+  "Every stage has a deadline and a fallback; ranking falls back to L1, semantic to lexical.",
+  "Measure conversion, zero-result rate, OOS in top 10 and per-stage latency."
+ ],
+ "quiz": [
+  {
+   "q": "A shopper searches 'sofa' but listings say 'couch'. Which component most directly fixes this?",
+   "options": [
+    "Semantic retrieval with embeddings (or synonyms) in a hybrid setup",
+    "Increasing BM25 k1",
+    "More shards",
+    "Longer cache TTL"
+   ],
+   "answer": 0,
+   "why": "Vocabulary mismatch needs semantic matching or synonyms. Tuning BM25 does not create matches that share no tokens."
+  },
+  {
+   "q": "Why keep price and stock in a key-value store instead of updating the inverted index on every change?",
+   "options": [
+    "Inverted indexes cannot store numbers",
+    "KV stores are more durable",
+    "It improves BM25 scores",
+    "Each index update rewrites a document and causes segment churn; KV updates are cheap and fresh"
+   ],
+   "answer": 3,
+   "why": "Lucene updates are delete plus add, so high-rate updates cause merge storms. Indexes do store numbers fine."
+  },
+  {
+   "q": "Lexical and vector retrievers return lists with incomparable scores. Simplest robust fusion?",
+   "options": [
+    "Add raw scores",
+    "Take only the vector list",
+    "Reciprocal rank fusion",
+    "Average the scores after min-max on each request"
+   ],
+   "answer": 2,
+   "why": "RRF combines ranks and needs no calibration. Min-max normalization per request is tempting but unstable across queries."
+  },
+  {
+   "q": "Sale peak forecast is 20K QPS. Why not rely on autoscaling the search cluster?",
+   "options": [
+    "Cloud providers forbid it",
+    "New replicas must copy large shards and warm caches, taking far longer than the spike",
+    "Autoscaling is too expensive",
+    "Replicas cannot serve reads"
+   ],
+   "answer": 1,
+   "why": "Stateful search nodes scale slowly; pre-provision. Cost is a concern but not the blocking reason."
+  },
+  {
+   "q": "Roughly how many searches per second are 100 million searches per day with 1.5 requests each at average load?",
+   "options": [
+    "About 1,700",
+    "About 170",
+    "About 17,000",
+    "About 600"
+   ],
+   "answer": 0,
+   "why": "150e6 / 86,400 is about 1,736. 17,000 is the sale peak, a tempting mix-up."
+  },
+  {
+   "q": "A user selects Brand=Nike. How should the Brand facet behave?",
+   "options": [
+    "Show only Nike with its count",
+    "Hide the Brand facet",
+    "Show counts from the unfiltered catalog",
+    "Still show other brands' counts by excluding the brand filter from the Brand facet's aggregation"
+   ],
+   "answer": 3,
+   "why": "Multi-select facets exclude their own filter. Unfiltered catalog counts would ignore the query and other filters."
+  },
+  {
+   "q": "Why use LambdaMART-style listwise training rather than pointwise regression on clicks?",
+   "options": [
+    "It needs no labels",
+    "It is always faster to serve",
+    "It optimizes ranking metrics like NDCG, weighting mistakes at the top more",
+    "It removes position bias automatically"
+   ],
+   "answer": 2,
+   "why": "Lambda gradients scale by NDCG change. It does not fix position bias by itself; that requires propensity weighting."
+  },
+  {
+   "q": "Ranker p99 doubles at sale start. Best first lever?",
+   "options": [
+    "Disable availability filtering",
+    "Reduce L2 candidate count or fall back to L1 for a slice via feature flag",
+    "Remove all facets permanently",
+    "Increase shard count"
+   ],
+   "answer": 1,
+   "why": "Reducing ranking depth cuts cost safely. Disabling availability harms correctness."
+  },
+  {
+   "q": "What does HNSW's ef_search control?",
+   "options": [
+    "Breadth of the candidate list explored at query time, trading latency for recall",
+    "Number of shards",
+    "Embedding dimension",
+    "Number of links per node at build time"
+   ],
+   "answer": 0,
+   "why": "ef_search is query-time breadth; M is links per node at build time, the most tempting confusion."
+  },
+  {
+   "q": "Including the user's pincode in the search cache key will most likely...",
+   "options": [
+    "Improve hit ratio",
+    "Have no effect",
+    "Break pagination",
+    "Collapse hit ratio because of high cardinality; better to overlay availability per request"
+   ],
+   "answer": 3,
+   "why": "Thousands of pincodes fragment the cache. Overlaying deliverability on cached candidates keeps hit rates high."
+  },
+  {
+   "q": "Which label best aligns ranking with business goals for an e-commerce search?",
+   "options": [
+    "Impressions",
+    "Dwell time on the results page",
+    "Graded labels with purchases highest, then add-to-cart, then clicks",
+    "Number of filters applied"
+   ],
+   "answer": 2,
+   "why": "Purchases reflect conversion; clicks alone reward clickbait."
+  },
+  {
+   "q": "Query understanding is 55% confident 'apple' means phones. What should search do?",
+   "options": [
+    "Hard-filter to phones",
+    "Use category as a soft boost or blend categories, and show category chips",
+    "Return zero results",
+    "Ignore the query"
+   ],
+   "answer": 1,
+   "why": "Low confidence argues for soft boosts. Hard filtering on 55% confidence hurts the other 45% of users."
+  },
+  {
+   "q": "Facet counts for a long-tail brand differ slightly from reality. Why?",
+   "options": [
+    "Each shard returns only its top N terms, so tail counts can be undercounted when merged",
+    "Doc values are lossy",
+    "Replicas are out of sync",
+    "BM25 affects counts"
+   ],
+   "answer": 0,
+   "why": "Sharded term aggregations are approximate; shard_size trades accuracy for cost. Replica lag is usually seconds and not the cause."
+  },
+  {
+   "q": "Training/serving skew is best prevented by...",
+   "options": [
+    "Training more often",
+    "Using a bigger model",
+    "Disabling caches",
+    "Logging features at serving time and training on those logged values"
+   ],
+   "answer": 3,
+   "why": "Logged features guarantee parity. More frequent training does not fix mismatched computations."
+  },
+  {
+   "q": "A product goes out of stock 3 seconds after a user loads results. Where is it ultimately prevented from being sold?",
+   "options": [
+    "Search index",
+    "CDN",
+    "Cart and checkout re-verification against the source of truth",
+    "Query understanding"
+   ],
+   "answer": 2,
+   "why": "Search is an eventually consistent read model; transactions verify. Index refresh cannot guarantee that window."
+  },
+  {
+   "q": "Why is document partitioning by hash(product_id) preferred over partitioning by category?",
+   "options": [
+    "It allows category facets",
+    "It spreads load evenly; category partitions create hot shards like mobiles during sales",
+    "It reduces index size",
+    "It removes the need for replicas"
+   ],
+   "answer": 1,
+   "why": "Even load is the reason. Category routing cuts fan-out but risks hot spots."
+  },
+  {
+   "q": "Approximately how much memory do 200M product vectors of 256 dims in int8 take before graph overhead?",
+   "options": [
+    "About 51 GB",
+    "About 5 GB",
+    "About 200 GB",
+    "About 1 TB"
+   ],
+   "answer": 0,
+   "why": "200e6 x 256 bytes = 51.2 GB. float32 would be 4x that, about 200 GB, the tempting wrong answer."
+  },
+  {
+   "q": "Zero-result rate spikes after a synonym file change. Most likely cause?",
+   "options": [
+    "Shard failure",
+    "Cache TTL too long",
+    "Vector index rebuild",
+    "A bad rewrite or synonym rule turned common queries into unmatched terms"
+   ],
+   "answer": 3,
+   "why": "Correlated with a config change, a bad rewrite is most likely. Shard failures cause partial results, not systematic zeros."
+  },
+  {
+   "q": "What is the purpose of reserving exploration slots for new products?",
+   "options": [
+    "To increase ad revenue",
+    "To reduce latency",
+    "To collect behavioural data and break the rich-get-richer feedback loop",
+    "To satisfy facet counts"
+   ],
+   "answer": 2,
+   "why": "Without exposure, cold items never earn signals. It is not about ads."
+  },
+  {
+   "q": "Which degradation should come LAST under extreme overload?",
+   "options": [
+    "Increase cache TTL",
+    "Turn off availability filtering",
+    "Disable semantic retrieval for head queries",
+    "Lazy-load secondary facets"
+   ],
+   "answer": 1,
+   "why": "Showing undeliverable or OOS items harms trust and causes cancellations; it is a correctness feature, not an optional one."
+  },
+  {
+   "q": "Why run lexical and vector retrieval in parallel rather than sequentially?",
+   "options": [
+    "The latency budget is about 200 ms; parallel calls cost max(latencies) instead of the sum",
+    "They depend on each other's output",
+    "Vector search needs BM25 scores",
+    "To reduce memory"
+   ],
+   "answer": 0,
+   "why": "Independent stages should run concurrently. They do not depend on each other's results."
+  },
+  {
+   "q": "A ranking A/B test shows +3% CTR but -1% conversion. What do you do?",
+   "options": [
+    "Ship it because CTR rose",
+    "Ship to half the users",
+    "Ignore both and test latency",
+    "Do not ship; the primary metric is conversion and CTR gains likely come from clickbait-like results"
+   ],
+   "answer": 3,
+   "why": "Optimize the business objective with guardrails; CTR is a proxy that can diverge from purchases."
+  }
+ ],
+ "references": [
+  {
+   "title": "Semantic Product Search (Nigam et al., Amazon, KDD 2019)",
+   "url": "https://arxiv.org/abs/1907.00937"
+  },
+  {
+   "title": "How Etsy uses LLMs to improve search relevance (Code as Craft)",
+   "url": "https://www.etsy.com/codeascraft/how-etsy-uses-llms-to-improve-search-relevance"
+  },
+  {
+   "title": "How to Build Product Search with Elasticsearch (OneUptime)",
+   "url": "https://oneuptime.com/blog/post/2026-01-21-elasticsearch-product-search/view"
+  },
+  {
+   "title": "Rank features for e-commerce search (Elastic discuss)",
+   "url": "https://discuss.elastic.co/t/dec-8th-2020-en-rank-features-for-e-commerce-search/256525"
+  },
+  {
+   "title": "Elasticsearch Reference: Near real-time search",
+   "url": "https://www.elastic.co/guide/en/elasticsearch/reference/8.17/near-real-time.html"
+  }
+ ]
+}

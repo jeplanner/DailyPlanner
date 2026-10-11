@@ -1,0 +1,1132 @@
+{
+ "slug": "comment-system",
+ "title": "Design a comment system with sorting and pagination",
+ "prompt": "Design a comment system with sorting and pagination.",
+ "group": "feeds",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 100,
+ "summary": "Comments look like simple rows under a post, but the interesting problems are in reading them: stable pagination while new comments arrive, several sort orders (newest, oldest, top, best) whose scores keep changing, nested replies that must not explode into N+1 queries, and viral posts with a million comments. The core tension is that ranked orders are mutable while users expect pages that never duplicate or skip, so the design leans on keyset cursors, precomputed per-post ranked indexes and snapshot-consistent cursors.",
+ "framework": {
+  "clarify": [
+   "Which objects take comments: posts, reels, product reviews? (Assume posts; design is object-agnostic.)",
+   "Threading: flat, two-level (comment and replies, like Instagram/YouTube) or arbitrary depth (Reddit)? (Assume two levels displayed, with replies to replies flattened into the thread with an @mention.)",
+   "Sort orders: newest, oldest, top (most liked), and a 'best'/relevance order? (Assume newest, top, and best using Wilson lower bound plus friend boost.)",
+   "Scale: assume 500M DAU, 1B comments written per day, 20B comment reads per day (comment sheets opened and scrolled).",
+   "Pagination UX: infinite scroll with 'load more replies', or numbered pages? (Assume infinite scroll; no jump to page 500.)",
+   "Edit and delete semantics: can users edit? Is a deleted parent shown as '[deleted]' to keep replies? (Assume edit within 15 minutes with an edited flag; deleted parent becomes a tombstone.)",
+   "Moderation: pre-moderation for some creators, keyword filters, spam classifier, creator can hide comments and pin one.",
+   "Freshness: should new comments appear live while the sheet is open? (Assume a 'N new comments' pill via polling or WebSocket for hot posts.)"
+  ],
+  "design": [
+   "Baseline: comments table (id, post_id, parent_id, author, text, created_at, like_count) with OFFSET/LIMIT queries ordered by created_at or like_count. Explain why OFFSET is O(n) and why ranked pages duplicate or skip as scores change.",
+   "Comment Service writes to a Comment Store partitioned by post_id (Cassandra or sharded MySQL), with a time-sortable comment_id (Snowflake) so 'newest' is a primary-key range scan.",
+   "Ranked indexes: per-post sorted sets in Redis (zset top:{post}, best:{post}) holding top-level comment ids with scores, maintained by a Ranking Worker consuming comment and like events; cold posts are computed on demand and cached.",
+   "Read path: GET /posts/{id}/comments?sort=best&cursor=... -> page of top-level ids from the index (keyset cursor) -> batch hydrate comment bodies, author profiles, viewer's like state, and the first 2 replies + reply count per comment.",
+   "Replies: GET /comments/{id}/replies?cursor= paginated oldest-first by (parent_id, comment_id) keyset.",
+   "Write path: POST comment -> validate, rate limit, spam check (sync fast model, async deep model) -> insert -> outbox event -> counters (comment_count, reply_count), ranking update, notifications, search indexing.",
+   "Critical path end to end: open sheet -> first page in p99 200 ms from cache/index -> scroll uses opaque cursor -> new comments appear via pill without disturbing scroll position."
+  ],
+  "defend": [
+   "Bottleneck: viral posts (1M comments, 2K new comments/s, 100K concurrent readers). Fix: first page per sort cached for 5 s and shared by all viewers, ranked zset trimmed to top 5,000, deeper pages served by newest order or a snapshot.",
+   "Scale reads: 20B reads/day is about 230K pages/s average, 1M peak; hot pages are cached; hydration is batched (one multi-get for 20 comments, one for authors); no per-comment queries.",
+   "Scale writes: 1B comments/day = about 12K/s average, 60K/s peak; Cassandra partitions bucketed by (post_id, day) for huge posts; counters via async coalesced deltas, not row updates.",
+   "Pagination correctness: keyset cursors encode (score, comment_id) for ranked sorts and a snapshot timestamp; we filter out comments created after the snapshot and accept small reordering of mutable scores while guaranteeing no duplicates via a seen-id check on the client for the session.",
+   "Failure behaviour: if Redis ranking is down, fall back to 'newest' from the store with a banner-less sort switch; if hydration of author profiles times out (50 ms budget), render with cached minimal profile; spam model timeout fails open to 'pending review' visibility for the author only.",
+   "Measure: first-page p99 latency by sort, cache hit rate, pagination duplicate/skip rate (client telemetry), comment write p99, spam false positive rate, ranking lag."
+  ],
+  "script": "Let me scope this. I will assume comments on posts with two visible levels, top-level comments and replies, three sorts - newest, top and a 'best' relevance sort - and infinite scroll. At around a billion comments written and twenty billion page reads a day, this is read-heavy and very skewed, since a viral post can have a million comments. The baseline of a comments table with ORDER BY and OFFSET breaks in two ways: OFFSET gets slower the deeper you go, and when scores change between requests, ranked pages duplicate or skip comments. So I store comments partitioned by post with time-sortable ids, which makes 'newest' a keyset range scan. For ranked sorts I keep a per-post sorted set of top-level comment ids, updated by a worker consuming comment and like events, and paginate it with a cursor of score plus id plus a snapshot time. Each page is twenty ids hydrated in batch with authors, the viewer's like state, and the first two replies. Replies have their own cursor, oldest first. To defend it: viral posts get a shared first-page cache for five seconds, counters are coalesced asynchronously, and if the ranking index fails we fall back to newest. I would measure first-page latency by sort, duplicate rate in pagination, and spam false positives."
+ },
+ "brd": {
+  "problem": "Comments are where community and creator relationships form, and they drive session time and return visits. The current comment sheet is slow on popular posts (several seconds for page one), shows duplicates while scrolling, surfaces low-quality and spam comments at the top, and buckles during viral moments. We need a comment system that loads fast, sorts meaningfully, paginates correctly and keeps conversations healthy.",
+  "goals": [
+   "Load the first page of comments in p99 under 200 ms for every post, including viral ones.",
+   "Provide newest, top and best sort orders with stable infinite scroll (no visible duplicates).",
+   "Surface high-quality conversation: best sort lifts well-received and friend comments over spam and pile-ons.",
+   "Accept comment writes with p99 under 150 ms and make them visible to the author immediately.",
+   "Give creators moderation tools: hide, pin, filter keywords, restrict who can comment.",
+   "Keep spam visible to others under 0.1 percent of comments."
+  ],
+  "non_goals": [
+   "Arbitrary-depth threaded discussions (Reddit-style) in v1.",
+   "Rich media comments beyond images and stickers.",
+   "Real-time collaborative editing of comments.",
+   "Full-text search across all comments for end users."
+  ],
+  "stakeholders": [
+   {
+    "who": "Commenters and readers",
+    "needs": "Fast sheet, meaningful order, replies easy to follow, own comment instantly visible."
+   },
+   {
+    "who": "Creators",
+    "needs": "Pin and hide comments, filter abuse, know which comments are getting traction."
+   },
+   {
+    "who": "Trust and safety",
+    "needs": "Spam and abuse classification, takedown tooling, audit trail of edits and deletions."
+   },
+   {
+    "who": "Feed and notification teams",
+    "needs": "Comment events for notifications and ranking signals; cheap comment counts for feed cards."
+   },
+   {
+    "who": "SRE",
+    "needs": "No meltdown on viral posts; graceful degradation of ranking."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "First page latency",
+    "target": "p99 under 200 ms, p50 under 60 ms"
+   },
+   {
+    "metric": "Pagination duplicate or skip rate",
+    "target": "under 0.1 percent of sessions"
+   },
+   {
+    "metric": "Comment write latency",
+    "target": "p99 under 150 ms"
+   },
+   {
+    "metric": "Spam prevalence in viewed comments",
+    "target": "under 0.1 percent"
+   },
+   {
+    "metric": "Comments per sheet open (engagement)",
+    "target": "+5 percent after best sort launch"
+   },
+   {
+    "metric": "Availability of reads",
+    "target": "99.95 percent"
+   }
+  ],
+  "constraints": [
+   "Extreme skew: top 0.01 percent of posts get the majority of comment reads during viral events.",
+   "Mobile clients on variable networks; payloads must be small and paginated.",
+   "Legal takedown requests must remove comments within hours, with audit trails.",
+   "Must reuse the existing like/reaction system for comment likes."
+  ],
+  "risks": [
+   {
+    "risk": "Ranked pagination shows duplicates as scores change",
+    "mitigation": "Snapshot-bound keyset cursors plus client-side seen-set dedupe."
+   },
+   {
+    "risk": "Viral post overloads a single partition",
+    "mitigation": "Shared first-page cache, bucketed partitions, trimmed ranking index."
+   },
+   {
+    "risk": "Best sort is gamed by like rings",
+    "mitigation": "Wilson lower bound on quality, weighting by liker trust, velocity caps, integrity signals."
+   },
+   {
+    "risk": "Spam classifier false positives silence real users",
+    "mitigation": "Shadow-visible to author, appeal path, precision targets per locale, human review sampling."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Reader",
+    "needs": "Scans the best comments quickly, expands replies on interesting threads."
+   },
+   {
+    "name": "Commenter",
+    "needs": "Posts quickly, sees their comment in place, gets notified of replies."
+   },
+   {
+    "name": "Creator",
+    "needs": "Pins a comment, hides abusive ones, restricts commenting to followers during a pile-on."
+   }
+  ],
+  "user_stories": [
+   "As a reader, I want comments sorted by best by default so that I see the most valuable discussion first.",
+   "As a reader, I want to switch to newest so that I can follow a live conversation.",
+   "As a reader, I want to scroll endlessly without seeing the same comment twice so that the sheet feels reliable.",
+   "As a reader, I want to see the first two replies and a 'View 34 more replies' link so that threads stay compact.",
+   "As a commenter, I want my comment to appear at the top for me immediately after posting so that I know it worked.",
+   "As a commenter, I want to edit a typo within 15 minutes so that I am not embarrassed.",
+   "As a creator, I want to pin one comment so that my clarification is seen first.",
+   "As a creator, I want to limit comments to followers so that I can stop a pile-on.",
+   "As a moderator, I want deleted comments with replies to show as removed so that the thread still makes sense."
+  ],
+  "functional": [
+   "Create, edit (15 min window), and delete comments and replies; tombstone deleted parents with replies.",
+   "List top-level comments per post with sort in {best, top, newest, oldest} and cursor pagination.",
+   "List replies per comment oldest-first with cursor pagination; show reply_count and first 2 replies inline.",
+   "Comment likes via the reaction system; display like counts.",
+   "Pinned comment shown first regardless of sort; creator-liked badge.",
+   "Moderation: auto-hide spam, creator hide, keyword filters, restrict to followers, report flow.",
+   "Maintain comment_count per post and reply_count per comment.",
+   "Show 'N new comments' indicator for open sheets on active posts."
+  ],
+  "non_functional": [
+   {
+    "name": "Read latency",
+    "target": "First page p99 under 200 ms; next pages p99 under 250 ms"
+   },
+   {
+    "name": "Write latency",
+    "target": "p99 under 150 ms; author sees own comment immediately"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95 percent reads, 99.9 percent writes"
+   },
+   {
+    "name": "Consistency",
+    "target": "Read-your-writes for the author; others see new comments within 5 s; counts eventually consistent"
+   },
+   {
+    "name": "Durability",
+    "target": "No acknowledged comment lost (RF 3, quorum writes)"
+   },
+   {
+    "name": "Pagination stability",
+    "target": "No duplicates within a session; at most minor reordering of ranked results"
+   },
+   {
+    "name": "Compliance",
+    "target": "Legal takedowns propagated to all caches within 1 hour"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "500M DAU; 2 comments written per DAU per day = 1B comments/day.",
+    "Each DAU opens 10 comment sheets and loads 4 pages on average = 20B page reads/day (top-level plus reply pages).",
+    "Average comment 200 bytes text + 150 bytes metadata = 350 bytes.",
+    "Page size 20 comments; each page hydrates 20 comments, about 10 distinct authors, and 2 replies each.",
+    "Peak = 5x average; a viral post can reach 2K comments/s and 100K concurrent readers.",
+    "70 percent of comments are top-level, 30 percent replies."
+   ],
+   "math": [
+    "Writes: 1B / 86,400 = about 11.6K comments/s average, about 58K/s peak.",
+    "Page reads: 20B / 86,400 = about 230K pages/s average, about 1.2M/s peak.",
+    "Hydration: 230K pages x 20 comments = 4.6M comment fetches/s average if uncached; batched multi-gets and caches cut store reads by over 90 percent.",
+    "Storage: 1B x 350 B = 350 GB/day, about 128 TB/year logical, about 384 TB with RF 3.",
+    "Ranking index: keep top 5,000 ids per active post; 10M active posts x 5,000 x about 30 B (zset entry) would be 1.5 TB, so only maintain zsets for posts with over 50 comments in the last 7 days (about 2M posts, about 300 GB), compute others on demand.",
+    "Bandwidth: page of 20 comments plus authors about 8 KB; 1.2M pages/s x 8 KB = about 9.6 GB/s egress at peak, served through regional edges."
+   ],
+   "summary": "About 12K comment writes per second average and 58K peak against 230K to 1.2M page reads per second: a 20:1 read-heavy, highly skewed workload with 350 GB/day of new data, where page hydration and hot posts dominate cost."
+  },
+  "out_of_scope": [
+   "Arbitrary-depth tree rendering.",
+   "End-user search over comments.",
+   "Comment translation (separate service, hook only).",
+   "Live chat for livestreams (different system)."
+  ]
+ },
+ "hld": {
+  "overview": "Comments are stored once in a post-partitioned Comment Store with time-sortable ids, which serves newest and oldest orders directly. Ranked orders are served from per-post ranking indexes in Redis maintained by a Ranking Worker that consumes comment, like and moderation events. The Comment Read API turns an index page into a fully hydrated page using batched lookups against a comment cache, the profile service and the reaction service. Writes go through a Comment Service that validates, rate-limits, classifies spam and emits events through an outbox.",
+  "diagram": "                     +-------------+\n  Client ----------->| API Gateway |----------------------------+\n   ^  (sheet, cursor) +------+------+                            |\n   |                         | write                             | read\n   |                         v                                   v\n   |              +---------------------+          +--------------------------+\n   |              | Comment Service     |          | Comment Read API         |\n   |              | validate, rate lim, |          | sort -> index page ->    |\n   |              | spam (fast model)   |          | batch hydrate            |\n   |              +----+-----------+----+          +--+------+-------+-----+--+\n   |                   |           | outbox           |      |       |     |\n   |                   v           v                  |      |       |     |\n   |   +------------------+   +--------------+        |      |       |     |\n   |   | Comment Store    |   | Kafka:       |        |      |       |     |\n   |   | (post,bucket),id |<--| comment-evts |        |      |       |     |\n   |   +--------+---------+   +--+--------+--+        |      |       |     |\n   |            ^                |        |           |      |       |     |\n   |            |                v        v           v      |       |     |\n   |   +--------+-------+ +-----------+ +---------+ +------+ |       |     |\n   |   | Comment cache  | | Ranking   | | Counter | | Rank | |       |     |\n   |   | (Memcached)    | | Worker    |-| /notif/ | | zsets| |       |     |\n   |   +----------------+ +-----+-----+ | search  | |Redis | |       |     |\n   |            ^               |       +---------+ +------+ |       |     |\n   |            |               +-------------------->^      |       |     |\n   |            +--------------------------------------------+       |     |\n   |                                         profiles <--------------+     |\n   |                                         reactions (likes) <-----------+\n   +---- hydrated page {items, next_cursor} -----------------------------------",
+  "components": [
+   {
+    "name": "API Gateway",
+    "responsibility": "Auth, per-user rate limits, request routing, response compression."
+   },
+   {
+    "name": "Comment Service (write)",
+    "responsibility": "Validates text and permissions (restricted posts, blocks), enforces edit window, runs fast spam model (under 20 ms), assigns Snowflake id, writes store plus outbox."
+   },
+   {
+    "name": "Comment Store",
+    "responsibility": "Durable comments partitioned by (post_id, bucket) clustered by comment_id; replies in a table partitioned by parent_id; supports keyset scans."
+   },
+   {
+    "name": "Kafka comment-events",
+    "responsibility": "Created, edited, deleted, hidden, liked events keyed by post_id for ranking, counters, notifications, search, and deep spam models."
+   },
+   {
+    "name": "Ranking Worker",
+    "responsibility": "Computes top and best scores, maintains per-post Redis zsets trimmed to 5,000, handles pins and hides, and recomputes on moderation events."
+   },
+   {
+    "name": "Ranking index (Redis zsets)",
+    "responsibility": "best:{post} and top:{post} sorted sets of top-level comment ids with scores; first-page cache per (post, sort) with 5 s TTL."
+   },
+   {
+    "name": "Comment cache",
+    "responsibility": "Memcached of comment bodies by id with write-through invalidation on edit/delete; lease-based to avoid thundering herds."
+   },
+   {
+    "name": "Comment Read API",
+    "responsibility": "Cursor decoding, index paging, batch hydration of comments, authors, viewer like state, reply previews, and filtering of blocked users and hidden comments."
+   },
+   {
+    "name": "Counter service",
+    "responsibility": "Coalesced comment_count and reply_count updates from events (same pattern as likes counters)."
+   },
+   {
+    "name": "Moderation pipeline",
+    "responsibility": "Async deep models, user reports, human review queue, takedown propagation."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Open the sheet (best sort) on a popular post",
+    "steps": [
+     "Client calls GET /v1/posts/P/comments?sort=best&limit=20.",
+     "Read API checks first-page cache page:{P}:best (TTL 5 s); hit returns the id list plus a snapshot_ts.",
+     "On miss, ZREVRANGE best:{P} 0 19 WITHSCORES; if the zset does not exist (cold post), load up to 500 recent top-level comments from the store, score them, build the zset with a 1 h TTL.",
+     "Prepend pinned comment id; drop ids hidden for this viewer (blocked authors, creator-hidden unless viewer is author).",
+     "Batch-get bodies from comment cache (misses from store), authors from profile service, like state from reactions, and first 2 replies plus reply_count per comment.",
+     "Return items and next_cursor = encode(sort=best, last_score, last_id, snapshot_ts)."
+    ]
+   },
+   {
+    "name": "Post a comment",
+    "steps": [
+     "Client sends POST /v1/posts/P/comments {text, parent_id?, client_id} and inserts it locally at the top (optimistic).",
+     "Comment Service checks restrictions, blocks, rate limit (for example 10 comments/min), runs fast spam model.",
+     "Generates comment_id (Snowflake: time-ordered), writes row with IF NOT EXISTS on (author, client_id) dedupe table, and an outbox event.",
+     "Returns the comment; the client replaces the optimistic item; the author's own comments are merged at the top of their first page for 10 minutes (read-your-writes).",
+     "Async: counter increments, Ranking Worker inserts it into best/top zsets with an initial score, notifications to post owner and parent author, deep spam model."
+    ]
+   },
+   {
+    "name": "Scroll to the next page",
+    "steps": [
+     "Client sends cursor; Read API decodes (sort, last_score, last_id, snapshot_ts).",
+     "For best/top: ZREVRANGEBYSCORE best:{P} (last_score -inf with tie-break on id, LIMIT 20.",
+     "Filter out ids with created_at > snapshot_ts (they belong to the 'new comments' pill, not this scroll).",
+     "If the zset is exhausted (beyond top 5,000), continue in newest order from the store with a cursor switch flag.",
+     "Client drops any id already in its seen set."
+    ]
+   },
+   {
+    "name": "Delete a comment with replies",
+    "steps": [
+     "Author deletes C; service sets deleted=true, clears text, keeps the row as a tombstone if reply_count > 0, else hard-deletes after 30 days.",
+     "Event removes C from zsets if no replies; with replies it stays with a demoted score and renders as 'Comment deleted'.",
+     "Comment cache invalidated; first-page caches for P expire within 5 s."
+    ]
+   }
+  ],
+  "data_flow": "Writes: client -> gateway -> Comment Service -> Comment Store plus outbox -> Kafka -> ranking, counters, notifications, search, moderation. Reads: client -> gateway -> Read API -> first-page cache or ranking zset or store keyset scan -> batch hydration from comment cache, profiles, reactions -> client. Moderation decisions flow back as events that update zsets, caches and visibility flags."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/posts/{post_id}/comments?sort=best|top|newest|oldest&cursor=&limit=20",
+    "request": "Sort, opaque cursor, limit up to 50.",
+    "response": "{items:[{id, author:{id,name,avatar,verified}, text, created_at, edited, like_count, viewer_liked, reply_count, replies_preview:[...2], pinned, creator_liked}], next_cursor, snapshot_ts, total_hint}",
+    "notes": "Cursor is base64 of signed JSON {s, score, id, ts}; never OFFSET. total_hint is the eventually-consistent comment_count."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/comments/{comment_id}/replies?cursor=&limit=20",
+    "request": "Opaque cursor.",
+    "response": "{items:[...], next_cursor}",
+    "notes": "Oldest-first keyset on comment_id within parent; cursor = last_id."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/posts/{post_id}/comments",
+    "request": "{text, parent_id?, client_id: 'uuid', attachments?}",
+    "response": "{comment}",
+    "notes": "Idempotent by (author, client_id); 429 on rate limit; 403 if restricted."
+   },
+   {
+    "method": "PATCH",
+    "path": "/v1/comments/{comment_id}",
+    "request": "{text, expected_version}",
+    "response": "{comment}",
+    "notes": "Only within 15 min of creation; optimistic concurrency on version; edit history kept for moderation."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/comments/{comment_id}",
+    "request": "{}",
+    "response": "{deleted: true}",
+    "notes": "Author, post owner or moderator; tombstone if replies exist."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/posts/{post_id}/comments/{comment_id}/pin",
+    "request": "{}",
+    "response": "{pinned: true}",
+    "notes": "Post owner only; one pin per post; replaces previous pin."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "comment (top-level)",
+    "store": "Cassandra",
+    "fields": [
+     "post_id bigint",
+     "bucket int",
+     "comment_id bigint (Snowflake)",
+     "author_id bigint",
+     "text text",
+     "status tinyint (visible, hidden, pending, deleted)",
+     "edited boolean",
+     "version int",
+     "reply_count_hint int"
+    ],
+    "keys": "PRIMARY KEY ((post_id, bucket), comment_id) WITH CLUSTERING ORDER BY (comment_id DESC); bucket = 0 for most posts, day number for posts flagged high-volume.",
+    "notes": "Newest = scan descending; oldest = scan ascending. A lookup table comment_by_id(comment_id) -> post_id, bucket, parent_id for direct access."
+   },
+   {
+    "entity": "reply",
+    "store": "Cassandra",
+    "fields": [
+     "parent_id bigint",
+     "comment_id bigint",
+     "post_id bigint",
+     "author_id",
+     "text",
+     "status",
+     "reply_to_user_id"
+    ],
+    "keys": "PRIMARY KEY ((parent_id), comment_id) ascending.",
+    "notes": "Replies to replies are stored under the top-level parent with reply_to_user_id for the @mention; keeps depth at two."
+   },
+   {
+    "entity": "ranking index",
+    "store": "Redis",
+    "fields": [
+     "best:{post} zset member=comment_id score=best_score",
+     "top:{post} zset score=like_count + id tiebreak fraction",
+     "page:{post}:{sort} string (cached first page id list + snapshot_ts) TTL 5 s",
+     "pin:{post} -> comment_id"
+    ],
+    "keys": "Hash tag {post} keeps one post's keys on one shard.",
+    "notes": "Trimmed to 5,000 members with ZREMRANGEBYRANK; built lazily for cold posts with TTL 1 h."
+   },
+   {
+    "entity": "comment dedupe",
+    "store": "Cassandra",
+    "fields": [
+     "author_id",
+     "client_id",
+     "comment_id"
+    ],
+    "keys": "PRIMARY KEY ((author_id), client_id) TTL 1 day.",
+    "notes": "INSERT IF NOT EXISTS makes create idempotent across retries."
+   },
+   {
+    "entity": "comment_count",
+    "store": "Redis + durable counter store",
+    "fields": [
+     "post_id",
+     "count",
+     "reply_count per comment"
+    ],
+    "keys": "cnt:comments:{post}; reply counts in comment cache metadata.",
+    "notes": "Coalesced async updates; shown as hints."
+   }
+  ],
+  "classes": [
+   {
+    "name": "CommentReadService",
+    "responsibility": "Serve paginated, sorted, hydrated pages.",
+    "methods": [
+     "listComments(postId, sort, cursor, limit, viewer) -> Page",
+     "listReplies(commentId, cursor, limit, viewer) -> Page",
+     "hydrate(ids, viewer) -> list<CommentView>"
+    ]
+   },
+   {
+    "name": "CursorCodec",
+    "responsibility": "Encode, sign and validate cursors.",
+    "methods": [
+     "encode(sort, score, id, snapshotTs) -> str",
+     "decode(str) -> Cursor",
+     "verify(signature)"
+    ]
+   },
+   {
+    "name": "RankingWorker",
+    "responsibility": "Maintain scores and per-post indexes from events.",
+    "methods": [
+     "onCommentCreated(e)",
+     "onCommentLiked(e)",
+     "onModeration(e)",
+     "bestScore(likes, dislikes_or_reports, impressions, age, friendBoost) -> double",
+     "rebuild(postId)"
+    ]
+   },
+   {
+    "name": "CommentWriteService",
+    "responsibility": "Validated, idempotent creation and edits.",
+    "methods": [
+     "create(postId, author, text, parentId, clientId) -> Comment",
+     "edit(commentId, text, expectedVersion)",
+     "delete(commentId, actor)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Keyset pagination over a ranked index with snapshot",
+    "explain": "OFFSET pagination re-counts all earlier rows and shifts when items are inserted. Keyset pagination remembers the last (score, id) and asks for items strictly after it in the sort order; the id breaks ties so ordering is total. A snapshot_ts filters out comments created after the first page so new arrivals do not push items across page boundaries; they appear via the new-comments pill instead.",
+    "pseudocode": "def page_ranked(post, sort, cursor, limit=20):\n  key = f'{sort}:{{{post}}}'\n  if cursor is None:\n      snap = now(); hi = '+inf'; last_id = None\n  else:\n      snap, hi, last_id = cursor.ts, cursor.score, cursor.id\n  out = []\n  while len(out) < limit:\n      batch = redis.zrevrangebyscore(key, hi, '-inf', withscores=True,\n                                     start=0, num=limit * 2)\n      if not batch: break\n      for cid, score in batch:\n          if (score, cid) >= (hi, last_id) and last_id is not None:\n              continue                          # already served (ties)\n          if created_at(cid) > snap: continue   # newer than snapshot\n          out.append((cid, score))\n          if len(out) == limit: break\n      hi, last_id = batch[-1][1], batch[-1][0]\n  nxt = encode(sort, out[-1][1], out[-1][0], snap) if out else None\n  return out, nxt\n"
+   },
+   {
+    "name": "Best score: Wilson lower bound with time decay and friend boost",
+    "explain": "Average rating or raw likes favour either tiny samples or old comments. The Wilson score lower bound of the positive fraction, with impressions or votes as n, asks 'with 95 percent confidence, the true approval is at least this', which penalises small samples. We use likes as positives and (reports + hides + scroll-past impressions sampled) as negatives, multiply by a mild time decay so new good comments can surface, and add a per-viewer friend boost at read time on the first page only.",
+    "pseudocode": "def wilson_lower(pos, n, z=1.96):\n  if n == 0: return 0.0\n  p = pos / n\n  return (p + z*z/(2*n) - z*math.sqrt((p*(1-p) + z*z/(4*n)) / n)) / (1 + z*z/n)\n\ndef best_score(c, now):\n  q = wilson_lower(c.likes, c.likes + c.negatives)\n  age_h = (now - c.created_at).hours\n  decay = 1 / (1 + age_h / 24) ** 0.5               # gentle\n  return q * decay + (0.05 if c.author_is_creator else 0)\n\n# read time, first page only: rerank top 100 with friend boost for this viewer\n"
+   },
+   {
+    "name": "Hydration with batching and request coalescing",
+    "explain": "A page needs data from several services; doing it per comment causes N+1 calls. We gather all ids, issue one multi-get per dependency in parallel with a 50 ms budget, and use single-flight on cache misses so concurrent readers of a viral post trigger one store read per id.",
+    "pseudocode": "async def hydrate(ids, viewer):\n  bodies, = await gather(cache.multi_get_or_load(ids, loader=store.multi_get))\n  authors = {b.author_id for b in bodies.values()}\n  profs, liked, previews = await gather(\n      timeout(profiles.multi_get(authors), 0.05, fallback=minimal_profiles),\n      timeout(reactions.viewer_state(viewer, ids), 0.05, fallback={}),\n      timeout(replies.first_n_multi(ids, n=2), 0.05, fallback={}))\n  return [view(bodies[i], profs, liked, previews) for i in ids\n          if visible(bodies[i], viewer)]\n"
+   }
+  ],
+  "sequence": "Client     Gateway    ReadAPI      Redis(zset)   CommentCache   Profiles   Reactions\n  | GET ?sort=best  |            |              |              |           |\n  |--------->|      |            |              |              |           |\n  |          |----->| GET page:{P}:best          |              |           |\n  |          |      |----------->|              |              |           |\n  |          |      |<-- miss ---|              |              |           |\n  |          |      | ZREVRANGE best:{P} 0 19    |              |           |\n  |          |      |----------->|              |              |           |\n  |          |      |<-- 20 ids -|              |              |           |\n  |          |      | multi_get(20 ids)         |              |           |\n  |          |      |-------------------------->|              |           |\n  |          |      | multi_get(authors) || viewer_state(ids)  |           |\n  |          |      |----------------------------------------->|           |\n  |          |      |----------------------------------------------------->|\n  |          |      |<-------------------- bodies, profiles, liked --------|\n  |          |      | SET page:{P}:best (5 s)   |              |           |\n  |          |      |----------->|              |              |           |\n  |<---------|<-----| {items, next_cursor(best, score, id, ts)} |           |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Scores change between page 1 and page 2, moving a comment from page 2 to page 1",
+   "handling": "Keyset cursor continues from (last_score, last_id), so the moved comment may be skipped this session; it is acceptable for ranked feeds, and the client seen-set prevents duplicates when the reverse happens. For strict stability, cache the session's ranked id list (top 500) keyed by snapshot for 10 minutes."
+  },
+  {
+   "case": "Hundreds of new comments arrive while a user reads newest order",
+   "handling": "Snapshot_ts in cursor excludes comments created after page 1; a 'N new comments' pill fetches them separately and prepends without moving the scroll position."
+  },
+  {
+   "case": "Two comments with identical scores",
+   "handling": "Tie-break by comment_id (unique, time ordered), encoded in the cursor, so ordering is total and no item is skipped or repeated."
+  },
+  {
+   "case": "User asks for page 5,000 of a 1M-comment post in best order",
+   "handling": "Ranked zset holds top 5,000 only; beyond it, the cursor switches to newest order from the store and the UI shows 'more comments' rather than claiming rank."
+  },
+  {
+   "case": "Client double-submits a comment on a flaky network",
+   "handling": "client_id dedupe with INSERT IF NOT EXISTS on (author, client_id); retry returns the original comment."
+  },
+  {
+   "case": "Parent comment deleted while someone is replying",
+   "handling": "Reply write checks parent status; if deleted with replies, the reply is still accepted under the tombstone; if hard-deleted, return 410 and the client shows 'comment no longer available'."
+  },
+  {
+   "case": "Author edits a comment after it has many likes (bait and switch)",
+   "handling": "Edit window of 15 minutes, edit history retained, 'edited' label; edits on comments with over 100 likes trigger re-classification."
+  },
+  {
+   "case": "Viewer blocked an author who has top comments",
+   "handling": "Filter at hydration; to keep pages full, over-fetch (limit x 1.5) from the index and continue scanning."
+  },
+  {
+   "case": "Creator hides a comment that is currently cached in first-page caches",
+   "handling": "Hide event removes it from zsets and deletes page:{P}:* keys; worst case 5 s visibility, and hidden status is checked at hydration so the stale id list renders without it."
+  },
+  {
+   "case": "Spam wave of 10K near-identical comments in a minute on a viral post",
+   "handling": "Per-user and per-post rate limits, near-duplicate detection (MinHash on text) in the fast path, auto-hold new accounts' comments as pending visible only to the author, and creator 'restrict to followers' switch."
+  },
+  {
+   "case": "Cursor tampering (client edits score to jump around)",
+   "handling": "Cursor is HMAC-signed; invalid signature returns 400 and the client restarts from page 1."
+  },
+  {
+   "case": "Takedown order for a comment in many caches and regions",
+   "handling": "Moderation event fans out to all regions; caches invalidated by id; the store row is hard-flagged so hydration refuses it even if an id list is stale."
+  },
+  {
+   "case": "Deep reply chains (reply to a reply to a reply)",
+   "handling": "All stored under the top-level parent with reply_to_user_id; UI shows @mention; depth bounded at two for rendering and pagination."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Cassandra",
+   "layer": "Comment store",
+   "overview": "Leaderless wide-column store with partition plus clustering keys and tunable consistency.",
+   "why": "Comments are append-mostly, read by (post, id range), and need high write throughput; clustering by comment_id gives newest and oldest scans for free.",
+   "alternatives": "Sharded MySQL/Vitess (strong constraints, secondary indexes, more ops at scale); DynamoDB (managed, same key model); PostgreSQL with ltree for deep trees (great for Reddit-style depth, harder to scale writes)."
+  },
+  {
+   "name": "Redis sorted sets",
+   "layer": "Ranking indexes and page cache",
+   "overview": "In-memory skip-list-backed sorted sets with O(log n) insert and range by score or rank.",
+   "why": "Exactly the operations ranked pagination needs: insert or update score, range by score with limit, trim to top N.",
+   "alternatives": "Precomputed ranked lists in the store (slow to update); Elasticsearch per-post queries (flexible scoring, higher latency and cost); in-memory ranking service with custom structures."
+  },
+  {
+   "name": "Memcached with leases",
+   "layer": "Comment body cache",
+   "overview": "Distributed in-memory cache; leases (as in Facebook's memcache paper) stop thundering herds and stale sets.",
+   "why": "Comment bodies are read far more than written and are small; multi-get of 20 ids is one round trip per server.",
+   "alternatives": "Redis (richer types, slightly more memory overhead); no cache with Cassandra row cache (less control)."
+  },
+  {
+   "name": "Snowflake-style ID generator",
+   "layer": "Identity",
+   "overview": "64-bit ids: 41 bits time, 10 bits machine, 12 bits sequence.",
+   "why": "Time-ordered ids make 'newest' a primary key range scan and provide a total-order tiebreaker in cursors without coordination.",
+   "alternatives": "UUIDv7 (128-bit, also time-ordered); database auto-increment (single point of contention); ULID."
+  },
+  {
+   "name": "Apache Kafka",
+   "layer": "Event backbone",
+   "overview": "Partitioned durable log.",
+   "why": "One comment event feeds ranking, counters, notifications, moderation and search with replay for rebuilds.",
+   "alternatives": "Pulsar; SNS/SQS fan-out (no replay); synchronous calls (coupling)."
+  },
+  {
+   "name": "Online spam classifier (lightweight model service)",
+   "layer": "Integrity",
+   "overview": "A fast text and behaviour model (for example distilled transformer or gradient boosted features) served under 20 ms, plus heavier async models.",
+   "why": "Blocks obvious spam before it is visible while keeping write latency within budget.",
+   "alternatives": "Rules only (cheap, easy to evade); async-only moderation (spam visible for seconds to minutes)."
+  },
+  {
+   "name": "Elasticsearch / OpenSearch",
+   "layer": "Moderation search",
+   "overview": "Inverted-index search engine.",
+   "why": "Moderators and creators search comments by keyword and filter; not on the user read path.",
+   "alternatives": "Batch queries on the data lake (slow for interactive moderation)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Keyset (cursor) pagination vs offset pagination",
+   "explain": "Offset pagination asks the database for rows ORDER BY x LIMIT 20 OFFSET 1000. To answer, the database must produce and discard the first 1,000 rows, so cost grows linearly with page depth. Worse, offsets are positions, not identities: if five rows are inserted at the head between two requests, every item shifts by five and the next page repeats five items; if rows are deleted, items are skipped. Keyset pagination, also called seek or cursor pagination, instead remembers the sort key of the last item returned and asks for rows strictly after it: WHERE (score, id) < (last_score, last_id) ORDER BY score DESC, id DESC LIMIT 20. With an index on the sort key this is a range seek with cost proportional to the page size, regardless of depth, and inserts before the cursor do not shift the next page. The sort key must be unique, so a tie-breaker such as a unique id is appended. The trade-off is that you cannot jump to page 500 directly, which infinite scroll never needs. The cursor is usually encoded opaquely (base64 of the key values) and signed so clients cannot construct arbitrary queries.",
+   "in_this_design": "All lists use keyset cursors: (comment_id) for newest, oldest and replies; (score, comment_id, snapshot_ts) for best and top. Cursors are opaque, HMAC-signed, and include the sort so a client cannot mix sorts.",
+   "key_points": [
+    "OFFSET is O(depth) and shifts under inserts; keyset is O(page) and stable.",
+    "Always add a unique tie-breaker to the sort key.",
+    "Make cursors opaque and signed.",
+    "You lose random page jumps, which infinite scroll does not need."
+   ],
+   "qa": [
+    {
+     "q": "Why does OFFSET produce duplicates in a live comment thread?",
+     "a": "New comments inserted ahead of the current position shift every row, so the next OFFSET window overlaps items already shown."
+    },
+    {
+     "q": "What goes in the cursor for 'top' order?",
+     "a": "The last item's score and id (for ties), plus a snapshot timestamp and the sort name, signed."
+    },
+    {
+     "q": "How would you support 'jump to comment X' from a notification?",
+     "a": "Fetch X directly by id, render it with its thread, and build cursors both directions from X's key (score or id) for scrolling up and down."
+    }
+   ]
+  },
+  {
+   "name": "Ranking with confidence: Wilson score lower bound",
+   "explain": "Sorting by raw likes favours old comments that had more time to collect likes; sorting by average approval (likes divided by votes) favours a comment with one like and zero dislikes over one with 900 likes and 100 dislikes. Both are wrong because they ignore uncertainty. The Wilson score interval gives a confidence interval for a proportion given n observations; its lower bound answers 'given what we have seen, what approval rate are we 95 percent sure this item has at least?'. With few votes the interval is wide and the lower bound is low; as votes accumulate it tightens toward the observed ratio. The formula uses p (observed fraction positive), n (total observations) and z (1.96 for 95 percent). Evan Miller's well-known essay popularised it, and Reddit's 'best' comment sort uses it. In practice you need a sensible negative signal: platforms without dislikes use impressions without a like, reports and hides. Time decay or a freshness boost is added so new comments can compete, and personalization (friends, creator replies) is applied on top for the first page.",
+   "in_this_design": "best_score = Wilson lower bound of likes over (likes + negatives) times a gentle age decay, plus a creator bonus; friend boost is applied at read time for the first page. The Ranking Worker recomputes the score on each like event (coalesced per second) and updates the zset.",
+   "key_points": [
+    "Raw counts favour old; averages favour tiny samples.",
+    "Wilson lower bound ranks by 'confidently good'.",
+    "Need a negative signal: reports, hides, impressions without engagement.",
+    "Add time decay and personal boosts on top, not inside the confidence math."
+   ],
+   "qa": [
+    {
+     "q": "Comment A has 1 like out of 1 vote, B has 90 out of 100. Which ranks higher and why?",
+     "a": "B. A's Wilson lower bound is about 0.21; B's is about 0.83, because B's sample is large enough to be confident."
+    },
+    {
+     "q": "We have no dislike button. What is n?",
+     "a": "Use impressions (comment was on screen for over 1 s) as n with likes as positives, optionally adding reports and hides as strong negatives; normalise for position bias."
+    },
+    {
+     "q": "Why not use an ML ranker straight away?",
+     "a": "You can, but Wilson is transparent, cheap, robust to small samples and makes a strong baseline; an ML model is an incremental improvement and needs logging and position-bias handling first."
+    }
+   ]
+  },
+  {
+   "name": "Precomputed ranked indexes (materialized views) with sorted sets",
+   "explain": "When reads vastly outnumber writes and each read needs data in a specific order, it pays to precompute that order at write time: a materialized view. Instead of sorting all comments of a post on every request, we maintain a structure that is always sorted. A sorted set, as implemented in Redis with a skip list plus hash map, supports insert and score update in O(log n), range by rank or score in O(log n + k), and trimming to the top N. The view is derived data: it can be rebuilt from the source of truth, so it can live in memory with relaxed durability. The costs are write amplification (every like may update a score), memory for every active post, and staleness between an event and the index update. Common mitigations are to maintain views only for active objects, build them lazily on first read for cold objects with a TTL, cap their length, and coalesce score updates.",
+   "in_this_design": "best:{post} and top:{post} zsets of top-level comment ids, trimmed to 5,000, maintained only for posts with recent activity and built on demand otherwise. Score updates from likes are coalesced per second. Newest and oldest need no view because the store's clustering order already is one.",
+   "key_points": [
+    "Precompute order when reads dominate and order is expensive.",
+    "Views are derived, so they can be rebuilt and kept in memory.",
+    "Bound memory: only active objects, trim to top N, TTL for cold.",
+    "Coalesce score updates to tame write amplification."
+   ],
+   "qa": [
+    {
+     "q": "Why not ORDER BY like_count in the database?",
+     "a": "It needs an index on (post_id, like_count) that is updated on every like, causing heavy write amplification on hot posts, and still does a sort-merge for each request; Redis zsets are built for this."
+    },
+    {
+     "q": "What if the zset is lost?",
+     "a": "Rebuild from the store for that post (load recent top-level comments and counts, score, insert); readers fall back to newest order meanwhile."
+    },
+    {
+     "q": "Why trim to 5,000?",
+     "a": "Almost nobody scrolls beyond a few hundred ranked comments; trimming bounds memory and update cost, and deep scrolling switches to newest order."
+    }
+   ]
+  },
+  {
+   "name": "Snapshot consistency for pagination over mutable data",
+   "explain": "Paginating a list that changes between requests can never be perfectly consistent unless the server pins a snapshot. Databases do this inside a transaction with MVCC: the transaction reads a consistent version even as others write. Across stateless HTTP requests seconds or minutes apart, keeping a database transaction open is not viable. Practical options are: (1) pin a logical snapshot by timestamp and filter out items created after it, which handles inserts but not changing scores; (2) materialize the ordered id list for the session and page through it, which is fully stable but costs memory per session; (3) accept small inconsistencies and dedupe on the client. Most feeds combine them: snapshot timestamp for inserts, a session-cached id list for the first few hundred ranked items, and client dedupe as the last line. The product decision is which anomalies users notice: duplicates are very visible, a skipped low-ranked item usually is not.",
+   "in_this_design": "Cursors carry snapshot_ts so new comments do not shift pages; for best sort on active posts we cache the session's top-500 id list for 10 minutes; clients keep a seen-set and drop duplicates.",
+   "key_points": [
+    "Stateless pagination over mutable data needs an explicit snapshot strategy.",
+    "Timestamp snapshot handles inserts; id-list snapshot handles score changes.",
+    "Client seen-set dedupe is cheap insurance.",
+    "Duplicates are worse UX than a rare skip."
+   ],
+   "qa": [
+    {
+     "q": "Why not hold a DB transaction open while the user scrolls?",
+     "a": "It pins resources and MVCC versions for minutes per user; at a million concurrent sessions it would exhaust the database."
+    },
+    {
+     "q": "What does the snapshot timestamp not solve?",
+     "a": "Score changes of existing comments; those still move items across page boundaries in ranked sorts."
+    },
+    {
+     "q": "How big is a session id-list cache?",
+     "a": "500 ids x 8 B = 4 KB per session; 1M concurrent sheets = about 4 GB, fine in Redis with 10-minute TTL."
+    }
+   ]
+  },
+  {
+   "name": "Caching hot content: first-page caches, leases and thundering herds",
+   "explain": "Read skew means a small number of keys get most traffic. Caching those keys is obvious, but caches fail in specific ways. A thundering herd (cache stampede) happens when a popular key expires and thousands of requests miss simultaneously, all hitting the database. Solutions: request coalescing (single-flight) so only one loader runs per key per process; leases, where the cache hands out a token to the first misser and tells others to wait or use stale data; probabilistic early refresh so keys are recomputed before they expire; and serving stale-while-revalidate. Stale sets are another hazard: a slow loader may write an old value after a newer invalidation, which leases also prevent because invalidation voids the token. Finally, caching a computed page (the id list) separately from item bodies lets you keep page caches very short-lived (seconds) and body caches long-lived with explicit invalidation.",
+   "in_this_design": "First page per (post, sort) is cached as an id list for 5 s and shared by all viewers; bodies are cached by id in Memcached with leases and invalidated on edit, delete or hide; hydration uses single-flight so a viral post triggers one load per id.",
+   "key_points": [
+    "Cache id lists briefly and bodies longer; invalidate bodies explicitly.",
+    "Use single-flight or leases to prevent stampedes.",
+    "Leases also stop stale sets after invalidation.",
+    "Personalisation (blocks, friend boost) is applied after the shared cache."
+   ],
+   "qa": [
+    {
+     "q": "Why only 5 s TTL on the first page?",
+     "a": "Active threads change quickly; 5 s keeps freshness acceptable while still collapsing 100K readers per second into one computation every 5 s."
+    },
+    {
+     "q": "How do personal filters work with a shared page cache?",
+     "a": "Cache the unpersonalised id list, then filter blocked authors and apply friend boosts per viewer at hydration time, over-fetching to keep the page full."
+    },
+    {
+     "q": "What is a stale set and how do leases help?",
+     "a": "A loader reads old data, an update invalidates the key, then the loader writes the old value back. With leases, invalidation cancels the token so the late write is rejected."
+    }
+   ]
+  },
+  {
+   "name": "Partitioning and hot partitions for skewed objects",
+   "explain": "Partitioning by the object being read (post_id) gives locality: one post's comments live together, so a page is a single-partition range scan. But it ties the load of a partition to the popularity of one object. In Cassandra, partitions should stay under roughly 100 MB and a few hundred thousand rows for healthy compaction and repair; a post with a million comments violates that. The standard fix is a compound partition key with a bucket component: (post_id, day) or (post_id, hash bucket). Time buckets preserve ordered scans (newest is the latest bucket, then the previous) at the cost of multi-partition reads when crossing buckets. Hash buckets spread writes evenly but turn ordered reads into a merge across buckets. Since most objects are small, systems apply bucketing only to objects detected as large, recording the bucketing scheme in object metadata. Read hotness is handled separately by caching, because replicas of one partition are still only RF nodes.",
+   "in_this_design": "Comment partitions are (post_id, bucket) with bucket 0 by default; posts that exceed 50K comments switch to day buckets, recorded in post metadata. Newest order reads the latest bucket and continues backwards. Read hotness is absorbed by first-page and body caches.",
+   "key_points": [
+    "Partition by access pattern (post) for locality.",
+    "Bucket large objects by time to bound partition size and keep order.",
+    "Apply bucketing adaptively; most posts never need it.",
+    "Replication does not solve read hotness; caching does."
+   ],
+   "qa": [
+    {
+     "q": "Why not partition comments by comment_id?",
+     "a": "Every page would be scatter-gather across the cluster; access is always 'comments of a post'."
+    },
+    {
+     "q": "How does newest pagination cross a bucket boundary?",
+     "a": "The cursor includes the bucket; when a bucket is exhausted, the reader moves to the previous bucket listed in post metadata."
+    },
+    {
+     "q": "Why day buckets instead of hash buckets?",
+     "a": "Day buckets keep time order so newest and oldest stay simple range scans; hash buckets would need a k-way merge per page."
+    }
+   ]
+  },
+  {
+   "name": "Idempotent writes and read-your-writes for user-generated content",
+   "explain": "Mobile clients retry on timeouts, and a timeout does not mean the write failed. Without idempotency, retries create duplicate comments. The usual technique is a client-generated idempotency key (a UUID per compose action) stored with a unique constraint; a retry with the same key returns the original result instead of creating a new one. Separately, after a successful write the author expects to see their content immediately, but the read path may be served from caches and derived indexes that are updated asynchronously. Read-your-writes can be provided by the client keeping its own just-written items and merging them into server responses, by the server merging the author's recent writes (from a small per-user recent list) into their first page, or by routing the author's reads to the primary for a short time. These session guarantees are cheaper than making the whole system strongly consistent.",
+   "in_this_design": "client_id per compose is stored in a dedupe table with INSERT IF NOT EXISTS. The author's comments from the last 10 minutes are merged at the top of their own first page, and the client keeps optimistic items until the server echoes them.",
+   "key_points": [
+    "Timeouts are ambiguous; make creates idempotent with client keys.",
+    "Read-your-writes is a session guarantee, cheap to provide.",
+    "Merge the author's recent writes into their own view.",
+    "Others can see the comment seconds later without harm."
+   ],
+   "qa": [
+    {
+     "q": "Why not dedupe by identical text within a minute?",
+     "a": "Legitimate repeated text exists ('congrats!'), and a slightly edited retry would slip through; an explicit client key is exact."
+    },
+    {
+     "q": "How long to keep idempotency keys?",
+     "a": "Longer than any client retry horizon, for example 24 hours; storage is tiny."
+    },
+    {
+     "q": "The author's comment is not in the best zset yet. How does it show?",
+     "a": "The read service merges the author's recent comments (from a per-user recent list) at the top of their own page; the zset update arrives within seconds."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Two-level threading vs arbitrary depth",
+   "options": "Flatten replies under top-level parent; or store full trees (adjacency list, materialized path)",
+   "choice": "Two-level",
+   "why": "Mobile UI readability, simple pagination per parent, bounded fan-out; deep trees need recursive queries or path indexes and complex 'continue this thread' UX."
+  },
+  {
+   "decision": "Keyset vs offset pagination",
+   "options": "OFFSET/LIMIT; or cursor on sort key",
+   "choice": "Keyset",
+   "why": "Constant cost per page and stability under inserts; we do not need random page jumps."
+  },
+  {
+   "decision": "Precomputed ranking vs query-time sort",
+   "options": "Redis zsets maintained by events; or sort per request",
+   "choice": "Precomputed for active posts, on-demand for cold",
+   "why": "Reads are 20x writes and concentrated on active posts; cold posts are cheap to compute when opened."
+  },
+  {
+   "decision": "Shared first-page cache vs fully personalised pages",
+   "options": "Cache id list per (post, sort); or compute per viewer",
+   "choice": "Shared cache plus per-viewer filtering and light reranking",
+   "why": "Personalised computation for 100K readers per second on one post is wasteful; most of the order is shared."
+  },
+  {
+   "decision": "Synchronous vs async spam checks",
+   "options": "Block until all models run; or fast model sync and deep models async",
+   "choice": "Fast sync, deep async",
+   "why": "Keeps write p99 under 150 ms while catching obvious spam before visibility; async can retroactively hide."
+  },
+  {
+   "decision": "Cassandra vs sharded MySQL",
+   "options": "Wide-column store; or relational with strong constraints",
+   "choice": "Cassandra",
+   "why": "Write-heavy append workload with predictable key access; we do not need joins on the read path."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Redis ranking cluster unavailable",
+   "behavior": "Read API falls back to newest order from the store for best/top requests, flagged in telemetry; writes continue; zsets rebuilt lazily on recovery."
+  },
+  {
+   "failure": "Comment cache cold after a restart",
+   "behavior": "Single-flight and leases throttle store load; first-page caches warm within seconds for hot posts."
+  },
+  {
+   "failure": "Profile service slow",
+   "behavior": "50 ms hydration timeout; render with minimal cached profile (name, default avatar); never fail the page."
+  },
+  {
+   "failure": "Spam model service down",
+   "behavior": "Fail into 'pending' visibility for new or low-trust accounts (visible only to author) and allow trusted accounts; async models catch up."
+  },
+  {
+   "failure": "Kafka consumer lag for ranking",
+   "behavior": "New comments missing from best order for longer; newest order unaffected; author still sees own comment via merge; alert on lag over 30 s."
+  },
+  {
+   "failure": "Cassandra partition too large on a viral post",
+   "behavior": "Detected by size metrics; post switched to day buckets for new writes; reads span old and new buckets."
+  }
+ ],
+ "metrics": [
+  "First-page and next-page p50/p99 by sort and by post size class.",
+  "Cache hit rates: first-page cache, body cache; single-flight collapse ratio.",
+  "Comment write p99, rejection reasons (rate limit, spam, restricted).",
+  "Ranking worker lag and zset rebuild count.",
+  "Client telemetry: duplicate items per session, empty-page rate.",
+  "Spam prevalence (sampled human review), false positive rate, appeals overturned.",
+  "Engagement: comments per sheet open, reply depth, time in sheet by sort.",
+  "Partition size distribution and large-partition warnings."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you support Reddit-style arbitrary depth?",
+   "a": "Store parent_id plus a materialized path (or path of ids) per comment; fetch a subtree up to depth 5 and breadth limits per level in one query by path prefix; render 'continue this thread' links beyond limits; ranking applies per sibling group."
+  },
+  {
+   "q": "How do you show 'N new comments' live on a viral post?",
+   "a": "Clients subscribe via WebSocket to a per-post channel only for hot posts; a broadcaster emits count deltas once per second, not the comments; tapping the pill fetches newest since snapshot_ts."
+  },
+  {
+   "q": "How would you translate comments?",
+   "a": "Detect language at write time, translate on demand when viewer locale differs, cache translations by (comment_id, locale)."
+  },
+  {
+   "q": "How do you rank for each viewer without destroying caching?",
+   "a": "Two stages: shared candidate list (top 200 by best score) cached per post; per-viewer rerank of those 200 with cheap features (friend, followed, language) at read time."
+  },
+  {
+   "q": "What about comment counts on feed cards?",
+   "a": "Served from the counter service (coalesced, eventually consistent), rounded for display; never computed by counting rows."
+  },
+  {
+   "q": "How do you handle GDPR or DPDP deletion of a user?",
+   "a": "Deletion job finds comments by author via an author index, tombstones them (keeping thread structure as 'deleted user'), purges caches and zsets, and verifies via audit."
+  },
+  {
+   "q": "How do you test pagination correctness?",
+   "a": "Property tests: random interleavings of inserts, deletes and score changes during pagination must never produce duplicates and must return every stable item exactly once."
+  }
+ ],
+ "key_points": [
+  "Never OFFSET; use keyset cursors with a unique tie-breaker, opaque and signed.",
+  "Store comments by (post, bucket) with time-ordered ids so newest and oldest are range scans.",
+  "Precompute ranked orders in per-post sorted sets for active posts; build cold ones on demand.",
+  "Best = Wilson lower bound with gentle time decay, plus read-time personal boosts.",
+  "Snapshot timestamp in the cursor stops new comments shifting pages; client seen-set kills duplicates.",
+  "Two-level threading: replies paginated per parent, first two inlined with reply_count.",
+  "Batch hydration with timeouts and single-flight; shared first-page cache for viral posts.",
+  "Idempotent creates with client keys and read-your-writes for the author."
+ ],
+ "quiz": [
+  {
+   "q": "Why does OFFSET pagination show duplicates in a 'newest' comment list?",
+   "options": [
+    "New comments inserted at the head shift positions so the next window overlaps",
+    "Databases return rows in random order",
+    "OFFSET does not support DESC order",
+    "Caches serve old pages"
+   ],
+   "answer": 0,
+   "why": "Offsets are positions, not identities; inserts move everything down. Caching can cause staleness but not the systematic overlap."
+  },
+  {
+   "q": "What must a keyset cursor for 'top' order contain at minimum?",
+   "options": [
+    "Page number",
+    "Total count of comments",
+    "Last item's score and a unique tie-breaker id",
+    "The viewer's id"
+   ],
+   "answer": 2,
+   "why": "Score alone is ambiguous with ties; adding the unique id makes the order total. A page number reintroduces offset semantics."
+  },
+  {
+   "q": "Comment A has 2 likes out of 2 votes; B has 450 out of 500. Which ranks higher by Wilson lower bound (95 percent)?",
+   "options": [
+    "A, because 100 percent beats 90 percent",
+    "B, because its large sample gives a much higher lower bound",
+    "They tie",
+    "Cannot be computed without time"
+   ],
+   "answer": 1,
+   "why": "A's lower bound is about 0.34; B's about 0.87. Average rating picks A, the classic mistake."
+  },
+  {
+   "q": "Roughly how many comment writes per second at 1B per day?",
+   "options": [
+    "About 1,200",
+    "About 1.2M",
+    "About 120,000",
+    "About 12,000"
+   ],
+   "answer": 3,
+   "why": "10^9 / 86,400 is about 11,600."
+  },
+  {
+   "q": "What is the main purpose of the snapshot_ts in the cursor?",
+   "options": [
+    "To exclude comments created after the first page so new arrivals do not shift subsequent pages",
+    "To expire cursors",
+    "To sort by time",
+    "To support caching headers"
+   ],
+   "answer": 0,
+   "why": "It pins the set against inserts; it does not stop score changes, which is why client dedupe also exists."
+  },
+  {
+   "q": "A viral post's first page is requested 100K times per second. What is the most effective protection?",
+   "options": [
+    "Add Cassandra replicas",
+    "Increase page size to 100",
+    "Cache the first-page id list per (post, sort) for a few seconds and share it across viewers",
+    "Disable sorting"
+   ],
+   "answer": 2,
+   "why": "A shared short-TTL cache collapses all requests to one computation per TTL. Replicas only multiply capacity by RF and still serve hot reads from few nodes."
+  },
+  {
+   "q": "Why store replies to replies under the top-level parent?",
+   "options": [
+    "Cassandra cannot store trees",
+    "Bounds depth to two, giving simple per-parent pagination and compact mobile UI",
+    "To save storage",
+    "It improves spam detection"
+   ],
+   "answer": 1,
+   "why": "It is a product and pagination simplification. Cassandra can model trees with paths; that is not the reason."
+  },
+  {
+   "q": "Which Redis structure fits ranked comment indexes best?",
+   "options": [
+    "List",
+    "Stream",
+    "HyperLogLog",
+    "Sorted set"
+   ],
+   "answer": 3,
+   "why": "Sorted sets support score updates and range by score in O(log n). Lists need O(n) reordering when scores change."
+  },
+  {
+   "q": "The Redis ranking cluster is down. What is the best degraded behaviour?",
+   "options": [
+    "Serve newest order from the store and keep accepting writes",
+    "Return 503 for comments",
+    "Sort all comments in the API per request",
+    "Show cached pages from yesterday"
+   ],
+   "answer": 0,
+   "why": "Newest is native to the store, so the sheet keeps working. Sorting all comments per request for viral posts would overload the store."
+  },
+  {
+   "q": "A client retries POST comment after a timeout; the first attempt actually succeeded. What prevents a duplicate?",
+   "options": [
+    "Spam classifier",
+    "Rate limiter",
+    "Idempotency via (author, client_id) with insert-if-not-exists",
+    "Keyset cursor"
+   ],
+   "answer": 2,
+   "why": "The client key makes create idempotent. A rate limiter might block a quick retry but would not reliably prevent duplicates."
+  },
+  {
+   "q": "Why bucket comment partitions by day for very large posts?",
+   "options": [
+    "To make deletes faster",
+    "To bound partition size while keeping time-ordered scans",
+    "To randomise load",
+    "Because Snowflake ids require it"
+   ],
+   "answer": 1,
+   "why": "Time buckets keep order; hash buckets would randomise load but need merges for ordered reads."
+  },
+  {
+   "q": "Users see a comment twice when scrolling in best order. Which cheap safeguard catches what server-side cursors miss?",
+   "options": [
+    "Longer cache TTL",
+    "OFFSET pagination",
+    "Bigger pages",
+    "A client-side seen-set that drops already displayed ids"
+   ],
+   "answer": 3,
+   "why": "Scores change between pages, so server keyset cursors cannot guarantee no repeats; the client seen-set does. Longer TTLs only hide fresh content."
+  },
+  {
+   "q": "What is a cache stampede?",
+   "options": [
+    "Many requests missing the same expired key at once and all hitting the backing store",
+    "A cache filling up",
+    "Cache replication lag",
+    "Evicting hot keys"
+   ],
+   "answer": 0,
+   "why": "Single-flight, leases and early refresh fix it. Eviction is a capacity issue, not a stampede."
+  },
+  {
+   "q": "Why apply the friend boost at read time instead of in the stored best score?",
+   "options": [
+    "Friend data is secret",
+    "Redis cannot store floats",
+    "It is per viewer; storing it would require one index per viewer per post",
+    "It is faster to compute offline"
+   ],
+   "answer": 2,
+   "why": "Personal signals differ per viewer; a shared index plus read-time rerank keeps caching effective."
+  },
+  {
+   "q": "With 20 comments per page and 230K pages per second, roughly how many comment body lookups per second before caching?",
+   "options": [
+    "About 460K",
+    "About 4.6M",
+    "About 46M",
+    "About 23K"
+   ],
+   "answer": 1,
+   "why": "230K x 20 = 4.6M; hence batching and caching are essential."
+  },
+  {
+   "q": "A comment with 40 replies is deleted by its author. What should the thread show?",
+   "options": [
+    "Delete all replies",
+    "Hide the thread entirely",
+    "Promote the first reply to top-level",
+    "Keep a tombstone 'Comment deleted' so replies keep context"
+   ],
+   "answer": 3,
+   "why": "Tombstones preserve structure; deleting replies punishes other users and loses content."
+  },
+  {
+   "q": "Why sign the pagination cursor with an HMAC?",
+   "options": [
+    "To prevent clients from forging cursors that query arbitrary ranges or other sorts",
+    "For compression",
+    "Because base64 is insecure",
+    "To make it shorter"
+   ],
+   "answer": 0,
+   "why": "Opaque and signed cursors keep the server in control of query shapes; base64 is encoding, not security."
+  },
+  {
+   "q": "Ranking worker lag rises to 2 minutes. What do users notice first?",
+   "options": [
+    "Comments disappear",
+    "Writes fail",
+    "New comments and like changes take longer to appear in best and top orders; newest is unaffected",
+    "Counts reset"
+   ],
+   "answer": 2,
+   "why": "Ranking is derived; writes and newest order come straight from the store. Comments do not disappear."
+  },
+  {
+   "q": "Which statement about Snowflake ids is most relevant here?",
+   "options": [
+    "They are globally random",
+    "They are roughly time-ordered, so 'newest' can be a primary-key range scan and a tie-breaker",
+    "They require a central counter",
+    "They are 128-bit"
+   ],
+   "answer": 1,
+   "why": "Time-ordered 64-bit ids without coordination are the point. UUIDv4 would be random and break ordering."
+  },
+  {
+   "q": "To show the author their own new comment at the top before ranking catches up, you rely on which guarantee?",
+   "options": [
+    "Linearizability",
+    "Causal broadcast",
+    "Monotonic writes",
+    "Read-your-writes"
+   ],
+   "answer": 3,
+   "why": "A session guarantee for the author is enough; making all readers linearizable would be far more expensive."
+  },
+  {
+   "q": "Why maintain zsets only for posts with recent activity?",
+   "options": [
+    "Memory and update cost; cold posts are opened rarely and can be ranked on demand",
+    "Redis cannot hold more keys",
+    "Old posts cannot be ranked",
+    "Zsets expire automatically"
+   ],
+   "answer": 0,
+   "why": "About 2M active posts fit in about 300 GB; all posts would be terabytes for little benefit."
+  }
+ ],
+ "references": [
+  {
+   "title": "Evan Miller: How Not To Sort By Average Rating",
+   "url": "https://www.evanmiller.org/how-not-to-sort-by-average-rating.html"
+  },
+  {
+   "title": "How Reddit ranking algorithms work",
+   "url": "https://medium.com/hacking-and-gonzo/how-reddit-ranking-algorithms-work-ef111e33d0d9"
+  },
+  {
+   "title": "Comment System Low-Level Design",
+   "url": "https://www.techinterview.org/post/3233467450/lld-comment-system/"
+  },
+  {
+   "title": "How Reddit stores comment trees and ranks hot posts (DEV)",
+   "url": "https://dev.to/roni_das_b1b76c5ee6583027/how-reddit-stores-comment-trees-and-ranks-hot-posts-1n0a"
+  },
+  {
+   "title": "System Design: Design Reddit - ranking, comment threading, moderation",
+   "url": "https://www.techinterview.org/post/3233474338/system-design-design-reddit-social-news-upvote-downvote-ranking-subreddits-comments-threading-moderation-karma/"
+  }
+ ]
+}

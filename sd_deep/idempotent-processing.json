@@ -1,0 +1,1163 @@
+{
+ "slug": "idempotent-processing",
+ "title": "Design Exactly-Once-Like Processing Using Idempotency",
+ "prompt": "Design \"exactly-once-like\" processing using idempotency.",
+ "group": "messaging",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 100,
+ "summary": "Networks lose acknowledgements, so every reliable system retries, and retries create duplicates. Exactly-once delivery is not achievable, but exactly-once effect is: deliver at least once, and make every step idempotent so that applying it twice changes nothing. The design is about where to put the dedup boundary (API idempotency keys, consumer inbox tables, Kafka transactions, downstream keys), how to make the dedup record and the side effect commit together, how to handle concurrent duplicates and partial failures midway through multi-step work, and how long to remember keys.",
+ "framework": {
+  "clarify": [
+   "What is the flow? I will use a concrete one: a client places an order and pays; the order service charges via a payment gateway, then emits OrderPaid, and downstream consumers (inventory, loyalty, notifications) react.",
+   "Where do duplicates come from? Client retries after timeouts, gateway and load balancer retries, at-least-once message redelivery, consumer restarts before offset commit, and producer retries.",
+   "What must be exactly-once in effect? Money movement and inventory decrements are critical; notifications can tolerate a rare duplicate.",
+   "Scale: assume 20k payment API requests/s at sale peak and 200k events/s through the bus.",
+   "How long can a retry arrive after the original? Clients retry within minutes; message replays can happen days later; assume a 24-72 h key window plus business-key uniqueness forever.",
+   "Do downstream third parties (payment gateway) support idempotency keys? Assume yes for the gateway, no for SMS providers.",
+   "Consistency: single-region primary DB per shard; cross-region is DR only."
+  ],
+  "design": [
+   "State the principle: at-least-once delivery plus idempotent processing equals exactly-once effect. Then place an idempotency boundary at each hop.",
+   "API layer: clients send Idempotency-Key (UUIDv4) on every mutating request; middleware stores (tenant, key, request fingerprint, status, recovery_point, response) in the same DB as the business data, with a unique index.",
+   "Multi-step request is split into atomic phases with recovery points (Stripe/Brandur pattern): create order (local tx), charge gateway with derived key, record charge and stage OrderPaid in an outbox (local tx), finish and store response.",
+   "Outbox relay (or CDC) publishes staged events to Kafka with idempotent producer enabled; duplicates from relay retries carry the same event_id.",
+   "Consumers use an inbox/processed_events table keyed by (consumer, event_id) written in the same transaction as their state change; or for Kafka-to-Kafka pipelines, Kafka transactions with read_committed.",
+   "Business-level natural keys and conditional writes (unique(order_id, action), version checks) as the last line of defence; reconciliation jobs compare ledgers with the gateway daily."
+  ],
+  "defend": [
+   "Bottleneck: the idempotency key write on every request. It is one indexed insert on the same shard as the business row (shard by tenant or order_id), so it adds about 1-2 ms and scales with the business DB.",
+   "Concurrent duplicates: unique constraint plus a locked_at lease; the second request gets 409 Conflict (retry later) instead of running in parallel.",
+   "Partial failure mid-request: recovery points let a retry resume from the last committed phase; a completer job drives abandoned requests forward; foreign calls use derived idempotency keys so re-calling them is safe.",
+   "Scale consumers: inbox table insert is one extra row in the consumer's own DB transaction; prune by time partitions; for very high volume, dedup by monotonically increasing per-partition offsets instead of storing every id.",
+   "Failure behaviour: timeouts with retries and jitter at every hop, because every hop is idempotent; an unknown outcome from a non-idempotent provider is treated as failed and reconciled rather than blindly retried.",
+   "Measure: duplicate-hit rate per layer, 409 rate, keys stuck in non-final recovery points, inbox conflicts, reconciliation mismatches (should be zero)."
+  ],
+  "script": "Let me clarify the flow first: a client places and pays for an order, we charge a payment gateway, then emit OrderPaid, and inventory, loyalty and notifications react. Duplicates will come from client retries, proxies, producer retries and at-least-once redelivery. Money and stock must be exactly-once in effect; a duplicate SMS is tolerable. I will assume 20 thousand payment requests per second at peak and 200 thousand events per second. The core idea is that exactly-once delivery is impossible, but at-least-once plus idempotent processing gives exactly-once effect. So I put an idempotency boundary at every hop. At the API, an Idempotency-Key header stored with a request fingerprint and the final response in the same database as the order, with a unique index. The request runs in atomic phases with recovery points, and the gateway call reuses a derived key, so a retry resumes safely. Events go through a transactional outbox, and every consumer records processed event ids in the same transaction as its own write. To defend it: concurrent duplicates hit the unique constraint and get a 409, partial failures resume from recovery points, keys are kept 72 hours with business-key uniqueness forever, and a daily reconciliation against the gateway proves the ledger is right."
+ },
+ "brd": {
+  "problem": "Our order and payment flows retry at many layers: mobile apps on flaky networks, API gateways, service meshes, message consumers. Each retry is reasonable on its own, but together they cause double charges, double refunds, inventory decremented twice and duplicate notifications. Each incident costs refunds, support effort and customer trust, and on sale days the duplicate rate spikes exactly when traffic is highest. We need a platform-wide approach that makes retried work safe by design.",
+  "goals": [
+   "Zero duplicate money movements (charges, refunds, payouts) caused by retries.",
+   "Make every mutating API and every event consumer safe to retry so that teams can retry aggressively for availability.",
+   "Provide shared libraries (API middleware, consumer inbox, outbox relay) so teams do not hand-roll dedup.",
+   "Give operators visibility into duplicates caught, stuck requests and reconciliation mismatches.",
+   "Keep the added latency under 5 ms p99 per request."
+  ],
+  "non_goals": [
+   "Distributed transactions (2PC/XA) across services and third parties.",
+   "Exactly-once delivery at the transport level to arbitrary endpoints.",
+   "Deduplicating semantically similar but distinct user actions (two separate orders for the same item are legitimate).",
+   "Replacing the payment gateway's own fraud and duplicate detection."
+  ],
+  "stakeholders": [
+   {
+    "who": "Payments and finance",
+    "needs": "No double charges or refunds; ledgers that reconcile with the gateway to the paisa."
+   },
+   {
+    "who": "Mobile and web client teams",
+    "needs": "A simple rule: generate a key per user action, reuse it on retry."
+   },
+   {
+    "who": "Service teams (orders, inventory, loyalty)",
+    "needs": "Drop-in middleware and consumer helpers with low latency overhead."
+   },
+   {
+    "who": "Customer support",
+    "needs": "Fewer duplicate-charge tickets and a way to look up what happened for a key."
+   },
+   {
+    "who": "SRE",
+    "needs": "Safe retry policies everywhere and alerts on stuck or mismatched operations."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Duplicate charges or refunds caused by retries",
+    "target": "0 per quarter"
+   },
+   {
+    "metric": "Duplicate-charge support tickets",
+    "target": "down 95 percent"
+   },
+   {
+    "metric": "Idempotency middleware latency overhead",
+    "target": "p99 under 5 ms"
+   },
+   {
+    "metric": "Mutating APIs covered by idempotency keys",
+    "target": "100 percent of payment and order APIs, 80 percent overall"
+   },
+   {
+    "metric": "Daily reconciliation mismatches with gateway",
+    "target": "0 unexplained"
+   },
+   {
+    "metric": "Requests stuck in a non-final recovery point for more than 1 hour",
+    "target": "under 0.001 percent"
+   }
+  ],
+  "constraints": [
+   "Business data is in sharded MySQL/Postgres; the dedup record must live in the same shard to share the transaction.",
+   "Third-party payment gateways support idempotency keys with their own retention (often 24 h); SMS/email providers mostly do not.",
+   "Kafka is the event bus; consumers are a mix of Java and Go.",
+   "PII in request bodies must not be stored in plain text in the idempotency store."
+  ],
+  "risks": [
+   {
+    "risk": "Clients generate a new key on every retry, defeating dedup.",
+    "mitigation": "SDKs generate the key once per user action and persist it; server-side natural-key uniqueness as a backstop."
+   },
+   {
+    "risk": "Key reused with different parameters (client bug) silently returns the wrong cached response.",
+    "mitigation": "Store a request fingerprint (hash of method, path, normalized body) and return 422 on mismatch."
+   },
+   {
+    "risk": "Idempotency table grows without bound.",
+    "mitigation": "Time-partitioned tables dropped after 72 h; business uniqueness constraints live on the business tables."
+   },
+   {
+    "risk": "A non-idempotent downstream call is retried after an unknown outcome.",
+    "mitigation": "Treat unknown outcomes as failed, query status before retrying when the provider allows, and reconcile."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Client developer (mobile/web)",
+    "needs": "Clear contract: send Idempotency-Key, retry with the same key, get the same answer."
+   },
+   {
+    "name": "Backend service developer",
+    "needs": "Middleware and consumer libraries that make handlers idempotent with minimal code."
+   },
+   {
+    "name": "Payments operations analyst",
+    "needs": "Lookup by key or order, reconciliation reports and a queue of stuck operations."
+   }
+  ],
+  "user_stories": [
+   "As a shopper on a flaky network, I want tapping Pay again after a spinner to not charge me twice so that I can trust the app.",
+   "As a mobile developer, I want the server to return the original response for a retried key so that my retry logic is trivial.",
+   "As a payments engineer, I want a request that crashed after charging the card to resume and finish on retry so that no charge is left without an order record.",
+   "As an inventory consumer owner, I want a redelivered OrderPaid event to be ignored so that stock is decremented once.",
+   "As a loyalty service owner, I want points credited exactly once per order even if events are replayed from last week so that replays are safe.",
+   "As an SRE, I want to enable retries with jitter on all internal calls without fear so that availability improves.",
+   "As a finance analyst, I want a daily reconciliation that flags any charge without a matching order so that mistakes are caught within a day.",
+   "As a client developer, I want a clear 409 when the same key is still in progress so that I know to retry later rather than create a new key."
+  ],
+  "functional": [
+   "Accept Idempotency-Key on all POST/PATCH/DELETE endpoints; required on payment endpoints.",
+   "Scope keys by tenant/user; store request fingerprint, status, recovery point, response code and body.",
+   "Return the stored response for completed keys; 409 for in-progress keys; 422 for key reuse with different parameters.",
+   "Support multi-phase requests with recovery points and resumption on retry.",
+   "Derive downstream idempotency keys from the request key for foreign calls (payment gateway).",
+   "Transactional outbox for events, relay with idempotent producer, stable event_id.",
+   "Consumer inbox library: dedup by (consumer, event_id) within the consumer's DB transaction.",
+   "Completer job for abandoned requests, reaper for expired keys, and daily reconciliation against external ledgers."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency overhead",
+    "target": "p99 under 5 ms per request for key check and store"
+   },
+   {
+    "name": "Correctness",
+    "target": "no duplicate effect for any retry within the key window; business-key uniqueness forever"
+   },
+   {
+    "name": "Durability",
+    "target": "idempotency record committed in the same transaction as the business write"
+   },
+   {
+    "name": "Availability",
+    "target": "middleware fails closed for payment endpoints (reject rather than risk duplicates), fails open for low-risk endpoints"
+   },
+   {
+    "name": "Key retention",
+    "target": "72 hours for API keys; consumer inbox 7 days (matching bus retention)"
+   },
+   {
+    "name": "Throughput",
+    "target": "20k keyed API requests/s and 200k consumer events/s at peak"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "20k mutating API requests/s at peak, 3k/s average; 260M keyed requests/day on average days.",
+    "Idempotency row about 600 bytes (fingerprint hash, status, recovery point, compressed response up to 400 bytes).",
+    "200k events/s through Kafka at peak, average 6 consumers per event that need dedup.",
+    "Inbox row about 80 bytes (consumer id, event_id, processed_at).",
+    "Retention: API keys 72 h, inbox 7 days."
+   ],
+   "math": [
+    "API key rows: 260M/day x 3 days = 780M rows x 600 B = about 470 GB across 32 DB shards, about 15 GB per shard.",
+    "API key write rate at peak: 20k inserts/s + 20k updates/s (finish) = 40k writes/s, about 1.25k/s per shard on 32 shards, well within capacity.",
+    "Consumer inbox writes at peak: 200k events/s x 6 consumers = 1.2M inbox inserts/s spread across consumer databases; each consumer sees at most 200k/s.",
+    "Inbox storage per consumer: average 40k events/s x 86,400 x 7 days = 24B rows x 80 B = about 2 TB per consumer, which is too much for some consumers, so high-volume consumers dedup by (partition, offset) watermark instead of per-id rows.",
+    "Watermark alternative: store last processed offset per partition in the same transaction: 64 partitions x 1 row = trivial storage.",
+    "Expected duplicates: if 0.5 percent of API requests are retries, that is 100 duplicates/s at peak, each served from the stored response in about 2 ms."
+   ],
+   "summary": "About 40k idempotency writes/s at peak spread across 32 shards and roughly 470 GB of 72-hour API keys; consumer dedup ranges from per-event inbox rows to per-partition offset watermarks for high-volume consumers to avoid multi-TB inbox tables."
+  },
+  "out_of_scope": [
+   "Cross-region active-active writes for the same key (keys are pinned to a home region).",
+   "Fraud detection of intentionally repeated purchases.",
+   "Exactly-once guarantees from providers that offer no idempotency or status APIs.",
+   "Generic distributed transactions or sagas beyond the order-pay flow."
+  ]
+ },
+ "hld": {
+  "overview": "Every hop that can retry gets an idempotency boundary whose dedup record commits atomically with the side effect. At the edge, an Idempotency Middleware in each service stores keys in the service's own sharded DB. The Order-Pay handler runs as atomic phases with recovery points, calling the payment gateway with a key derived from the client key. Events are staged in an outbox table in the same transaction and published by a relay with an idempotent Kafka producer. Consumers apply events through an Inbox library (processed_events row in the same transaction) or Kafka transactions for stream-to-stream steps. A Completer pushes abandoned requests to completion, a Reaper expires keys, and Reconciliation compares internal ledgers with the gateway.",
+  "diagram": "\n Client (generates Idempotency-Key per user action, retries with jitter)\n    | POST /orders/{id}/pay  Idempotency-Key: k1\n    v\n +--------------------+\n | API Gateway        |  (does not retry non-idempotent calls without key)\n +---------+----------+\n           v\n +---------------------------------------------------------------+\n | Order-Pay Service                                             |\n |  Idempotency Middleware -> Phase runner (recovery points)     |\n +----+-------------------------+------------------------+-------+\n      | tx: keys + orders       | charge, key = k1:charge| tx: charge + outbox\n      v                         v                        v\n +-------------------+   +------------------+   +-------------------+\n | Orders DB shard   |   | Payment Gateway  |   | outbox table      |\n | idempotency_keys  |   | (idempotent API) |   | (same DB shard)   |\n +-------------------+   +------------------+   +---------+---------+\n                                                          | relay / CDC\n                                                          v\n                                   +-------------------------------+\n                                   | Kafka (idempotent producer,   |\n                                   | transactions, read_committed) |\n                                   +---+-----------+-----------+---+\n                                       |           |           |\n                                       v           v           v\n                               Inventory      Loyalty     Notifications\n                               inbox+tx       inbox+tx    best-effort dedup\n Completer (finishes stuck keys)  Reaper (drops keys > 72h)  Reconciler (daily)\n",
+  "components": [
+   {
+    "name": "Client SDK",
+    "responsibility": "Generates a UUIDv4 Idempotency-Key per user action, persists it until a final response, retries with exponential backoff and full jitter on timeouts, 5xx and 409."
+   },
+   {
+    "name": "Idempotency Middleware",
+    "responsibility": "Validates key, computes request fingerprint, inserts or loads the key row, enforces lock lease, returns cached response, 409 or 422 as appropriate."
+   },
+   {
+    "name": "Phase runner",
+    "responsibility": "Executes the handler as a sequence of atomic phases; each phase commits its local writes together with the new recovery point; foreign calls sit in their own phase."
+   },
+   {
+    "name": "Idempotency key store",
+    "responsibility": "Table in the same DB shard as the business data, unique on (tenant_id, key), time-partitioned for cheap expiry."
+   },
+   {
+    "name": "Transactional outbox and relay",
+    "responsibility": "Events written to an outbox table in the business transaction; a relay (polling or CDC via Debezium) publishes them to Kafka with the outbox id as event_id, using an idempotent producer."
+   },
+   {
+    "name": "Kafka",
+    "responsibility": "Event bus with idempotent producers (producer id plus sequence numbers) and transactions for read-process-write pipelines; consumers use read_committed."
+   },
+   {
+    "name": "Consumer Inbox library",
+    "responsibility": "Wraps a handler: within one DB transaction, insert (consumer, event_id) into processed_events, then apply the change; a unique-violation means duplicate and the handler is skipped."
+   },
+   {
+    "name": "Completer",
+    "responsibility": "Finds keys stuck in a non-final recovery point for over 5 minutes with no active lock and drives them to completion through an internal path."
+   },
+   {
+    "name": "Reaper",
+    "responsibility": "Drops idempotency partitions older than 72 h and inbox partitions older than 7 days."
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Daily (and hourly on sale days) compares charges and refunds in our ledger with gateway settlement files; flags orphans and duplicates for automated or manual repair."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Pay with retry after timeout",
+    "steps": [
+     "Client sends POST /orders/o1/pay with Idempotency-Key k1; the request times out at the client after the server has charged the card.",
+     "Server phase 1 had inserted keys row (k1, fingerprint, recovery_point=started, locked_at=now).",
+     "Phase 2 called the gateway with idempotency key 'k1:charge' and got charge ch_9; phase 3 committed charge row, outbox OrderPaid, recovery_point=charge_created.",
+     "Phase 4 stored response 200 {charge: ch_9} and recovery_point=finished, cleared lock; the response was lost on the network.",
+     "Client retries with k1; middleware finds finished row with matching fingerprint and returns the stored 200 without touching the gateway."
+    ]
+   },
+   {
+    "name": "Crash after foreign call, resume on retry",
+    "steps": [
+     "Server crashes after the gateway charged the card but before phase 3 committed; row is at recovery_point=started with a lock that expires after 60 s.",
+     "Client retries with k1 after 2 s and gets 409 (in progress); retries again after backoff once the lock has expired.",
+     "Middleware takes the lock and resumes from started: phase 2 calls the gateway again with 'k1:charge', and the gateway returns the original ch_9 instead of charging again.",
+     "Phases 3 and 4 commit normally; the client gets 200 with ch_9.",
+     "If the client never returns, the Completer picks up the stuck key after 5 minutes and finishes it, so the charge always gets an order record and an event."
+    ]
+   },
+   {
+    "name": "Event consumed exactly-once in effect",
+    "steps": [
+     "Relay publishes outbox row 7781 as OrderPaid(event_id=7781); producer retry after a broker leader change is deduped by Kafka's producer sequence numbers.",
+     "Relay crashes before marking the row sent and republishes it later: a genuine duplicate with the same event_id.",
+     "Inventory consumer begins a transaction, INSERT processed_events(inventory, 7781) succeeds, decrements stock, commits, then crashes before committing its Kafka offset.",
+     "On restart it re-reads 7781 and the insert hits the unique constraint; the transaction rolls back, the handler is skipped, and the offset advances.",
+     "Notification consumer uses a best-effort Redis SETNX on event_id with 24 h TTL, accepting a rare duplicate SMS."
+    ]
+   }
+  ],
+  "data_flow": "Client key flows into the middleware and is stored with the order data; derived keys flow to the gateway; the outbox row id becomes the event_id carried through Kafka; each consumer turns event_id into an inbox row in its own database. Responses flow back from the key table on retries. Completer, Reaper and Reconciler run asynchronously over the same tables and the gateway's settlement files."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/orders/{order_id}/pay",
+    "request": "Headers: Idempotency-Key (required, <= 64 chars). Body: {amount, currency, payment_method_id}",
+    "response": "200 {charge_id, status} | 402 card declined (stored) | 409 in progress | 422 key reused with different params | 503 retry",
+    "notes": "402 is a final, cached result; 503 and 409 are retryable with the same key."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/refunds",
+    "request": "Headers: Idempotency-Key. Body: {order_id, amount, reason}",
+    "response": "201 {refund_id}",
+    "notes": "Additional business constraint: sum(refunds) <= captured amount, checked under row lock."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/idempotency/{key}",
+    "request": "Internal, scoped by tenant",
+    "response": "200 {status, recovery_point, response_code, created_at}",
+    "notes": "Support and debugging; bodies redacted."
+   },
+   {
+    "method": "POST",
+    "path": "(gateway) /charges",
+    "request": "Headers: Idempotency-Key: {client_key}:charge. Body: {amount, source, metadata.order_id}",
+    "response": "200 charge (same object on replay)",
+    "notes": "Gateway keeps keys for 24 h; our retries must finish within that or query by metadata."
+   },
+   {
+    "method": "Kafka",
+    "path": "topic order-events",
+    "request": "OrderPaid {event_id, order_id, amount, version, occurred_at}",
+    "response": "-",
+    "notes": "Key = order_id for per-order ordering; producer enable.idempotence=true, acks=all."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "idempotency_keys",
+    "store": "Orders DB (sharded by tenant_id/order_id), partitioned by day",
+    "fields": [
+     "id",
+     "tenant_id",
+     "idempotency_key",
+     "request_method",
+     "request_path",
+     "request_fingerprint (sha256)",
+     "recovery_point",
+     "locked_at",
+     "response_code",
+     "response_body (compressed, PII-redacted)",
+     "created_at",
+     "last_run_at"
+    ],
+    "keys": "UNIQUE (tenant_id, idempotency_key)",
+    "notes": "Same shard as orders so key and business rows commit together; partitions older than 72 h dropped."
+   },
+   {
+    "entity": "charges",
+    "store": "Orders DB",
+    "fields": [
+     "charge_id",
+     "order_id",
+     "idempotency_key_id",
+     "gateway_charge_id",
+     "amount",
+     "status"
+    ],
+    "keys": "PK charge_id; UNIQUE (order_id, attempt_type) for business-level dedup",
+    "notes": "Natural-key uniqueness survives after the idempotency key expires."
+   },
+   {
+    "entity": "outbox",
+    "store": "Orders DB",
+    "fields": [
+     "id (bigserial, becomes event_id)",
+     "aggregate_id",
+     "type",
+     "payload",
+     "created_at",
+     "sent_at"
+    ],
+    "keys": "PK id; index on sent_at IS NULL",
+    "notes": "Relay polls every 100 ms or CDC tails the binlog."
+   },
+   {
+    "entity": "processed_events (inbox)",
+    "store": "Each consumer's own DB, partitioned by day",
+    "fields": [
+     "consumer",
+     "event_id",
+     "processed_at"
+    ],
+    "keys": "PK (consumer, event_id)",
+    "notes": "Insert in the same transaction as the consumer's write; drop partitions after 7 days."
+   },
+   {
+    "entity": "partition_watermarks",
+    "store": "High-volume consumer DB",
+    "fields": [
+     "consumer",
+     "topic",
+     "partition",
+     "last_offset"
+    ],
+    "keys": "PK (consumer, topic, partition)",
+    "notes": "Alternative to per-event inbox: update in same tx, skip any offset <= last_offset."
+   }
+  ],
+  "classes": [
+   {
+    "name": "IdempotencyMiddleware",
+    "responsibility": "Gatekeeper for keyed requests.",
+    "methods": [
+     "handle(req) -> Response",
+     "fingerprint(req) -> bytes",
+     "acquire(tenant, key, fp) -> KeyRow|Conflict|Mismatch",
+     "release(keyRow, response)"
+    ]
+   },
+   {
+    "name": "PhaseRunner",
+    "responsibility": "Run atomic phases and persist recovery points.",
+    "methods": [
+     "run(keyRow, phases)",
+     "atomicPhase(keyRow, fn) -> NoOp|RecoveryPoint|Response",
+     "resumeFrom(recoveryPoint)"
+    ]
+   },
+   {
+    "name": "GatewayClient",
+    "responsibility": "Call the payment gateway idempotently.",
+    "methods": [
+     "charge(amount, source, key) -> Charge",
+     "findByMetadata(orderId) -> Charge?",
+     "derivedKey(clientKey, step) -> str"
+    ]
+   },
+   {
+    "name": "OutboxRelay",
+    "responsibility": "Publish outbox rows to Kafka.",
+    "methods": [
+     "pollUnsent(limit)",
+     "publish(rows)",
+     "markSent(ids)"
+    ]
+   },
+   {
+    "name": "InboxConsumer",
+    "responsibility": "Exactly-once-effect wrapper for handlers.",
+    "methods": [
+     "consume(record)",
+     "tryRecord(tx, consumer, eventId) -> bool",
+     "commitOffset()"
+    ]
+   },
+   {
+    "name": "Completer",
+    "responsibility": "Finish abandoned requests.",
+    "methods": [
+     "findStuck(olderThan) -> List[KeyRow]",
+     "complete(keyRow)"
+    ]
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Compare ledgers with gateway settlements.",
+    "methods": [
+     "loadSettlement(date)",
+     "diff() -> List[Mismatch]",
+     "repair(mismatch)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Acquire idempotency key",
+    "explain": "Insert-or-load under a unique constraint, verify the fingerprint, and take a time-bounded lock so only one execution runs at a time.",
+    "pseudocode": "acquire(tenant, key, fp):\n  BEGIN (serializable)\n  row = INSERT INTO idempotency_keys(tenant, key, fp, recovery_point='started', locked_at=now())\n        ON CONFLICT (tenant, key) DO NOTHING RETURNING *\n  if row: COMMIT; return row                       -- first time\n  row = SELECT ... FOR UPDATE WHERE tenant=? AND key=?\n  if row.fp != fp: ROLLBACK; return MISMATCH (422)\n  if row.recovery_point == 'finished': ROLLBACK; return CACHED(row.response)\n  if row.locked_at and now() - row.locked_at < 60s: ROLLBACK; return CONFLICT (409)\n  UPDATE ... SET locked_at=now(), last_run_at=now()\n  COMMIT; return row                               -- resume from row.recovery_point"
+   },
+   {
+    "name": "Atomic phases with recovery points",
+    "explain": "Each phase is a local transaction that also advances the recovery point. Foreign calls are isolated and use derived idempotency keys, so re-running a phase after a crash is safe.",
+    "pseudocode": "pay(keyRow, req):\n  loop:\n   switch keyRow.recovery_point:\n    case 'started':\n      ch = gateway.charge(req.amount, req.pm, key=keyRow.key+':charge')   -- foreign, idempotent\n      atomicPhase: INSERT charges(...ch); INSERT outbox(OrderPaid);\n                   SET recovery_point='charge_created'\n    case 'charge_created':\n      atomicPhase: UPDATE orders SET status='PAID';\n                   SET response=(200, ch), recovery_point='finished', locked_at=NULL\n    case 'finished': return keyRow.response\n  on CardDeclined: atomicPhase: SET response=(402,..), recovery_point='finished'\n  on other error: atomicPhase: SET locked_at=NULL; return 503"
+   },
+   {
+    "name": "Inbox consumer",
+    "explain": "The dedup record and the state change commit together; the offset is committed after the DB commit, so a crash at any point yields either a skip or a clean reprocess.",
+    "pseudocode": "for record in poll():\n  BEGIN\n  ok = INSERT INTO processed_events(consumer, event_id)\n       VALUES(:c, record.event_id) ON CONFLICT DO NOTHING\n  if ok: apply(record)            -- e.g. UPDATE stock SET qty = qty - n WHERE sku=?\n  COMMIT\n  commitOffset(record.offset)     -- may be lost: redelivery is harmless"
+   }
+  ],
+  "sequence": "\nClient    Middleware      OrdersDB          Gateway        Relay      Kafka    Inventory\n  | POST k1   |               |                 |              |          |          |\n  |---------->| INSERT key    |                 |              |          |          |\n  |           |-------------->| started,locked  |              |          |          |\n  |           | charge(k1:charge)               |              |          |          |\n  |           |-------------------------------->| ch_9         |          |          |\n  |           |<--------------------------------|              |          |          |\n  |           | tx: charge+outbox+rp            |              |          |          |\n  |           |-------------->|                 |              |          |          |\n  |           | tx: PAID, response, finished    |              |          |          |\n  |           |-------------->|                 |              |          |          |\n  |  200 (lost on network)    |  poll outbox    |              |          |          |\n  |<- - - - - |               |<-------------------------------|          |          |\n  | retry k1  |               |                 |   produce    |          |          |\n  |---------->| SELECT key    |                 |              |--------->|          |\n  |           |-------------->| finished        |              |          | deliver  |\n  |  200 cached (same ch_9)   |                 |              |          |--------->|\n  |<----------|               |                 |   tx: inbox insert + stock update |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Two identical requests with the same key arrive concurrently on different pods.",
+   "handling": "Unique index lets only one INSERT win; the other loads the row, sees a fresh lock and returns 409; client retries later and gets the cached result."
+  },
+  {
+   "case": "Same key reused with a different amount (client bug).",
+   "handling": "Fingerprint mismatch returns 422; never return the cached response for different parameters."
+  },
+  {
+   "case": "Client generates a new key on each retry.",
+   "handling": "Key-level dedup cannot help; business constraint UNIQUE(order_id, 'capture') and gateway metadata check catch the duplicate charge attempt."
+  },
+  {
+   "case": "Crash after the gateway charged but before recording the charge.",
+   "handling": "Recovery point is still 'started'; retry or Completer re-calls gateway with the same derived key, which returns the original charge."
+  },
+  {
+   "case": "Retry arrives after the gateway's 24 h key retention has passed.",
+   "handling": "Before re-charging, query the gateway by metadata.order_id; if a charge exists, adopt it. Our own key window is 72 h but must not exceed what downstream guarantees without this lookup."
+  },
+  {
+   "case": "Request fails with a 500 halfway; should the stored response be the 500?",
+   "handling": "No: transient errors clear the lock without finishing, so the retry resumes. Only deterministic results (success, card declined, validation errors) are stored as final."
+  },
+  {
+   "case": "Lock lease expires while the original request is still slow (GC pause) and a retry takes over.",
+   "handling": "Both may call the gateway, but with the same derived key, so one charge results; phase transactions check recovery_point in a WHERE clause (compare-and-set) so the stale runner's commit fails."
+  },
+  {
+   "case": "Consumer commits Kafka offset before its DB transaction (wrong order).",
+   "handling": "A crash then loses the event (at-most-once). Library enforces DB commit first, offset second."
+  },
+  {
+   "case": "Event replay from 10 days ago, after inbox partitions were dropped.",
+   "handling": "Inbox no longer has the ids; consumers also use entity versions (apply only if event.version > stored.version) so stale replays are no-ops."
+  },
+  {
+   "case": "Non-idempotent provider (SMS) times out with unknown outcome.",
+   "handling": "Do not retry blindly for high-cost messages; record as unknown, query delivery status API if available, else accept rare duplicates for low-risk notifications."
+  },
+  {
+   "case": "Aggregate operations like 'add 100 points' are not naturally idempotent.",
+   "handling": "Turn them into set-style or keyed operations: INSERT points_ledger(order_id, 100) with unique order_id, and derive the balance from the ledger."
+  },
+  {
+   "case": "Clock skew between pods affects lock expiry checks.",
+   "handling": "Use the database's now() for locked_at comparisons, not the application clock."
+  },
+  {
+   "case": "Region failover mid-request.",
+   "handling": "Keys are pinned to a home region; after failover, keys written in the last seconds may be missing in DR, so business-level uniqueness and reconciliation catch any duplicate."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "PostgreSQL / MySQL (sharded)",
+   "layer": "Idempotency store and business data",
+   "overview": "Relational OLTP databases with ACID transactions and unique constraints.",
+   "why": "The key row must commit atomically with the business write; same-shard placement makes that a local transaction, no 2PC.",
+   "alternatives": "Redis SETNX (fast, but not atomic with the DB write and loses data on failover, fine only for low-risk dedup); DynamoDB conditional writes with transactions (good if the business data is also in DynamoDB)."
+  },
+  {
+   "name": "Apache Kafka with idempotent producer and transactions",
+   "layer": "Event bus",
+   "overview": "Partitioned log; producer ids and sequence numbers dedup producer retries; transactions make multi-partition writes and offset commits atomic.",
+   "why": "Removes duplicates introduced by producer retries and enables exactly-once read-process-write for Kafka-to-Kafka steps at a 3-20 percent throughput cost.",
+   "alternatives": "RabbitMQ with publisher confirms (at-least-once only); Pulsar with transactions (similar semantics)."
+  },
+  {
+   "name": "Debezium (CDC) for the outbox",
+   "layer": "Outbox relay",
+   "overview": "Reads the database binlog/WAL and emits row changes to Kafka.",
+   "why": "Publishes outbox rows without polling load and in commit order; no dual-write window.",
+   "alternatives": "A polling relay every 100 ms (simpler, adds DB load and some latency)."
+  },
+  {
+   "name": "Payment gateway idempotency keys",
+   "layer": "Foreign side effect",
+   "overview": "Gateway API that stores a key and returns the original result for repeats (Stripe's Idempotency-Key header).",
+   "why": "Makes the most dangerous foreign call safe to retry.",
+   "alternatives": "Query-before-retry by metadata (works when keys are not supported, slower)."
+  },
+  {
+   "name": "Redis",
+   "layer": "Best-effort dedup for low-risk consumers",
+   "overview": "In-memory key-value store with SET NX EX.",
+   "why": "Sub-millisecond dedup for notifications where a rare duplicate is acceptable.",
+   "alternatives": "Bloom filters (memory-cheap, false positives drop legitimate events)."
+  },
+  {
+   "name": "Kubernetes CronJobs / scheduler",
+   "layer": "Completer, Reaper, Reconciler",
+   "overview": "Periodic batch jobs.",
+   "why": "Simple scheduling with leader election via a lock to avoid double runs.",
+   "alternatives": "Airflow for reconciliation DAGs with settlement-file dependencies."
+  },
+  {
+   "name": "Prometheus and Grafana",
+   "layer": "Observability",
+   "overview": "Metrics and dashboards.",
+   "why": "Duplicate-hit rate, 409/422 rates, stuck keys and reconciliation mismatches.",
+   "alternatives": "Datadog."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Idempotency (definition and how to make operations idempotent)",
+   "explain": "An operation is idempotent if applying it once or many times leaves the system in the same state: f(f(x)) = f(x). In HTTP, GET, PUT and DELETE are defined as idempotent, while POST is not: 'set the order status to PAID' is idempotent, 'charge 500 rupees' is not, and 'add 100 points' is not. There are a few ways to make a non-idempotent operation safe to repeat. The first is to give it an identity: attach a unique key to the intent and record that the key has been applied; repeats see the record and skip. The second is to rewrite it in absolute terms: instead of increment balance by 100, insert a ledger row keyed by order_id and compute the balance from the ledger, so a repeat collides on the key. The third is conditional writes: only apply if the current version is the expected one (compare-and-set), so a repeat finds the version already advanced. The crucial detail in all of them is atomicity: the record that says 'done' and the effect itself must commit together, otherwise a crash between them creates either a lost effect or a duplicate.",
+   "in_this_design": "Every mutating API takes an Idempotency-Key; points are a ledger keyed by order_id; stock decrements go through an inbox row in the same transaction; order status changes use version checks.",
+   "key_points": [
+    "Idempotent: applying twice equals applying once.",
+    "Give the intent an identity, record it atomically with the effect.",
+    "Rewrite increments as keyed inserts into a ledger.",
+    "Use compare-and-set with versions for state transitions.",
+    "The dedup record and the effect must share a transaction."
+   ],
+   "qa": [
+    {
+     "q": "Is DELETE /carts/123/items/9 idempotent?",
+     "a": "Yes in state: after the first call the item is gone and repeats change nothing, though the response may differ (204 then 404). Idempotency is about effect, not identical responses, unless you cache the response."
+    },
+    {
+     "q": "How do you make 'credit 100 loyalty points' idempotent?",
+     "a": "Store a points_ledger row with a unique (order_id, reason) and derive the balance; a duplicate insert fails and nothing double-credits."
+    },
+    {
+     "q": "Why not check 'already processed?' with a SELECT then do the work?",
+     "a": "Check-then-act races: two concurrent duplicates both see 'not processed' and both act. Use a unique constraint insert or a row lock so the check and the claim are one atomic step."
+    }
+   ]
+  },
+  {
+   "name": "Delivery semantics: at-most-once, at-least-once, and exactly-once effect",
+   "explain": "When a sender transmits a message and does not hear back, it cannot tell whether the message was lost, the receiver crashed before processing, or the receiver processed it and the reply was lost. This is the core of the Two Generals problem: no finite protocol over an unreliable channel lets both sides be certain. The sender therefore chooses. If it never retries, some messages are lost: at-most-once. If it retries until acknowledged, some messages arrive more than once: at-least-once. Exactly-once delivery would require knowledge the sender cannot have. What systems actually provide under the name exactly-once is exactly-once effect, also called effectively-once: messages may be delivered several times, but the receiver's state changes as if each was processed once. That is achieved by combining at-least-once delivery with idempotent or deduplicating processing, where the dedup record commits atomically with the state change. Kafka's exactly-once semantics are a special case: within Kafka, producer retries are deduplicated and consume-transform-produce steps commit outputs and offsets atomically, but any effect outside Kafka still needs idempotency.",
+   "in_this_design": "The design never assumes exactly-once delivery anywhere. Every channel (client to API, service to gateway, relay to Kafka, Kafka to consumer) is at-least-once, and each receiver dedups with a key stored atomically with its effect.",
+   "key_points": [
+    "Lost reply and lost request look identical to the sender.",
+    "Choose: lose some (at-most-once) or duplicate some (at-least-once).",
+    "Exactly-once effect = at-least-once + idempotent receiver.",
+    "Kafka EOS covers only Kafka-internal reads and writes."
+   ],
+   "qa": [
+    {
+     "q": "A vendor claims exactly-once delivery. How do you interpret it?",
+     "a": "As exactly-once effect within their boundary, typically dedup within a time window. Ask what happens on crashes between their delivery and my side effect; I still need idempotency at my boundary."
+    },
+    {
+     "q": "When is at-most-once the right choice?",
+     "a": "When duplicates cost more than losses and the data is low value, like a metrics sample or a 'user is typing' indicator."
+    },
+    {
+     "q": "Why does committing the consumer offset after processing give at-least-once?",
+     "a": "A crash after processing but before the offset commit replays the message; a crash before processing just retries. Nothing is lost, but the first case duplicates."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency keys with request fingerprints, locks and stored responses",
+   "explain": "An idempotency key is a client-generated unique identifier (typically a UUIDv4) for one intended operation, sent with the request and reused on every retry of that operation. The server stores the key scoped to the caller, along with a fingerprint of the request (a hash of method, path and normalized body) and, once the operation completes, the response. On a repeat, the server compares fingerprints: if they differ, the client is misusing the key and gets an error (422) rather than a misleading cached result; if they match and the operation finished, the server returns the stored response without re-executing. Two harder cases need care. Concurrent duplicates, when a retry arrives while the original is still running, are handled by a unique constraint plus a lock with a timeout; the second caller gets 409 and retries later. Partial failures, when the server crashed midway, are handled by storing progress (recovery points) so that a retry resumes rather than restarts, and by distinguishing final outcomes (success, card declined) from transient errors (timeouts, 5xx), which should not be cached. Keys are retained for a bounded window, commonly 24 hours to a few days.",
+   "in_this_design": "Middleware enforces UNIQUE(tenant_id, key), sha256 fingerprints, a 60 s lock lease via locked_at, cached final responses, recovery points for the pay flow, and 72 h retention via daily partitions.",
+   "key_points": [
+    "Client generates one key per intent and reuses it on retries.",
+    "Scope keys per tenant/user.",
+    "Fingerprint mismatch means 422, never a cached response.",
+    "In-progress duplicate means 409 with retry.",
+    "Cache final outcomes only, not transient errors."
+   ],
+   "qa": [
+    {
+     "q": "Why does the client generate the key instead of the server?",
+     "a": "Only the client knows that two requests are the same intent; a server-generated id would be new for each attempt, and the response carrying it might be the very thing that was lost."
+    },
+    {
+     "q": "Should a 500 be cached under the key?",
+     "a": "No: it is not a final outcome. Clear the lock so a retry can resume. Cache deterministic results like 200, 402 card declined or 400 validation errors."
+    },
+    {
+     "q": "How long should keys live?",
+     "a": "Longer than the realistic client retry horizon and no longer than downstream guarantees without a status lookup; Stripe-style systems use about 24 h, and a reaper at about 72 h gives time to fix bugs over a weekend."
+    }
+   ]
+  },
+  {
+   "name": "Atomic phases, recovery points and foreign state mutations",
+   "explain": "A request that touches only one database can be made all-or-nothing with a single transaction. Real flows also mutate foreign state: charging a card, sending an email, calling another service. Those cannot be rolled back with your database, so a crash between the foreign call and your local commit leaves the two out of sync. The technique is to split the request into atomic phases. Each phase is one local transaction that also records a recovery point naming how far the request got. Foreign calls happen between phases, never inside a long transaction, and each foreign call is made idempotent, ideally with an idempotency key derived from the original request key (for example key + ':charge'). If the process crashes, a retry reads the recovery point and resumes from there; repeating a foreign call is safe because of its derived key. If a provider offers no idempotency, you can query its status before retrying, or treat an unknown result as failed and reconcile later. For requests whose clients disappear, a background completer finds keys stuck in intermediate recovery points and drives them to completion, so the system converges even without the client.",
+   "in_this_design": "The pay flow has phases started -> charge_created -> finished. The gateway charge uses key 'k1:charge'; recording the charge, inserting the outbox event and advancing the recovery point are one transaction. A Completer finishes keys stuck for more than 5 minutes.",
+   "key_points": [
+    "Never hold a DB transaction open across a foreign call.",
+    "One local transaction per phase, including the recovery point.",
+    "Foreign calls get derived idempotency keys.",
+    "Resume, do not restart, on retry.",
+    "A completer makes abandoned requests converge."
+   ],
+   "qa": [
+    {
+     "q": "Why not wrap the gateway call inside the DB transaction?",
+     "a": "The transaction could hold locks for seconds, and if the DB commit fails after the gateway charged, you still have a charge with no record; the transaction gives no protection over foreign state."
+    },
+    {
+     "q": "What if the gateway does not support idempotency keys?",
+     "a": "Pass our order id as metadata, and before retrying, query the gateway for a charge with that order id; if found, adopt it. Otherwise treat the outcome as unknown and reconcile."
+    },
+    {
+     "q": "How does this relate to sagas?",
+     "a": "It is a single-service saga: steps with persisted progress. Full sagas add compensating actions when a later step fails permanently, such as refunding a charge if inventory cannot be reserved."
+    }
+   ]
+  },
+  {
+   "name": "Transactional outbox and inbox patterns",
+   "explain": "A service often needs to update its database and publish an event about it. Doing these as two separate operations is the dual-write problem: if the DB commit succeeds and the publish fails (or the process crashes in between), consumers never hear about the change; if you publish first and the DB commit fails, consumers react to something that did not happen. Distributed transactions across the DB and the broker are slow and often unsupported. The transactional outbox solves it by writing the event into an outbox table in the same local transaction as the business change. A separate relay, either polling the table or tailing the database log with change data capture, publishes outbox rows to the broker and marks them sent. The relay can crash after publishing and before marking, so it may publish twice; that is at-least-once, and the outbox row id serves as a stable event_id for downstream dedup. The inbox is the mirror image on the consumer side: the consumer records the event_id in a processed_events table in the same transaction as its own state change, so a redelivered event hits a unique constraint and is skipped.",
+   "in_this_design": "OrderPaid is inserted into the outbox in the same transaction as the charge record; Debezium publishes it with event_id = outbox id. Inventory and loyalty use the inbox library; high-volume consumers use per-partition offset watermarks stored in the same transaction instead of per-event rows.",
+   "key_points": [
+    "Dual writes to DB and broker will eventually diverge.",
+    "Outbox: event row in the same transaction as the change.",
+    "Relay publishes at-least-once with a stable event_id.",
+    "Inbox: processed_events row in the same transaction as the consumer's change.",
+    "Offset watermarks are a cheap inbox for ordered partitions."
+   ],
+   "qa": [
+    {
+     "q": "Why not publish to Kafka inside the DB transaction before commit?",
+     "a": "The publish is not part of the DB transaction; if the commit then fails, consumers already saw an event for a change that never happened."
+    },
+    {
+     "q": "Polling relay or CDC?",
+     "a": "CDC (Debezium) avoids polling load and preserves commit order with low latency; polling is simpler to run and fine at a few thousand events per second."
+    },
+    {
+     "q": "When can a consumer use an offset watermark instead of an inbox table?",
+     "a": "When it processes a partition strictly in order and stores its state in a transactional DB: save last_offset in the same transaction and skip records with offset <= last_offset. It fails if events can be republished with new offsets, like relay duplicates, so pair it with entity versions."
+    }
+   ]
+  },
+  {
+   "name": "Kafka exactly-once semantics (idempotent producer and transactions)",
+   "explain": "Kafka offers two building blocks. The idempotent producer, enabled with enable.idempotence=true, gives each producer a producer id and stamps every batch with a per-partition sequence number. The broker stores the latest sequence numbers in the replicated log, so if the producer retries a batch after a timeout, or after a leader failover, the broker recognizes the duplicate and does not append it again. This removes duplicates and reordering caused by producer retries, with negligible throughput cost. Transactions go further: a producer configured with a transactional.id can write to several partitions and commit consumer offsets as one atomic unit, coordinated by a transaction coordinator inside the brokers whose state lives in an internal replicated topic. Consumers with isolation.level=read_committed see only committed transactional data. Together these enable exactly-once consume-transform-produce pipelines such as Kafka Streams. Confluent measured roughly 3 percent throughput overhead for 100 ms transactions with 1 KB messages versus acks=all, and up to 15-30 percent with very short commit intervals. The boundary matters: if the transform writes to a database or calls an API, those effects are outside the transaction and need idempotency.",
+   "in_this_design": "The outbox relay uses an idempotent producer (acks=all) so broker retries do not duplicate. The order-enrichment stream (OrderPaid -> OrderReadyToShip) uses Kafka transactions with read_committed. Consumers writing to their own databases use the inbox, because Kafka transactions do not cover their DB writes.",
+   "key_points": [
+    "Idempotent producer: producer id plus per-partition sequence numbers.",
+    "Transactions: atomic multi-partition writes plus offset commit.",
+    "Consumers must use read_committed to benefit.",
+    "Overhead is small with commit intervals around 100 ms or more.",
+    "Effects outside Kafka still need idempotency."
+   ],
+   "qa": [
+    {
+     "q": "Does enabling Kafka transactions make my DB writes exactly-once?",
+     "a": "No. Only Kafka reads, writes and offset commits are in the transaction. For DB writes, use an inbox table or store offsets in the DB in the same transaction."
+    },
+    {
+     "q": "What does the producer sequence number protect against?",
+     "a": "Duplicates and reordering from producer retries, including retries that span a partition leader failover, because sequence state is replicated."
+    },
+    {
+     "q": "What is transactional.id for?",
+     "a": "It identifies the producer across restarts so the coordinator can fence zombie instances with an older epoch and complete or abort their open transactions."
+    }
+   ]
+  },
+  {
+   "name": "Concurrency control: unique constraints, locks and fencing",
+   "explain": "Deduplication is a concurrency problem as much as a retry problem. If two copies of the same request run at the same moment, a check-then-act pattern (SELECT whether processed, then INSERT) lets both pass the check before either writes. Databases give stronger primitives. A unique constraint makes the claim itself atomic: of two concurrent inserts of the same key, exactly one succeeds and the other gets a conflict. Row locks (SELECT ... FOR UPDATE) serialize work on an existing key. Serializable isolation detects read-write conflicts and aborts one transaction. For work that outlives a transaction, such as a phase that calls a gateway, a lock lease (locked_at with a timeout) prevents parallel execution while allowing recovery after crashes. Leases have the zombie problem: a paused process may resume after its lease expired and someone else took over. Fencing handles that: each writer carries a token or expected state, and the database accepts its write only if the token or state still matches (compare-and-set), so the stale writer's commit fails harmlessly.",
+   "in_this_design": "Keys are claimed with INSERT ... ON CONFLICT on a unique index; resumption uses SELECT FOR UPDATE and a 60 s locked_at lease based on the DB clock; each phase's UPDATE includes WHERE recovery_point = expected, which fences a stale runner.",
+   "key_points": [
+    "Check-then-act races; insert-and-catch-conflict does not.",
+    "Unique constraints are the cheapest correct dedup.",
+    "Lock leases allow crash recovery for long work.",
+    "Fence stale holders with compare-and-set on state or token.",
+    "Use the DB clock for lease checks."
+   ],
+   "qa": [
+    {
+     "q": "Two pods receive the same key within 1 ms. Walk through it.",
+     "a": "Both attempt INSERT; one wins and runs; the other conflicts, loads the row under FOR UPDATE, sees locked_at fresh and returns 409. The client retries and gets the cached response."
+    },
+    {
+     "q": "Why use the database clock for locked_at?",
+     "a": "Application hosts can drift; using the DB's now() for both setting and checking gives one consistent clock."
+    },
+    {
+     "q": "How does compare-and-set protect a phase?",
+     "a": "UPDATE ... SET recovery_point='finished' WHERE id=? AND recovery_point='charge_created' affects zero rows if another runner already advanced it, so the stale runner detects it and stops."
+    }
+   ]
+  },
+  {
+   "name": "Retries with backoff and jitter, and reconciliation as the safety net",
+   "explain": "Idempotency is what makes retries safe; retry policy determines whether retries help or hurt. Retrying immediately after a failure tends to hit the same overloaded or recovering system and amplifies load, especially when every layer retries (a request retried 3 times at each of 3 layers becomes 27 attempts). Good policy retries only on transient errors (timeouts, 503, 409 in progress), uses exponential backoff with full jitter so that clients spread out, caps the number of attempts, and ideally retries at one layer only, often the outermost, with a retry budget elsewhere. Even with perfect idempotency, bugs, provider quirks and expired keys can leave internal records and external reality out of sync. Reconciliation is the safety net: periodically compare your ledger with an independent source of truth, such as the gateway's settlement file, and flag differences (a charge with no order, an order marked paid with no charge, two charges for one order). Financial systems treat reconciliation as mandatory, because it turns rare silent errors into visible, fixable items within hours.",
+   "in_this_design": "Clients and services retry with full jitter (base 200 ms, cap 10 s, 4 attempts) only on transient errors and 409; the API gateway does not add its own retries for POSTs; the Reconciler runs daily (hourly on sale days) against settlement files with automated refunds for confirmed duplicates.",
+   "key_points": [
+    "Retry only transient errors, with capped exponential backoff and full jitter.",
+    "Avoid retry multiplication across layers.",
+    "Idempotency makes retries safe; budgets make them cheap.",
+    "Reconcile against an independent source of truth.",
+    "Treat every mismatch as a bug to explain."
+   ],
+   "qa": [
+    {
+     "q": "Why does layered retrying cause outages?",
+     "a": "Attempts multiply per layer, so a brief downstream slowdown becomes a flood of retries that keeps it down. Retry at one layer and use budgets elsewhere."
+    },
+    {
+     "q": "If everything is idempotent, why reconcile?",
+     "a": "Because keys expire, providers have bugs, and our code has bugs. Reconciliation detects the duplicates or orphans that slipped through and proves correctness to finance and auditors."
+    },
+    {
+     "q": "Should a client retry on 422 key mismatch?",
+     "a": "No. It is a client bug, not a transient condition; retrying cannot succeed. It should alert and use the original parameters or a new key for a new intent."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Where to store idempotency keys",
+   "options": "Redis / separate key service / same DB as business data",
+   "choice": "Same DB shard as business data",
+   "why": "Only a shared local transaction makes the key record and effect atomic without 2PC; Redis is fine only for low-risk dedup."
+  },
+  {
+   "decision": "Consumer dedup technique",
+   "options": "Per-event inbox rows / offset watermark / entity versions / Bloom filter",
+   "choice": "Inbox for critical consumers, watermark plus versions for high-volume ones",
+   "why": "Inbox is simplest and exact; watermarks avoid TB-scale tables; versions handle replays after inbox expiry; Bloom filters can drop legitimate events."
+  },
+  {
+   "decision": "Event publishing",
+   "options": "Dual write / outbox with polling / outbox with CDC / 2PC",
+   "choice": "Outbox with CDC",
+   "why": "No dual-write gap, commit-ordered, low DB load; 2PC is slow and unsupported by Kafka."
+  },
+  {
+   "decision": "Concurrent duplicate handling",
+   "options": "Block and wait / return 409 / run both",
+   "choice": "Return 409",
+   "why": "Holding a connection while another request finishes wastes resources and can deadlock; 409 is explicit and retryable."
+  },
+  {
+   "decision": "Key retention",
+   "options": "1 h / 24 h / 72 h / forever",
+   "choice": "72 h for keys, forever for business uniqueness",
+   "why": "Covers realistic retries and weekend bug fixes; permanent uniqueness belongs on business tables, not the key table."
+  },
+  {
+   "decision": "Failure posture of middleware on DB errors",
+   "options": "Fail open (process without dedup) / fail closed (reject)",
+   "choice": "Fail closed for money, fail open for low-risk endpoints",
+   "why": "A duplicate charge is worse than a brief payment outage; a duplicate 'mark as read' is not."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Orders DB shard primary fails",
+   "behavior": "Requests for that shard fail with 503 (fail closed); clients retry with the same key after failover; sync replica promotion keeps committed keys."
+  },
+  {
+   "failure": "Pod crashes mid-request",
+   "behavior": "Lock lease expires in 60 s; client retry or Completer resumes from the recovery point; derived gateway key prevents double charge."
+  },
+  {
+   "failure": "Payment gateway times out",
+   "behavior": "Outcome unknown; phase does not advance; retry calls gateway with the same key, which returns the original result or performs the charge once."
+  },
+  {
+   "failure": "Outbox relay crashes after publishing",
+   "behavior": "Rows re-published on restart with the same event_id; Kafka sees new appends (different producer session), consumers dedup via inbox."
+  },
+  {
+   "failure": "Consumer crashes after DB commit, before offset commit",
+   "behavior": "Event redelivered; inbox insert conflicts; handler skipped; offset advances."
+  },
+  {
+   "failure": "Reaper bug drops keys early",
+   "behavior": "Key-level dedup lost for that window; business uniqueness constraints and reconciliation catch duplicates; alert on unusual partition drops."
+  },
+  {
+   "failure": "Reconciliation finds a duplicate charge",
+   "behavior": "Automated refund with its own idempotency key (refund:charge_id), incident ticket opened, root cause required."
+  }
+ ],
+ "metrics": [
+  "Idempotent replays served (cached responses) per endpoint and as a percent of traffic.",
+  "409 in-progress and 422 fingerprint-mismatch rates per client version.",
+  "Keys stuck in non-final recovery points by age; Completer actions per hour.",
+  "Inbox duplicate-skip rate per consumer (spikes signal relay or rebalance issues).",
+  "Outbox lag: oldest unsent row age.",
+  "Gateway idempotent-replay responses versus new charges.",
+  "Reconciliation mismatches by type (orphan charge, missing charge, duplicate).",
+  "Middleware latency overhead p99 and DB errors causing fail-closed rejections."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just use Kafka's exactly-once and be done?",
+   "a": "It covers only Kafka-to-Kafka processing. Our effects are database writes and gateway charges, so we still need idempotency at those boundaries. We use Kafka EOS where a step is purely stream-to-stream."
+  },
+  {
+   "q": "Why not 2PC across the DB and Kafka?",
+   "a": "Kafka does not participate in XA, 2PC blocks on coordinator failure, and it adds latency on the hot path. The outbox gives atomicity with a local transaction plus at-least-once publishing."
+  },
+  {
+   "q": "How do you handle keys across regions?",
+   "a": "Each key has a home region (by tenant or order shard); requests are routed there. Cross-region active-active for the same key would need a globally consistent store like Spanner and adds latency, so we avoid it."
+  },
+  {
+   "q": "What if the client reuses a key days later for a new purchase?",
+   "a": "If the key expired, it is treated as new, which is why SDKs generate UUIDv4 per action and why business uniqueness (one capture per order) remains the backstop."
+  },
+  {
+   "q": "How would you dedup 1M events/s for a consumer cheaply?",
+   "a": "Process partitions in order and store a per-partition offset watermark in the same transaction as the state; combine with entity versions to ignore re-published duplicates with new offsets."
+  },
+  {
+   "q": "How do you make a refund idempotent when the support agent clicks twice?",
+   "a": "The UI generates a key per refund intent; the server also enforces that total refunds do not exceed the captured amount under a row lock, so even a new key cannot over-refund."
+  },
+  {
+   "q": "How do you test this?",
+   "a": "Fault injection: kill pods between every phase, drop responses, duplicate messages, and replay topics in staging; assert ledger invariants and zero reconciliation mismatches."
+  }
+ ],
+ "key_points": [
+  "Exactly-once delivery is impossible; exactly-once effect is at-least-once plus idempotent processing.",
+  "Put an idempotency boundary at every hop that can retry: client-API, service-gateway, relay-bus, bus-consumer.",
+  "The dedup record must commit in the same transaction as the effect; same DB shard, no 2PC.",
+  "Idempotency keys: client-generated, scoped per tenant, fingerprinted, 409 while in progress, cache only final outcomes.",
+  "Atomic phases with recovery points and derived keys for foreign calls; a completer finishes abandoned work.",
+  "Transactional outbox for publishing, inbox (or offset watermark) for consuming.",
+  "Kafka EOS dedups producer retries and makes Kafka-to-Kafka steps atomic, nothing more.",
+  "Business-level uniqueness and versioned writes are the backstop after keys expire.",
+  "Retry with jitter at one layer, and reconcile against an independent ledger to prove it works."
+ ],
+ "quiz": [
+  {
+   "q": "Which statement about exactly-once processing is most accurate?",
+   "options": [
+    "Kafka guarantees exactly-once side effects in any external database",
+    "Exactly-once effect is achieved with at-least-once delivery plus idempotent processing",
+    "TCP guarantees exactly-once application processing",
+    "Exactly-once delivery is achievable with enough retries"
+   ],
+   "answer": 1,
+   "why": "Dedup at the receiver gives exactly-once effect. The Kafka option is tempting but its EOS covers only Kafka-internal reads and writes."
+  },
+  {
+   "q": "A consumer does: SELECT processed? -> if not, apply change -> INSERT processed. What is the bug?",
+   "options": [
+    "None, it is correct",
+    "It should commit the offset first",
+    "Concurrent duplicates can both pass the check (check-then-act race)",
+    "It needs a Bloom filter"
+   ],
+   "answer": 2,
+   "why": "Use an atomic insert on a unique key in the same transaction. Committing the offset first is tempting but makes it at-most-once."
+  },
+  {
+   "q": "Where should the idempotency key row be stored?",
+   "options": [
+    "In the same DB transaction and shard as the business write",
+    "In Redis with a 24 h TTL",
+    "In the client only",
+    "In Kafka"
+   ],
+   "answer": 0,
+   "why": "Atomicity with the effect is the point. Redis is tempting for speed but cannot commit atomically with the DB write and can lose keys on failover."
+  },
+  {
+   "q": "A retry arrives with the same key but a different amount. Correct response?",
+   "options": [
+    "Return the cached response",
+    "Process it as a new charge",
+    "Return 409 and let the client retry",
+    "Reject with 422 because the fingerprint does not match"
+   ],
+   "answer": 3,
+   "why": "Key reuse with different params is a client bug. Returning the cached response is tempting but would confirm a payment for an amount the client did not ask for."
+  },
+  {
+   "q": "The server crashed after the gateway charged the card but before recording it. What makes the retry safe?",
+   "options": [
+    "The DB transaction rolls back the charge",
+    "Calling the gateway again with the same derived idempotency key returns the original charge",
+    "The client generates a new key",
+    "Kafka transactions"
+   ],
+   "answer": 1,
+   "why": "Derived keys make the foreign call idempotent. DB rollback is tempting but cannot undo foreign state."
+  },
+  {
+   "q": "Which result should NOT be cached as the final response for an idempotency key?",
+   "options": [
+    "200 success",
+    "402 card declined",
+    "500 internal error from a timeout",
+    "400 validation error"
+   ],
+   "answer": 2,
+   "why": "Transient errors should allow resumption. 402 is tempting to treat as transient but it is a deterministic outcome for that request."
+  },
+  {
+   "q": "Why use a transactional outbox instead of publishing to Kafka right after the DB commit?",
+   "options": [
+    "A crash between commit and publish would lose the event (dual-write problem)",
+    "Kafka cannot handle the rate",
+    "It makes events smaller",
+    "It removes the need for consumers to dedup"
+   ],
+   "answer": 0,
+   "why": "The outbox makes the event part of the DB transaction. 'Removes dedup' is tempting but the relay can publish twice, so consumers still dedup."
+  },
+  {
+   "q": "Kafka's idempotent producer protects against:",
+   "options": [
+    "Consumers processing a record twice",
+    "Duplicate appends caused by producer retries, even across leader failover",
+    "Duplicate rows in an external DB",
+    "Outbox relay republishing after a crash"
+   ],
+   "answer": 1,
+   "why": "Producer id plus sequence numbers dedup retries in one producer session. Relay republish after a restart is a new session and new append, the tempting confusion."
+  },
+  {
+   "q": "Two pods receive the same key 1 ms apart. With a unique index and 60 s lock lease, what does the second get?",
+   "options": [
+    "A cached 200 immediately",
+    "A second gateway charge",
+    "422",
+    "409 in progress, then the cached response on a later retry"
+   ],
+   "answer": 3,
+   "why": "The second sees a fresh lock and is told to retry. A cached 200 is tempting but the first request has not finished yet."
+  },
+  {
+   "q": "A consumer handles 1M events/s; a per-event inbox table would be TBs. Best alternative?",
+   "options": [
+    "Disable dedup",
+    "Per-partition offset watermark in the same transaction plus entity versions",
+    "Bloom filter with 1 percent false positives",
+    "Redis set with no TTL"
+   ],
+   "answer": 1,
+   "why": "Watermarks are tiny and exact for in-order partitions; versions cover republished duplicates. A Bloom filter is tempting but false positives silently drop real events."
+  },
+  {
+   "q": "At 20k keyed requests/s with one insert and one update per request across 32 shards, approximate writes per shard per second?",
+   "options": [
+    "About 600",
+    "About 1,250",
+    "About 20,000",
+    "About 40,000"
+   ],
+   "answer": 1,
+   "why": "40k writes / 32 = 1,250. 40,000 is the total, the tempting answer that forgets sharding."
+  },
+  {
+   "q": "Which is the best way to make 'credit 100 loyalty points for order o1' idempotent?",
+   "options": [
+    "UPDATE balance = balance + 100",
+    "Check balance before adding",
+    "Insert into a points ledger with UNIQUE(order_id, reason) and derive the balance",
+    "Retry only once"
+   ],
+   "answer": 2,
+   "why": "Keyed ledger inserts collide on duplicates. Checking balance first is tempting but races and cannot tell whether this order was credited."
+  },
+  {
+   "q": "A slow original request's lock lease expired and a retry took over. What stops both from finishing the phase?",
+   "options": [
+    "Compare-and-set: UPDATE ... WHERE recovery_point = expected fails for the stale runner",
+    "NTP time sync",
+    "Increasing the lease to 1 hour",
+    "The load balancer"
+   ],
+   "answer": 0,
+   "why": "Fencing via expected state makes the stale commit a no-op. A longer lease is tempting but only reduces, never removes, the race and slows crash recovery."
+  },
+  {
+   "q": "Why should the API gateway not add its own automatic retries on POSTs without keys?",
+   "options": [
+    "POSTs are always idempotent",
+    "Retries at several layers multiply attempts and, without keys, can duplicate effects",
+    "Gateways cannot retry",
+    "It increases TLS cost"
+   ],
+   "answer": 1,
+   "why": "Layered retries amplify load and duplicates. 'POSTs are idempotent' is the tempting misconception; POST is not idempotent by definition."
+  },
+  {
+   "q": "Kafka transactions with read_committed give exactly-once for which pipeline?",
+   "options": [
+    "Kafka topic -> DB write",
+    "Kafka topic -> HTTP call to SMS provider",
+    "Client -> REST API",
+    "Kafka topic -> transform -> Kafka topic with offsets committed in the same transaction"
+   ],
+   "answer": 3,
+   "why": "Only Kafka-to-Kafka with offsets in the transaction. Kafka -> DB is tempting but the DB write is outside the transaction."
+  },
+  {
+   "q": "Your gateway keeps idempotency keys for 24 h and a retry shows up after 30 h. Safest action before charging?",
+   "options": [
+    "Charge again with the same key",
+    "Query the gateway by order metadata and adopt an existing charge if found",
+    "Generate a new key",
+    "Reject forever"
+   ],
+   "answer": 1,
+   "why": "Downstream key expiry breaks the guarantee, so look up by business id first. Reusing the key is tempting but the gateway no longer remembers it."
+  },
+  {
+   "q": "Which failure posture fits the payment idempotency middleware when its DB is unavailable?",
+   "options": [
+    "Fail open: process without dedup",
+    "Cache keys in pod memory",
+    "Fail closed: return 503 so clients retry later",
+    "Skip the gateway call"
+   ],
+   "answer": 2,
+   "why": "For money, a brief outage beats a duplicate charge. Pod memory is tempting but is not shared across pods and is lost on restart."
+  },
+  {
+   "q": "A consumer commits its Kafka offset before its DB transaction commits. A crash in between causes:",
+   "options": [
+    "A lost event (at-most-once)",
+    "A duplicate event",
+    "Nothing, it is safe",
+    "A Kafka rebalance only"
+   ],
+   "answer": 0,
+   "why": "The offset says done but the state change never committed. Duplicate is the tempting answer; that happens with the opposite order."
+  },
+  {
+   "q": "Why is reconciliation still needed if every step is idempotent?",
+   "options": [
+    "It replaces idempotency",
+    "Keys expire, providers and code have bugs; an independent comparison detects what slipped through",
+    "It speeds up payments",
+    "Regulators require Bloom filters"
+   ],
+   "answer": 1,
+   "why": "It is the safety net and proof of correctness. 'Replaces idempotency' is tempting but reconciliation finds errors after the fact, it does not prevent them."
+  },
+  {
+   "q": "An event replayed 10 days later, after the inbox partition was dropped, must be harmless. What helps most?",
+   "options": [
+    "Longer Kafka retention",
+    "Re-enabling the producer idempotence",
+    "Bigger inbox",
+    "Entity version checks: apply only if event.version > stored.version"
+   ],
+   "answer": 3,
+   "why": "Versioned writes make stale events no-ops regardless of inbox retention. A bigger inbox is tempting but only moves the horizon."
+  }
+ ],
+ "references": [
+  {
+   "title": "Designing robust and predictable APIs with idempotency (Stripe)",
+   "url": "https://stripe.com/blog/idempotency"
+  },
+  {
+   "title": "Implementing Stripe-like Idempotency Keys in Postgres (brandur.org)",
+   "url": "https://brandur.org/idempotency-keys"
+  },
+  {
+   "title": "Exactly-once Semantics are Possible: Here's How Kafka Does it (Confluent)",
+   "url": "https://www.confluent.io/en-gb/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/"
+  },
+  {
+   "title": "Idempotency (archman.dev)",
+   "url": "https://archman.dev/docs/distributed-systems-and-microservices/fundamentals/idempotency"
+  },
+  {
+   "title": "IETF draft for a standardized Idempotency-Key (brandur.org fragment)",
+   "url": "https://www.brandur.org/fragments/idempotency-key-draft"
+  }
+ ]
+}

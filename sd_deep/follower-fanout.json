@@ -1,0 +1,1087 @@
+{
+ "slug": "follower-fanout",
+ "title": "Design fanout for a follower graph",
+ "prompt": "Design fanout for a follower graph.",
+ "group": "feeds",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 105,
+ "summary": "When an account posts, every follower should see it quickly, but follower counts follow a power law, so one post can mean ten deliveries or fifty million. The design is about bounding write amplification: reliable event capture with an outbox, batched and prioritised push for most authors, pull at read time for celebrities, and idempotent delivery so retries are safe. Interviewers probe the celebrity problem, hot partitions, backpressure and what degraded delivery looks like.",
+ "framework": {
+  "clarify": [
+   "What is being fanned out: posts into home feeds (could also be notifications); assume posts into a reverse-chronological inbox.",
+   "Scale: 300M DAU, 500M posts/day, median 100 followers, top accounts 100M followers.",
+   "Delivery SLO: followers active in the last day see a post within 5s p99; inactive users can be slower.",
+   "Is ordering per author required? Assume inboxes are time-ordered; no global order.",
+   "Is the feed ranked downstream? Assume fanout only produces candidates; ranking is separate.",
+   "Do unfollow, block and delete need immediate effect? Assume yes at read time.",
+   "Durability: posts must never be lost; inboxes are rebuildable caches.",
+   "Multi-region? Assume a home region per user with async cross-region replication."
+  ],
+  "design": [
+   "Baseline: on post, loop over followers and insert into their inbox list. Then fix its problems.",
+   "Reliable capture: post row plus outbox row in one transaction; CDC relay to Kafka post-events keyed by author_id.",
+   "Fanout planner tiers authors (normal / large / celebrity), pages followers 1000 at a time, emits batches to priority topics.",
+   "Stateless fanout workers ZADD post ids into inbox sorted sets, pipelined per Redis node, trimmed to 500.",
+   "Read path: read inbox, merge outboxes of followed celebrities, filter unfollowed/blocked/deleted, return with composite cursor.",
+   "APIs: POST /v1/posts, GET /v1/feed, POST /v1/follow, DELETE /v1/follow."
+  ],
+  "defend": [
+   "Bottleneck: write amplification from large authors and inbox store write throughput; tiering and pull bound it.",
+   "Scale writes: Kafka partitions, batch messages keyed by batch_id, Redis pipelines grouped by slot, skip inactive followers.",
+   "Scale reads: one sorted-set range per reader, celebrity outboxes replicated and cached in-process for 1s.",
+   "Failure: outbox guarantees no loss; at-least-once with idempotent ZADD; retries with exponential backoff and jitter; DLQ; bulkheaded priority pools; lazy rebuild for shed users.",
+   "Measure: post-to-inbox latency p99 by tier, consumer lag per topic, outbox age, inserts/s, DLQ size, inbox rebuild rate."
+  ],
+  "script": "I will scope this as delivering new posts into followers' home inboxes for about 300 million daily users, with active followers seeing a post within 5 seconds and nothing ever lost. The naive design loops over followers on post, which breaks immediately because followers are power-law distributed: one celebrity post is 50 million writes. So first I capture posts reliably with a transactional outbox and CDC into Kafka. A planner tiers each author: normal authors get pushed, large authors get pushed in batches of a thousand on a lower-priority lane, and celebrities are not pushed at all, readers pull their recent posts and merge at read time. Workers do idempotent ZADDs into Redis sorted sets, so retries are harmless. To defend it, the bottleneck is write amplification, which tiering bounds; backlog is prioritised so active users are served first and inactive users are rebuilt lazily; and I would watch post-to-inbox latency by tier, consumer lag and outbox age."
+ },
+ "brd": {
+  "problem": "Users expect posts from accounts they follow to appear in their feed almost instantly, but naive delivery collapses under celebrity posts and traffic spikes, causing delayed or missing posts and runaway infrastructure cost. The business needs predictable, reliable delivery whose cost scales with what is actually read.",
+  "goals": [
+   "Deliver posts to active followers within 5 seconds p99.",
+   "Never lose a published post from followers' feeds.",
+   "Keep fanout cost bounded under celebrity posts and live events.",
+   "Keep feed reads to a single cache lookup for most users.",
+   "Apply unfollow, block and delete immediately in what users see."
+  ],
+  "non_goals": [
+   "Ranking the feed (downstream consumer).",
+   "Push notifications delivery.",
+   "Search indexing of posts.",
+   "Building the social graph product features (suggestions)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Readers",
+    "needs": "Fresh, complete feed that loads fast."
+   },
+   {
+    "who": "Creators and celebrities",
+    "needs": "Reliable, fast reach to all followers."
+   },
+   {
+    "who": "Feed ranking team",
+    "needs": "Complete candidate inboxes with timestamps."
+   },
+   {
+    "who": "SRE / infra",
+    "needs": "Bounded, predictable load and clear degradation."
+   },
+   {
+    "who": "Trust and safety",
+    "needs": "Deletes and blocks honoured immediately."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Post-to-inbox latency p99 (active followers)",
+    "target": "< 5 s"
+   },
+   {
+    "metric": "Lost deliveries",
+    "target": "0 (verified by reconciliation sampling)"
+   },
+   {
+    "metric": "Feed read p99",
+    "target": "< 100 ms"
+   },
+   {
+    "metric": "Fanout cost per 1M posts",
+    "target": "Flat or declining quarter over quarter"
+   },
+   {
+    "metric": "Consumer lag during peak events",
+    "target": "< 30 s on high-priority lane"
+   }
+  ],
+  "constraints": [
+   "Inbox store memory is the main cost; inboxes must be bounded.",
+   "Graph store cannot serve 100M-row scans in one call.",
+   "Mobile clients retry aggressively on flaky networks.",
+   "Spikes of 5-10x around live events."
+  ],
+  "risks": [
+   {
+    "risk": "Celebrity post saturates fanout and delays everyone.",
+    "mitigation": "Pull for celebrities; priority lanes."
+   },
+   {
+    "risk": "Dual-write bug loses posts.",
+    "mitigation": "Transactional outbox with CDC."
+   },
+   {
+    "risk": "Spam accounts create fanout storms.",
+    "mitigation": "Per-account rate limits and reputation-based fanout caps."
+   },
+   {
+    "risk": "Redis cluster outage empties inboxes.",
+    "mitigation": "Replicas plus pull-based rebuild path from post store."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Everyday reader",
+    "needs": "Sees friends' posts instantly with fast scrolling."
+   },
+   {
+    "name": "Celebrity author",
+    "needs": "Every follower can see the post during a live moment."
+   },
+   {
+    "name": "Dormant user returning",
+    "needs": "A correct feed on return, even if fanout skipped them."
+   }
+  ],
+  "user_stories": [
+   "As a reader, I want new posts from people I follow to appear within seconds so that conversations feel live.",
+   "As an author, I want my post visible to me immediately so that I know it published.",
+   "As a reader, I want posts from someone I unfollowed to disappear so that my choice is respected.",
+   "As a celebrity, I want all my followers to be able to see my post so that my reach is not throttled.",
+   "As a returning user, I want my feed to show recent posts even after months away so that I can catch up.",
+   "As a reader, I want deleted posts removed from my feed so that I do not see retracted content.",
+   "As an operator, I want to replay fanout for a time range so that I can recover from incidents."
+  ],
+  "functional": [
+   "Publish a post and enqueue fanout reliably.",
+   "Deliver post ids to followers' inboxes by author tier policy.",
+   "Merge pulled celebrity posts at read time.",
+   "Filter unfollowed, blocked, muted and deleted posts at read time.",
+   "Trim inboxes to the most recent 500 entries.",
+   "Rebuild an inbox on demand for users with missing or incomplete inboxes.",
+   "Support replay of post-events by time range."
+  ],
+  "non_functional": [
+   {
+    "name": "Freshness",
+    "target": "p99 < 5s for followers active in 24h; < 60s for 1-30 days"
+   },
+   {
+    "name": "Read latency",
+    "target": "Feed p99 < 100ms"
+   },
+   {
+    "name": "Durability",
+    "target": "Posts RF=3; zero loss of fanout intent via outbox"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95 percent for reads; writes accepted even if fanout is delayed"
+   },
+   {
+    "name": "Consistency",
+    "target": "Eventual for followers, read-your-writes for author"
+   },
+   {
+    "name": "Throughput",
+    "target": "4M inbox inserts/s sustained at peak"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "300M DAU, 500M posts/day, peak 3x average.",
+    "Effective push followers per post ~200 after skipping inactive and celebrity tiers.",
+    "Inbox entry ~16 bytes (8-byte id + 8-byte score) plus Redis overhead ~3x.",
+    "Celebrities (> 1M followers) about 50k accounts."
+   ],
+   "math": [
+    "Posts: 500M/86400 = ~5.8k/s avg, ~17k/s peak.",
+    "Inserts: 500M x 200 = 100B/day = ~1.2M/s avg, ~3.5M/s peak.",
+    "Inbox memory: 300M x 500 x 16B = 2.4TB raw, ~7TB with overhead, ~14TB with one replica.",
+    "Redis nodes at ~100k writes/s each with pipelining: ~40 primaries for peak writes; memory pushes it to ~200 nodes of 64GB.",
+    "Graph reads by planner: 100B follower ids/day in pages of 1000 = 100M page reads/day = ~1.2k/s.",
+    "Feed reads: 300M x 20 opens = 6B/day = ~70k/s avg, ~200k/s peak."
+   ],
+   "summary": "About 1-4M inbox inserts per second and ~7-14TB of inbox memory; memory, not CPU, sizes the Redis fleet, and the celebrity tier is what keeps insert volume from growing by orders of magnitude."
+  },
+  "out_of_scope": [
+   "Ranking, ads and recommendations.",
+   "Notifications.",
+   "Media upload and CDN.",
+   "Follow suggestions."
+  ]
+ },
+ "hld": {
+  "overview": "The post service writes the post and an outbox event atomically; CDC publishes to Kafka. A fanout planner reads each event, decides the author tier, and turns follower lists into bounded batches on high and low priority topics. Stateless workers write post ids into per-user Redis sorted-set inboxes. Celebrity posts are kept only in per-author outboxes and merged at read time. The feed read path is one inbox range plus a few outbox reads, filtered against the live graph and post tombstones.",
+  "diagram": "\n  Author client\n      | POST /posts (idempotency key)\n      v\n +-----------+   tx: post row + outbox row   +-------------------+\n | Post Svc  |------------------------------>| Post DB (sharded) |\n +-----------+                               +---------+---------+\n                                                       | CDC / outbox relay\n                                                       v\n                                       +-------------------------------+\n                                       | Kafka: post-events            |\n                                       |  (key=author_id, 256 parts)   |\n                                       +---------------+---------------+\n                                                       v\n                                       +-------------------------------+\n                                       | Fanout Planner                |\n                                       |  - tier author (normal/large/ |\n                                       |    celebrity)                 |\n                                       |  - split follower list into   |\n                                       |    batches of 1000            |\n                                       +-------+---------------+-------+\n                     normal/large batches      |               | celebrity: no push\n                                               v               v\n                         +----------------------------+   +-------------------+\n                         | Kafka: fanout-batches      |   | Author outbox     |\n                         | (key=batch_id, priority    |   | store (recent N)  |\n                         |  topics hi/lo)             |   +---------+---------+\n                         +-------------+--------------+             |\n                                       v                            | pulled at read\n                         +----------------------------+             |\n                         | Fanout Workers (stateless) |             |\n                         |  pipeline ZADD to inboxes  |             |\n                         +-------------+--------------+             |\n                                       v                            |\n +-------------------+     +----------------------------+          |\n | Graph Store       |     | Inbox Store (Redis Cluster)|          |\n | followers by      |     | inbox:{user} sorted set    |<---------+\n | (author, bucket)  |     +-------------+--------------+   Feed read merges\n +-------------------+                   ^                  inbox + pulled\n                                         | GET /feed\n                                   Reader clients\n",
+  "components": [
+   {
+    "name": "Post service",
+    "responsibility": "Validate, persist post and outbox row in one transaction, idempotent on client key."
+   },
+   {
+    "name": "CDC relay (Debezium)",
+    "responsibility": "Tail binlog, publish outbox rows to post-events in commit order."
+   },
+   {
+    "name": "Fanout planner",
+    "responsibility": "Tier author, page followers, split into 1000-id batches, route to priority topics by follower activity."
+   },
+   {
+    "name": "Fanout workers",
+    "responsibility": "Idempotent pipelined ZADD + trim into inboxes, retries with backoff, DLQ."
+   },
+   {
+    "name": "Graph store",
+    "responsibility": "Dual-indexed follower/followee tables, bucketed for big accounts; follower counts."
+   },
+   {
+    "name": "Inbox store (Redis Cluster)",
+    "responsibility": "Per-user sorted sets of post ids, 500 cap, watermark of completeness."
+   },
+   {
+    "name": "Author outbox store",
+    "responsibility": "Recent 100 posts for celebrity authors, heavily replicated and cached."
+   },
+   {
+    "name": "Feed read service",
+    "responsibility": "Merge inbox and outboxes, filter, paginate with composite cursor, trigger rebuilds."
+   },
+   {
+    "name": "Rebuild service",
+    "responsibility": "Reconstruct inboxes by pulling recent posts of followees; single-flight per user."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Normal author posts",
+    "steps": [
+     "POST /v1/posts; transaction inserts post and outbox row.",
+     "CDC publishes event to post-events (key author_id).",
+     "Planner sees follower_count 2,300: tier normal; pages followers in 3 batches.",
+     "Followers split into hi (active 24h) and lo (1-30 days) batches, skip > 30 days.",
+     "Workers ZADD inbox:{f} ts post_id and ZREMRANGEBYRANK to keep 500; commit offsets."
+    ]
+   },
+   {
+    "name": "Celebrity posts",
+    "steps": [
+     "Planner sees follower_count 40M: tier celebrity.",
+     "Append to outbox:{author} (ZADD, trim 100); no inbox writes.",
+     "Readers following this author merge outbox at read time; caches warm via coalesced fetch."
+    ]
+   },
+   {
+    "name": "Reader opens feed",
+    "steps": [
+     "GET /v1/feed; read inbox:{u} top 50 by score.",
+     "Read cached celebrity followee set; fetch each outbox top 20 (in-process cache 1s).",
+     "K-way merge, dedupe by post_id, filter against followee set, blocks, tombstones.",
+     "If inbox missing or watermark stale, trigger single-flight rebuild and serve pulled results meanwhile.",
+     "Return 20 items with cursor (ts, post_id)."
+    ]
+   }
+  ],
+  "data_flow": "Post rows and outbox rows land in the sharded post DB; CDC streams them to Kafka post-events. The planner joins each event with the graph store to produce follower batches on fanout-hi and fanout-lo topics. Workers write into the Redis inbox store. Reads pull from inboxes and celebrity outboxes and hydrate post bodies from the post cache. Follow/unfollow events update the graph store and the per-user celebrity followee cache."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/posts",
+    "request": "{text, media_ids, idempotency_key}",
+    "response": "{post_id, created_at}",
+    "notes": "Returns after DB commit; fanout async."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/feed",
+    "request": "cursor=(ts,post_id) opt, limit=20",
+    "response": "{items:[post], next_cursor}",
+    "notes": "Merges inbox + pulled outboxes."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/follow",
+    "request": "{followee_id}",
+    "response": "204",
+    "notes": "Writes forward edge, emits event to update reverse edge and caches; optional backfill of last 20 posts."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/follow/{followee_id}",
+    "request": "-",
+    "response": "204",
+    "notes": "Read-time filter immediately; background inbox purge."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/fanout/replay",
+    "request": "{from_ts, to_ts, author_ids?}",
+    "response": "{job_id}",
+    "notes": "Operator recovery; idempotent."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Post + Outbox",
+    "store": "MySQL sharded by author_id (Vitess)",
+    "fields": [
+     "post_id",
+     "author_id",
+     "body",
+     "created_at",
+     "deleted_at",
+     "outbox: event_id, post_id, published"
+    ],
+    "keys": "PK post_id; shard key author_id",
+    "notes": "Same-shard transaction makes outbox atomic."
+   },
+   {
+    "entity": "Followers edge",
+    "store": "Cassandra",
+    "fields": [
+     "author_id",
+     "bucket",
+     "follower_id",
+     "followed_at"
+    ],
+    "keys": "Partition (author_id, bucket); clustering follower_id",
+    "notes": "Bucket size 100k; reverse table followees(user_id -> followee_id)."
+   },
+   {
+    "entity": "Inbox",
+    "store": "Redis Cluster sorted set",
+    "fields": [
+     "member post_id",
+     "score created_at_ms"
+    ],
+    "keys": "inbox:{user_id}",
+    "notes": "Cap 500; companion key wm:{user_id} = last complete ts."
+   },
+   {
+    "entity": "Author outbox",
+    "store": "Redis sorted set (replicated)",
+    "fields": [
+     "member post_id",
+     "score ts"
+    ],
+    "keys": "outbox:{author_id}",
+    "notes": "Only for celebrity tier; cap 100."
+   },
+   {
+    "entity": "FollowerCount / Tier",
+    "store": "Redis + Cassandra counters",
+    "fields": [
+     "author_id",
+     "follower_count",
+     "tier"
+    ],
+    "keys": "author_id",
+    "notes": "Tier recomputed hourly with hysteresis."
+   }
+  ],
+  "classes": [
+   {
+    "name": "FanoutPlanner",
+    "responsibility": "Turn a post event into follower batches.",
+    "methods": [
+     "onPostEvent(evt)",
+     "tierOf(authorId)",
+     "pageFollowers(authorId, cursor, n)",
+     "routeBatch(batch)"
+    ]
+   },
+   {
+    "name": "FanoutWorker",
+    "responsibility": "Execute a batch idempotently.",
+    "methods": [
+     "process(batch)",
+     "groupBySlot(ids)",
+     "pipelineZadd(node, ids, postId, ts)",
+     "retryOrDLQ(batch, err)"
+    ]
+   },
+   {
+    "name": "FeedReader",
+    "responsibility": "Serve merged, filtered pages.",
+    "methods": [
+     "getFeed(userId, cursor)",
+     "mergeSources(inbox, outboxes)",
+     "filter(items, ctx)",
+     "ensureInbox(userId)"
+    ]
+   },
+   {
+    "name": "InboxRebuilder",
+    "responsibility": "Lazy rebuild with single-flight.",
+    "methods": [
+     "rebuild(userId, since)",
+     "pullFromFollowees(userId, topK)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Tiered fanout planning",
+    "explain": "Decide push or pull and split work by activity priority.",
+    "pseudocode": "onPostEvent(e):\n  t = tierOf(e.author)          # with hysteresis\n  if t == CELEB:\n     ZADD outbox:{e.author} e.ts e.post; trim 100; return\n  cursor = START\n  while cursor != END:\n     page, cursor = followers(e.author, cursor, 1000)\n     hi = [f for f in page if active(f, 24h)]\n     lo = [f for f in page if active(f, 30d) and f not in hi]\n     emit('fanout-hi', Batch(e, hi)); emit('fanout-lo', Batch(e, lo))\n  commit(e.offset)"
+   },
+   {
+    "name": "Read-time k-way merge",
+    "explain": "Merge inbox and celebrity outboxes in (ts, id) order with dedupe.",
+    "pseudocode": "getFeed(u, cur):\n  srcs = [range(inbox:{u}, < cur, 50)]\n  for c in celebFollowees(u)[:100]: srcs.append(range(outbox:{c}, < cur, 20))\n  heap = init with head of each src\n  out, seen = [], set()\n  while heap and len(out) < 20:\n     (ts, id, s) = pop(heap)\n     if id not in seen and visible(u, id): out.append(id); seen.add(id)\n     push next of s\n  return out, cursor(out[-1])"
+   },
+   {
+    "name": "Worker retry with jitter",
+    "explain": "Bounded retries with exponential backoff and full jitter, then DLQ.",
+    "pseudocode": "for attempt in 0..4:\n  try: pipelineZadd(...); return OK\n  except Transient: sleep(random(0, min(2s, 50ms * 2**attempt)))\nsend to DLQ with error"
+   }
+  ],
+  "sequence": "\nAuthor   PostSvc    PostDB    Relay    Kafka(post)  Planner   GraphDB  Kafka(batch) Worker  Inbox\n  |  POST  |          |         |          |           |         |          |          |      |\n  |------->| tx write |         |          |           |         |          |          |      |\n  |        |--------->| post+outbox        |           |         |          |          |      |\n  |<-------| 201 id   |         |          |           |         |          |          |      |\n  |        |          |-------->| poll     |           |         |          |          |      |\n  |        |          |         |--------->| append    |         |          |          |      |\n  |        |          |         |          |---------->| consume |          |          |      |\n  |        |          |         |          |           |-------->| page followers (cursor) |\n  |        |          |         |          |           |<--------| 1000 ids per page        |\n  |        |          |         |          |           |------------------->| batch msgs|      |\n  |        |          |         |          |           |         |          |--------->|      |\n  |        |          |         |          |           |         |          |          |----->|\n  |        |          |         |          |           |         |          |          | ZADD |\n  |        |          |         |          |           |         |          |<---------| ack  |\n  |        |          |         |          |           |         |          | commit   |      |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Author crosses celebrity threshold mid-day.",
+   "handling": "Hysteresis (enter at 1M, exit at 800k); during switch readers merge both sources and dedupe by post_id."
+  },
+  {
+   "case": "Follow happens while a post from that author is mid-fanout.",
+   "handling": "New follower may miss it; follow API backfills the author's last 20 posts into the inbox."
+  },
+  {
+   "case": "Unfollow during fanout.",
+   "handling": "Late insert may land; read-time filter against followee set hides it."
+  },
+  {
+   "case": "Duplicate post event from CDC relay restart.",
+   "handling": "Idempotent ZADD; planner dedupes event_id in a 1h cache to avoid re-paging large lists."
+  },
+  {
+   "case": "Post deleted seconds after publish.",
+   "handling": "Tombstone; read filter drops it; fanout of the delete event optionally ZREMs from inboxes."
+  },
+  {
+   "case": "Hot celebrity outbox key read by millions per second.",
+   "handling": "In-process cache with 1s TTL, request coalescing, many read replicas."
+  },
+  {
+   "case": "User with 1M followees (bot).",
+   "handling": "Followee cap and abuse detection; celebrity merge capped at 100 authors."
+  },
+  {
+   "case": "Redis node failure loses unreplicated recent writes.",
+   "handling": "Watermark marks inbox possibly incomplete; next read pulls since watermark."
+  },
+  {
+   "case": "Clock skew gives a post a future timestamp so it sticks at top.",
+   "handling": "Timestamps from snowflake ids generated server side; clamp to now."
+  },
+  {
+   "case": "Spam account posts 1000 times per minute.",
+   "handling": "Token-bucket rate limit per account; low-reputation fanout capped."
+  },
+  {
+   "case": "Poison batch fails repeatedly.",
+   "handling": "After 5 retries send to DLQ, alert, replay after fix; offsets keep moving."
+  },
+  {
+   "case": "Live event causes 10x posting spike.",
+   "handling": "Lag absorbed on disk; hi lane gets capacity; lo lane deferred; autoscale on lag."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "MySQL/Vitess",
+   "layer": "Post store",
+   "overview": "Sharded relational database with Vitess routing.",
+   "why": "Local transactions make the outbox atomic; mature binlog for CDC.",
+   "alternatives": "Postgres + logical replication (similar), Cassandra (no multi-row tx; outbox harder)."
+  },
+  {
+   "name": "Debezium",
+   "layer": "CDC",
+   "overview": "Log-based change data capture connectors for Kafka Connect.",
+   "why": "Publishes outbox rows in commit order with low latency and no polling load.",
+   "alternatives": "Polling relay (simpler, more DB load, higher latency), Maxwell."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Event bus",
+   "overview": "Partitioned replicated log.",
+   "why": "Durable buffer for spikes, consumer parallelism, replay.",
+   "alternatives": "Pulsar (per-message ack, tiered storage), SQS (no ordering at scale, no replay)."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Inbox store",
+   "overview": "In-memory sharded data structures.",
+   "why": "Sorted sets with idempotent ZADD and O(log n) trimming; pipelining for throughput.",
+   "alternatives": "Cassandra wide rows (cheaper, slower reads), Aerospike (SSD, cheaper per GB)."
+  },
+  {
+   "name": "Cassandra",
+   "layer": "Graph store",
+   "overview": "Wide-column store with partition and clustering keys.",
+   "why": "Bucketed adjacency lists, fast cursor paging, high write throughput.",
+   "alternatives": "TAO-like cache over MySQL, FlockDB-style sharded MySQL, Neo4j (multi-hop, not needed)."
+  },
+  {
+   "name": "Kubernetes + KEDA autoscaling",
+   "layer": "Worker runtime",
+   "overview": "Container orchestration with event-driven autoscaling on lag.",
+   "why": "Scale fanout workers on consumer lag automatically.",
+   "alternatives": "Static fleets (wasteful), serverless functions (cold starts, cost at this volume)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Write amplification and the fanout cost model",
+   "explain": "Fanout is the act of delivering one event to many recipients. In a follower graph, a post by an author with F followers creates F deliveries under push. The total fanout work per day is the sum over posts of the author's follower count, which is dominated by the heavy tail: follower distributions follow a power law, so a tiny fraction of accounts hold a large share of all follow edges. If the median account has 100 followers but the top 0.01 percent have tens of millions, a single post from one of them costs as much as hundreds of thousands of ordinary posts. A useful cost model has three terms: write cost (F inserts per post), storage cost (F copies of an id, bounded by inbox trimming), and read cost (one inbox read under push versus K author reads under pull, where K is the number of followees). Because reads typically outnumber writes by 10 to 100 times, push is usually cheaper in aggregate, but its worst case is unbounded and its latency for a single post grows linearly with F. The design problem is therefore to bound the worst case: cap push work per post, defer or skip low-value deliveries, and move the heaviest authors to pull.",
+   "in_this_design": "Authors are tiered by follower count: normal (< 10k) pushed inline, large (10k to 1M) pushed via batched, lower-priority fanout, celebrity (> 1M) not pushed at all. Inactive followers (no session in 30 days) are skipped. This bounds per-post push work to about 1M batched inserts and keeps the daily insert volume near 100B instead of several trillion.",
+   "key_points": [
+    "Fanout work = sum of follower counts of posting authors; the tail dominates.",
+    "Reads usually outnumber writes, so push wins on average but not in the worst case.",
+    "Tier authors by follower count and treat each tier differently.",
+    "Skip inactive followers to cut most wasted writes.",
+    "Bound the worst case per post, not just the average."
+   ],
+   "qa": [
+    {
+     "q": "Estimate daily fanout inserts.",
+     "a": "500M posts x ~200 effective followers after skipping inactive and celebrity = 100B inserts per day, about 1.2M per second average and 3-4M at peak."
+    },
+    {
+     "q": "Why not just add more fanout workers for celebrities?",
+     "a": "Even with infinite workers, 50M inserts per post across many celebrities saturate the inbox store's write capacity and memory, and most of those inbox entries are never read before trimming. Pull is cheaper for that tier."
+    },
+    {
+     "q": "How do power laws change the design?",
+     "a": "Averages hide the problem. You design for the p99.99 author, which forces tiering, batching and pull, while the average path stays simple push."
+    }
+   ]
+  },
+  {
+   "name": "Hybrid push/pull with read-time merge",
+   "explain": "In a hybrid model the reader's feed is the union of two sources: a precomputed inbox populated by push, and a set of authors whose posts are fetched at read time. At read time the feed service reads the inbox (one sorted-set range), identifies which followees are pull-mode (usually a small set, cached per user), fetches their recent posts from per-author outboxes, and does a k-way merge by timestamp or score. The merge cost is proportional to the number of pulled followees, so the system keeps that number small by setting the celebrity threshold high enough that a typical user follows at most a few dozen of them. Per-author outboxes for celebrities are read by millions of users, so they are perfect cache candidates: small, hot, and changing slowly. A subtle issue is transitions: when an author crosses the threshold, posts already pushed must not reappear from the pull path, which is solved by deduplicating on post id during merge. Another subtlety is pagination: the merge must use a stable cursor such as (timestamp, post_id) so both sources can be resumed consistently.",
+   "in_this_design": "Each user has a cached list of followed celebrity ids (refreshed on follow/unfollow). The feed service reads inbox:{user} with ZREVRANGEBYSCORE up to the cursor and outbox:{celeb} for each followed celebrity, merges with a min-heap, dedupes by post_id, and returns 20 with a cursor (ts, post_id).",
+   "key_points": [
+    "Feed = inbox (pushed) union outboxes of pulled authors.",
+    "Keep pulled authors per reader small (tens).",
+    "Celebrity outboxes are tiny, hot, highly cacheable.",
+    "Dedupe by post id across sources.",
+    "Use a composite cursor (ts, id) for consistent paging."
+   ],
+   "qa": [
+    {
+     "q": "A user follows 2000 celebrities. What now?",
+     "a": "Cap the pull set at, say, the 100 with highest affinity for the merge and get the rest via a periodic background job that pushes their posts into this user's inbox, or rely on the ranker's out-of-network source."
+    },
+    {
+     "q": "How do you avoid hot keys on a celebrity outbox?",
+     "a": "Replicate it to many read replicas, add a per-host in-memory cache with 1-2s TTL, and request coalescing so one host fetches once per second."
+    },
+    {
+     "q": "Why a composite cursor?",
+     "a": "Timestamps collide; (ts, post_id) is unique and totally ordered, so pages never skip or repeat items with equal timestamps."
+    }
+   ]
+  },
+  {
+   "name": "Transactional outbox and change data capture",
+   "explain": "A service that writes to its database and also publishes an event faces the dual-write problem: if it writes the row and crashes before publishing, downstream systems never learn about it; if it publishes first and the DB write fails, downstream acts on something that does not exist. The transactional outbox pattern fixes this by writing the event into an outbox table in the same local transaction as the business row. A separate relay process, either polling the outbox or tailing the database's change log (CDC, for example Debezium reading the MySQL binlog), publishes outbox rows to the message broker and marks them sent. Because the relay may publish a row twice if it crashes between publishing and marking, consumers must be idempotent, usually by deduplicating on the event id. The result is at-least-once delivery that is guaranteed to agree with the database: an event exists if and only if the row was committed. CDC also preserves commit order per table partition, which keeps per-author ordering intact.",
+   "in_this_design": "Post service inserts the post row and an outbox row (event_id, author_id, post_id, created_at) in one transaction on the author's shard. Debezium tails the binlog and publishes to post-events keyed by author_id. Fanout consumers dedupe on event_id (and inbox ZADD is idempotent by post_id anyway).",
+   "key_points": [
+    "Dual writes to DB and broker are not atomic; the outbox makes them so.",
+    "Relay via polling or CDC; CDC has lower latency and load.",
+    "Delivery is at-least-once; consumers must be idempotent.",
+    "Event exists iff the row committed.",
+    "Per-key ordering follows commit order."
+   ],
+   "qa": [
+    {
+     "q": "Why not publish to Kafka inside the request after the DB commit?",
+     "a": "A crash between commit and publish loses the event forever, so followers never get the post. The outbox guarantees eventual publish."
+    },
+    {
+     "q": "What if the relay falls behind?",
+     "a": "Fanout is delayed but nothing is lost; alert on outbox age (oldest unpublished row) and scale relay or partition it by shard."
+    },
+    {
+     "q": "How do consumers handle duplicates?",
+     "a": "Dedupe on event_id in a short-lived store, and make the effect idempotent: ZADD of the same post id to an inbox is a no-op."
+    }
+   ]
+  },
+  {
+   "name": "Partitioning, batching and work splitting",
+   "explain": "To fan out a large job across many machines you must split it into independent units of bounded size. A follower list of 800k ids is split into pages of, say, 1000 using a cursor over the graph store, and each page becomes a separate message. Workers process batches in parallel, so the wall-clock time for a large author's post is roughly F divided by (batch size times number of parallel workers), rather than F times per-insert latency. Batches also amortise network cost: a Redis pipeline of 1000 ZADDs across a few shards costs a handful of round trips. Partitioning matters on both sides. Kafka partitions give consumer parallelism; the key decides ordering and load balance. Keying fanout batches by author would put a large author's 800 batches on one partition, creating a hot partition, so batches should be keyed by batch id or follower bucket instead, giving up per-author ordering which the timestamp-sorted inbox restores anyway. On the storage side, inboxes are partitioned by recipient user id, so a batch of followers touches many shards; grouping followers by shard inside a batch lets each worker send one pipeline per shard.",
+   "in_this_design": "The planner pages followers 1000 at a time from the graph store (followers stored by author_id with clustering key follower bucket) and emits one message per page to fanout-batches keyed by batch_id across 512 partitions. Workers group ids by Redis slot and send one pipeline per node. An 800k-follower post finishes in about 2 to 4 seconds with 200 workers.",
+   "key_points": [
+    "Split huge fanouts into fixed-size batches.",
+    "Key batches to spread load, not by author.",
+    "Pipelines per shard amortise round trips.",
+    "Inbox order is restored by timestamp score, so cross-batch ordering is unnecessary.",
+    "Wall time scales with F / (batch x parallelism)."
+   ],
+   "qa": [
+    {
+     "q": "Why not key fanout-batches by author_id?",
+     "a": "A large author would put hundreds of batches on one partition, which only one consumer can process, serialising the work and creating a hot partition."
+    },
+    {
+     "q": "What batch size?",
+     "a": "Big enough to amortise overhead (hundreds to thousands), small enough that a retry is cheap and a batch finishes in well under a second. 500 to 2000 is typical."
+    },
+    {
+     "q": "How do you handle a batch failing halfway?",
+     "a": "Retry the whole batch; inserts are idempotent so partial success does not cause duplicates. After N retries send it to a dead-letter topic for replay."
+    }
+   ]
+  },
+  {
+   "name": "Backpressure, priority queues and load shedding",
+   "explain": "Backpressure is the mechanism by which a slow downstream component signals upstream to slow down, rather than letting queues grow without bound until memory runs out. In pull-based brokers like Kafka, backpressure is implicit: consumers fetch at their own rate and lag accumulates on disk, which is safe but means delay. The questions are then which work to do first and which to drop. Priority queues separate urgent from deferrable work, for example fanout to followers active in the last hour versus followers active in the last month, using separate topics and dedicated consumer pools so low-priority backlog cannot starve high-priority work (a bulkhead). Load shedding deliberately drops or defers work when overloaded: skipping fanout to users who will not open the app soon, since their inbox can be rebuilt on demand. Admission control at the edge, such as rate limiting how many posts per minute an account can make, prevents abuse from creating unbounded fanout. Good systems define what degraded looks like before an incident: for fanout, it means slower delivery to the least active readers, never loss.",
+   "in_this_design": "Two batch topics: fanout-hi for followers active in the last 24h, fanout-lo for 1 to 30 days. Separate worker pools; on lag above 60s for hi, lo workers are scaled down and capacity moved. Posting is rate-limited per account (for example 300 posts per 3 hours). Followers missed by shedding are reconciled by lazy rebuild on next open.",
+   "key_points": [
+    "Lag on disk is safe backpressure; decide what to prioritise.",
+    "Separate topics and worker pools per priority (bulkhead).",
+    "Shed work whose result can be rebuilt on demand.",
+    "Rate-limit producers to bound fanout input.",
+    "Degraded means slower for inactive users, never lost."
+   ],
+   "qa": [
+    {
+     "q": "Why separate worker pools instead of one pool with priority?",
+     "a": "Kafka has no per-message priority; a single pool would process backlog in offset order. Separate topics and pools guarantee hi-priority capacity."
+    },
+    {
+     "q": "What happens to a shed delivery?",
+     "a": "The follower's inbox is marked possibly incomplete (last-complete watermark); on next open the feed service pulls recent posts from followees since the watermark."
+    },
+    {
+     "q": "How would a spam account abuse fanout?",
+     "a": "Posting in a tight loop with many fake followers. Rate limits per account, follower quality scoring, and capping fanout for low-reputation accounts contain it."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency and at-least-once delivery",
+   "explain": "Distributed messaging almost always provides at-least-once delivery: a message may be delivered more than once if an acknowledgement is lost or a consumer crashes after doing work but before committing. Exactly-once delivery across arbitrary external systems is not achievable in general, so systems achieve exactly-once effects by making operations idempotent, meaning that applying them twice has the same result as applying them once. Some operations are naturally idempotent: setting a value, adding an element to a set, deleting by key. Others, like incrementing a counter or appending to a list, are not, and must be made idempotent with a dedupe key (store processed ids for a window) or by converting them to set semantics. Idempotency keys also protect client retries: a mobile client that resends POST /posts after a timeout includes the same key, and the server returns the original result. The trade-off is storage and lookup cost for dedupe state, which is usually bounded with a TTL slightly longer than the maximum retry horizon.",
+   "in_this_design": "Inboxes are sorted sets keyed by post_id, so duplicate fanout is harmless. Post creation uses an idempotency key stored for 24h. Unread counters are not incremented blindly; they are computed as ZCOUNT over the inbox since the last-read timestamp, avoiding double counting.",
+   "key_points": [
+    "At-least-once is the realistic baseline.",
+    "Prefer naturally idempotent ops: set-add, put.",
+    "Convert increments to set membership or dedupe by id.",
+    "Client idempotency keys make retries safe.",
+    "Bound dedupe state with TTL."
+   ],
+   "qa": [
+    {
+     "q": "Why use a sorted set instead of a list for inboxes?",
+     "a": "LPUSH twice creates a duplicate; ZADD of the same member is idempotent and also keeps time order."
+    },
+    {
+     "q": "How would you count unread without double counting?",
+     "a": "Derive it from data: ZCOUNT inbox (last_read_ts, +inf). It is recomputed, not incremented."
+    },
+    {
+     "q": "Does Kafka exactly-once solve this?",
+     "a": "Kafka transactions give exactly-once between Kafka topics and its offsets. Writes to Redis are outside that boundary, so idempotency is still required."
+    }
+   ]
+  },
+  {
+   "name": "Social graph storage and sharding",
+   "explain": "A follower graph is a directed graph with billions of edges. The two queries that matter are 'who does X follow' (followees) and 'who follows X' (followers), and both must be fast and pageable. The usual approach stores each edge twice, once in a forward table keyed by follower and once in a reverse table keyed by followee, because a single table can be partitioned efficiently by only one key. Partitioning by the key user means all of one user's edges live on one shard, which is ideal for paging but creates skew: a celebrity's follower list may have 100M rows on one partition. The fix is to sub-partition large adjacency lists into buckets (author_id, bucket) so they spread across nodes, while small lists stay in one bucket. Writes to both tables are not atomic across shards; they are made consistent by writing the forward edge first and asynchronously repairing the reverse via an event, or by a background reconciler. Counts (follower_count) are maintained separately and approximately, because counting 100M rows on each read is too slow. Twitter's FlockDB and Facebook's TAO are real examples of this dual-indexed, sharded adjacency approach.",
+   "in_this_design": "Graph store has followees(user_id -> followee) and followers((author_id, bucket) -> follower, followed_at), each bucket capped at 100k rows. The planner pages through buckets with a cursor. Follower counts live in a counter table updated by events and used for author tiering.",
+   "key_points": [
+    "Store each edge in both directions.",
+    "Bucket huge adjacency lists to avoid giant partitions.",
+    "Page with cursors, never offsets.",
+    "Keep counts separately and approximately.",
+    "Repair cross-shard inconsistency asynchronously."
+   ],
+   "qa": [
+    {
+     "q": "Why not a graph database?",
+     "a": "Fanout needs only one-hop adjacency scans at massive throughput; a sharded KV with dual indexes is simpler and cheaper. Graph databases shine for multi-hop traversal."
+    },
+    {
+     "q": "What if forward and reverse edges disagree?",
+     "a": "Treat forward as source of truth; a reconciler compares and repairs. Fanout tolerates a briefly missing follower, and the read path can pull to cover gaps."
+    },
+    {
+     "q": "How do you page 50M followers safely?",
+     "a": "Cursor (bucket, last_follower_id) over a clustered key, fetched 1000 at a time; resumable after crashes."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Push vs pull",
+   "options": "Pure push, pure pull, hybrid",
+   "choice": "Hybrid by author tier",
+   "why": "Push makes reads cheap; pull caps worst-case write amplification."
+  },
+  {
+   "decision": "Event capture",
+   "options": "Dual write, outbox polling, outbox CDC",
+   "choice": "Outbox with CDC",
+   "why": "No loss, low latency, low DB load."
+  },
+  {
+   "decision": "Batch key",
+   "options": "author_id, batch_id, follower bucket",
+   "choice": "batch_id",
+   "why": "Spreads a large author over many partitions; order restored by timestamp."
+  },
+  {
+   "decision": "Inbox structure",
+   "options": "List, sorted set, DB table",
+   "choice": "Redis sorted set capped at 500",
+   "why": "Idempotent inserts, ordered reads, bounded memory."
+  },
+  {
+   "decision": "Inactive followers",
+   "options": "Push anyway, skip and rebuild",
+   "choice": "Skip beyond 30 days, rebuild lazily",
+   "why": "Most such writes are never read."
+  },
+  {
+   "decision": "Unfollow handling",
+   "options": "Synchronous purge vs read filter",
+   "choice": "Read filter plus async purge",
+   "why": "Immediate correctness without a large synchronous write."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "CDC relay down",
+   "behavior": "Posts still commit; fanout pauses; outbox age alert; on recovery relay catches up in order."
+  },
+  {
+   "failure": "Kafka broker loss",
+   "behavior": "RF=3, min.insync=2 keeps writes available; partitions re-elect leaders in seconds."
+  },
+  {
+   "failure": "Redis shard loss",
+   "behavior": "Replica promotion; watermark marks gaps; reads pull to fill."
+  },
+  {
+   "failure": "Graph store slow",
+   "behavior": "Planner backs off with jitter; lag grows on disk; hi lane prioritised when it recovers."
+  },
+  {
+   "failure": "Worker bug writes wrong ids",
+   "behavior": "Stop consumers, fix, replay post-events from offset; ZADD idempotency makes replay safe."
+  },
+  {
+   "failure": "Peak event overload",
+   "behavior": "Lo lane deferred, inactive users shed, autoscale on lag; delivery to active users protected."
+  }
+ ],
+ "metrics": [
+  "Post-to-inbox latency p50/p99 by tier and priority lane.",
+  "Consumer lag per topic and partition; outbox oldest-row age.",
+  "Inbox inserts/s and Redis CPU/memory per node.",
+  "DLQ rate and retry counts.",
+  "Inbox rebuild rate and rebuild latency.",
+  "Feed read p99 and celebrity outbox cache hit ratio.",
+  "Reconciliation sample: fraction of followers missing a recent post."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you verify no posts are lost?",
+   "a": "Continuous reconciliation: sample posts and random active followers, check the post appears in the merged feed within SLO, and alert on miss rate. Outbox guarantees capture; idempotent replay fixes gaps."
+  },
+  {
+   "q": "How do notifications differ from feed fanout?",
+   "a": "Notifications are lossy-intolerant per user and rate-limited per recipient, often only to a subset (close friends, opted in). Same pipeline shape, but separate topics and stricter dedupe."
+  },
+  {
+   "q": "How do you handle multi-region?",
+   "a": "Each region consumes the replicated post-events stream and fans out to users homed there. Users read from their home region; a region failover rebuilds inboxes lazily."
+  },
+  {
+   "q": "Why not store inboxes in Cassandra instead of Redis?",
+   "a": "Possible and cheaper per GB, but read latency and tombstone-heavy trimming hurt. Many systems use Redis as the hot tier and fall back to pull rebuild for misses."
+  },
+  {
+   "q": "What if ranking needs more than 500 candidates?",
+   "a": "Ranking also pulls out-of-network sources; for in-network depth you raise the cap for heavy readers only or pull extra from top-affinity authors."
+  },
+  {
+   "q": "How do you choose the celebrity threshold?",
+   "a": "Plot fanout latency and cost by follower count; pick the point where push for that tier breaches the 5s SLO at peak, keeping pulled authors per reader small. Add hysteresis."
+  },
+  {
+   "q": "What changes for private accounts?",
+   "a": "Fanout only to approved followers (same graph), and read filter checks approval state; celebrity pull must check visibility per reader."
+  }
+ ],
+ "key_points": [
+  "Fanout cost is the sum of follower counts; power-law tails dominate.",
+  "Capture posts with a transactional outbox and CDC so nothing is lost.",
+  "Tier authors: push normal, batch large, pull celebrities.",
+  "Batch follower lists into 1000-id messages keyed to spread load.",
+  "Idempotent ZADD into capped sorted-set inboxes makes at-least-once safe.",
+  "Priority lanes protect active users; shed and rebuild inactive ones.",
+  "Read-time filtering handles unfollow, block and delete instantly.",
+  "Measure post-to-inbox latency by tier, lag, outbox age and reconciliation miss rate."
+ ],
+ "quiz": [
+  {
+   "q": "An author with 30M followers posts. In a hybrid design, what happens on the write path?",
+   "options": [
+    "30M inbox inserts in one transaction",
+    "The post is appended to the author's outbox and pulled by readers",
+    "The post is dropped until off-peak",
+    "Only the first 1M followers get it"
+   ],
+   "answer": 1,
+   "why": "Celebrities are pull-mode. A single 30M-insert transaction is impossible and partial delivery would be unfair and inconsistent."
+  },
+  {
+   "q": "Why key the fanout-batches topic by batch_id rather than author_id?",
+   "options": [
+    "To spread one large author's batches across many partitions and consumers",
+    "To keep per-author ordering",
+    "Because author_id is not unique",
+    "Kafka requires random keys"
+   ],
+   "answer": 0,
+   "why": "Author keying hot-spots one partition. Per-author ordering is not needed since inboxes sort by timestamp."
+  },
+  {
+   "q": "500M posts/day, 200 effective followers each. Average inserts per second?",
+   "options": [
+    "About 12k",
+    "About 120k",
+    "About 12M",
+    "About 1.2M"
+   ],
+   "answer": 3,
+   "why": "1e11 / 86400 is about 1.16M/s. 120k forgets a factor of ten."
+  },
+  {
+   "q": "Post service commits the DB row then crashes before publishing to Kafka. With the outbox pattern, what happens?",
+   "options": [
+    "The post is lost",
+    "The relay later reads the outbox row and publishes it",
+    "The client must retry",
+    "Kafka replays it automatically"
+   ],
+   "answer": 1,
+   "why": "Outbox row was committed atomically with the post; the relay publishes eventually. Without the outbox, the post would be lost to fanout."
+  },
+  {
+   "q": "Why are inboxes Redis sorted sets keyed by post_id rather than lists?",
+   "options": [
+    "Lists cannot be trimmed",
+    "Sorted sets use less memory",
+    "ZADD is idempotent and keeps time order",
+    "Lists are not replicated"
+   ],
+   "answer": 2,
+   "why": "Duplicate deliveries become no-ops. Lists can be trimmed, but LPUSH twice duplicates."
+  },
+  {
+   "q": "Fanout lag for active users hits 5 minutes during a big event. Best first move?",
+   "options": [
+    "Shift capacity to the high-priority pool and defer low-priority fanout",
+    "Disable posting",
+    "Increase inbox size",
+    "Switch everyone to pull"
+   ],
+   "answer": 0,
+   "why": "Bulkheaded priorities protect active readers. Switching everyone to pull would overwhelm reads."
+  },
+  {
+   "q": "Which statement about Kafka exactly-once is correct here?",
+   "options": [
+    "It guarantees no duplicate Redis writes",
+    "It is required for correctness",
+    "It makes the outbox unnecessary",
+    "It covers Kafka-to-Kafka only; external effects still need idempotency"
+   ],
+   "answer": 3,
+   "why": "Transactions cover topics and offsets, not Redis. The outbox solves DB-to-Kafka, a different boundary."
+  },
+  {
+   "q": "How should a large follower list be stored in the graph store?",
+   "options": [
+    "One partition per author regardless of size",
+    "Bucketed into (author_id, bucket) partitions",
+    "In a single JSON blob",
+    "Only in the forward table"
+   ],
+   "answer": 1,
+   "why": "Bucketing avoids giant partitions. Reverse lookups need the followers table, so forward-only fails."
+  },
+  {
+   "q": "With batches of 1000 and 200 parallel workers each doing a batch in 250ms, about how long to fan out to 800k followers?",
+   "options": [
+    "About 0.25s",
+    "About 1 second",
+    "About 4 minutes",
+    "About 40 seconds"
+   ],
+   "answer": 1,
+   "why": "800 batches / 200 workers = 4 rounds x 250ms = 1s. 0.25s would require 800 workers so every batch runs at once."
+  },
+  {
+   "q": "Why skip fanout to followers inactive for 30 days?",
+   "options": [
+    "Privacy rules",
+    "They cannot receive posts",
+    "Most writes would be trimmed before being read; rebuild on return",
+    "Redis cannot hold them"
+   ],
+   "answer": 2,
+   "why": "It is a cost optimisation with lazy rebuild. Nothing prevents them from receiving posts."
+  },
+  {
+   "q": "A user follows 40 celebrities. Read path cost?",
+   "options": [
+    "40 inbox reads",
+    "One inbox read plus up to 40 outbox reads merged",
+    "One read only",
+    "A full graph traversal"
+   ],
+   "answer": 1,
+   "why": "Hybrid read merges inbox with pulled outboxes. Inboxes are per reader, not per author."
+  },
+  {
+   "q": "What is the most appropriate cursor for merged feed pagination?",
+   "options": [
+    "Page number offset",
+    "Timestamp only",
+    "Composite (timestamp, post_id)",
+    "Random token"
+   ],
+   "answer": 2,
+   "why": "Composite is unique and ordered. Timestamp only can skip or repeat ties; offsets shift as new items arrive."
+  },
+  {
+   "q": "An author is deleted along with their posts. Cheapest correct cleanup?",
+   "options": [
+    "Synchronously remove from every inbox",
+    "Tombstone; filter at hydration, let inboxes trim naturally",
+    "Rebuild all inboxes",
+    "Ignore it"
+   ],
+   "answer": 1,
+   "why": "Read-time filtering is cheap and correct; a reverse fanout delete is optional background work."
+  },
+  {
+   "q": "Unfollow happened, but the unfollowed author's posts still show for a while. Fix?",
+   "options": [
+    "Filter inbox entries against current followee set at read time",
+    "Make unfollow synchronous across all inboxes",
+    "Disable unfollow",
+    "Increase TTL"
+   ],
+   "answer": 0,
+   "why": "Read-time filter is immediate and cheap; optionally purge in background. Synchronous purge is slow and races fanout."
+  },
+  {
+   "q": "Why do priority topics need separate consumer pools?",
+   "options": [
+    "Kafka has no per-message priority; one pool processes in offset order",
+    "Pools are cheaper",
+    "To keep ordering",
+    "To avoid rebalances"
+   ],
+   "answer": 0,
+   "why": "Without separate pools, low-priority backlog blocks urgent work. Rebalances are unrelated."
+  },
+  {
+   "q": "Follower distribution is power-law. Which design principle follows?",
+   "options": [
+    "Optimise only for the average account",
+    "Use pull for everyone",
+    "Use push for everyone",
+    "Tier authors and bound the worst-case per-post work"
+   ],
+   "answer": 3,
+   "why": "Tails dominate cost. Pure pull wastes the cheap-read advantage for the vast majority."
+  },
+  {
+   "q": "The outbox relay is 10 minutes behind. What do users see?",
+   "options": [
+    "Posts lost",
+    "Duplicated posts",
+    "Posts delayed in followers' feeds but authors see their own",
+    "Errors on posting"
+   ],
+   "answer": 2,
+   "why": "Nothing is lost; fanout is delayed. Authors see their own posts via read-your-writes."
+  },
+  {
+   "q": "What does a 'last-complete watermark' on an inbox enable?",
+   "options": [
+    "Faster ZADD",
+    "Knowing when fanout may have skipped posts so the reader can pull since then",
+    "Global ordering",
+    "Exactly-once delivery"
+   ],
+   "answer": 1,
+   "why": "It marks the point after which shedding may have left gaps; reads fill them by pull."
+  },
+  {
+   "q": "Memory for 300M inboxes of 500 ids at ~16 bytes per entry (id + score) is roughly?",
+   "options": [
+    "2.4GB",
+    "24GB",
+    "240TB",
+    "2.4TB"
+   ],
+   "answer": 3,
+   "why": "3e8 x 500 x 16 = 2.4e12 bytes. Real Redis overhead adds 2-3x on top."
+  },
+  {
+   "q": "Which posting rate limit best protects fanout from abuse?",
+   "options": [
+    "Global limit of posts per second",
+    "Per-account token bucket plus reduced fanout for low-reputation accounts",
+    "Limit by IP only",
+    "No limits; autoscale"
+   ],
+   "answer": 1,
+   "why": "Per-account limits target the abuser without hurting everyone. Global limits hurt legitimate traffic."
+  },
+  {
+   "q": "Why store follower edges in two tables?",
+   "options": [
+    "For backup",
+    "Kafka needs it",
+    "Each table can be partitioned by only one key; followers and followees queries need different keys",
+    "To support transactions"
+   ],
+   "answer": 2,
+   "why": "Dual indexing serves both directions efficiently. It is not a backup."
+  },
+  {
+   "q": "Which is NOT a valid reason to put an author in pull mode?",
+   "options": [
+    "They post very rarely",
+    "Very high follower count",
+    "Their followers are mostly inactive",
+    "Fanout lag for their posts breaches SLO"
+   ],
+   "answer": 0,
+   "why": "Rare posting with modest followers is cheap to push. The other three all make push expensive or slow."
+  }
+ ],
+ "references": [
+  {
+   "title": "The Architecture Twitter Uses to Deal with 150M Active Users (High Scalability)",
+   "url": "https://highscalability.com/the-architecture-twitter-uses-to-deal-with-150m-active-users/"
+  },
+  {
+   "title": "How to scale real-time tweet delivery architecture at Twitter",
+   "url": "https://blog.mi.hdm-stuttgart.de/index.php/2021/03/10/how-to-scale-real-time-tweet-delivery-architecture-at-twitter/"
+  },
+  {
+   "title": "How a News Feed Works: Fanout on Write vs Fanout on Read",
+   "url": "https://dev.to/roni_das_b1b76c5ee6583027/how-a-news-feed-works-fanout-on-write-vs-fanout-on-read-3lle"
+  },
+  {
+   "title": "Activity feed traffic spikes (Stream blog)",
+   "url": "https://getstream.io/blog/activity-feed-traffic-spikes/"
+  }
+ ]
+}

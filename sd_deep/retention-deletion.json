@@ -1,0 +1,1196 @@
+{
+ "slug": "retention-deletion",
+ "title": "Design an enforceable data retention and deletion policy",
+ "prompt": "Design a data retention and deletion policy that is enforceable.",
+ "group": "storage",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "Writing a retention policy is easy; making it true across hundreds of databases, caches, search indexes, Kafka topics, data-lake tables, ML features and backups is the hard part. The core tension is that data is copied everywhere for performance and analytics, while deletion must reach every copy, respect legal holds and retention minimums, and be provable to a regulator. An enforceable design turns policy into code attached to a data catalog, executes deletion as idempotent durable workflows fanning out to per-store agents, uses TTLs and partition drops for bulk expiry and crypto-shredding for places that cannot be edited, and continuously verifies with canaries and scans.",
+ "framework": {
+  "clarify": [
+   "Which regimes apply: GDPR for EU users, India's DPDP Act 2023, RBI and tax rules that require keeping financial records (often 8-10 years), PCI DSS for card data? These set both maximum and minimum retention.",
+   "What triggers deletion: time-based expiry (TTL per data class), user erasure requests, account closure, contract end for sellers, or all three? Assume all three.",
+   "What is the deadline: GDPR expects erasure without undue delay, typically within one month; I will target 30 days end to end including backups.",
+   "How many systems hold personal data, and do we have a catalog? Assume about 400 datasets across MySQL, Cassandra, Redis, Elasticsearch, Kafka, an S3/Iceberg lake, a warehouse, ML feature stores and backups, with a partial catalog.",
+   "Delete versus anonymise: is irreversible anonymisation (aggregates, k-anonymous) acceptable for analytics instead of deletion? Assume yes, but pseudonymisation alone is not deletion.",
+   "Legal holds: litigation, fraud investigations, tax audits can suspend deletion for specific subjects or datasets; who can place them?",
+   "Proof: what evidence do regulators or auditors expect - per-request completion records, sampling results, and a policy-to-system coverage report?",
+   "Volume: assume 2 million erasure requests per year (about 5,500 per day, spikes after news events) and petabytes of TTL-based expiry per month."
+  ],
+  "design": [
+   "Baseline: a cron job per team that runs DELETE WHERE created_at < now() - N days, plus a manual runbook for erasure requests. I will explain why that is not enforceable: no inventory, no proof, copies are missed, backups ignored.",
+   "Policy as code: a registry of data classes (for example PII_CONTACT, PAYMENT_TXN, CLICKSTREAM) with retention min and max, deletion method (hard delete, anonymise, crypto-shred) and legal basis, versioned in Git and reviewed by Legal.",
+   "Catalog and lineage: every dataset and column is registered with owner, store, data class and subject key column; CI blocks schema changes that add unclassified columns; lineage tracks derived copies so deletion fans out to them.",
+   "Execution: bulk expiry by TTL and time-partition drops aligned to policy; subject erasure as a durable workflow (saga) that plans tasks per store from the catalog, calls idempotent store agents, and records each step in an append-only deletion ledger.",
+   "Unreachable copies: backups, immutable logs and archives are handled by per-subject encryption keys and crypto-shredding, plus a bounded backup retention (for example 35 days) so restores cannot resurrect data indefinitely.",
+   "Verification: canary subjects whose deletion is checked end to end daily, residual scanners that look for deleted subject ids across stores, coverage reports (datasets without a policy), and SLA dashboards."
+  ],
+  "defend": [
+   "Bottleneck: fan-out and slow stores. One request touches about 40 stores; I make each task idempotent and asynchronous, batch subject ids per store (for example 1,000 ids per delete job), and let slow stores (warehouse, lake) process in daily batches within the 30-day SLA.",
+   "Scale writes of deletes: avoid row-by-row deletes in LSM and columnar stores - use tombstones plus compaction schedules, partition-level rewrites in Iceberg (merge-on-read delete files, then compaction), and Kafka compacted topics with tombstones or crypto-shredding.",
+   "Failure behaviour: tasks retry with exponential backoff and jitter (base 1 min, cap 6 h); after N failures a task escalates to the dataset owner with an SLA clock; the workflow never marks a request complete until every task is done or explicitly exempted with a reason.",
+   "Correctness hazards: a restore from backup, a replay of a Kafka topic, or a late-arriving event can resurrect a deleted subject; I keep a deletion denylist (tombstone registry) consulted by ingest and restore paths.",
+   "Holds and minimums: policy evaluation is deterministic - legal hold beats deletion, statutory minimum retention beats erasure for the fields it covers - and every decision is logged with the policy version.",
+   "Measure: percentage of datasets classified and covered by policy, erasure requests completed within SLA, tasks overdue by store, residual-scan hits, canary pass rate, and bytes expired versus bytes eligible."
+  ],
+  "script": "I want to separate two things that people blur: the policy, which is a legal decision, and enforcement, which is an engineering system. The policy says for each class of data how long we must keep it, how long we may keep it, and how to get rid of it. Enforcement has four parts. First, know where data lives: a catalog that classifies every dataset and column, with CI checks so new tables cannot appear unclassified, and lineage so we know every copy. Second, execute: bulk expiry happens by TTLs and dropping time partitions, which is cheap, while individual erasure requests run as durable workflows that fan out idempotent delete tasks to every store and record each step. Third, handle what you cannot edit - backups, immutable logs, archives - with per-user encryption keys that we destroy, and bounded backup retention. Fourth, prove it: canary users whose deletion we check daily, scanners that look for leftovers, and an append-only deletion ledger for auditors. Then I will defend legal holds, resurrection from backups and replays, and how we hit a 30-day SLA across 40 systems."
+ },
+ "brd": {
+  "problem": "The company has a retention policy document, but nobody can say whether it is true. Personal data sits in hundreds of datasets, many copied into analytics, search and ML pipelines; deletion requests are handled by tickets and spreadsheets; backups and logs keep data for years. Regulators (GDPR, India DPDP Act) can impose large penalties, a breach of over-retained data multiplies damage, and storage costs grow because nothing expires.",
+  "goals": [
+   "Every dataset holding personal or regulated data is classified and mapped to a retention rule (100 percent coverage of tier-1 stores).",
+   "Time-based expiry runs automatically and is measurable per dataset.",
+   "Subject erasure requests complete across all stores, including derived copies, within 30 days, with evidence.",
+   "Legal holds and statutory minimum retention are respected automatically and auditable.",
+   "Deleted data cannot be resurrected by restores, replays or late events.",
+   "Reduce storage of expired data and the blast radius of breaches."
+  ],
+  "non_goals": [
+   "Deciding the legal retention periods themselves (Legal owns the values; engineering enforces them).",
+   "Consent management UI and cookie banners (separate system, though it may trigger deletions).",
+   "Physical destruction of hardware media (handled by data-centre processes).",
+   "Anonymisation research beyond standard techniques (aggregation, generalisation, removal of identifiers)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Legal and Privacy office (DPO)",
+    "needs": "Policies that are actually enforced, evidence for regulators, ability to place and lift legal holds."
+   },
+   {
+    "who": "Data and service owners",
+    "needs": "Clear contracts: implement a delete endpoint or use a standard agent; know their SLA and see overdue tasks."
+   },
+   {
+    "who": "Data platform and analytics",
+    "needs": "Deletion in lake and warehouse that does not break tables or require full rewrites daily."
+   },
+   {
+    "who": "Security",
+    "needs": "Less data at rest; assurance that backups and logs are covered."
+   },
+   {
+    "who": "Customers and sellers",
+    "needs": "A simple way to request deletion and a confirmation when it is done."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Tier-1 datasets classified and covered by an enforced policy",
+    "target": "100 percent; overall 95 percent in 2 quarters"
+   },
+   {
+    "metric": "Erasure requests completed within 30 days",
+    "target": "> 99.5 percent"
+   },
+   {
+    "metric": "Residual-scan hits for deleted subjects",
+    "target": "0 in tier-1 stores; any hit is an incident"
+   },
+   {
+    "metric": "Canary deletion checks passing",
+    "target": "100 percent daily"
+   },
+   {
+    "metric": "Data held beyond maximum retention",
+    "target": "< 0.1 percent of bytes, trending to 0"
+   },
+   {
+    "metric": "Storage reclaimed from expiry",
+    "target": "Measured monthly; expected 20-30 percent reduction in hot storage"
+   }
+  ],
+  "constraints": [
+   "Financial and tax records must be retained for statutory periods even if the user requests erasure (erasure applies to non-required fields).",
+   "Some systems are vendor SaaS (CRM, support desk) reachable only through their APIs with rate limits.",
+   "Immutable systems exist: audit logs in WORM storage, Kafka topics with long retention, backups.",
+   "No big-bang migration: teams adopt incrementally; tier-1 stores first.",
+   "Deletion must not degrade production latency (delete jobs throttled, off-peak for heavy stores)."
+  ],
+  "risks": [
+   {
+    "risk": "Unknown copies of data (shadow tables, CSV exports, ML training sets) are missed.",
+    "mitigation": "Lineage capture, PII scanners on storage and warehouse, CI gates, and periodic discovery sweeps; unregistered datasets are flagged and owners paged."
+   },
+   {
+    "risk": "Accidental mass deletion due to a policy bug.",
+    "mitigation": "Policy changes reviewed and simulated (dry-run reports of what would be deleted), staged rollout, rate limits on delete volume per dataset, and soft-delete grace windows."
+   },
+   {
+    "risk": "Restored backups or replayed streams resurrect deleted data.",
+    "mitigation": "Deletion denylist applied on restore and replay; crypto-shredding makes resurrected ciphertext unreadable."
+   },
+   {
+    "risk": "Teams never implement delete hooks.",
+    "mitigation": "Make it a launch-review gate, provide standard agents for common stores, and publish per-team compliance scores."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Privacy officer",
+    "needs": "Define policies, see coverage and SLA dashboards, place legal holds, export evidence."
+   },
+   {
+    "name": "Service or data owner",
+    "needs": "Register datasets, receive deletion tasks via a standard contract, see failures and deadlines."
+   },
+   {
+    "name": "End user or seller",
+    "needs": "Request deletion of their account and data, receive confirmation."
+   },
+   {
+    "name": "Auditor",
+    "needs": "Verify that policies map to systems and that sampled requests were fully executed."
+   }
+  ],
+  "user_stories": [
+   "As a privacy officer, I want to define 'clickstream data is kept at most 180 days' once so that every store holding clickstream enforces it.",
+   "As a privacy officer, I want to place a legal hold on a subject so that no system deletes their data until the hold is lifted.",
+   "As a user, I want to request account deletion and get confirmation within 30 days so that I know my data is gone.",
+   "As a data owner, I want my new table to be blocked from deploy if it has unclassified PII columns so that I do not create compliance debt.",
+   "As a data owner, I want deletion tasks delivered in batches with idempotency keys so that I can process them safely and efficiently.",
+   "As a data engineer, I want lake tables to support row-level deletes without daily full rewrites so that costs stay reasonable.",
+   "As an auditor, I want an append-only record of each request with per-store completion so that I can sample and verify.",
+   "As a security engineer, I want backups to expire within 35 days and be covered by key destruction so that deleted data cannot be restored."
+  ],
+  "functional": [
+   "Policy registry with data classes, min and max retention, deletion method, legal basis, version history and dry-run simulation.",
+   "Data catalog with dataset, column, data class, subject-id column, owner, store and lineage edges; CI and runtime scanners enforce classification.",
+   "Bulk expiry engine: configures native TTLs, partition drops and lifecycle rules from policy; reconciles configured versus desired.",
+   "Erasure workflow: intake, identity verification, grace period with cancel, hold check, plan generation from catalog, fan-out to store agents, retries, escalation, completion.",
+   "Store agent contract: delete(subject_ids, task_id) idempotent, returns counts and a completion token; standard agents for MySQL, Cassandra, Redis, Elasticsearch, Kafka, Iceberg, warehouse, SaaS APIs.",
+   "Per-subject key service for crypto-shredding of backups, logs and archives.",
+   "Deletion denylist consulted by ingestion, restore and replay paths.",
+   "Verification: canary subjects, residual scanners, sampling jobs, coverage and SLA dashboards, evidence export."
+  ],
+  "non_functional": [
+   {
+    "name": "Erasure SLA",
+    "target": "99.5 percent within 30 days end to end; tier-1 online stores within 72 h"
+   },
+   {
+    "name": "Correctness",
+    "target": "Zero residual personal data in covered stores after completion (verified by scans)"
+   },
+   {
+    "name": "Safety",
+    "target": "No deletion of data under legal hold or below statutory minimum; dry-run for every policy change"
+   },
+   {
+    "name": "Durability of evidence",
+    "target": "Deletion ledger retained 7 years, append-only, without the deleted personal data itself"
+   },
+   {
+    "name": "Production impact",
+    "target": "Delete jobs add < 5 percent load; throttled per store"
+   },
+   {
+    "name": "Throughput",
+    "target": "50k erasure requests/day burst, 500k store tasks/day"
+   },
+   {
+    "name": "Availability",
+    "target": "Intake 99.9 percent; workflow durable across restarts (no lost requests)"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "2 million erasure requests per year, about 5,500 per day average, bursts to 50k per day.",
+    "About 40 stores per subject on average after catalog planning (fan-out factor 40).",
+    "400 datasets in scope, 120 tier-1.",
+    "Lake holds 5 PB, with clickstream at 30 TB/day subject to 180-day retention.",
+    "Backups: daily snapshots retained 35 days."
+   ],
+   "math": [
+    "Tasks per day: 5,500 x 40 = 220k store tasks/day average; 2M/day at burst - batched per store into about 1,000-id jobs, so at most about 2,000 batch jobs per store per day at burst.",
+    "Clickstream expiry: 30 TB/day x 180 days = 5.4 PB steady state; dropping one day-partition per day reclaims 30 TB with a metadata operation instead of 30 TB of row deletes.",
+    "Row-level deletes in lake: if a subject's rows touch 1 in 1,000 files, a daily batch of 5,500 subjects touches a large fraction of partitions; hence merge-on-read delete files plus weekly compaction instead of rewriting files per request.",
+    "Key service: 300M users x 1 data key (wrapped, about 100 B) = 30 GB, trivially fits a replicated KV; 5,500 key destructions per day.",
+    "Backup resurrection window: with 35-day backups and 30-day deletion, worst case a subject's data exists in backups 65 days, which the policy must state, or crypto-shred keys to make backup copies unreadable immediately.",
+    "Deletion ledger: 220k task records/day x 300 B = about 66 MB/day, about 170 GB over 7 years."
+   ],
+   "summary": "The erasure workload is modest (hundreds of thousands of store tasks per day) but highly fanned out and must be batched per store. Bulk expiry is the large-volume problem and is solved by partition drops and lifecycle rules, not row deletes. Keys and ledger storage are small."
+  },
+  "out_of_scope": [
+   "Legal interpretation of retention periods per jurisdiction.",
+   "Consent and preference management UI.",
+   "Deletion inside third parties' own systems beyond calling their deletion APIs and recording responses.",
+   "Re-identification risk scoring for anonymised datasets beyond standard rules."
+  ]
+ },
+ "hld": {
+  "overview": "Policy lives as code in a registry mapping data classes to retention rules. A data catalog with lineage maps every dataset and column to a class and a subject key, enforced by CI checks and scanners. Two execution paths share these: bulk expiry, which configures native TTLs, partition drops and object lifecycle rules and reconciles them continuously; and subject erasure, a durable workflow that checks holds, plans per-store tasks from the catalog, fans out to idempotent store agents, crypto-shreds per-subject keys for unreachable copies, and records every step in an append-only deletion ledger. A verifier runs canaries and residual scans and produces evidence.",
+  "diagram": "\n   Policy authors (Legal, Privacy, Data owners)\n        | policy-as-code PRs (YAML), reviewed + versioned\n        v\n +-----------------+     +-------------------------+     +--------------------------+\n | Policy Registry |<--->| Data Catalog + Lineage  |<----| Schema scanners / PII    |\n | class -> rules  |     | dataset, column, class, |     | classifiers (CI + daily) |\n | holds, versions |     | owner, store, lineage   |     +--------------------------+\n +--------+--------+     +-----------+-------------+\n          |                          |\n          v                          v\n +-------------------------------------------------+       +----------------------+\n | Retention / Deletion Orchestrator (workflow)    |<------| Triggers:            |\n | durable workflows (Temporal), per-request saga  |       | erasure requests,    |\n | plan = catalog lookup -> tasks per store        |       | account closure,     |\n +---+---------+---------+---------+---------+-----+       | TTL schedules        |\n     |         |         |         |         |             +----------------------+\n     v         v         v         v         v\n +-------+ +-------+ +--------+ +--------+ +---------+   +----------------------------+\n | OLTP  | | Cache | | Search | | Kafka  | | Lake /  |   | Key Service (per-subject   |\n | DBs   | | Redis | | index  | | topics | | Iceberg |   | keys) - crypto-shred for   |\n | agent | | agent | | agent  | | agent  | | agent   |   | backups, logs, archives    |\n +---+---+ +---+---+ +---+----+ +---+----+ +----+----+   +-------------+--------------+\n     |         |         |          |           |                      |\n     +---------+---------+----+-----+-----------+----------------------+\n                              v\n              +---------------------------------+      +------------------------------+\n              | Deletion ledger (append-only)   |----->| Verifier: canary records,    |\n              | request, task, store, status,   |      | residual scans, sampling,    |\n              | proof, timestamps               |      | SLA dashboards, attestations |\n              +---------------------------------+      +------------------------------+\n",
+  "components": [
+   {
+    "name": "Policy registry",
+    "responsibility": "Versioned policy-as-code: data classes, retention min/max, deletion method, legal basis, exceptions; dry-run simulation of impact before rollout."
+   },
+   {
+    "name": "Data catalog and lineage",
+    "responsibility": "Inventory of datasets and columns with owner, store, class, subject-id column; lineage edges from sources to derived datasets (ETL, ML features, search indexes)."
+   },
+   {
+    "name": "Classification scanners and CI gate",
+    "responsibility": "Detect PII via column names, regex and ML classifiers in schemas and sampled data; block deploys of unclassified PII columns; flag unregistered buckets and tables."
+   },
+   {
+    "name": "Legal hold service",
+    "responsibility": "Holds by subject, dataset or case, with owner, reason and expiry review date; consulted before any deletion."
+   },
+   {
+    "name": "Bulk expiry engine",
+    "responsibility": "Translates policy into store-native mechanisms (Cassandra TTL, partition drops in MySQL/Iceberg, S3 lifecycle, Kafka retention.ms) and reconciles desired versus actual configs daily."
+   },
+   {
+    "name": "Erasure orchestrator",
+    "responsibility": "Durable workflow per request (Temporal): verify, grace period, hold check, plan, fan-out, retry, escalate, verify, close; idempotent and resumable."
+   },
+   {
+    "name": "Store agents",
+    "responsibility": "Standard per-technology deleters implementing delete(subject_ids, task_id) idempotently with throttling; custom agents for bespoke services and SaaS APIs."
+   },
+   {
+    "name": "Key service (crypto-shredding)",
+    "responsibility": "Per-subject data keys wrapped by KMS master keys; encryption of PII in logs, archives and backups; key destruction on erasure."
+   },
+   {
+    "name": "Deletion denylist (tombstone registry)",
+    "responsibility": "Set of erased subject ids (hashed) consulted on ingest, backup restore and stream replay to prevent resurrection."
+   },
+   {
+    "name": "Deletion ledger",
+    "responsibility": "Append-only record of requests, plans, task results, policy version and evidence; contains hashed subject ids, not personal data."
+   },
+   {
+    "name": "Verifier and reporting",
+    "responsibility": "Canary subjects, residual scans, statistical sampling, coverage reports, SLA dashboards, evidence export for regulators."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Subject erasure request",
+    "steps": [
+     "User requests deletion in app; Privacy API verifies identity (re-authentication or OTP) and creates request with a hashed subject id.",
+     "Orchestrator starts a workflow; account is soft-disabled immediately (login blocked, profile hidden) and a 14-day cancellable grace period begins.",
+     "After grace, the orchestrator checks legal holds and statutory minimums; held fields or datasets are recorded as exempt with reason and review date.",
+     "Plan: catalog query returns every dataset with this subject's id (direct and via lineage), grouped by store, with deletion method per class.",
+     "Tasks are enqueued to store agents, batched per store; each agent deletes or anonymises idempotently and returns counts plus a completion token.",
+     "Key service destroys the subject key, making PII in backups, audit archives and immutable logs unreadable; subject added to the denylist.",
+     "Verifier runs residual scans on tier-1 stores; on zero hits, the ledger records completion and the user receives confirmation."
+    ]
+   },
+   {
+    "name": "Time-based expiry",
+    "steps": [
+     "Policy says CLICKSTREAM max 180 days; catalog lists 14 datasets of that class.",
+     "Bulk expiry engine sets native mechanisms: Iceberg partition drop for day > 180, Kafka retention.ms 7 days for raw topics, Elasticsearch index lifecycle delete at 180 days.",
+     "Daily reconciler compares actual configs and oldest data timestamp per dataset with policy; drift raises a ticket to the owner and a red cell on the coverage dashboard.",
+     "Expiry actions are recorded in the ledger with bytes and partitions removed."
+    ]
+   },
+   {
+    "name": "New dataset onboarding",
+    "steps": [
+     "Engineer adds a table migration; CI scanner detects columns like phone and email without classification annotations and fails the build.",
+     "Engineer annotates columns with data classes and subject-id column, registers owner; catalog entry is created.",
+     "Policy registry assigns retention; bulk expiry engine configures TTL or partitioning; a standard store agent is attached for erasure.",
+     "Launch review requires a passing canary deletion test for the new dataset."
+    ]
+   }
+  ],
+  "data_flow": "Policy (Git) -> registry -> joined with catalog classes -> two executors. Bulk: registry + catalog -> expiry engine -> native TTL/partition/lifecycle configs -> stores -> reconciler -> ledger. Erasure: user -> Privacy API -> orchestrator -> hold check -> catalog plan -> store agents (delete/anonymise) + key service (shred) + denylist -> verifier -> ledger -> confirmation. Ingest, restore and replay paths read the denylist. Scanners feed the catalog continuously."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/erasure-requests",
+    "request": "{subject_type: user|seller, subject_ref, verification_token, scope: full|marketing|specific_classes}",
+    "response": "202 {request_id, status: GRACE, grace_ends_at, expected_completion_by}",
+    "notes": "Idempotent per (subject, open request); cancel allowed until grace ends."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/erasure-requests/{id}",
+    "request": "-",
+    "response": "200 {status, tasks: {done, pending, exempt}, exemptions: [{class, reason, until}]}",
+    "notes": "User-visible status without internal store names."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/legal-holds",
+    "request": "{scope: subject|dataset|case, target, reason, case_ref, review_by}",
+    "response": "201 {hold_id}",
+    "notes": "Only Legal role; hold creation and release are themselves audited."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/policies/{data_class}",
+    "request": "{min_retention_days, max_retention_days, method: delete|anonymise|crypto_shred, legal_basis, version}",
+    "response": "200 {version, dry_run_report_url}",
+    "notes": "Requires dry-run review; rollout staged per store tier."
+   },
+   {
+    "method": "POST",
+    "path": "/agent/v1/delete",
+    "request": "{task_id, dataset, subject_id_hashes or ids: [...], method, deadline}",
+    "response": "200 {task_id, rows_affected, completion_token} | 409 already_done | 429 retry_after",
+    "notes": "Contract every store agent implements; must be idempotent on task_id and safe to repeat."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/coverage",
+    "request": "store?, owner?, class?",
+    "response": "200 {datasets: [{id, class, policy, enforced: bool, oldest_record_age_days, drift}]}",
+    "notes": "Feeds dashboards and auditor evidence."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Policy",
+    "store": "Git + Postgres (registry)",
+    "fields": [
+     "data_class",
+     "version",
+     "min_retention_days",
+     "max_retention_days",
+     "method",
+     "legal_basis",
+     "effective_from",
+     "approved_by"
+    ],
+    "keys": "PK (data_class, version)",
+    "notes": "Immutable versions; tasks record the version used."
+   },
+   {
+    "entity": "DatasetCatalogEntry",
+    "store": "Catalog DB (e.g. DataHub/OpenMetadata backend)",
+    "fields": [
+     "dataset_id",
+     "store_type",
+     "location",
+     "owner_team",
+     "columns[{name, data_class, is_subject_key}]",
+     "partition_scheme",
+     "agent_id",
+     "tier",
+     "lineage_upstream[]"
+    ],
+    "keys": "PK dataset_id; index on data_class and on is_subject_key",
+    "notes": "Lineage edges allow deletion plans to reach derived datasets."
+   },
+   {
+    "entity": "ErasureRequest",
+    "store": "Postgres (orchestrator) + Temporal history",
+    "fields": [
+     "request_id",
+     "subject_hash",
+     "scope",
+     "status",
+     "created_at",
+     "grace_ends_at",
+     "deadline",
+     "policy_versions",
+     "exemptions[]"
+    ],
+    "keys": "PK request_id; unique (subject_hash) where status open",
+    "notes": "Holds hashed subject id only after completion; raw id purged at close."
+   },
+   {
+    "entity": "DeletionTask",
+    "store": "Postgres + deletion ledger (append-only)",
+    "fields": [
+     "task_id",
+     "request_id or expiry_run_id",
+     "dataset_id",
+     "method",
+     "attempts",
+     "status",
+     "rows_affected",
+     "completion_token",
+     "finished_at"
+    ],
+    "keys": "PK task_id = hash(request_id, dataset_id); index (dataset_id, status)",
+    "notes": "Deterministic task_id makes re-planning idempotent."
+   },
+   {
+    "entity": "SubjectKey",
+    "store": "Key service KV (replicated), wrapped by KMS",
+    "fields": [
+     "subject_hash",
+     "key_id",
+     "wrapped_dek",
+     "created_at",
+     "destroyed_at"
+    ],
+    "keys": "PK subject_hash",
+    "notes": "Key backups expire within 7 days so destruction is final within the SLA."
+   },
+   {
+    "entity": "Denylist entry",
+    "store": "Redis set + durable Postgres table, Bloom filter snapshot for ingest",
+    "fields": [
+     "subject_hash",
+     "erased_at",
+     "scope"
+    ],
+    "keys": "PK subject_hash",
+    "notes": "Bloom filter (about 0.1 percent FPR) at ingest; exact check on hit."
+   }
+  ],
+  "classes": [
+   {
+    "name": "PolicyEvaluator",
+    "responsibility": "Deterministically decide what may be deleted for a subject or dataset given policies, holds and minimums.",
+    "methods": [
+     "evaluate(subject, dataset, now) -> Decision",
+     "dryRun(policyChange) -> ImpactReport"
+    ]
+   },
+   {
+    "name": "DeletionPlanner",
+    "responsibility": "Build per-store task plans from the catalog and lineage.",
+    "methods": [
+     "plan(request) -> list[Task]",
+     "expandLineage(dataset) -> list[Dataset]",
+     "groupByStore(tasks)"
+    ]
+   },
+   {
+    "name": "ErasureWorkflow",
+    "responsibility": "Durable saga for one request with timers, retries and escalation.",
+    "methods": [
+     "run(request)",
+     "awaitGrace()",
+     "fanOut(tasks)",
+     "onTaskFailed(task)",
+     "verifyAndClose()"
+    ]
+   },
+   {
+    "name": "StoreAgent (interface)",
+    "responsibility": "Idempotent deletion for one technology.",
+    "methods": [
+     "delete(task) -> Result",
+     "estimate(task) -> rows",
+     "verify(subject_hash) -> residual_count"
+    ]
+   },
+   {
+    "name": "ExpiryReconciler",
+    "responsibility": "Ensure store-native expiry matches policy and measure oldest data.",
+    "methods": [
+     "desiredConfig(dataset)",
+     "actualConfig(dataset)",
+     "apply(diff)",
+     "oldestRecordAge(dataset)"
+    ]
+   },
+   {
+    "name": "ResidualScanner",
+    "responsibility": "Search for erased subjects and canaries across stores.",
+    "methods": [
+     "scan(dataset, subject_hashes)",
+     "runCanaries()",
+     "report()"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Policy evaluation with precedence",
+    "explain": "Deletion decisions must be deterministic and explainable. Precedence: legal hold blocks everything in its scope; statutory minimum retention blocks deletion of the specific fields it covers (others are deleted or anonymised); otherwise erasure request or max retention triggers deletion via the class method. Every decision records the inputs and policy version.",
+    "pseudocode": "def evaluate(subject, dataset, now):\n    if holds.active(subject=subject, dataset=dataset):\n        return Decision('KEEP', reason='LEGAL_HOLD')\n    out = []\n    for col in dataset.subject_columns_and_payload():\n        p = policy.for_class(col.data_class)\n        age = now - record_time(subject, dataset)\n        if age < p.min_retention and p.legal_basis == 'STATUTORY':\n            out.append((col, 'KEEP_UNTIL', record_time + p.min_retention))\n        else:\n            out.append((col, p.method))        # delete | anonymise | crypto_shred\n    return Decision('PARTIAL' if any(a[1] == 'KEEP_UNTIL' for a in out) else 'DELETE', out)"
+   },
+   {
+    "name": "Fan-out saga with idempotent tasks and escalation",
+    "explain": "The workflow plans tasks with deterministic ids, dispatches them in parallel per store with concurrency limits, retries with exponential backoff and jitter, escalates after N failures, and only closes when all tasks are done or exempted. Durable execution (Temporal) means a crash resumes from the last step.",
+    "pseudocode": "def run(req):\n    disable_account(req.subject); sleep_until(req.grace_ends_at)\n    if req.cancelled: return close('CANCELLED')\n    tasks = planner.plan(req)                      # task_id = hash(req.id, dataset.id)\n    for t in tasks:\n        d = evaluator.evaluate(req.subject, t.dataset, now())\n        if d.kind == 'KEEP': ledger.exempt(t, d); continue\n        spawn(execute, t, d)\n    await_all(); keys.shred(req.subject); denylist.add(req.subject)\n    if scanner.scan_tier1(req.subject) == 0: ledger.close(req)\n    else: incident('RESIDUAL_DATA', req)\n\ndef execute(t, d):\n    for attempt in range(8):\n        r = agent(t.store).delete(t, d)           # idempotent on t.id\n        if r.ok: return ledger.done(t, r)\n        sleep(min(6*HOUR, MINUTE * 2**attempt) * random.uniform(0.5, 1.5))\n    escalate(t.dataset.owner, t, deadline=t.deadline)"
+   },
+   {
+    "name": "Lake row deletes with merge-on-read and compaction",
+    "explain": "Columnar files are immutable, so deleting a few rows means rewriting files. Iceberg format v2 writes small delete files (equality or position deletes) that readers apply on the fly, then a scheduled compaction rewrites affected data files and expires old snapshots so the bytes physically disappear. Snapshot expiry is the step people forget: until old snapshots are expired, time travel can still read deleted rows.",
+    "pseudocode": "daily:\n    ids = batch_of_subject_ids_for(dataset)            # e.g. 5,500 per day\n    DELETE FROM lake.orders_enriched WHERE user_hash IN ids   -- writes delete files\nweekly:\n    CALL rewrite_data_files(table, where='has_delete_files')\n    CALL expire_snapshots(table, older_than=now() - 7 days)\n    CALL remove_orphan_files(table, older_than=now() - 3 days)\n    assert scan(table, user_hash IN erased_last_30d) == 0"
+   }
+  ],
+  "sequence": "\nUser      PrivacyAPI     Orchestrator    PolicyReg/Catalog   StoreAgent(xN)   KeySvc    Ledger\n | erase me  |               |                  |                |            |         |\n |---------->| verify identity, create request  |                |            |         |\n |           |-------------->| start workflow   |                |            |         |\n |           |               |---- holds? ----->|                |            |         |\n |           |               |<-- none; plan ---|                |            |         |\n |           |               |  (stores, keys, rules, deadlines) |            |         |\n |           |               |---------------------------------------------------- log ->|\n |           |               |-- soft-delete / disable login ----->|          |         |\n |           |               |   (grace 14 days, cancellable)    |            |         |\n |           |               |  ... grace ends ...               |            |         |\n |           |               |-- delete(subject, task_id) ------>| idempotent |         |\n |           |               |<-------------- done + counts -----|            |         |\n |           |               |-- shred(subject key) ---------------------->|  |         |\n |           |               |<------------------------------------ ok ----|  |         |\n |           |               |---- verify (residual scan) ------>|            |         |\n |           |               |<-------------- 0 rows found ------|            |         |\n |           |               |------------------------------------------------- close ->|\n |<-- confirmation (within 30 days) ----------|                  |            |         |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Backup restore after a disaster brings back users who were erased last week.",
+   "handling": "Restore procedure replays the deletion denylist against restored data before serving traffic; PII encrypted with shredded keys is unreadable anyway. Restores without the denylist step are blocked by the runbook and tooling."
+  },
+  {
+   "case": "Kafka topic replay or a new consumer reprocesses 7 days of events containing an erased user.",
+   "handling": "Consumers check the denylist Bloom filter at ingest and drop or anonymise matches; for compacted topics publish a tombstone for the user key; long-retention topics carry PII encrypted with per-subject keys."
+  },
+  {
+   "case": "User requests deletion while a fraud investigation is open on their account.",
+   "handling": "Legal hold on the subject; workflow records exemption with case reference and review date, account is still disabled, and the request resumes automatically when the hold is lifted."
+  },
+  {
+   "case": "Statutory minimum: invoices must be retained 8 years but the user asks for erasure.",
+   "handling": "Partial deletion: keep invoice fields required by law (amount, tax ids, date), delete or anonymise others (phone, address beyond what tax law needs, browsing history); tell the user what is retained and why."
+  },
+  {
+   "case": "Derived data: user's purchases are in an ML training set and a trained model.",
+   "handling": "Lineage marks training sets as derived; delete rows from training data and exclude from next retrain; models are retrained on schedule (for example monthly) and policy states that models do not store raw personal data; high-risk models (memorising embeddings) are retrained sooner."
+  },
+  {
+   "case": "Aggregates: daily sales by city include the user's orders.",
+   "handling": "Aggregates that cannot re-identify an individual (k-anonymity threshold, for example k >= 20 per cell) are not personal data and are retained; small cells are suppressed or recomputed."
+  },
+  {
+   "case": "Search index and caches still serve the user's profile for minutes after deletion.",
+   "handling": "Soft-disable at request time removes visibility immediately via a denylist check in the serving path; cache invalidation and index delete tasks complete within hours; TTLs on caches bound staleness (for example 24 h max)."
+  },
+  {
+   "case": "Store agent times out after partially deleting rows.",
+   "handling": "Delete is idempotent and keyed by task_id; retry deletes the remaining rows; agent verifies residual count before reporting success."
+  },
+  {
+   "case": "Policy change shortens retention from 365 to 90 days.",
+   "handling": "Dry-run shows bytes and datasets affected; rollout staged by tier with delete rate limits; a 7-day pause between dry-run approval and execution allows objections; mass deletes are not reversible, so snapshot-level safety (soft delete of partitions) for 7 days."
+  },
+  {
+   "case": "Subject identity spans multiple ids (user id, phone, device ids, email hash, guest checkout).",
+   "handling": "Identity graph resolves all linked identifiers at plan time; catalog marks which column holds which identifier type; guest data linked only by email is included if verifiably the same person."
+  },
+  {
+   "case": "Third-party processors (SMS provider, logistics partner) hold copies.",
+   "handling": "Processor registry in the catalog; agents call processors' deletion APIs or send contractual deletion notices; ledger records request and acknowledgement; contracts require deletion within 30 days."
+  },
+  {
+   "case": "Duplicate and repeated erasure requests from the same user.",
+   "handling": "Unique open request per subject_hash; repeat requests return the existing request status; after completion a new request re-runs plan in case new data appeared."
+  },
+  {
+   "case": "Unregistered dataset discovered by scanner containing phone numbers (an analyst's CSV export in S3).",
+   "handling": "Scanner raises a finding, owner assigned via bucket tags, dataset quarantined (access restricted) until classified or deleted; repeat offenders blocked by bucket policies that require classification tags."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "DataHub or OpenMetadata",
+   "layer": "Catalog and lineage",
+   "overview": "Open-source metadata platforms that index datasets, schemas, owners, tags and lineage from many systems.",
+   "why": "Gives the inventory and lineage that every deletion plan depends on, with APIs for tags like data class.",
+   "alternatives": "Cloud-native catalogs (AWS Glue, Google Dataplex) simpler but limited to that cloud; home-grown registry (fits exactly, high maintenance)."
+  },
+  {
+   "name": "Temporal",
+   "layer": "Workflow orchestration",
+   "overview": "Durable execution engine: workflow code survives crashes, with timers, retries and history.",
+   "why": "Erasure requests are long-running (weeks with grace and holds), fan out to dozens of tasks and must never be lost; Temporal models this naturally.",
+   "alternatives": "Airflow (batch DAGs, poor for per-request long timers); a hand-rolled state machine on Postgres plus queues (works, more bugs)."
+  },
+  {
+   "name": "Apache Iceberg (or Delta Lake / Hudi)",
+   "layer": "Lake tables",
+   "overview": "Table formats over object storage with snapshots, row-level deletes (delete files), compaction and snapshot expiry.",
+   "why": "Enables GDPR row deletes without rewriting whole partitions per request, and partition drops for bulk expiry.",
+   "alternatives": "Plain Parquet on S3 (requires full file rewrites); warehouse-native tables (simpler deletes, higher cost)."
+  },
+  {
+   "name": "Cloud KMS plus per-subject data keys",
+   "layer": "Crypto-shredding",
+   "overview": "Envelope encryption: a data key per subject, wrapped by a master key in a hardware-backed KMS.",
+   "why": "Only practical way to erase from backups, WORM archives and immutable logs.",
+   "alternatives": "Per-record keys (too many); per-tenant keys (cannot erase one user); no encryption (cannot erase immutable copies)."
+  },
+  {
+   "name": "Store-native expiry: Cassandra TTL, Kafka retention.ms, Elasticsearch ILM, S3 lifecycle, MySQL partition drop",
+   "layer": "Bulk expiry",
+   "overview": "Built-in mechanisms that expire data by age with minimal cost.",
+   "why": "Bulk expiry at petabyte scale must be metadata operations, not row deletes; the platform just configures and reconciles these.",
+   "alternatives": "Custom delete jobs (expensive, tombstone-heavy, easy to forget)."
+  },
+  {
+   "name": "PII classifiers (e.g. Microsoft Presidio, cloud DLP)",
+   "layer": "Discovery",
+   "overview": "Pattern and ML-based detection of personal data in text and tables.",
+   "why": "Finds unclassified copies and validates catalog tags; essential because inventories drift.",
+   "alternatives": "Manual annotation only (misses shadow data); commercial data security posture tools (broader, costly)."
+  },
+  {
+   "name": "PostgreSQL",
+   "layer": "Registry, requests, ledger",
+   "overview": "Relational database with strong constraints.",
+   "why": "Policies, requests and tasks are relational with uniqueness constraints (one open request per subject, deterministic task ids).",
+   "alternatives": "DynamoDB (scales further, weaker ad hoc querying for audits)."
+  },
+  {
+   "name": "Redis with Bloom filter snapshots",
+   "layer": "Denylist",
+   "overview": "In-memory data store; Bloom filters give compact probabilistic membership tests.",
+   "why": "Ingest paths need a sub-millisecond 'is this subject erased?' check; Bloom filter of 10M entries at 0.1 percent FPR is about 18 MB.",
+   "alternatives": "Exact lookup in a DB on every event (too slow at high ingest); no denylist (resurrection risk)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Data catalog, classification and lineage",
+   "explain": "You cannot delete what you cannot find. A data catalog is an inventory of datasets - tables, topics, buckets, indexes - with metadata such as schema, owner, location and sensitivity tags. Classification assigns each column or field a data class (for example contact PII, payment data, behavioural data) and marks which column identifies the data subject. Lineage records how data flows: table B is built from table A by an ETL job; feature store C is derived from B; search index D is fed from A. Lineage can be captured from job definitions (SQL parsing, Spark listeners, Airflow metadata) or declared manually. For enforcement, lineage is what turns 'delete user 42 from the orders table' into 'and from every place orders were copied'. Catalogs rot unless they are wired into the development lifecycle: schema migrations and pipeline definitions should be checked in CI for classification annotations, and scanners should sample real data to find personal data that was never declared. The catalog then becomes the single source for both policy enforcement and access control.",
+   "in_this_design": "Every dataset in scope has a catalog entry with data class per column, subject key column, owner, store, tier and agent. The deletion planner expands lineage to reach derived datasets, CI blocks unclassified PII columns, and daily scanners hunt for undeclared copies.",
+   "key_points": [
+    "Inventory first: enforcement coverage cannot exceed catalog coverage.",
+    "Classify at column level and mark the subject identifier.",
+    "Lineage is how deletion reaches copies and derived data.",
+    "Wire the catalog into CI and scanners or it decays."
+   ],
+   "qa": [
+    {
+     "q": "How do you bootstrap a catalog for 400 existing datasets?",
+     "a": "Auto-ingest schemas from all stores, run PII classifiers on samples to propose tags, have owners confirm tier-1 first, and publish coverage per team. Then add CI gates so new datasets cannot appear unclassified."
+    },
+    {
+     "q": "Lineage is incomplete for some ad hoc analyst tables. What then?",
+     "a": "Treat them as risk: scanners detect PII, the platform quarantines unregistered datasets, and analyst workspaces have short default retention (for example 30 days) so unknown copies expire even if lineage is missing."
+    },
+    {
+     "q": "Why mark the subject key column explicitly?",
+     "a": "Deletion and scanning need to know how to find a person's rows. A table might have buyer_id and seller_id; erasing a buyer must target the right column and not delete the seller's records."
+    }
+   ]
+  },
+  {
+   "name": "Policy as code and deterministic precedence",
+   "explain": "A policy written in a document is interpreted differently by each team. Policy as code expresses rules in a machine-readable format (YAML, Rego for Open Policy Agent, or a typed schema) stored in version control, reviewed through pull requests, tested, and evaluated by software. That gives a single authoritative version, an audit trail of who changed what and when, and the ability to simulate impact before rollout. Retention rules have several competing inputs: maximum retention (privacy minimisation), minimum retention (tax, financial, telecom laws), user rights (erasure, objection), legal holds (litigation, investigations), and contractual obligations. A good evaluator applies a fixed precedence order and returns an explanation, so the same inputs always produce the same decision, which can be shown to an auditor. Policies should be attached to data classes rather than to individual tables, so that a new table inherits the right rule just by being classified. Changes to policies are dangerous because deletion is irreversible; dry-run reports and staged rollouts are the equivalent of canary deploys.",
+   "in_this_design": "The registry stores versioned rules per data class; the PolicyEvaluator applies hold > statutory minimum > erasure or max retention, field by field, and stamps decisions with the policy version in the deletion ledger. Changes require a dry-run impact report and staged rollout.",
+   "key_points": [
+    "Rules live in Git, attach to data classes, and are evaluated by code.",
+    "Precedence: legal hold, then statutory minimum, then erasure or max retention.",
+    "Every decision records inputs and policy version for audit.",
+    "Dry-run and stage policy changes; deletion cannot be rolled back."
+   ],
+   "qa": [
+    {
+     "q": "Why attach policy to data classes rather than tables?",
+     "a": "There are hundreds of tables and new ones appear weekly; there are a few dozen classes. Class-level policy means classification is the only per-table decision, and a policy change applies everywhere consistently."
+    },
+    {
+     "q": "How do you handle conflicting laws across countries?",
+     "a": "Policies can be scoped by jurisdiction of the data subject or entity; evaluator picks the rule for the subject's jurisdiction and, when unclear, the stricter combination - longest required minimum for required fields, shortest maximum for everything else."
+    },
+    {
+     "q": "A bug in a policy change would delete 2 years of order data. How do you stop it?",
+     "a": "Dry-run report shows the bytes and datasets before execution; changes that increase deletion volume beyond a threshold need two approvals; execution is rate-limited and partitions are soft-dropped (moved to a quarantine location for 7 days) before hard deletion."
+    }
+   ]
+  },
+  {
+   "name": "Saga-style orchestration with idempotent tasks",
+   "explain": "A saga is a long-running business process broken into steps, each a local transaction in a different system, coordinated without a global distributed transaction. If a step fails, the saga retries or runs compensating actions. Orchestrated sagas have a central coordinator that tells each participant what to do and tracks state; choreographed sagas let participants react to events. For multi-step processes with deadlines, retries, timers and human escalation, orchestration is easier to reason about and to audit. Each step must be idempotent - safe to execute more than once - because retries after timeouts are unavoidable: did the delete fail, or did it succeed and the response get lost? Deterministic task ids (hash of request and dataset) let participants recognise repeats. Durable workflow engines such as Temporal or AWS Step Functions persist the coordinator's state after every step, so a crash resumes rather than restarts, and long timers (a 14-day grace period) are cheap. Deletion has no meaningful compensation - you cannot undelete - so the saga is forward-only: it retries until success or escalates, and irreversible steps come after all checks.",
+   "in_this_design": "Each erasure request is a Temporal workflow: disable account, wait grace, check holds, plan tasks with deterministic ids, fan out to store agents with bounded concurrency and jittered retries, shred keys, verify, close. Failures escalate to dataset owners with the SLA clock still running.",
+   "key_points": [
+    "Orchestrate long, multi-system processes with a durable coordinator.",
+    "Every task idempotent with a deterministic id; retries are normal.",
+    "Deletion is forward-only: no compensation, so do checks before irreversible steps.",
+    "Escalate stuck tasks to humans with deadlines instead of retrying forever."
+   ],
+   "qa": [
+    {
+     "q": "Why not have each service subscribe to a 'UserDeleted' event (choreography)?",
+     "a": "It is a fine transport, but nobody would know when all copies are gone. The orchestrator owns the plan, tracks each store's completion, retries, escalates and produces evidence; services can still receive the task via events."
+    },
+    {
+     "q": "The orchestrator crashes mid-fan-out. What happens?",
+     "a": "Temporal replays workflow history and resumes; tasks already completed are recorded, in-flight ones are retried, and agents dedupe on task_id."
+    },
+    {
+     "q": "One store keeps failing for a week. Do you close the request?",
+     "a": "No. The request stays open with that task overdue, the owner is paged, and SLA reporting shows the breach. Closing without completion would make the evidence false."
+    }
+   ]
+  },
+  {
+   "name": "Crypto-shredding and envelope encryption",
+   "explain": "Some copies of data cannot be practically edited: backups, write-once archives, immutable logs, long-retention Kafka topics, data already shipped to cold storage. Crypto-shredding makes them irrelevant: encrypt the personal data with a key specific to the subject, and to delete, destroy the key. Envelope encryption makes this scalable: each subject has a data encryption key (DEK) used to encrypt their fields; the DEK is stored wrapped (encrypted) by a key encryption key held in a KMS or HSM. Encrypting and decrypting uses the DEK locally; only wrapping and unwrapping touches the KMS. Destroying the wrapped DEK, and ensuring no backup of it survives beyond a bounded window, renders all ciphertext permanently unreadable. Granularity matters: per-tenant keys cannot erase one user; per-record keys explode key counts; per-subject keys are the usual compromise. The trade-offs are operational: every reader must decrypt (latency, caching of DEKs), searches on encrypted fields need blind indexes, key loss means data loss, and the key store itself must be highly available and backed up carefully.",
+   "in_this_design": "PII written to logs, Kafka topics, audit archives and backups is encrypted with the subject's DEK. On erasure the key service deletes the wrapped DEK; key-store backups expire within 7 days, so all backup copies become unreadable well within the 30-day SLA.",
+   "key_points": [
+    "Delete the key, not the data, where the data cannot be edited.",
+    "Per-subject DEKs wrapped by a KMS master key.",
+    "Key backups must expire on a bounded schedule or shredding is not final.",
+    "Costs: decryption on read, blind indexes for search, key availability."
+   ],
+   "qa": [
+    {
+     "q": "Is crypto-shredded data really 'deleted' for GDPR?",
+     "a": "Regulators and practitioners generally accept that data rendered permanently unreadable with destroyed keys is effectively erased, especially when combined with deleting accessible copies. State this in the policy and document the key destruction process."
+    },
+    {
+     "q": "What happens if the key service is down?",
+     "a": "Reads of encrypted PII fail or degrade (show masked values); writes queue. So the key service needs multi-AZ replication, DEK caching with short TTLs, and is treated as tier-0 infrastructure."
+    },
+    {
+     "q": "Why not encrypt everything with one key and rotate it?",
+     "a": "Rotating a global key does not erase one person's data; old ciphertext under the old key would still be readable unless you destroy the old key, which erases everyone. Erasure needs keys at subject granularity."
+    }
+   ]
+  },
+  {
+   "name": "Tombstones, TTLs and compaction in LSM and log stores",
+   "explain": "In log-structured stores (Cassandra, RocksDB, HBase, Kafka compacted topics) data is never overwritten in place. A delete writes a tombstone: a marker saying 'this key is deleted as of time T'. Reads see the tombstone and hide older values. The bytes are physically removed only when compaction merges files and drops both the old values and, after a grace period, the tombstone itself. In Cassandra, tombstones are kept for gc_grace_seconds (10 days by default) so replicas that missed the delete learn it during repair; if a replica is down longer than that and comes back, it can resurrect deleted data ('zombie' rows). Heavy deletes create tombstone-heavy partitions that slow reads and can hit tombstone thresholds that fail queries. TTLs are tombstones set at write time and expire automatically, which works well when every row in a partition shares a lifetime; combined with time-window compaction, whole expired files are dropped without scanning. Kafka compacted topics keep the latest value per key; a null-value tombstone removes the key after delete.retention.ms. Non-compacted topics delete only by segment age via retention.ms. Understanding when bytes are actually gone matters for deletion SLAs.",
+   "in_this_design": "Bulk expiry uses TTL plus time-window compaction in Cassandra and retention.ms in Kafka. Erasure in Cassandra writes tombstones, and the verifier counts the request complete only after compaction and repair cycles ensure bytes are gone, all within the 30-day window; Kafka compacted topics get tombstones, others rely on encryption and bounded retention.",
+   "key_points": [
+    "A delete in an LSM is a tombstone; bytes vanish only after compaction.",
+    "Replicas down longer than gc_grace can resurrect deleted rows; repair within the grace window.",
+    "TTL + time-window compaction makes bulk expiry nearly free.",
+    "Kafka: tombstones only work on compacted topics; otherwise rely on retention.ms or encryption."
+   ],
+   "qa": [
+    {
+     "q": "Why does a deleted user's data sometimes reappear in Cassandra?",
+     "a": "A replica missed the delete, was down longer than gc_grace_seconds, and after tombstones were purged it streamed its old copy back during repair. Run repairs more often than gc_grace and never bring back replicas offline longer than that without rebuilding them."
+    },
+    {
+     "q": "Your delete-heavy partition starts failing reads. Why?",
+     "a": "Reads scan many tombstones and hit the tombstone failure threshold. Model data so deletes remove whole partitions or use TTLs, and tune compaction to purge tombstones."
+    },
+    {
+     "q": "How do you delete one user's events from a 30-day-retention Kafka topic?",
+     "a": "You cannot remove records from a non-compacted segment. Options: wait for retention (if within SLA), encrypt PII with per-subject keys and shred, or move to a compacted topic keyed by user and publish a tombstone."
+    }
+   ]
+  },
+  {
+   "name": "Partition-aligned retention and lake table deletes",
+   "explain": "The cheapest deletion is one that removes a whole unit at once: a time partition, a file, an index, a bucket prefix. If tables are partitioned by date, expiring 180-day-old data means dropping one partition per day, a metadata operation that costs the same regardless of size. This is why retention design must influence physical layout: partition by the dimension you expire by. Row-level deletion (for an individual subject) is harder in columnar data lakes, where files are immutable and large (128 MB to 1 GB). Rewriting a whole file to remove one row is copy-on-write and expensive when requests are frequent. Modern table formats such as Iceberg, Delta and Hudi offer merge-on-read deletes: write a small delete file listing removed rows (by position or by equality on key), which readers apply, then periodically compact to rewrite data files without those rows. Two subtle steps finish the job: expiring old snapshots (otherwise time travel still reads deleted rows) and removing orphan files. Batching subject deletions daily or weekly amortises the rewrite cost across many requests while staying within the SLA.",
+   "in_this_design": "Clickstream and logs are partitioned by day so expiry is partition drops. Subject erasure in Iceberg tables runs as daily batched DELETEs producing delete files, weekly compaction, snapshot expiry at 7 days and orphan file removal, with a verification scan afterwards.",
+   "key_points": [
+    "Partition by the dimension you expire by.",
+    "Drop partitions for bulk expiry; never mass row-delete.",
+    "Lake row deletes: delete files, compaction, then snapshot expiry.",
+    "Forgotten snapshots and time travel keep deleted data readable."
+   ],
+   "qa": [
+    {
+     "q": "You deleted a user's rows in an Iceberg table but an analyst can still query them. How?",
+     "a": "Time travel to an older snapshot. Deletion is only complete after snapshots older than the delete are expired and orphan files removed."
+    },
+    {
+     "q": "Why batch deletes daily instead of per request?",
+     "a": "Each delete touches files across many partitions; per-request rewrites would rewrite the same files thousands of times. Daily batches amortise cost while the 30-day SLA leaves ample room."
+    },
+    {
+     "q": "The warehouse table is partitioned by customer region, but retention is by date. Problem?",
+     "a": "Expiry must scan and delete rows across all partitions, which is expensive. Re-partition (or add date as a partition level) so retention becomes partition drops."
+    }
+   ]
+  },
+  {
+   "name": "Preventing resurrection: denylists and Bloom filters",
+   "explain": "Deletion is not a single moment; it is a state that must be maintained against processes that copy data back. Restores from backups, replays of event streams, late-arriving events from offline devices, re-imports from partners, and caches warmed from stale sources can all reintroduce erased data. A deletion denylist (sometimes called a tombstone registry) is a durable set of erased subject identifiers, stored as salted hashes so the list itself does not hold personal data. Ingest pipelines, restore tools and replay jobs consult it and drop or anonymise matching records. At high ingest rates an exact lookup per event is costly, so a Bloom filter - a compact bit array with k hash functions that answers 'definitely not present' or 'possibly present' - screens events first; only possible hits go to the exact store. A Bloom filter with about 10 bits per element and 7 hash functions gives roughly a 1 percent false positive rate; 14-15 bits per element gives about 0.1 percent. Bloom filters never give false negatives, which is the property that matters: no erased subject slips through. They cannot remove elements, so they are rebuilt periodically from the durable set.",
+   "in_this_design": "Every completed erasure adds the subject hash to the denylist (Postgres plus Redis). Ingest consumers load a Bloom filter snapshot refreshed every 10 minutes; backup restore and stream replay tooling apply the denylist before data is served.",
+   "key_points": [
+    "Deletion is a maintained state, not a one-time action.",
+    "Restores, replays and late events are the classic resurrection paths.",
+    "Store hashed ids so the denylist itself is not personal data.",
+    "Bloom filters: no false negatives, tunable false positives, rebuild to remove."
+   ],
+   "qa": [
+    {
+     "q": "Doesn't keeping a list of deleted users violate the deletion itself?",
+     "a": "Store a keyed hash (HMAC with a secret) of the identifier, which is not usable to contact or profile the person; it is kept for the legitimate purpose of honouring the deletion. Document it in the policy."
+    },
+    {
+     "q": "Why a Bloom filter rather than just Redis lookups?",
+     "a": "At hundreds of thousands of events per second, a network round trip per event is costly. A local Bloom filter of 10M entries at 0.1 percent FPR is about 18 MB and answers in microseconds; only rare positives need an exact check."
+    },
+    {
+     "q": "An old mobile client uploads offline orders for a user erased 3 weeks ago. What happens?",
+     "a": "Ingest checks the denylist; the account is gone, so the events are rejected or anonymised, and the client gets an account-not-found response."
+    }
+   ]
+  },
+  {
+   "name": "Verification: canaries, residual scans and evidence",
+   "explain": "An enforceable policy is one you can prove is enforced. Proof has three layers. Process evidence: an append-only record of each request or expiry run, the plan, each task's outcome, the policy version, and timestamps; this shows the system did what it intended. Outcome checks: independent scans that look for data that should not exist - erased subject hashes across stores, records older than maximum retention per dataset (oldest_record_age), and unregistered datasets with personal data. Canaries: synthetic subjects created regularly with data planted in every store through the normal product paths, then deleted through the normal erasure flow; a daily job confirms they disappear everywhere within the SLA. Canaries catch silent breakage such as a new table that never received a delete hook, much like synthetic monitoring catches outages before users do. Sampling gives statistical confidence for auditors: randomly select completed requests and re-scan. Coverage metrics (percentage of datasets classified, with policy, with a working agent) show where the system is blind. All of this turns 'we have a policy' into 'here is the evidence'.",
+   "in_this_design": "Canary users are created and erased daily; residual scanners check tier-1 stores for erased hashes and datasets for records older than max retention; the deletion ledger holds per-task evidence; coverage dashboards and evidence exports go to the DPO and auditors.",
+   "key_points": [
+    "Evidence = process records + outcome scans + canaries.",
+    "Canaries detect silent gaps like new tables without delete hooks.",
+    "Measure oldest record age per dataset against max retention.",
+    "Coverage metrics show where enforcement is blind."
+   ],
+   "qa": [
+    {
+     "q": "Why are canaries better than checking task statuses?",
+     "a": "Task statuses only cover stores the planner knew about. A canary planted through real product flows lands wherever real data lands, so if any store keeps it, the canary check fails even if no task existed for that store."
+    },
+    {
+     "q": "What would you show a regulator asking 'prove you deleted user X'?",
+     "a": "The ledger record for the request: timestamps, plan of datasets, per-store completion counts and tokens, key destruction record, residual scan result, and any exemptions with legal basis - without revealing other users' data."
+    },
+    {
+     "q": "How do you check time-based expiry is working?",
+     "a": "For each dataset, compute oldest record age daily and compare with policy max plus tolerance (for example one partition). Any dataset exceeding it is a policy violation alert assigned to the owner."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Hard delete vs anonymise vs crypto-shred",
+   "options": "Hard delete rows; irreversible anonymisation; destroy per-subject keys",
+   "choice": "Per class: hard delete in mutable OLTP and search, anonymise in analytics aggregates, crypto-shred for backups, logs and archives",
+   "why": "Each store has a different cheapest correct mechanism; one method everywhere is either impossible or too costly."
+  },
+  {
+   "decision": "Orchestration vs choreography",
+   "options": "Central orchestrator; event broadcast with each service self-managing",
+   "choice": "Orchestrator (Temporal) that may deliver tasks via events",
+   "why": "Need a plan, completion tracking, escalation and evidence; pure choreography cannot say when deletion is complete."
+  },
+  {
+   "decision": "Immediate vs batched deletion",
+   "options": "Delete per request immediately; batch per store daily or weekly",
+   "choice": "Immediate soft-disable plus batched physical deletion within SLA",
+   "why": "Users stop being visible at once; batching amortises cost in lake and LSM stores while meeting the 30-day deadline."
+  },
+  {
+   "decision": "Grace period",
+   "options": "None; 14 days cancellable",
+   "choice": "14-day cancellable grace with account disabled",
+   "why": "Protects against account takeover and regret; deletion is irreversible. The SLA clock includes grace, leaving 16 days for execution."
+  },
+  {
+   "decision": "Backup retention",
+   "options": "Long backups (1 year); short (35 days) plus crypto-shredding",
+   "choice": "35-day backups with PII encrypted under per-subject keys",
+   "why": "Bounds the resurrection window and makes backup copies unreadable immediately after key destruction."
+  },
+  {
+   "decision": "Central deleters vs owner-implemented hooks",
+   "options": "Platform deletes in every store directly; owners implement delete endpoints",
+   "choice": "Standard platform agents for common stores, owner-implemented agents for bespoke services, same contract",
+   "why": "Platform covers 80 percent cheaply; owners know their business invariants (for example cascading order deletes) for the rest."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "A store agent is down or failing repeatedly.",
+   "behavior": "Tasks retry with exponential backoff and jitter up to 6 h intervals; after 8 failures the owner is paged; request stays open and SLA dashboard shows the breach risk."
+  },
+  {
+   "failure": "Catalog unavailable when planning.",
+   "behavior": "Workflow waits and retries planning; no partial plan is executed, because an incomplete plan would produce false completion."
+  },
+  {
+   "failure": "Key service outage.",
+   "behavior": "Shredding steps wait; reads of encrypted PII degrade to masked values via cached DEKs expiring in 5 minutes; multi-AZ replicas make this rare."
+  },
+  {
+   "failure": "Policy bug triggers mass deletion.",
+   "behavior": "Delete-volume circuit breaker per dataset trips when deletions exceed 3x expected; partitions are soft-dropped to quarantine for 7 days, allowing recovery."
+  },
+  {
+   "failure": "Backup restore without denylist step.",
+   "behavior": "Restore tooling refuses to promote a restored database until the denylist job has run; shredded PII is unreadable regardless."
+  },
+  {
+   "failure": "Residual scan finds data after request closed.",
+   "behavior": "Treated as a privacy incident: re-open request, delete residual data, find root cause (missing lineage, missing agent), add a regression canary."
+  }
+ ],
+ "metrics": [
+  "Catalog coverage: percentage of datasets classified, with policy, with working agent (by tier).",
+  "Erasure requests by status and age; percentage completed within 30 days; p95 completion time.",
+  "Overdue tasks by store and owner team.",
+  "Residual-scan hits and canary pass rate (daily).",
+  "Oldest record age per dataset vs policy maximum; bytes held beyond maximum retention.",
+  "Bulk expiry bytes and partitions removed per day; config drift count from reconciler.",
+  "Legal holds active, with review dates overdue.",
+  "Denylist hits at ingest, restore and replay (resurrection attempts prevented).",
+  "Delete job load on stores (CPU, latency impact) and circuit breaker trips."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you handle data in third-party SaaS tools like the CRM or support desk?",
+   "a": "Register them as datasets in the catalog with a SaaS agent that calls their deletion API within rate limits; for tools without APIs, a human task with evidence upload. Contracts (DPAs) require processors to delete within the SLA, and the ledger records request and acknowledgement."
+  },
+  {
+   "q": "What about logs that contain user ids and IPs?",
+   "a": "Minimise first: do not log PII, or log pseudonymous ids. Application logs get short retention (for example 30 days) so they expire within the SLA by default; long-retention security logs encrypt PII fields with per-subject keys."
+  },
+  {
+   "q": "How do you roll this out in a company with hundreds of teams?",
+   "a": "Tier-1 stores first with platform agents, CI gates for new datasets, team scorecards on coverage, launch-review requirement for new services, and quarterly attestations by owners. Measure coverage and burn down, rather than a big-bang migration."
+  },
+  {
+   "q": "Is pseudonymisation enough?",
+   "a": "No. Pseudonymised data can be re-linked with the mapping table, so it remains personal data under GDPR and similar laws. It reduces risk and helps analytics, but erasure needs deletion of the data, deletion of the mapping key, or true anonymisation."
+  },
+  {
+   "q": "How do you ensure ML models do not retain deleted users?",
+   "a": "Lineage marks training datasets; deleted subjects are removed from training data and the next scheduled retrain excludes them. For models that can memorise personal data (embeddings per user, recommendation factors), delete the per-user vectors directly from the feature store and model serving index."
+  },
+  {
+   "q": "What would you do differently for a startup with 10 tables?",
+   "a": "Skip the platform: TTLs and partition-aligned tables, one delete script per table driven by a list in the repo, short backup retention, and a quarterly manual check. Add catalog and orchestration when systems and copies multiply."
+  },
+  {
+   "q": "How do you prove to auditors that time-based retention is enforced, not just configured?",
+   "a": "Show oldest record age per dataset against policy, reconciler drift reports, and expiry runs in the ledger with bytes removed; plus sampled direct queries during the audit."
+  }
+ ],
+ "key_points": [
+  "Separate policy (Legal decides periods) from enforcement (engineering makes it true and provable).",
+  "You cannot delete what you cannot find: catalog, column classification, lineage, CI gates, scanners.",
+  "Policy as code on data classes with deterministic precedence: hold, statutory minimum, then erasure or max retention.",
+  "Two execution paths: bulk expiry via TTLs and partition drops; subject erasure via durable, idempotent sagas.",
+  "Crypto-shred what you cannot edit: backups, immutable logs, archives, long Kafka topics.",
+  "Bytes are not gone until compaction, snapshot expiry and backup rotation; measure that.",
+  "Prevent resurrection with a hashed denylist on ingest, restore and replay paths.",
+  "Prove it: deletion ledger, residual scans, canary users, oldest-record-age per dataset.",
+  "Soft-disable immediately, physically delete in batches within a 30-day SLA.",
+  "Safety rails: dry-run policy changes, delete-volume circuit breakers, quarantine before hard drop."
+ ],
+ "quiz": [
+  {
+   "q": "Which single capability most limits how enforceable a retention policy can be?",
+   "options": [
+    "The speed of the delete jobs",
+    "The number of legal holds",
+    "The encryption algorithm used for backups",
+    "Coverage of the data catalog: classified datasets with known subject key columns and lineage"
+   ],
+   "answer": 3,
+   "why": "Enforcement cannot reach data the system does not know about. Fast delete jobs are useless against unknown copies."
+  },
+  {
+   "q": "A user requests erasure but tax law requires keeping their invoices for 8 years. Best handling?",
+   "options": [
+    "Refuse the entire request until 8 years pass",
+    "Keep only the legally required invoice fields, delete or anonymise the rest, and tell the user what is retained",
+    "Delete everything including invoices; privacy law wins",
+    "Pseudonymise the invoices and call it deleted"
+   ],
+   "answer": 1,
+   "why": "Statutory minimums override erasure only for the fields they cover. Pseudonymisation is tempting but still personal data and not deletion."
+  },
+  {
+   "q": "Clickstream must be kept at most 180 days and arrives at 30 TB/day. Most efficient enforcement?",
+   "options": [
+    "Partition by day and drop partitions older than 180 days",
+    "Nightly DELETE WHERE event_time < now() - 180 days",
+    "Encrypt all clickstream and rotate the key yearly",
+    "Row-level delete files in Iceberg for every expired row"
+   ],
+   "answer": 0,
+   "why": "Dropping a partition is a metadata operation regardless of size. Nightly row deletes rewrite or tombstone 30 TB per day."
+  },
+  {
+   "q": "You deleted a user's rows from an Iceberg table, yet an analyst still reads them. Most likely reason?",
+   "options": [
+    "Iceberg does not support deletes",
+    "The analyst's cache is stale",
+    "Old snapshots were not expired, so time travel can still read the deleted rows",
+    "Parquet files are encrypted"
+   ],
+   "answer": 2,
+   "why": "Deletion completes only after snapshot expiry and orphan cleanup. Caches could matter briefly, but not for direct time-travel queries."
+  },
+  {
+   "q": "Why is crypto-shredding the right tool for backups?",
+   "options": [
+    "Backups are impractical to edit per user, but destroying the user's key makes every backup copy unreadable",
+    "It compresses backups so deletion is faster",
+    "It allows backups to be restored without the user",
+    "It removes the need for any backup retention limits"
+   ],
+   "answer": 0,
+   "why": "Key destruction reaches all copies at once. It does not remove the need for bounded key-backup retention; otherwise the key itself could be restored."
+  },
+  {
+   "q": "A Cassandra replica was down for 14 days with gc_grace_seconds at 10 days. After it rejoins, erased users reappear. Why?",
+   "options": [
+    "TTLs do not work across replicas",
+    "Cassandra does not replicate deletes",
+    "Tombstones were purged before the replica learned of the deletes, so repair streamed its stale data back",
+    "Compaction re-creates deleted rows"
+   ],
+   "answer": 2,
+   "why": "Replicas must be repaired or rebuilt within gc_grace. Cassandra does replicate deletes - as tombstones - which is exactly what was lost."
+  },
+  {
+   "q": "Why use a central orchestrator instead of only broadcasting a 'UserDeleted' event?",
+   "options": [
+    "Events cannot carry user ids",
+    "Someone must own the plan, track completion per store, retry, escalate and produce evidence",
+    "Kafka cannot deliver to more than 10 consumers",
+    "Orchestrators delete data faster"
+   ],
+   "answer": 1,
+   "why": "Choreography alone cannot tell when all copies are gone. Speed is not the reason; completeness and evidence are."
+  },
+  {
+   "q": "A store agent times out; the orchestrator retries. What makes the retry safe?",
+   "options": [
+    "The retry uses a longer timeout",
+    "The orchestrator first restores the deleted rows",
+    "Retries are sent to a different region",
+    "The delete is idempotent and keyed by a deterministic task id"
+   ],
+   "answer": 3,
+   "why": "Idempotency makes repeats harmless. A longer timeout reduces retries but does not make a repeated delete safe by itself."
+  },
+  {
+   "q": "Which path most commonly resurrects deleted user data?",
+   "options": [
+    "Running compaction",
+    "Rotating KMS master keys",
+    "Restoring a database from backup or replaying an event stream",
+    "Adding a new read replica from the current primary"
+   ],
+   "answer": 2,
+   "why": "Restores and replays reintroduce old copies; a denylist check on those paths prevents it. A replica from the current primary copies current, post-deletion state."
+  },
+  {
+   "q": "A Bloom filter of erased subject hashes at ingest returns 'possibly present'. What should happen?",
+   "options": [
+    "Do an exact lookup in the durable denylist, since Bloom filters can give false positives",
+    "Drop the event immediately; Bloom filters are exact",
+    "Ignore it; Bloom filters often give false negatives",
+    "Rebuild the Bloom filter"
+   ],
+   "answer": 0,
+   "why": "Bloom filters have false positives but no false negatives. Claiming false negatives is the tempting misconception and would be dangerous here."
+  },
+  {
+   "q": "With 35-day backups and no crypto-shredding, what is the worst-case time a deleted user's data can exist somewhere?",
+   "options": [
+    "30 days",
+    "35 days",
+    "Indefinitely, because backups are immutable",
+    "About 30 days of processing plus 35 days of backup retention, roughly 65 days"
+   ],
+   "answer": 3,
+   "why": "Data deleted at day 30 remains in backups taken before then until those expire 35 days later. Indefinite is wrong when backups rotate."
+  },
+  {
+   "q": "What is the main reason to attach retention rules to data classes rather than to individual tables?",
+   "options": [
+    "Data classes are faster to query",
+    "New tables inherit the right rule by classification, and one change applies consistently everywhere",
+    "Tables cannot hold metadata",
+    "Regulators require class-based rules"
+   ],
+   "answer": 1,
+   "why": "Scalability and consistency drive the choice. Regulators specify outcomes, not this modelling choice."
+  },
+  {
+   "q": "A policy change would delete 2 years of order history by mistake. Which safeguard best prevents damage?",
+   "options": [
+    "Running deletes only at night",
+    "Dry-run impact reports, two-person approval for volume increases, and soft-drop to quarantine before hard deletion",
+    "Encrypting all orders",
+    "Giving every engineer delete rights so they can fix it quickly"
+   ],
+   "answer": 1,
+   "why": "Deletion is irreversible, so preview, approve and stage it. Night-time runs reduce load but not the mistake."
+  },
+  {
+   "q": "Daily sales totals by city include an erased user's orders. What is the usual correct treatment?",
+   "options": [
+    "Keep aggregates that cannot identify an individual (e.g. cells with at least k contributors), suppress small cells",
+    "Recompute all historical aggregates for every erasure",
+    "Delete all aggregates containing any erased user",
+    "Ignore it; aggregates are never personal data"
+   ],
+   "answer": 0,
+   "why": "Properly anonymised aggregates are not personal data, but small cells can re-identify people. 'Never personal data' is the tempting oversimplification."
+  },
+  {
+   "q": "Which evidence most directly catches a new table that silently never receives deletions?",
+   "options": [
+    "The orchestrator's task completion statuses",
+    "KMS key destruction logs",
+    "Number of erasure requests received",
+    "Canary users planted through real product flows and checked for disappearance daily"
+   ],
+   "answer": 3,
+   "why": "Task statuses only cover stores the planner knows; canaries land wherever real data lands. That gap is exactly a missing table."
+  },
+  {
+   "q": "Erasure requests arrive at about 5,500/day and fan out to about 40 stores each. Roughly how many store tasks per day?",
+   "options": [
+    "About 22,000",
+    "About 2.2 million",
+    "About 220,000",
+    "About 5,500"
+   ],
+   "answer": 2,
+   "why": "5,500 x 40 = 220,000. 2.2 million would be the 50k/day burst case scaled up, not the average."
+  },
+  {
+   "q": "Why include a 14-day cancellable grace period before physical deletion?",
+   "options": [
+    "Deletion is irreversible; grace protects against account takeover and regret while the account is already disabled",
+    "To give time for compaction",
+    "Because GDPR requires a 14-day wait",
+    "To reduce storage costs"
+   ],
+   "answer": 0,
+   "why": "It is a product and safety choice, not a legal requirement; the account is hidden immediately so privacy is still served."
+  },
+  {
+   "q": "How should you erase one user's events from a Kafka topic with 30-day time-based retention?",
+   "options": [
+    "Publish a null tombstone for the user's key",
+    "Delete the user's offsets from the consumer group",
+    "Rely on retention expiring within the SLA, or encrypt PII per subject and shred the key",
+    "Rewrite the topic partitions in place"
+   ],
+   "answer": 2,
+   "why": "Tombstones only remove data on compacted topics; time-retention topics drop whole segments by age. Consumer offsets do not delete data at all."
+  },
+  {
+   "q": "Why does the denylist store keyed hashes rather than raw user identifiers?",
+   "options": [
+    "Hashes are shorter, saving storage",
+    "Bloom filters only accept hashes",
+    "Raw ids would collide",
+    "So the list needed to honour deletions does not itself retain usable personal data"
+   ],
+   "answer": 3,
+   "why": "The purpose is privacy: a keyed hash cannot be used to contact or profile the person. Storage savings are incidental."
+  },
+  {
+   "q": "What best demonstrates that time-based retention is actually enforced for a dataset?",
+   "options": [
+    "The TTL setting exists in the table schema",
+    "Daily oldest-record-age compared with policy maximum, plus expiry runs recorded in the ledger",
+    "The policy document is approved by Legal",
+    "No user has complained"
+   ],
+   "answer": 1,
+   "why": "Configured TTLs can be wrong, missing on some partitions, or not compacted; measuring the outcome proves enforcement. A schema setting is the tempting but insufficient answer."
+  }
+ ],
+ "references": [
+  {
+   "title": "DELF: Safeguarding deletion correctness in Online Social Networks (USENIX Security 2020)",
+   "url": "https://www.usenix.org/conference/usenixsecurity20/presentation/cohn-gordon"
+  },
+  {
+   "title": "GDPR and Kafka: Right to Erasure (Conduktor)",
+   "url": "https://conduktor.io/blog/gdpr-kafka-right-to-erasure"
+  },
+  {
+   "title": "Delete Kafka Data Without Deleting It: Crypto Shredding for GDPR Compliance (Conduktor)",
+   "url": "https://www.conduktor.io/blog/crypto-shredding-in-kafka-a-cost-effective-way-to-ensure-compliance"
+  },
+  {
+   "title": "Implementing right to erasure with CSFLE (MongoDB)",
+   "url": "https://mongodb.com/developer/products/mongodb/implementing-right-erasure-csfle"
+  },
+  {
+   "title": "The Right to Erasure from Sequential Storages (Unite tech blog)",
+   "url": "https://techblog.unite.eu/the-right-to-erasure-from-sequential-storages-2fffe822139b"
+  }
+ ]
+}

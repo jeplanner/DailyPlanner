@@ -1,0 +1,1176 @@
+{
+ "slug": "pubsub-notifications",
+ "title": "Design a Pub-Sub System for Event Notifications",
+ "prompt": "Design a pub-sub system for event notifications.",
+ "group": "messaging",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 110,
+ "summary": "A pub-sub platform lets a service announce that something happened (order shipped, price dropped, payment failed) once, and have any number of independent subscribers react, without the publisher knowing who they are. The interesting tension is fan-out: one publish can mean thousands of deliveries to subscribers of wildly different speed and reliability, so the design must store each event once, track progress per subscription, isolate slow or dead webhook endpoints from healthy ones, and still offer ordering per key and replay.",
+ "framework": {
+  "clarify": [
+   "Who subscribes: internal services only, or also external webhooks (sellers, partners)? Assume both: pull subscriptions for internal services and HTTPS push for internal and external endpoints.",
+   "Scale: assume 2B events/day, peak 100k publishes/s during sale events, average fan-out of 4 subscriptions per event and a few topics with 10k+ subscriptions.",
+   "Delivery semantics: at-least-once per subscription, with message ids for consumer dedup. Exactly-once is not promised end to end.",
+   "Ordering: needed per entity (per order_id), not globally. Publishers set an ordering key when they care.",
+   "Latency: publish to delivery p99 under 500 ms for push in normal conditions; publish ack under 50 ms.",
+   "Retention and replay: keep events 7 days so a subscriber can seek back to a timestamp after a bug.",
+   "Filtering: subscribers want only some events (e.g. only category=electronics); attribute-based filters are in scope.",
+   "Is end-user delivery (mobile push, SMS, email) part of this? Assume no: a Notification Service is one subscriber of this platform."
+  ],
+  "design": [
+   "Baseline: publishers write to a topic; each subscription gets its own copy (SNS fanning into SQS queues). Simple, but storage and write cost multiply by fan-out.",
+   "Better: store each event once in a partitioned, replicated topic log and keep a cursor plus ack state per subscription (fan-out on read). Publish API appends with acks from 2 of 3 replicas and returns a message_id.",
+   "Subscription dispatcher per (subscription, partition): reads from its cursor, applies the filter AST, and hands messages to the delivery path, tracking individually acked messages with an ack-range structure.",
+   "Pull delivery: subscribers call Pull(max=100) and get messages with ack_ids and a 10 s ack deadline they can extend; unacked messages are redelivered.",
+   "Push delivery: a separate pool of push workers POSTs batches to HTTPS endpoints, treats 2xx as ack, retries with exponential backoff and jitter, and uses per-endpoint concurrency limits and circuit breakers.",
+   "Dead-letter topic per subscription after 5 attempts; seek/replay by timestamp; metadata (topics, subscriptions, filters, cursors) in a strongly consistent store.",
+   "Critical path: publish -> append to partition leader -> replicate -> ack publisher -> dispatcher reads -> filter -> deliver -> ack -> advance cursor."
+  ],
+  "defend": [
+   "Bottleneck: high-fan-out topics. Fan-out on read keeps the write cost constant; a dedicated high-fan-out tier and batching deliveries per endpoint keep delivery cost manageable.",
+   "Scale writes: partition topics (for example 64 partitions for big topics); each partition leader appends sequentially at tens of MB/s; publishers batch for 5-10 ms.",
+   "Scale reads: tailing readers are served from page cache or broker memory, so N subscriptions reading the same recent data cost little I/O; lagging subscribers read from tiered storage without evicting hot data.",
+   "Failure: a slow webhook only backs up its own subscription (bulkhead per subscription and per endpoint); a dead endpoint trips a circuit breaker and messages wait in the log, not in memory; broker loss handled by ISR leader election.",
+   "Measure: publish rate and p99, per-subscription backlog (unacked count and oldest unacked age), delivery success rate per endpoint, redelivery rate, DLQ rate, end-to-end latency.",
+   "Degrade: under overload, keep accepting publishes (the log is the buffer) and let push delivery lag, prioritizing internal critical subscriptions over external webhooks."
+  ],
+  "script": "Let me clarify first. Publishers are internal services emitting domain events like order shipped; subscribers are internal services pulling, plus internal and external HTTPS webhooks. I will assume 2 billion events a day, 100 thousand per second at sale peaks, fan-out of about four on average with some topics at ten thousand subscribers, at-least-once per subscription, ordering only per key such as order id, seven-day replay, and attribute filters. End-user push and SMS is just one subscriber of this system. For the design, the naive approach copies every event into every subscription's queue, which multiplies writes by the fan-out. Instead I store each event once in a partitioned, replicated log and track a cursor and individual acks per subscription. Pull subscribers lease messages with a ten-second ack deadline; push workers post batches to endpoints, retry with backoff and jitter, and dead-letter after five attempts. To defend it: publish cost does not depend on fan-out, each subscription and endpoint is bulkheaded so a dead webhook only delays itself, the log is the buffer under overload, and I watch per-subscription oldest unacked age as the key health signal."
+ },
+ "brd": {
+  "problem": "Services announce state changes by calling each other directly: when an order ships, the order service calls notifications, analytics, seller dashboards, loyalty and fraud, one by one. Every new consumer requires a change in the producer, a slow consumer slows the producer, and an outage in one consumer causes missed or retried events across the chain. Sellers and partners also want webhooks for these events, which each team implements differently. We need a shared, durable event notification backbone.",
+  "goals": [
+   "Decouple producers from consumers: publish once, any number of subscribers, no producer change to add one.",
+   "Never lose an acknowledged event; deliver it to every matching subscription at least once.",
+   "Isolate subscribers so a slow or failing one cannot delay others or the publisher.",
+   "Provide reliable webhooks for external sellers and partners with retries, signing and visibility.",
+   "Support replay so a consumer can recover from its own bugs without asking producers to resend."
+  ],
+  "non_goals": [
+   "End-user channel delivery (mobile push, SMS, email templates); that is the Notification Service, a subscriber.",
+   "Stream processing (joins, windows, aggregations).",
+   "Global total ordering across all events.",
+   "Request/response RPC semantics."
+  ],
+  "stakeholders": [
+   {
+    "who": "Producer teams (orders, payments, catalog)",
+    "needs": "One cheap, fast, reliable publish call and schemas that evolve safely."
+   },
+   {
+    "who": "Consumer teams (notifications, analytics, fraud, loyalty)",
+    "needs": "Filtered streams, per-key ordering, replay and clear backlog metrics."
+   },
+   {
+    "who": "External sellers and partners",
+    "needs": "Signed, retried webhooks with a delivery log and a way to replay missed events."
+   },
+   {
+    "who": "Platform SRE",
+    "needs": "Isolation between tenants, capacity planning, and safe degradation during sales."
+   },
+   {
+    "who": "Security and compliance",
+    "needs": "Authorization per topic, PII controls, signed webhooks, audit."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Acknowledged events lost",
+    "target": "0"
+   },
+   {
+    "metric": "Publish p99 latency",
+    "target": "under 50 ms in-region"
+   },
+   {
+    "metric": "Publish-to-push-delivery p99 (healthy endpoints)",
+    "target": "under 500 ms"
+   },
+   {
+    "metric": "Publish availability",
+    "target": "99.99 percent"
+   },
+   {
+    "metric": "Point-to-point service calls replaced by events",
+    "target": "70 percent of fan-out calls within 3 quarters"
+   },
+   {
+    "metric": "External webhook delivery success within 1 hour",
+    "target": "99.9 percent for reachable endpoints"
+   }
+  ],
+  "constraints": [
+   "Messages up to 1 MB; typical events are 1 KB JSON or Avro.",
+   "Must run in two regions with region-local publish; cross-region replication asynchronous.",
+   "External webhooks must be HMAC-signed and sent only to verified HTTPS endpoints.",
+   "PII-bearing topics require encryption at rest and field-level access controls."
+  ],
+  "risks": [
+   {
+    "risk": "A popular topic with 10k webhook subscribers amplifies one publish into 10k HTTP calls, saturating egress.",
+    "mitigation": "High-fan-out tier with dedicated push workers, batching per endpoint and per-subscription rate limits."
+   },
+   {
+    "risk": "Schema changes by a producer break consumers silently.",
+    "mitigation": "Schema registry with backward-compatibility checks enforced at publish time."
+   },
+   {
+    "risk": "Consumers assume exactly-once or global order and corrupt data on duplicates.",
+    "mitigation": "Document semantics clearly, include message_id and per-key sequence numbers, ship dedup helpers."
+   },
+   {
+    "risk": "External endpoints that accept and drop events blame the platform.",
+    "mitigation": "Delivery logs per webhook with response codes, replay API, and signed delivery receipts."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Publisher engineer",
+    "needs": "Publish an event with attributes and an optional ordering key; know it is durable when the call returns."
+   },
+   {
+    "name": "Internal subscriber engineer",
+    "needs": "Create a filtered pull or push subscription, process in parallel, ack individually, replay from a timestamp."
+   },
+   {
+    "name": "External seller developer",
+    "needs": "Register a webhook URL, receive signed events with retries, see delivery history and request redelivery."
+   }
+  ],
+  "user_stories": [
+   "As the order service, I want to publish OrderShipped once so that notifications, analytics and loyalty all receive it without me calling each.",
+   "As the fraud team, I want a subscription filtered to payment_status=failed so that I do not pay to process irrelevant events.",
+   "As the inventory consumer, I want events for the same sku delivered in order so that a stock decrement never applies before the earlier increment.",
+   "As a seller, I want an HTTPS webhook with signatures so that I can trust OrderPlaced events and update my warehouse system.",
+   "As a consumer who shipped a bug, I want to seek my subscription back to 09:00 so that I can reprocess the last three hours.",
+   "As an on-call engineer, I want an alert when a subscription's oldest unacked message is older than 5 minutes so that I catch stuck consumers early.",
+   "As a seller whose endpoint was down for an hour, I want missed events retried automatically so that I do not lose orders.",
+   "As a platform owner, I want each subscription to have its own backlog so that one broken webhook cannot slow other subscribers."
+  ],
+  "functional": [
+   "Create and delete topics with partition count, retention (up to 7 days) and schema.",
+   "Publish single or batched messages with payload, attributes map and optional ordering key; return message_ids.",
+   "Create subscriptions (pull or push) with filter expression, ack deadline, retry policy, max attempts and dead-letter topic.",
+   "Pull: fetch up to N messages, ack, nack, and modify ack deadline per message.",
+   "Push: deliver to HTTPS endpoints with HMAC signature, batching, retries with backoff, per-endpoint rate limit.",
+   "Ordering keys: in-order delivery per key within a subscription.",
+   "Seek a subscription to a timestamp or snapshot to replay or skip.",
+   "Delivery log and metrics per subscription: backlog, oldest unacked age, error codes."
+  ],
+  "non_functional": [
+   {
+    "name": "Publish latency",
+    "target": "p50 10 ms, p99 50 ms"
+   },
+   {
+    "name": "End-to-end latency (push, healthy endpoint)",
+    "target": "p99 500 ms"
+   },
+   {
+    "name": "Durability",
+    "target": "ack after 2 of 3 replicas in separate AZs; RPO 0 in-region"
+   },
+   {
+    "name": "Availability",
+    "target": "publish 99.99 percent, delivery 99.95 percent"
+   },
+   {
+    "name": "Throughput",
+    "target": "100k publishes/s and 400k deliveries/s at peak; 1 GB/s egress"
+   },
+   {
+    "name": "Fan-out",
+    "target": "start delivery to 10k subscriptions within 1 s of publish"
+   },
+   {
+    "name": "Isolation",
+    "target": "a failing subscription adds zero latency to other subscriptions of the same topic"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "2B events/day, peak 5x average, 1 KB average message including attributes.",
+    "Average 4 subscriptions per topic weighted by traffic; 1 percent of traffic goes to topics with 1k+ subscriptions.",
+    "Retention 7 days, replication factor 3.",
+    "60 percent of deliveries are pull (internal), 40 percent push.",
+    "About 3,000 topics, 50,000 subscriptions including 30,000 external seller webhooks."
+   ],
+   "math": [
+    "Average publish rate: 2B / 86,400 = about 23k/s; peak 5x = about 115k/s, so plan for 100-120k/s.",
+    "Ingress at peak: 115k x 1 KB = about 115 MB/s; with RF=3 the cluster writes about 350 MB/s.",
+    "Storage: 2B x 1 KB = 2 TB/day; x3 replicas x 7 days = 42 TB; keep the last 24 h on broker SSD (6 TB) and older segments in tiered object storage.",
+    "Deliveries at peak: 115k x 4 = 460k/s; egress about 460 MB/s plus headers, about 1 GB/s with push overhead.",
+    "Push calls: 40 percent of 460k = about 185k HTTP deliveries/s; batching 10 messages per call for internal endpoints cuts that to about 40k requests/s.",
+    "Push worker sizing: at 200 ms average endpoint latency, concurrency = 40k x 0.2 = 8k in-flight requests; at 500 per worker that is about 16 workers, provisioned 3x for slow endpoints.",
+    "Ack state: 50k subscriptions x average 2k unacked = 100M ack entries worst case; range-compressed this is a few GB in memory."
+   ],
+   "summary": "About 115k publishes/s and 460k deliveries/s at peak, 350 MB/s replicated writes, 42 TB of 7-day retention (mostly tiered), about 1 GB/s egress, and roughly 40k webhook HTTP requests/s after batching."
+  },
+  "out_of_scope": [
+   "End-user channels (APNs/FCM, SMS, email) and user preference management.",
+   "Exactly-once delivery to external webhooks.",
+   "Cross-region synchronous replication; cross-region is async with RPO of seconds.",
+   "Complex content-based routing beyond attribute filters (no payload SQL)."
+  ]
+ },
+ "hld": {
+  "overview": "Publishers hit a stateless Publish Front-end that authenticates, validates the schema, picks a partition by ordering key (or round robin) and appends to the partition leader in the Topic Log, a Kafka-like replicated log with tiered storage. For each subscription, a Subscription Dispatcher owns a set of partitions, reads forward from the subscription's cursor, evaluates the filter, and tracks per-message delivery state in an Ack Tracker. Pull subscribers fetch leased messages through the Subscriber Front-end; push subscriptions are delivered by Push Workers with per-endpoint queues, rate limits and circuit breakers. Failures retry with backoff and land in a dead-letter topic. Metadata lives in a strongly consistent store, and a schema registry guards compatibility.",
+  "diagram": "\n Publishers (order, payment, catalog services)\n      | Publish(topic, msgs, attrs, ordering_key)\n      v\n +-------------------+   schema check   +-----------------+\n | Publish Front-end |----------------->| Schema Registry |\n +---------+---------+                  +-----------------+\n           | append, wait ISR=2\n           v\n +--------------------------------------------------------+\n | Topic Log (partitioned, RF=3, hot 24h SSD + tiered S3) |\n |  topic.order-events p0 .. p63                          |\n +---------------------------+----------------------------+\n                             | tail read per subscription cursor\n                             v\n +--------------------------------------------------------+\n | Subscription Dispatchers (one owner per sub-partition) |\n |  filter AST  ->  Ack Tracker (cursor + ack ranges)     |\n +-----------+------------------------------+-------------+\n             | pull leases                  | push tasks\n             v                              v\n +-----------------------+      +---------------------------+\n | Subscriber Front-end  |      | Push Workers              |\n | Pull / Ack / ModAck   |      | per-endpoint queue, CB,   |\n +-----------+-----------+      | rate limit, HMAC signing  |\n             |                  +-------------+-------------+\n             v                                | HTTPS POST\n   Internal consumers                         v\n   (fraud, analytics)            Webhooks (notif svc, sellers)\n\n Metadata store (etcd/Spanner-like): topics, subs, filters, cursors\n Dead-letter topics per subscription; delivery log for webhooks\n",
+  "components": [
+   {
+    "name": "Publish Front-end",
+    "responsibility": "Stateless gRPC/HTTP tier: authN/Z per topic, schema validation, size limits, batching, partition selection (hash of ordering key), append to leader, return message_ids after ISR ack."
+   },
+   {
+    "name": "Topic Log (brokers)",
+    "responsibility": "Partitioned, replicated append-only log; leader per partition, followers in other AZs; recent segments on SSD and page cache, older segments offloaded to object storage (tiered storage)."
+   },
+   {
+    "name": "Metadata store",
+    "responsibility": "Strongly consistent store for topics, partitions, subscriptions, filters, push configs, cursors and partition-to-dispatcher assignments; watched by all components."
+   },
+   {
+    "name": "Schema Registry",
+    "responsibility": "Stores Avro/Protobuf schemas per topic with compatibility rules; rejects incompatible publishes and schema updates."
+   },
+   {
+    "name": "Subscription Dispatcher",
+    "responsibility": "Owns (subscription, partition) pairs via leases; reads from the cursor, evaluates the filter, enforces per-key ordering, hands messages to pull leases or push tasks, and advances the cursor past contiguous acked messages."
+   },
+   {
+    "name": "Ack Tracker",
+    "responsibility": "Per (subscription, partition): committed cursor plus a compressed set of acked ranges and unacked messages with deadlines and attempt counts; checkpointed to the metadata store or a compacted internal topic every second."
+   },
+   {
+    "name": "Subscriber Front-end",
+    "responsibility": "Pull, Ack, Nack, ModifyAckDeadline and Seek APIs; long polling; flow control by max outstanding messages and bytes per subscriber."
+   },
+   {
+    "name": "Push Workers",
+    "responsibility": "Per-endpoint delivery queues, HMAC signing, batching, timeouts, exponential backoff with jitter, adaptive concurrency, circuit breakers, delivery logs."
+   },
+   {
+    "name": "Dead-letter handling",
+    "responsibility": "After max attempts, republish the message with failure metadata to the subscription's dead-letter topic; operators inspect and replay with normal APIs."
+   },
+   {
+    "name": "Cross-region replicator",
+    "responsibility": "Asynchronously mirrors selected topics to the other region for DR and regional consumers, preserving message_id for dedup."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Publish and pull delivery",
+    "steps": [
+     "Order service publishes OrderShipped with ordering_key=order_123 and attributes {category: electronics}.",
+     "Front-end validates schema, hashes order_123 to partition 17, appends to the leader; leader waits for one follower in another AZ (ISR=2) and returns offset; front-end returns message_id = topic/17/offset.",
+     "Dispatcher for subscription fraud-sub on partition 17 tails the log, evaluates filter category=electronics, and adds the message to the outstanding set.",
+     "Fraud consumer calls Pull(max=100); gets the message with ack_id and deadline now+10 s.",
+     "Consumer processes and calls Ack(ack_id); Ack Tracker marks offset acked; if it closes the gap at the cursor, the cursor advances and is checkpointed."
+    ]
+   },
+   {
+    "name": "Push delivery to a failing webhook",
+    "steps": [
+     "Dispatcher for seller-42-webhook enqueues the message into that endpoint's delivery queue in a Push Worker.",
+     "Worker signs the body with HMAC-SHA256 using the subscription secret and POSTs with a 10 s timeout.",
+     "Endpoint returns 503; worker schedules retry at random(0, min(10 min, 1 s x 2^attempt)) and lowers the endpoint's concurrency (AIMD).",
+     "After 10 consecutive failures the circuit breaker opens; the worker probes once a minute and messages wait in the log, consuming no worker memory.",
+     "After 5 attempts or 24 h the message goes to the dead-letter topic and the seller dashboard shows the failure; the seller can replay later."
+    ]
+   },
+   {
+    "name": "Replay after consumer bug",
+    "steps": [
+     "Analytics team deploys a fix and calls Seek(subscription, time=09:00).",
+     "Metadata store translates time to per-partition offsets via the log's time index.",
+     "Dispatchers reset cursors and clear ack state; older segments are read from tiered storage without disturbing the hot cache.",
+     "Consumer reprocesses, deduplicating by message_id where needed."
+    ]
+   }
+  ],
+  "data_flow": "Event payload and attributes are written once to a topic partition and replicated. Each subscription reads the same bytes through its own cursor; only small per-subscription state (cursor offset, acked ranges, deadlines, attempts) is written per delivery. Pull consumers receive messages via leases; push workers deliver over HTTPS. Failures go to per-subscription dead-letter topics. Metadata and cursors are checkpointed to a strongly consistent store; old log segments move to object storage for replay."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/topics/{topic}:publish",
+    "request": "{messages: [{data (base64), attributes: map, ordering_key?}]} up to 1000 msgs or 10 MB",
+    "response": "200 {message_ids: [...]}",
+    "notes": "Returns after ISR ack; 429 when publisher quota exceeded; schema validated."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/subscriptions/{sub}",
+    "request": "{topic, type: pull|push, push_endpoint?, filter?, ack_deadline_s: 10-600, max_attempts: 5, dead_letter_topic?, ordering: bool, retry: {min_s, max_s}}",
+    "response": "200 subscription",
+    "notes": "Filter parsed into an AST at creation; invalid filters rejected with 400."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/subscriptions/{sub}:pull",
+    "request": "{max_messages: 1-1000, wait_s: 0-30}",
+    "response": "200 {received: [{ack_id, message_id, data, attributes, publish_time, delivery_attempt}]}",
+    "notes": "Long poll; flow control by max outstanding per subscriber."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/subscriptions/{sub}:acknowledge",
+    "request": "{ack_ids: [...]}",
+    "response": "200",
+    "notes": "Idempotent; acking an expired ack_id is a no-op."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/subscriptions/{sub}:modifyAckDeadline",
+    "request": "{ack_ids, ack_deadline_s}",
+    "response": "200",
+    "notes": "0 seconds means nack (immediate redelivery eligibility)."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/subscriptions/{sub}:seek",
+    "request": "{time? | snapshot?}",
+    "response": "200",
+    "notes": "Resets cursor; ack state cleared for messages after the target."
+   },
+   {
+    "method": "POST",
+    "path": "{push_endpoint} (outbound)",
+    "request": "headers: X-Signature: HMAC-SHA256(secret, ts + body), X-Message-Id, X-Delivery-Attempt; body: {messages: [...]}",
+    "response": "2xx = ack; anything else or timeout = retry",
+    "notes": "10 s timeout; batch up to 100 messages for endpoints that opt in."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Log record",
+    "store": "Topic Log segment files",
+    "fields": [
+     "offset",
+     "publish_time",
+     "ordering_key",
+     "attributes",
+     "payload",
+     "producer_id",
+     "producer_seq",
+     "crc"
+    ],
+    "keys": "(topic, partition, offset)",
+    "notes": "Segments of 1 GB with offset and time indexes; idempotent producer dedups retries by (producer_id, seq)."
+   },
+   {
+    "entity": "Topic",
+    "store": "Metadata store",
+    "fields": [
+     "name",
+     "partitions",
+     "retention",
+     "schema_id",
+     "owner",
+     "pii_level"
+    ],
+    "keys": "PK name",
+    "notes": "Partition count can increase but not decrease."
+   },
+   {
+    "entity": "Subscription",
+    "store": "Metadata store",
+    "fields": [
+     "name",
+     "topic",
+     "type",
+     "endpoint",
+     "filter_ast",
+     "ack_deadline",
+     "max_attempts",
+     "dlq_topic",
+     "ordering",
+     "secret_ref",
+     "state"
+    ],
+    "keys": "PK name; index by topic",
+    "notes": "Cached by dispatchers for 30 s and invalidated by watch."
+   },
+   {
+    "entity": "Ack state",
+    "store": "Compacted internal topic __sub_state + memory",
+    "fields": [
+     "sub",
+     "partition",
+     "committed_offset",
+     "acked_ranges [(a,b)...]",
+     "outstanding {offset: (deadline, attempts)}"
+    ],
+    "keys": "(sub, partition)",
+    "notes": "Checkpoint every 1 s; on dispatcher failover the new owner reloads and redelivers anything not acked (at-least-once)."
+   },
+   {
+    "entity": "Delivery log",
+    "store": "Wide-column store (Cassandra), TTL 7 days",
+    "fields": [
+     "sub",
+     "message_id",
+     "attempt",
+     "status_code",
+     "latency_ms",
+     "error",
+     "ts"
+    ],
+    "keys": "PK (sub, day) clustering ts desc",
+    "notes": "Powers seller-facing delivery history."
+   }
+  ],
+  "classes": [
+   {
+    "name": "Publisher",
+    "responsibility": "Batch, partition and append messages.",
+    "methods": [
+     "publish(topic, msgs) -> ids",
+     "partitionFor(key) -> int",
+     "flush()"
+    ]
+   },
+   {
+    "name": "PartitionLog",
+    "responsibility": "Append, replicate and read records.",
+    "methods": [
+     "append(batch) -> offset",
+     "read(fromOffset, maxBytes)",
+     "offsetForTime(ts)"
+    ]
+   },
+   {
+    "name": "SubscriptionDispatcher",
+    "responsibility": "Drive delivery for owned (sub, partition) pairs.",
+    "methods": [
+     "tail()",
+     "matches(msg) -> bool",
+     "lease(n) -> List[Msg]",
+     "onAck(offset)",
+     "onExpire(offset)"
+    ]
+   },
+   {
+    "name": "AckTracker",
+    "responsibility": "Track acked ranges and outstanding deadlines.",
+    "methods": [
+     "markAcked(off)",
+     "advanceCursor() -> off",
+     "expired(now) -> List[off]",
+     "checkpoint()"
+    ]
+   },
+   {
+    "name": "PushDeliverer",
+    "responsibility": "Deliver to one endpoint with limits and breaker.",
+    "methods": [
+     "send(batch) -> Result",
+     "backoff(attempt) -> Duration",
+     "adjustConcurrency(result)",
+     "breakerState()"
+    ]
+   },
+   {
+    "name": "FilterEvaluator",
+    "responsibility": "Evaluate attribute filter ASTs.",
+    "methods": [
+     "compile(expr) -> Ast",
+     "eval(ast, attributes) -> bool"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Cursor advancement with out-of-order acks",
+    "explain": "Consumers ack individually and out of order, so the subscription cannot simply store 'last offset'. It stores a committed cursor (everything below is acked) plus acked ranges above it. When an ack fills the gap at the cursor, the cursor jumps past all contiguous acked ranges.",
+    "pseudocode": "onAck(off):\n  if off < cursor: return            -- duplicate ack\n  acked.addRange(off, off)           -- merges adjacent ranges\n  outstanding.remove(off)\n  while acked.first().start == cursor:\n     r = acked.popFirst()\n     cursor = r.end + 1\n  -- persist (cursor, acked) every 1s\n\nonTimer(now):\n  for off in outstanding.expired(now):\n     attempts[off] += 1\n     if attempts[off] > max: publishDLQ(off); onAck(off)\n     else: redeliverable.push(off)"
+   },
+   {
+    "name": "Per-key ordered delivery",
+    "explain": "With ordering enabled, only one message per ordering key may be outstanding. A nack or expiry blocks that key until it is acked or dead-lettered, while other keys proceed.",
+    "pseudocode": "nextBatch(n):\n  out = []\n  for msg in readAhead:\n    k = msg.ordering_key\n    if k and k in inflightKeys: continue   -- key blocked\n    if not matches(msg): onAck(msg.off); continue  -- filtered = auto-ack\n    out.append(msg); if k: inflightKeys.add(k)\n    if len(out) == n: break\n  return out\n\nonAck(msg): inflightKeys.remove(msg.ordering_key)"
+   },
+   {
+    "name": "Adaptive push concurrency (AIMD) with circuit breaker",
+    "explain": "Each endpoint gets its own concurrency window. Success increases it slowly, failure halves it, and repeated failure opens a breaker so a dead endpoint costs nothing but periodic probes.",
+    "pseudocode": "onResult(ep, ok, latency):\n  if ok and latency < 2s: ep.window = min(ep.max, ep.window + 1/ep.window)\n  else: ep.window = max(1, ep.window / 2); ep.fails += 1\n  if ep.fails >= 10: ep.breaker = OPEN; ep.probeAt = now + 60s\n  if ok: ep.fails = 0; ep.breaker = CLOSED"
+   }
+  ],
+  "sequence": "\nPublisher  PubFE     Leader(p17)  Follower   Dispatcher   PushWorker   Seller endpoint\n   |publish  |            |           |            |            |            |\n   |-------->| append     |           |            |            |            |\n   |         |----------->| replicate |            |            |            |\n   |         |            |---------->|            |            |            |\n   |         |            |<--- ack --|            |            |            |\n   |  ids    |<-- offset -|           |            |            |            |\n   |<--------|            |  tail read             |            |            |\n   |         |            |----------------------->| filter ok  |            |\n   |         |            |           |            |----------->| sign, POST |\n   |         |            |           |            |            |----------->|\n   |         |            |           |            |            |<--- 503 ---|\n   |         |            |           |            |            | backoff    |\n   |         |            |           |            |            |----------->|\n   |         |            |           |            |            |<--- 200 ---|\n   |         |            |           |            |<-- ack ----|            |\n   |         |            |           |  advance cursor, checkpoint         |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Publisher retries after a timeout though the first append succeeded.",
+   "handling": "Idempotent producer: (producer_id, sequence) per partition lets the leader drop the duplicate; without it, consumers dedup on a business event_id carried in attributes."
+  },
+  {
+   "case": "One subscription stops acking for a day.",
+   "handling": "Its backlog grows only as a cursor gap in the shared log; other subscriptions are unaffected. Alert on oldest unacked age; after 7 days retention, messages expire (alert well before)."
+  },
+  {
+   "case": "Webhook endpoint returns 200 but drops events.",
+   "handling": "Platform cannot know; provide delivery logs with timestamps and signed receipts, and a replay API so the seller can recover."
+  },
+  {
+   "case": "Ordered subscription hits a poison message for key order_123.",
+   "handling": "That key blocks while retries proceed; after max attempts the message goes to DLQ and the key unblocks; other keys continue the whole time."
+  },
+  {
+   "case": "Filter change on an existing subscription.",
+   "handling": "Applies to messages read after the change; messages already outstanding keep their old filter decision. Document it; offer seek if full re-evaluation is needed."
+  },
+  {
+   "case": "Topic with 50k subscriptions receives a burst.",
+   "handling": "Fan-out on read keeps write cost constant; high-fan-out tier parallelizes dispatch; push batching and per-subscription rate limits cap egress."
+  },
+  {
+   "case": "Dispatcher owning a partition crashes after delivering but before checkpointing acks.",
+   "handling": "New owner reloads the last checkpoint (up to 1 s old) and redelivers those messages; consumers see duplicates, never gaps."
+  },
+  {
+   "case": "Partition count increased on a topic using ordering keys.",
+   "handling": "Key-to-partition mapping changes, so per-key order can break at the boundary. Disallow increases on ordered topics or drain-and-switch with a fence offset."
+  },
+  {
+   "case": "Lagging subscriber reads 3-day-old data from tiered storage.",
+   "handling": "Served through a separate read path with its own cache so it does not evict hot pages used by tailing subscribers."
+  },
+  {
+   "case": "SSRF via webhook URL (pointing to internal metadata IPs).",
+   "handling": "Validate and resolve endpoints, block private and link-local ranges, re-check DNS at send time, egress through a proxy."
+  },
+  {
+   "case": "Clock skew makes publish_time non-monotonic within a partition.",
+   "handling": "Use broker-assigned log-append time for seek and ordering; offsets, not timestamps, define order."
+  },
+  {
+   "case": "Region failover with async cross-region replication.",
+   "handling": "Up to a few seconds of events may be missing or duplicated in the DR region; consumers dedup by message_id; producers republish from their outbox if needed."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Kafka (or Pulsar) with tiered storage",
+   "layer": "Topic log",
+   "overview": "Partitioned replicated commit log with consumer offsets; Pulsar adds per-message acks and separates storage (BookKeeper) from serving brokers.",
+   "why": "Sequential appends handle 100k+ msg/s cheaply; one stored copy serves all subscriptions; tiered storage makes 7-day replay affordable.",
+   "alternatives": "Google Pub/Sub or AWS SNS+SQS (managed, per-message acks built in, less control and cost at this volume); RabbitMQ fanout exchanges (copies per queue, weaker at large backlogs)."
+  },
+  {
+   "name": "etcd or a Spanner-like store",
+   "layer": "Metadata",
+   "overview": "Strongly consistent replicated KV with watches.",
+   "why": "Subscription configs and partition ownership must be consistent; watches propagate changes in seconds.",
+   "alternatives": "ZooKeeper (older, heavier); a MySQL table with polling (simpler, slower)."
+  },
+  {
+   "name": "Confluent Schema Registry (Avro/Protobuf)",
+   "layer": "Schema governance",
+   "overview": "Versioned schemas per topic with compatibility checks.",
+   "why": "Prevents producers from breaking consumers; compact binary encoding cuts bytes on the wire.",
+   "alternatives": "JSON Schema with CI checks only (weaker enforcement); no schemas (fast start, painful later)."
+  },
+  {
+   "name": "Go or Java push workers with Envoy egress proxy",
+   "layer": "Push delivery",
+   "overview": "High-concurrency HTTP clients behind an egress proxy.",
+   "why": "Thousands of concurrent connections per worker; proxy enforces SSRF rules, mTLS and egress IP allow-listing for sellers.",
+   "alternatives": "Serverless functions per delivery (cold starts, cost at 40k req/s)."
+  },
+  {
+   "name": "Cassandra",
+   "layer": "Delivery log",
+   "overview": "Wide-column store optimized for high write throughput with TTLs.",
+   "why": "Hundreds of thousands of log writes/s, partitioned by subscription and day, auto-expiring.",
+   "alternatives": "Elasticsearch (good search, costly at this write rate); ClickHouse (great analytics, less suited to point reads)."
+  },
+  {
+   "name": "Kubernetes + KEDA",
+   "layer": "Compute",
+   "overview": "Orchestration with autoscaling on custom metrics.",
+   "why": "Scale dispatchers and push workers on backlog and in-flight requests.",
+   "alternatives": "VM autoscaling groups."
+  },
+  {
+   "name": "Prometheus, Grafana, OpenTelemetry",
+   "layer": "Observability",
+   "overview": "Metrics and traces.",
+   "why": "Per-subscription backlog and age, per-endpoint success rate, trace from publish to delivery via propagated trace ids.",
+   "alternatives": "Managed APM tools."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Publish-subscribe vs point-to-point queues",
+   "explain": "In a point-to-point queue each message is consumed by exactly one consumer from a pool: it is a way to distribute work. In publish-subscribe, each message is delivered to every subscription: it is a way to broadcast facts. The two are often combined: each subscription is internally a work queue shared by that subscriber's instances (Kafka consumer groups, Google Pub/Sub subscriptions with many pullers). Pub-sub provides decoupling in three dimensions: space (publishers do not know subscribers), time (subscribers can be offline and catch up), and synchronization (publishers do not block on subscriber processing). The cost is that the publisher no longer knows whether anyone handled the event, and failures move from synchronous errors to backlogs that must be monitored. Pub-sub is a fit for events, statements about something that already happened (OrderShipped), rather than commands (ShipOrder), which have one intended handler and an expected outcome. Mixing the two leads to brittle systems where a publisher secretly depends on a particular subscriber.",
+   "in_this_design": "Topics carry domain events; each subscription is an independent consumer group with its own cursor, so fraud, analytics and the Notification Service each get every matching event, and multiple instances of fraud share that subscription's work.",
+   "key_points": [
+    "Queue: one consumer per message. Pub-sub: one delivery per subscription.",
+    "Each subscription behaves like a work queue for its instances.",
+    "Decoupled in space, time and synchronization.",
+    "Publish events (facts), not commands."
+   ],
+   "qa": [
+    {
+     "q": "When would you use a queue instead of pub-sub?",
+     "a": "When exactly one logical handler should act, such as executing a refund job. Use pub-sub when several independent parties react to the same fact."
+    },
+    {
+     "q": "How does the publisher know an event was processed?",
+     "a": "It does not, by design. If it needs an outcome, the consumer publishes its own event (RefundIssued), or you use a request/response or saga pattern."
+    },
+    {
+     "q": "How do two instances of the same consumer avoid processing the same message?",
+     "a": "They share one subscription; the platform leases each message to one instance at a time, just like a queue."
+    }
+   ]
+  },
+  {
+   "name": "Fan-out on write vs fan-out on read",
+   "explain": "Fan-out is the multiplication of one input into many outputs. On write, the system copies the message into a separate queue per subscription at publish time; SNS fanning into SQS queues works this way. Each subscription then has fully independent storage, simple per-message deletion and isolation, but storage and write I/O grow linearly with the number of subscriptions, and a topic with 10,000 subscribers turns one publish into 10,000 writes. On read, the message is stored once in a shared log and each subscription keeps only a pointer (cursor) and some bookkeeping about which messages it has acknowledged. Write cost is constant, replay is natural, and tailing subscribers share the same cached bytes, but per-subscription state is more complex (out-of-order acks, retention is shared, a slow subscriber pins old data). Most large platforms use a hybrid: store once, then materialize per-subscription delivery records only for the work actually outstanding, and use special handling for very high fan-out.",
+   "in_this_design": "We store each event once in the topic log and keep cursor plus ack ranges per subscription (fan-out on read). Push deliveries are materialized lazily into bounded per-endpoint queues. Topics with more than 10k subscriptions go to a high-fan-out tier that parallelizes dispatch.",
+   "key_points": [
+    "Fan-out on write: simple isolation, cost proportional to subscribers.",
+    "Fan-out on read: one copy, cursors per subscription, more complex ack state.",
+    "Retention is shared on read: slow subscribers must be alerted before data expires.",
+    "Hybrids materialize only outstanding work."
+   ],
+   "qa": [
+    {
+     "q": "Why not just copy each message into a queue per subscription?",
+     "a": "At 115k/s with average fan-out 4 that is 460k durable writes/s and 4x storage, and the big topics would amplify far more; storing once cuts writes and storage by the fan-out factor."
+    },
+    {
+     "q": "What is the downside of one shared log?",
+     "a": "Retention is per topic, so a subscriber stuck for 8 days loses data; and per-subscription acks out of order need range tracking rather than a single offset."
+    },
+    {
+     "q": "How is this related to the news-feed fan-out problem?",
+     "a": "Same trade-off: precomputing per-user feeds (write) versus merging at read time; celebrities are the high-fan-out topics that need special handling."
+    }
+   ]
+  },
+  {
+   "name": "Partitioned logs, offsets and consumer groups",
+   "explain": "A log is an append-only sequence of records, each identified by a position called an offset. Appending is sequential disk I/O, which is extremely fast, and reading is a matter of remembering where you are. To scale beyond one machine, a topic is split into partitions, each an independent log with its own leader. Producers choose a partition by hashing a key, so all records with the same key land in the same partition and keep their order. A consumer group is a set of consumer instances that divide a topic's partitions among themselves; each partition is read by exactly one member at a time, which gives parallelism and per-partition order. Progress is recorded as a committed offset per partition. This model is cheap and simple but has two limits: parallelism is capped at the partition count, and a single slow or failing record blocks everything behind it in that partition (head-of-line blocking), because the offset can only move forward past fully processed records. Rebalancing, when members join or leave, pauses consumption; cooperative incremental rebalancing reduces the pause by moving only the affected partitions.",
+   "in_this_design": "The topic log uses this model for storage and replay, with 64 partitions for large topics and ordering keys hashed to partitions. On top, the dispatcher adds per-message leases and ack ranges so one slow message does not block the subscription, which plain consumer-group offsets cannot do.",
+   "key_points": [
+    "Offset = position in an append-only partition.",
+    "Same key, same partition, same order.",
+    "Parallelism is bounded by partition count.",
+    "Plain offsets cause head-of-line blocking; per-message acks avoid it.",
+    "Rebalances pause work; prefer cooperative rebalancing."
+   ],
+   "qa": [
+    {
+     "q": "Why can't you add 100 consumers to a 10-partition topic to go faster?",
+     "a": "Only 10 can be active in one group; the others sit idle. You need more partitions or a per-message dispatch layer like ours."
+    },
+    {
+     "q": "What breaks when you add partitions to an existing keyed topic?",
+     "a": "hash(key) mod N changes, so new records for a key go to a different partition than old ones, breaking per-key ordering at the switch."
+    },
+    {
+     "q": "Why are log appends so fast?",
+     "a": "They are sequential writes that the OS batches and the disk handles at full bandwidth, and reads of recent data come from page cache with zero-copy transfer."
+    }
+   ]
+  },
+  {
+   "name": "Acknowledgements, ack deadlines and redelivery",
+   "explain": "Delivery reliability depends on when the system forgets a message for a given subscriber. If it forgets at send time, a crash loses the message (at-most-once). If it forgets only after an explicit acknowledgement, a lost ack causes a redelivery (at-least-once). An ack deadline makes this practical: when a message is handed out, a timer starts; if no ack arrives before it expires, the message becomes eligible for redelivery, possibly to a different subscriber instance. Consumers that need more time extend the deadline. A negative acknowledgement (nack) asks for immediate or delayed redelivery. Because acks can arrive out of order (message 7 finishes before message 5), a subscription must track individual acknowledgements rather than a single high-water mark; a compact representation keeps a committed cursor plus a list of acked ranges above it. Each message carries a delivery attempt count so consumers can detect redeliveries and the system can dead-letter after a limit. Consumers should be idempotent, keyed by message_id or a business key, because redelivery is normal, not exceptional.",
+   "in_this_design": "Pull subscriptions default to a 10 s ack deadline extendable to 600 s; the Ack Tracker keeps cursor plus acked ranges and checkpoints every second; delivery_attempt is included in every message; after 5 attempts the message goes to the dead-letter topic.",
+   "key_points": [
+    "Forget on ack, not on send.",
+    "Ack deadline expiry means redeliver.",
+    "Track individual acks with cursor plus ranges.",
+    "Expose delivery_attempt; dead-letter after a limit.",
+    "Duplicates are normal; consumers dedup by id."
+   ],
+   "qa": [
+    {
+     "q": "A consumer's p99 processing time is 15 s but the ack deadline is 10 s. Symptom?",
+     "a": "High duplicate rate and wasted work, because messages are redelivered to other instances while still being processed. Extend deadlines or raise the default."
+    },
+    {
+     "q": "Why checkpoint ack state only every second rather than every ack?",
+     "a": "Per-ack durable writes would multiply metadata writes by delivery rate (460k/s). A 1 s checkpoint bounds redelivery after failover to about one second of messages, which at-least-once already permits."
+    },
+    {
+     "q": "How do you represent 1M outstanding messages efficiently?",
+     "a": "Most acks are near-contiguous, so ranges compress well; store a cursor plus a sorted list or bitmap of acked ranges, as Pulsar's managed cursor does."
+    }
+   ]
+  },
+  {
+   "name": "Ordering keys and their cost",
+   "explain": "Global ordering of all events requires a single sequencer and a single consumer, which caps throughput at one machine. Most business needs are narrower: events for the same entity (an order, a SKU, a user) must be processed in order, while events for different entities are independent. Ordering keys express this. The producer tags each event with a key, the system routes all events for a key to the same partition (preserving publish order), and on the consumer side the system allows at most one in-flight message per key so that a later event cannot be processed while an earlier one is still pending or being retried. This creates per-key head-of-line blocking: if an event for order_123 keeps failing, every later event for order_123 waits, but other keys continue. Ordering also interacts badly with retries and dead-lettering: skipping a failed message to the DLQ technically breaks order for that key, which must be a conscious choice. Consumers that need order across retries often use version numbers or sequence numbers in the event so they can reject stale updates, which is more robust than relying on the transport.",
+   "in_this_design": "Publishers set ordering_key such as order_id or sku; Publish Front-end hashes it to a partition; dispatchers allow one outstanding message per key on ordered subscriptions. Events also carry a per-entity version so consumers can ignore stale updates after a replay or region failover.",
+   "key_points": [
+    "Order per key, not globally.",
+    "Same key to same partition, one in flight per key.",
+    "A failing message blocks only its own key.",
+    "Dead-lettering breaks order for that key; decide explicitly.",
+    "Entity versions in the payload make consumers robust to reordering."
+   ],
+   "qa": [
+    {
+     "q": "Why not just guarantee global order?",
+     "a": "It forces a single partition and single consumer, so throughput is one machine's; and almost no business rule needs order across unrelated orders."
+    },
+    {
+     "q": "Can filtering break ordering?",
+     "a": "Filtering removes messages but keeps relative order of those delivered; but a subscriber that only sees some event types for an entity must handle gaps, ideally using versions."
+    },
+    {
+     "q": "How do consumers handle out-of-order events after a cross-region failover?",
+     "a": "Compare the event's entity version with the stored version and ignore older ones (last-writer-wins by version), rather than trusting arrival order."
+    }
+   ]
+  },
+  {
+   "name": "Reliable webhooks: backoff, circuit breakers and bulkheads",
+   "explain": "Push delivery means the platform calls the subscriber, often an external HTTPS endpoint the platform does not control. Endpoints will be slow, down, misconfigured or malicious. Three patterns keep delivery reliable without letting bad endpoints hurt good ones. Exponential backoff with jitter spaces out retries so that an endpoint recovering from an outage is not hit by a synchronized wave. A circuit breaker tracks recent failures per endpoint; when they cross a threshold it opens and stops sending, probing occasionally (half-open) and closing once a probe succeeds, so the platform does not waste threads on a dead endpoint. Bulkheads partition resources (connection pools, concurrency windows, queues) per endpoint or per tenant, so one slow endpoint can exhaust only its own share, like watertight compartments in a ship. Adaptive concurrency (additive increase, multiplicative decrease, as TCP does) sizes each endpoint's window to what it can actually handle. Finally, security matters: signatures (HMAC over timestamp plus body) let receivers verify authenticity and reject replays, and egress controls prevent the webhook feature from being used to reach internal systems (SSRF).",
+   "in_this_design": "Push Workers keep a separate queue and AIMD concurrency window per endpoint, open a breaker after 10 consecutive failures with 60 s probes, back off with full jitter up to 10 minutes, dead-letter after 5 attempts or 24 h, sign every request with HMAC-SHA256 and a timestamp, and send through an egress proxy that blocks private IP ranges.",
+   "key_points": [
+    "Never let one endpoint share a thread pool with all others.",
+    "Backoff with jitter plus breakers protects both sides.",
+    "AIMD finds each endpoint's safe concurrency.",
+    "Sign with timestamp to stop tampering and replay.",
+    "Block SSRF at egress, re-resolving DNS at send time."
+   ],
+   "qa": [
+    {
+     "q": "A big seller's endpoint gets slow and every webhook's latency rises. What is missing?",
+     "a": "Bulkheads: deliveries share a worker pool or connection pool, so slow requests occupy all slots. Per-endpoint queues and concurrency limits fix it."
+    },
+    {
+     "q": "Why include a timestamp in the HMAC?",
+     "a": "So the receiver can reject old captured requests (replay attacks) by checking the timestamp is within, say, 5 minutes."
+    },
+    {
+     "q": "How do you avoid losing events while a breaker is open?",
+     "a": "Messages stay in the durable log with the cursor not advanced; the breaker only stops sending. After it closes, delivery resumes from the backlog, subject to retention and the DLQ time limit."
+    }
+   ]
+  },
+  {
+   "name": "Replication, ISR and durability in the log",
+   "explain": "Each partition has one leader and several followers on other machines, ideally in different availability zones. Producers write to the leader; followers fetch and append the same records. The in-sync replica (ISR) set contains followers that are caught up within a time bound. A write acknowledged with acks=all is committed once every ISR member has it, and min.insync.replicas sets the floor: with replication factor 3 and minimum 2, a write needs the leader and at least one follower, so losing any one machine or AZ loses nothing acknowledged. If the ISR shrinks below the minimum, the partition rejects writes instead of accepting data it might lose, choosing consistency over availability for that partition. On leader failure, a new leader is elected from the ISR via the controller, so committed records survive. Unclean leader election (choosing an out-of-sync replica) restores availability faster but can lose committed data and should be disabled for event topics. Cross-region replication is typically asynchronous because synchronous writes across regions would add tens of milliseconds to every publish.",
+   "in_this_design": "Topic log partitions use RF=3 across three AZs, min.insync.replicas=2, acks=all, unclean leader election disabled. Cross-region mirroring is asynchronous with message_id preserved for dedup; region failover accepts an RPO of a few seconds.",
+   "key_points": [
+    "Ack after leader plus at least one follower in another AZ.",
+    "Below min ISR, reject writes rather than risk loss.",
+    "Elect leaders only from the ISR.",
+    "Cross-region is async: RPO seconds, not zero."
+   ],
+   "qa": [
+    {
+     "q": "Why not ack after the leader alone?",
+     "a": "A leader crash before followers copy the record loses an event the publisher believes is safe, which breaks the contract for payment events."
+    },
+    {
+     "q": "What happens to publish latency with acks=all?",
+     "a": "It adds one intra-region replication round trip, typically 1-5 ms across AZs, well inside the 50 ms p99 budget."
+    },
+    {
+     "q": "When would you accept unclean leader election?",
+     "a": "For low-value telemetry topics where availability matters more than a few lost events; never for business events."
+    }
+   ]
+  },
+  {
+   "name": "Backpressure and flow control for subscribers",
+   "explain": "A fast publisher and a slow subscriber are the default situation in pub-sub. Without flow control, the system either buffers unbounded data in memory until it crashes, or pushes faster than the subscriber can handle until it falls over. Flow control limits how much is outstanding at any moment. For pull subscribers, the client library caps outstanding messages and bytes (for example 1,000 messages or 100 MB) and simply stops pulling when full, so backpressure is natural: the backlog stays in the durable log. For push, the platform must impose the limit itself, using per-endpoint concurrency windows and pausing when they are full. Upstream, publishers are protected by quotas (token buckets per publisher and topic) that return 429 when exceeded, so one runaway producer cannot overload the cluster. The key design principle is to keep the backlog in the cheapest durable tier, the log on disk or object storage, and never in worker memory, which turns overload into increased latency rather than failure.",
+   "in_this_design": "Pull clients have max outstanding 1,000 messages / 100 MB; push uses per-endpoint AIMD windows; publishers have per-topic token-bucket quotas; backlogs live in the log with tiered storage so even a day-long subscriber outage costs disk, not memory.",
+   "key_points": [
+    "Bound outstanding work per subscriber.",
+    "Pull gives natural backpressure; push needs explicit windows.",
+    "Quota publishers with token buckets and 429s.",
+    "Backlog belongs on disk, not in RAM."
+   ],
+   "qa": [
+    {
+     "q": "Why is pull often preferred for high-volume internal consumers?",
+     "a": "The consumer controls its rate and batch size, so backpressure is automatic and the platform does not need to guess capacity."
+    },
+    {
+     "q": "What signals tell you a subscriber needs to scale?",
+     "a": "Oldest unacked age and backlog size growing while its ack rate is flat."
+    },
+    {
+     "q": "A producer bug publishes 50x normal rate. What protects others?",
+     "a": "Per-publisher quotas reject the excess with 429; partitions are spread across brokers so the topic's load does not land on one broker."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Fan-out strategy",
+   "options": "Copy per subscription (on write) / shared log with cursors (on read)",
+   "choice": "Shared log with cursors, lazy materialization for push",
+   "why": "Write and storage cost independent of fan-out; natural replay; complexity moves into ack tracking."
+  },
+  {
+   "decision": "Delivery mode",
+   "options": "Push only / pull only / both",
+   "choice": "Both",
+   "why": "Pull suits high-volume internal consumers with natural backpressure; push is required for external webhooks and serverless consumers."
+  },
+  {
+   "decision": "Ack granularity",
+   "options": "Offset commit per partition / per-message acks",
+   "choice": "Per-message acks with ranges",
+   "why": "Avoids head-of-line blocking from one slow message and enables per-message retries and DLQ."
+  },
+  {
+   "decision": "Ordering",
+   "options": "None / per key / global",
+   "choice": "Per key, opt-in",
+   "why": "Global order caps throughput; per-key covers business needs; opt-in avoids blocking cost for subscribers that do not care."
+  },
+  {
+   "decision": "Durability vs latency",
+   "options": "Leader ack / ISR ack / cross-region sync",
+   "choice": "ISR ack in-region, async cross-region",
+   "why": "RPO 0 against AZ loss for about 2-5 ms; cross-region sync would add 30-80 ms to every publish."
+  },
+  {
+   "decision": "Filtering location",
+   "options": "Subscriber filters client-side / server-side attribute filters",
+   "choice": "Server-side attribute filters",
+   "why": "Saves egress and consumer cost; restricting to attributes (not payload) keeps evaluation cheap and safe."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Broker hosting partition leaders dies",
+   "behavior": "Controller elects new leaders from ISR in seconds; publishers retry idempotently; dispatchers reconnect; brief p99 spike, no loss."
+  },
+  {
+   "failure": "Dispatcher instance dies",
+   "behavior": "Its (subscription, partition) leases expire in about 10 s; another instance loads the last checkpoint and redelivers unacked messages."
+  },
+  {
+   "failure": "External endpoint down for hours",
+   "behavior": "Breaker opens, backlog accumulates as a cursor gap in the log; retries continue with backoff; DLQ after 24 h; seller sees status and can replay."
+  },
+  {
+   "failure": "Metadata store unavailable",
+   "behavior": "Data plane keeps running on cached configs; creating or changing subscriptions fails; cursor checkpoints buffer in memory and the internal topic."
+  },
+  {
+   "failure": "AZ loss",
+   "behavior": "RF=3 across AZs keeps two replicas; partitions remain writable with minISR=2; stateless tiers reschedule."
+  },
+  {
+   "failure": "Region loss",
+   "behavior": "DNS fails publishers over to the DR region; async mirror means seconds of possible loss or duplication; consumers dedup by message_id."
+  },
+  {
+   "failure": "Subscriber falls behind retention",
+   "behavior": "Alert at 50 percent and 80 percent of retention age; option to extend retention for the topic temporarily; otherwise oldest data expires."
+  }
+ ],
+ "metrics": [
+  "Publish rate, error rate and latency p50/p99 per topic.",
+  "Per-subscription backlog: unacked message count and oldest unacked message age.",
+  "End-to-end latency publish_time to ack per subscription.",
+  "Redelivery rate and delivery_attempt distribution; DLQ inflow per subscription.",
+  "Push: success rate, status code mix, latency and breaker state per endpoint.",
+  "Broker: under-replicated partitions, ISR shrink events, disk and page-cache hit rate.",
+  "Dispatcher: ack checkpoint lag, rebalance count and duration.",
+  "Quota rejections (429) per publisher."
+ ],
+ "follow_ups": [
+  {
+   "q": "Can you give exactly-once delivery to subscribers?",
+   "a": "Within the platform we can dedup publishes with idempotent producers, but across the network to a subscriber, no. We provide stable message_ids and delivery_attempt so subscribers dedup; for internal consumers writing to a DB, they store processed ids in the same transaction."
+  },
+  {
+   "q": "How do you make sure the order service's DB write and the publish both happen?",
+   "a": "Transactional outbox: write the order and an outbox row in one DB transaction; a relay (or CDC like Debezium) publishes outbox rows and marks them sent. It can publish twice, which idempotent producer ids and consumer dedup absorb."
+  },
+  {
+   "q": "How would you support 1 million webhook subscribers on one topic?",
+   "a": "Fan-out on read for storage, then a high-fan-out tier that shards subscribers into groups processed in parallel by many workers, batching per endpoint, and rate limits per subscription; often you also question the product: should sellers get a digest or pull API instead?"
+  },
+  {
+   "q": "Why not use Google Pub/Sub or SNS+SQS?",
+   "a": "On a single cloud, I likely would for speed. At our scale the cost per delivery, the need for on-prem or multi-cloud, deep tiered replay and custom webhook features push toward running Kafka/Pulsar plus our own dispatch layer."
+  },
+  {
+   "q": "How do you handle schema evolution?",
+   "a": "Schema registry with backward compatibility: add optional fields only, never repurpose fields, version event types for breaking changes and run both versions in parallel during migration."
+  },
+  {
+   "q": "How do you prevent a noisy publisher from hurting others?",
+   "a": "Per-publisher and per-topic quotas, partition placement spread across brokers, and separate clusters (cells) for the largest tenants."
+  },
+  {
+   "q": "How do you test that no events are lost?",
+   "a": "Canary publishers send sequenced heartbeat events to every partition each minute and canary subscribers verify gaps and latency, the same idea Slack used for its job queue migration."
+  }
+ ],
+ "key_points": [
+  "Pub-sub broadcasts facts; each subscription is its own work queue with its own cursor.",
+  "Store once, fan out on read: publish cost does not grow with subscribers.",
+  "At-least-once per subscription with message_id and delivery_attempt; consumers dedup.",
+  "Per-message acks with cursor plus ack ranges avoid head-of-line blocking of plain offsets.",
+  "Ordering only per key, one in flight per key; dead-lettering breaks order explicitly.",
+  "Webhooks need bulkheads per endpoint, AIMD concurrency, jittered backoff, breakers, HMAC and SSRF protection.",
+  "RF=3, minISR=2, acks=all gives RPO 0 in region; cross-region async.",
+  "The health signal is oldest unacked age per subscription; the log is the buffer under overload.",
+  "Use the transactional outbox so DB writes and publishes cannot diverge."
+ ],
+ "quiz": [
+  {
+   "q": "What is the main advantage of storing each event once in a shared log with per-subscription cursors?",
+   "options": [
+    "It guarantees exactly-once delivery",
+    "Write and storage cost do not grow with the number of subscriptions",
+    "It removes the need for acks",
+    "It gives global ordering"
+   ],
+   "answer": 1,
+   "why": "Fan-out on read keeps publish cost constant. Exactly-once is tempting but cursors do not change at-least-once semantics."
+  },
+  {
+   "q": "A subscription's consumers ack messages out of order. What state must the platform keep?",
+   "options": [
+    "Only the highest acked offset",
+    "Only the lowest unacked offset",
+    "A committed cursor plus ranges of acked offsets above it",
+    "Nothing; Kafka handles it"
+   ],
+   "answer": 2,
+   "why": "Out-of-order acks need range tracking. Keeping only the highest acked offset is tempting but would skip still-unacked messages below it."
+  },
+  {
+   "q": "One seller's webhook becomes very slow and all webhook deliveries slow down. What is the root design flaw?",
+   "options": [
+    "Missing bulkheads: deliveries share a worker or connection pool",
+    "Too few Kafka partitions",
+    "Ack deadline too long",
+    "No schema registry"
+   ],
+   "answer": 0,
+   "why": "Shared pools let one slow endpoint occupy all slots. More partitions is tempting but does not isolate HTTP concurrency."
+  },
+  {
+   "q": "With RF=3 and min.insync.replicas=2, how many replicas can fail while a partition still accepts acks=all writes?",
+   "options": [
+    "0",
+    "2",
+    "3",
+    "1"
+   ],
+   "answer": 3,
+   "why": "Need 2 in sync, so one can fail. 2 is tempting if you confuse RF with tolerance, but then only one replica remains, below the minimum."
+  },
+  {
+   "q": "Peak 115k publishes/s with average fan-out 4. Roughly how many deliveries per second?",
+   "options": [
+    "About 29k",
+    "About 115k",
+    "About 460k",
+    "About 4.6M"
+   ],
+   "answer": 2,
+   "why": "115k x 4 = 460k. 115k is the publish rate and forgets fan-out."
+  },
+  {
+   "q": "Ordering is enabled per key and one message for order_123 keeps failing. What happens?",
+   "options": [
+    "All messages on the subscription stop",
+    "Only order_123 is blocked until the message is acked or dead-lettered",
+    "The message is skipped immediately to keep order",
+    "Order is silently broken"
+   ],
+   "answer": 1,
+   "why": "Per-key blocking limits the blast radius. Stopping everything is what plain partition offsets would do, the tempting confusion."
+  },
+  {
+   "q": "Why include a timestamp inside the webhook HMAC signature?",
+   "options": [
+    "To compress the body",
+    "So the receiver can reject replayed old requests",
+    "To order events",
+    "To speed up TLS"
+   ],
+   "answer": 1,
+   "why": "Timestamped signatures stop replay attacks. Ordering is tempting but timestamps are not reliable ordering in distributed systems."
+  },
+  {
+   "q": "A consumer group has 10 partitions and 40 instances. How many instances do useful work in plain Kafka?",
+   "options": [
+    "40",
+    "20",
+    "1",
+    "10"
+   ],
+   "answer": 3,
+   "why": "One consumer per partition per group. 40 is tempting but extra instances sit idle."
+  },
+  {
+   "q": "Your ack deadline is 10 s and consumer p99 processing is 20 s. Which symptom appears first?",
+   "options": [
+    "Elevated duplicate deliveries and wasted work",
+    "Message loss",
+    "Publish latency increase",
+    "Schema errors"
+   ],
+   "answer": 0,
+   "why": "Messages expire and are redelivered while still in progress. Loss is tempting but at-least-once systems redeliver rather than lose."
+  },
+  {
+   "q": "The order service must update its DB and publish OrderShipped atomically. Best approach?",
+   "options": [
+    "Publish first, then write DB",
+    "Transactional outbox with a relay or CDC",
+    "Two-phase commit across DB and every subscriber",
+    "Write DB, then publish in a finally block"
+   ],
+   "answer": 1,
+   "why": "Outbox makes the event part of the DB transaction. Publish-in-finally is tempting but a crash between steps still loses or orphans events."
+  },
+  {
+   "q": "A subscriber endpoint is down for 3 hours. Where should the backlog live?",
+   "options": [
+    "In push worker memory",
+    "In the publisher",
+    "In the durable log as an unadvanced cursor",
+    "In Redis"
+   ],
+   "answer": 2,
+   "why": "The log is the buffer; the breaker just stops sending. Worker memory is tempting but would exhaust RAM and be lost on restart."
+  },
+  {
+   "q": "Which filter design is safest for a multi-tenant pub-sub service?",
+   "options": [
+    "Arbitrary user JavaScript on payloads",
+    "Attribute-based filters compiled to an AST at subscription time",
+    "Regex on full payload bytes",
+    "Client-side filtering only"
+   ],
+   "answer": 1,
+   "why": "Restricted attribute filters are cheap and safe. Client-side is tempting for simplicity but wastes egress and consumer CPU."
+  },
+  {
+   "q": "Adding partitions to a topic that uses ordering keys risks:",
+   "options": [
+    "Data loss",
+    "Lower durability",
+    "Per-key ordering breaking because key-to-partition mapping changes",
+    "Schema incompatibility"
+   ],
+   "answer": 2,
+   "why": "hash(key) mod N changes. Data loss is tempting but existing records are untouched."
+  },
+  {
+   "q": "Which metric best indicates a stuck subscriber?",
+   "options": [
+    "Topic publish rate",
+    "Broker CPU",
+    "Number of subscriptions",
+    "Oldest unacked message age for the subscription"
+   ],
+   "answer": 3,
+   "why": "Age directly shows lateness. Publish rate is about the producer side, a tempting but irrelevant signal."
+  },
+  {
+   "q": "Why does AIMD fit adaptive webhook concurrency?",
+   "options": [
+    "It probes capacity slowly and backs off quickly on errors, like TCP congestion control",
+    "It guarantees ordering",
+    "It removes the need for retries",
+    "It encrypts traffic"
+   ],
+   "answer": 0,
+   "why": "Additive increase, multiplicative decrease converges to a safe rate. 'Removes retries' is tempting but retries are still needed for failed requests."
+  },
+  {
+   "q": "Cross-region replication in this design is asynchronous. What does that imply on region failover?",
+   "options": [
+    "Zero data loss guaranteed",
+    "Possible loss or duplication of seconds of events, handled with message_id dedup and producer outbox replays",
+    "Publishers must stop for an hour",
+    "Ordering becomes global"
+   ],
+   "answer": 1,
+   "why": "Async means non-zero RPO. 'Zero loss' is tempting but only synchronous replication can give it, at large latency cost."
+  },
+  {
+   "q": "Which situation is better modeled as a command on a queue rather than a pub-sub event?",
+   "options": [
+    "OrderShipped consumed by analytics and notifications",
+    "PriceDropped consumed by wishlist alerts and search indexing",
+    "UserSignedUp consumed by CRM and welcome email",
+    "IssueRefund for order 123, which exactly one service must execute"
+   ],
+   "answer": 3,
+   "why": "A command with a single intended handler belongs on a queue. The others are facts many parties react to."
+  },
+  {
+   "q": "Tailing subscribers barely add disk I/O on brokers because:",
+   "options": [
+    "Records are compressed to zero",
+    "Recent data is served from page cache and shared across all readers",
+    "Each subscriber has its own copy",
+    "Brokers skip replication"
+   ],
+   "answer": 1,
+   "why": "All tailing readers hit the same cached bytes. 'Own copy' is the fan-out-on-write model, the tempting confusion."
+  },
+  {
+   "q": "A webhook URL resolves to 169.254.169.254. What should happen?",
+   "options": [
+    "Deliver normally",
+    "Deliver only with a signature",
+    "Reject: block private and link-local ranges at registration and at send time",
+    "Retry later"
+   ],
+   "answer": 2,
+   "why": "That is a cloud metadata address, a classic SSRF target. Signing is tempting but signs requests to the wrong place."
+  },
+  {
+   "q": "Approximately how much replicated storage does 2 TB/day, RF=3, 7-day retention need?",
+   "options": [
+    "42 TB",
+    "6 TB",
+    "14 TB",
+    "140 TB"
+   ],
+   "answer": 0,
+   "why": "2 x 3 x 7 = 42 TB. 14 TB forgets replication."
+  }
+ ],
+ "references": [
+  {
+   "title": "Pub/Sub Service Low-Level Design: Topic Fanout, Subscription Filters, and Dead Letter Handling",
+   "url": "https://www.techinterview.org/post/3233469932/lld-pub-sub-service/"
+  },
+  {
+   "title": "Exactly-once Semantics are Possible: Here's How Kafka Does it (Confluent)",
+   "url": "https://www.confluent.io/en-gb/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/"
+  },
+  {
+   "title": "Incremental Cooperative Rebalancing in Kafka (Confluent)",
+   "url": "https://www.confluent.io/en-gb/blog/incremental-cooperative-rebalancing-in-kafka"
+  },
+  {
+   "title": "How to Implement Fan-Out Message Patterns with Multiple Pub/Sub Subscriptions (OneUptime)",
+   "url": "https://oneuptime.com/blog/post/2026-02-17-how-to-implement-fan-out-message-patterns-with-multiple-pubsub-subscriptions/markdown"
+  },
+  {
+   "title": "Scaling Slack's Job Queue (Slack Engineering)",
+   "url": "https://slack.engineering/scaling-slacks-job-queue/"
+  }
+ ]
+}

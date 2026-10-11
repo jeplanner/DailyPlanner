@@ -1,0 +1,1150 @@
+{
+ "slug": "fraud-detection",
+ "title": "Design a fraud detection pipeline (real-time risk scoring for suspicious actions)",
+ "prompt": "Design a fraud detection pipeline for suspicious actions.",
+ "group": "security",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 110,
+ "summary": "A fraud system must decide in roughly 100ms, inline on checkout, login or payout, whether an action is legitimate, using features that summarise behaviour over minutes to months, while fraudsters adapt weekly and the true labels (chargebacks) arrive 30 to 90 days late. The core tensions are latency versus feature richness, precision versus recall (every false positive is a lost customer), and keeping online features identical to the ones the model was trained on. The senior design splits a synchronous scoring path (rules plus model over precomputed features) from asynchronous streaming feature computation, graph analysis, case review and a label feedback loop.",
+ "framework": {
+  "clarify": [
+   "Which actions: payments/checkout, account login, new account sign-up, coupon redemption, seller payouts, refunds/returns? Assume checkout, login, sign-up, refunds and payouts as typed events through one platform.",
+   "Decision mode: inline blocking (allow / challenge / block) or post-hoc detection? Assume inline for checkout and payout with a 100ms p99 budget, async for others.",
+   "Scale: 50M events/day normal, peak 30k scored events/s during a sale; 1B events/day of raw clickstream for behavioural features.",
+   "Actions available: allow, step-up (OTP, 3DS), hold for manual review, block, and post-facto actions (cancel order, freeze payout, ban account).",
+   "Label sources and delay: chargebacks (30-90 days), manual review outcomes (hours), customer complaints, RTO/return abuse signals; assume we must handle delayed and noisy labels.",
+   "Business tolerance: what false-positive rate is acceptable? Assume block rate under 0.3% of good orders and review queue capacity of 20k cases/day.",
+   "Explainability and compliance: do decisions need reason codes for support teams and regulators? Assume yes, top reasons per decision."
+  ],
+  "design": [
+   "Baseline: synchronous rules in the checkout service (if order > 50k INR and new account then review). Quick, but brittle, slow to change and blind to cross-account patterns.",
+   "Components: Event ingestion (Kafka), Streaming feature engine (Flink) computing velocity and aggregates, Online feature store (Redis/Aerospike), Offline store (lakehouse), Risk Decision API (rules engine + ML model server), Graph service (entity links: device, card, address, phone), Case management for analysts, Label service and training pipeline.",
+   "API: POST /v1/risk/evaluate {event_type, entity ids, context} -> {decision, score, reasons[], decision_id}; POST /v1/risk/feedback for outcomes; Kafka topics risk.events, risk.decisions, risk.labels.",
+   "Critical path: caller sends the event -> Decision API fetches about 300 precomputed features in one batched read (5-10ms) plus a few request-time features -> hard rules (blocklists) -> GBDT model score (2-5ms) -> policy thresholds per segment -> decision + reasons -> event and decision emitted to Kafka asynchronously.",
+   "Async path: Flink consumes all events and updates windowed counters (orders per card in 1h/24h/7d, distinct accounts per device), graph links and anomaly detectors; analysts work queued cases; labels flow back to training with point-in-time feature snapshots."
+  ],
+  "defend": [
+   "Bottleneck: feature fetch latency and hot keys. Batch all feature reads in one multi-get, co-locate by entity, cap at 10ms with partial-feature fallback; hot entities (a popular shared Wi-Fi IP) get local caching and cardinality caps.",
+   "Scaling reads: Decision API is stateless and horizontally scaled; online store is sharded by entity key with replicas; model servers scale independently on CPU.",
+   "Scaling writes: Flink jobs partitioned by entity key; about 30k events/s x about 20 feature updates each = 600k counter updates/s into the online store, batched and written with per-key coalescing.",
+   "Failure: if the Decision API times out at 100ms, the caller applies a per-flow fallback: allow low-value orders, hold high-value ones, never block on timeout. Streaming lag degrades features (they are stale, not missing) and is monitored; bulkheads separate checkout from login scoring.",
+   "Model risk: champion/challenger with shadow scoring, threshold tuning by segment, drift monitoring on feature distributions and score distributions, and a rules hot-path for emergencies deployable in minutes.",
+   "Measure: fraud loss in basis points of GMV, false-positive rate (good orders blocked or challenged), review queue size and SLA, precision/recall at the operating threshold on matured labels, p99 decision latency, feature freshness lag."
+  ],
+  "script": "Let me frame it: we need to score checkouts, logins, sign-ups, refunds and payouts. Checkout and payout are inline with a 100ms p99 budget at up to 30k events per second, and we can allow, challenge, hold for review or block. The ground truth, chargebacks, arrives up to 90 days later. So I split the system into two paths. The synchronous path is a stateless Risk Decision API that pulls a few hundred precomputed features from an online store in one round trip, runs hard rules and a gradient-boosted model, maps the score to an action using per-segment thresholds, and returns reason codes. The asynchronous path is a Flink pipeline that computes velocity features like orders per card in the last hour or accounts per device, a graph service that links accounts through shared devices, cards and addresses, a case-management queue for analysts, and a label pipeline that trains new models on point-in-time-correct features. To defend it: the bottleneck is feature fetch, so it is one batched read with a timeout; failures degrade to safe defaults rather than blocking customers; and I measure fraud loss in basis points against the false-positive rate on good customers."
+ },
+ "brd": {
+  "problem": "Fraud costs the marketplace through payment chargebacks, account takeovers draining wallets, coupon and referral abuse, fake returns and seller payout fraud. Current static rules inside individual services catch obvious cases but block many good customers, cannot see patterns across accounts, and take days to update when a new attack appears during a sale.",
+  "goals": [
+   "Reduce fraud losses from 18 to under 8 basis points of GMV within two quarters.",
+   "Keep false positives low: under 0.3% of legitimate orders blocked or challenged.",
+   "Decide inline within 100ms p99 for checkout and payouts.",
+   "Deploy a new rule in under 15 minutes and a new model weekly, with safe rollout.",
+   "Give analysts a case queue with explanations so manual reviews close within 2 hours at peak.",
+   "Detect coordinated rings (many accounts, shared devices/cards) that per-event scoring misses."
+  ],
+  "non_goals": [
+   "Issuing-bank-side card fraud models (we are the merchant/marketplace).",
+   "KYC document verification and AML transaction monitoring (separate compliance systems, though we share signals).",
+   "Content moderation of reviews and listings.",
+   "Bot management at the CDN edge (we consume its signals)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Risk / Trust and Safety team",
+    "needs": "Rules authoring, model performance visibility, case management, fast reaction to new attacks."
+   },
+   {
+    "who": "Payments and checkout teams",
+    "needs": "A fast, reliable API with predictable fallback; low false positives to protect conversion."
+   },
+   {
+    "who": "Finance",
+    "needs": "Chargeback and loss reporting, payout hold controls."
+   },
+   {
+    "who": "Customer support",
+    "needs": "Reason codes to explain holds and a path to release legitimate orders."
+   },
+   {
+    "who": "Data science / ML platform",
+    "needs": "Clean labels, point-in-time training data, feature store, experiment framework."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Fraud loss",
+    "target": "< 8 bps of GMV (from 18)"
+   },
+   {
+    "metric": "False-positive rate on good orders",
+    "target": "< 0.3% blocked or challenged"
+   },
+   {
+    "metric": "Decision latency",
+    "target": "p99 < 100ms, p50 < 30ms"
+   },
+   {
+    "metric": "Manual review SLA",
+    "target": "90% of cases decided within 2 hours"
+   },
+   {
+    "metric": "Time to deploy an emergency rule",
+    "target": "< 15 minutes"
+   },
+   {
+    "metric": "Recall on matured labels at operating threshold",
+    "target": ">= 80% of fraud value caught"
+   }
+  ],
+  "constraints": [
+   "Chargeback labels arrive 30-90 days later, so model evaluation lags.",
+   "Card data is PCI-scoped; the risk system only sees tokenized card fingerprints, never PAN.",
+   "DPDP Act: personal data use must be purpose-limited and retained per policy; explanations needed for adverse actions on users.",
+   "Sale days produce 10x normal traffic with a different behaviour mix (distribution shift)."
+  ],
+  "risks": [
+   {
+    "risk": "False positives during a sale block thousands of good customers",
+    "mitigation": "Segment-level thresholds, challenge instead of block, real-time block-rate monitoring with automatic threshold guardrails."
+   },
+   {
+    "risk": "Training-serving skew makes the model useless in production",
+    "mitigation": "Single feature definitions in the feature store used for both online and offline, with point-in-time joins and skew monitoring."
+   },
+   {
+    "risk": "Fraudsters probe and adapt to rules",
+    "mitigation": "Mix of ML and rules, randomised challenges, delayed actions (cancel after shipment hold), not revealing exact reasons to users."
+   },
+   {
+    "risk": "Risk service outage blocks checkout",
+    "mitigation": "Strict timeouts with fail-safe defaults per flow, multi-zone deployment, bulkheads."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Legitimate shopper",
+    "needs": "Checkout without friction; if challenged, a quick OTP or 3DS, not a block."
+   },
+   {
+    "name": "Fraud analyst",
+    "needs": "A prioritised queue with linked entities, history and reason codes; one-click actions."
+   },
+   {
+    "name": "Risk strategist",
+    "needs": "Write and backtest rules, tune thresholds by segment, see impact before rollout."
+   },
+   {
+    "name": "ML engineer",
+    "needs": "Point-in-time training data, shadow deployment, drift dashboards."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want a trusted repeat purchase to go through instantly so that I am not inconvenienced.",
+   "As a shopper with an unusual order, I want to verify with OTP rather than be blocked so that I can still buy.",
+   "As an analyst, I want to see all accounts sharing a device or card with a flagged account so that I can take down a ring at once.",
+   "As a risk strategist, I want to backtest a new rule on the last 30 days before enabling it so that I know its catch and false-positive rate.",
+   "As a risk strategist, I want to deploy an emergency rule in minutes during a coupon-abuse attack so that losses stop quickly.",
+   "As an ML engineer, I want to shadow-score a challenger model on live traffic so that I can compare it to the champion without customer impact.",
+   "As a support agent, I want reason codes for a held order so that I can explain it and release it if appropriate.",
+   "As finance, I want payouts to new sellers with suspicious refund patterns held automatically so that we do not pay out to fraud."
+  ],
+  "functional": [
+   "Synchronous evaluate API for checkout, login, sign-up, refund and payout events returning decision, score and reason codes.",
+   "Rules engine with lists (block/allow lists for devices, cards, emails, IPs), thresholds and expressions over features; versioned with backtest and staged rollout.",
+   "ML scoring with per-event-type models (GBDT), champion/challenger and shadow modes.",
+   "Streaming features: velocity counts and sums over sliding windows (5m/1h/24h/7d/30d), distinct counts (accounts per device), time since first seen, behavioural signals.",
+   "Entity graph linking accounts, devices, cards, addresses, phones and IPs with connected-component and ring scoring.",
+   "Case management: queues by priority and value, entity view, actions (approve, cancel, ban, freeze payout), analyst decisions recorded as labels.",
+   "Label ingestion from chargebacks, reviews, refunds and support, joined to the original decision and point-in-time features.",
+   "Audit log of every decision with model version, rule versions and features used."
+  ],
+  "non_functional": [
+   {
+    "name": "Decision latency",
+    "target": "p99 < 100ms end to end, feature fetch < 10ms, model < 5ms"
+   },
+   {
+    "name": "Throughput",
+    "target": "30k evaluations/s peak, 1M raw events/s ingested for features"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for the evaluate API (with caller fallback)"
+   },
+   {
+    "name": "Feature freshness",
+    "target": "Streaming features p99 lag < 5s"
+   },
+   {
+    "name": "Durability",
+    "target": "All events and decisions retained 2 years for labels and audit"
+   },
+   {
+    "name": "Explainability",
+    "target": "Top 3 reason codes on every non-allow decision"
+   },
+   {
+    "name": "Rule deploy time",
+    "target": "< 15 minutes with backtest"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "50M scored events/day normal; sale peak 30k/s scored events.",
+    "Raw behavioural events (clicks, views, logins) about 1B/day, peak 1M/s.",
+    "300 features per decision; about 50 entity keys touched per event (user, device, card, IP, address, each with several windows).",
+    "Online feature value average 16 bytes; 200M active entities x 100 feature values = 20B values."
+   ],
+   "math": [
+    "Online store size: 20B values x 16B = 320GB, x 2 for key overhead and x 2 replicas = about 1.3TB in Aerospike/Redis on SSD-backed nodes.",
+    "Feature reads: 30k evals/s x about 10 entity lookups (batched multi-get) = 300k key reads/s at peak.",
+    "Feature writes: 1M raw events/s x about 5 counters each = 5M increments/s raw; Flink pre-aggregates in state and flushes per key every 1s, cutting store writes to about 300k/s.",
+    "Event storage: 1B events x 1KB = 1TB/day raw, about 150GB/day compressed in the lakehouse; 2 years about 110TB.",
+    "Model scoring: GBDT with 500 trees of depth 6 costs about 0.5ms per event per core; 30k/s needs about 15 cores, plus 3x headroom.",
+    "Review queue: 0.1% of 5M orders/day sent to review = 5k cases/day; at 3 minutes each that is about 250 analyst-hours/day, about 35 analysts per day across shifts."
+   ],
+   "summary": "Scoring compute is cheap; the heavy parts are the streaming aggregation (millions of counter updates per second, pre-aggregated in Flink state) and a terabyte-scale online feature store that must answer a 10-key batched read in under 10ms. Human review capacity is a hard constraint that drives threshold choice."
+  },
+  "out_of_scope": [
+   "AML transaction monitoring and regulatory reporting.",
+   "Card network dispute handling workflow (we ingest outcomes only).",
+   "Edge bot mitigation (consumed as a signal).",
+   "Seller listing and review fraud (separate trust system)."
+  ]
+ },
+ "hld": {
+  "overview": "Producers (checkout, auth, refunds, payouts, clickstream) publish events to Kafka. A Flink streaming layer, partitioned by entity key, maintains windowed aggregates in keyed state and writes them to an online feature store; the same definitions run in batch on the lakehouse to produce training data. For inline decisions, callers hit the Risk Decision API, which loads features for all entities in the event, adds request-time features, runs the rules engine and the ML model, applies thresholds and returns an action with reasons. All decisions are published to Kafka for audit, case creation and label joining. A graph service keeps an entity-link graph used both for features (ring size, fraud neighbours) and for analyst investigation. Labels from chargebacks and reviews flow back to the training pipeline, which produces new model versions deployed via shadow then canary.",
+  "diagram": "\n Checkout/Auth/Refund/Payout        Clickstream / device SDK\n        |  sync evaluate                   | events\n        v                                  v\n +-------------------+   publish    +------------------+\n | Risk Decision API |------------->| Kafka risk.events|\n | rules + model     |              +----+--------+----+\n | thresholds        |                   |        |\n +--+-------+----+---+                   v        v\n    |       |    |             +-------------+  +-------------+\n    | mget  |    | score       | Flink stream|  | Graph svc   |\n    v       |    v             | windows,    |  | entity links|\n +--------+ | +-----------+    | velocity    |  +------+------+\n | Online | | | Model     |    +------+------+         |\n | feature|<+ | server    |           | upserts        | ring feats\n | store  |<--------------------------+----------------+\n +--------+   +-----------+\n    ^                                   +---------------+\n    | batch backfill                    | Case mgmt     |<-- review decisions\n +--+-------------+   labels   +--------+ (analysts)    |\n | Lakehouse /    |<-----------| Label svc  <- chargebacks, support\n | training (PIT) |            +---------------+\n +----------------+  new model -> shadow -> canary -> champion\n",
+  "components": [
+   {
+    "name": "Event ingestion (Kafka)",
+    "responsibility": "Durable, ordered streams risk.events, risk.decisions, risk.labels keyed by primary entity; schema-registry validated."
+   },
+   {
+    "name": "Risk Decision API",
+    "responsibility": "Stateless synchronous scoring: feature fetch, rules, model, thresholds, reasons, decision emission; enforces the 100ms budget with internal deadlines."
+   },
+   {
+    "name": "Rules engine",
+    "responsibility": "Versioned rules and lists evaluated in priority order (hard blocks, allow lists, scored rules); supports backtest and shadow."
+   },
+   {
+    "name": "Model server",
+    "responsibility": "Hosts GBDT models per event type (champion plus challengers in shadow); returns score and SHAP-style top contributors."
+   },
+   {
+    "name": "Streaming feature engine (Flink)",
+    "responsibility": "Keyed windowed aggregations (counts, sums, distinct counts via HyperLogLog), first-seen times, and anomaly signals with event-time processing."
+   },
+   {
+    "name": "Online feature store",
+    "responsibility": "Low-latency key-value store of latest feature values per entity; batched multi-get under 10ms."
+   },
+   {
+    "name": "Offline store / lakehouse",
+    "responsibility": "All events, decisions and feature snapshots for point-in-time training, backtests and analytics."
+   },
+   {
+    "name": "Graph service",
+    "responsibility": "Entity-link graph (account-device-card-address-phone-IP); connected components, fraud-neighbour counts, ring detection batch jobs."
+   },
+   {
+    "name": "Case management",
+    "responsibility": "Queues prioritised by expected loss, entity views, actions, SLA tracking; outcomes become labels."
+   },
+   {
+    "name": "Label service and training pipeline",
+    "responsibility": "Joins chargebacks, review outcomes and refunds to decisions; builds training sets; trains, validates and registers models."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Inline checkout evaluation",
+    "steps": [
+     "Checkout calls POST /v1/risk/evaluate with order_id, user_id, device_id, card_fingerprint, address_hash, ip, amount, items; deadline header 100ms.",
+     "Decision API builds entity keys and issues one batched multi-get to the online store (about 10 keys, 300 features), deadline 10ms; missing features are marked missing rather than waited for.",
+     "Computes request-time features: amount vs user's 90-day average, billing/shipping distance, account age, device-IP geo mismatch.",
+     "Rules stage 1: hard blocklists (banned device, stolen card fingerprint) and allowlists (verified corporate buyer); short-circuit if matched.",
+     "Model scores the feature vector (about 1ms); challenger models score in shadow asynchronously.",
+     "Policy maps score to action using segment thresholds (for example new users with COD vs prepaid): score < 0.2 allow, 0.2-0.6 challenge (OTP/3DS), 0.6-0.85 review hold, > 0.85 block.",
+     "Returns {decision, score, reasons, decision_id}; publishes the decision with feature snapshot to risk.decisions asynchronously.",
+     "If held, a case is created in case management with priority = score x order value."
+    ]
+   },
+   {
+    "name": "Streaming feature update",
+    "steps": [
+     "Order placed event lands on risk.events (keyed by user_id; Flink re-keys to card, device and IP as needed).",
+     "Flink updates keyed state: count and sum in sliding windows (5m, 1h, 24h, 7d), HLL of distinct accounts per device and per card, first_seen timestamps.",
+     "Event-time windows with 30s allowed lateness via watermarks; late events update windows and emit corrections.",
+     "Every 1s per key (or on significant change) Flink upserts features to the online store with version = event time.",
+     "Graph service consumes the same events and adds edges (user-device, user-card); periodic jobs recompute component sizes and fraud-neighbour counts as features."
+    ]
+   },
+   {
+    "name": "Label feedback and model refresh",
+    "steps": [
+     "Chargeback arrives 45 days later for order 987; label service maps it to decision_id and marks fraud=1 with a reason category.",
+     "Review outcomes and confirmed-good signals (delivered, no dispute after 90 days) produce labels too.",
+     "Weekly training builds a dataset with point-in-time features as of each decision (from logged snapshots or time-travel joins).",
+     "New model validated offline on a time-based holdout; then shadow scored for a week; then canaried at 5% with guardrails on block rate and loss.",
+     "Promoted to champion; thresholds recalibrated so the block rate stays within budget."
+    ]
+   }
+  ],
+  "data_flow": "Raw and business events flow into Kafka, then into Flink (features to the online store), the graph service and the lakehouse. Synchronous requests flow from producers to the Decision API, which reads the online store and model server and emits decisions back into Kafka. Decisions flow to case management and to the lakehouse. Labels flow from chargebacks, analysts and support into the label service, which joins them with decision snapshots for training; trained models flow to the model registry and then to model servers."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/risk/evaluate",
+    "request": "{event_type:'checkout', event_id, ts, entities:{user_id, device_id, card_fp, address_hash, ip, phone_hash}, context:{amount, currency, payment_method, items_count, coupon?}}",
+    "response": "{decision:'allow|challenge|review|block', score:0.0-1.0, reasons:[{code, weight}], decision_id, model_version, rules_version}",
+    "notes": "Idempotent on event_id (returns the cached decision for 24h). Deadline header honoured; partial-feature decisions flagged."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/risk/feedback",
+    "request": "{decision_id | event_id, label:'fraud|legit', source:'chargeback|review|support', category, ts}",
+    "response": "202",
+    "notes": "Writes to risk.labels; deduped by (decision_id, source)."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/rules",
+    "request": "{name, expression, action, priority, segment, mode:'shadow|active', expires_at?}",
+    "response": "201 {rule_id, version}",
+    "notes": "Requires a backtest id for active mode except for emergency list additions."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/rules/{id}/backtest",
+    "request": "{from, to}",
+    "response": "{hits, precision_on_matured_labels, est_false_positive_rate, est_loss_prevented}",
+    "notes": "Runs on lakehouse against point-in-time features."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/entities/{type}/{id}/graph",
+    "request": "?depth=2&limit=500",
+    "response": "{nodes:[...], edges:[...], component_size, known_fraud_neighbors}",
+    "notes": "Analyst tool; capped fan-out for super-nodes."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/cases/{id}/decision",
+    "request": "{action:'approve|cancel|ban|freeze_payout', note}",
+    "response": "200",
+    "notes": "Executes downstream action via the owning service and emits a label."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "online features",
+    "store": "Aerospike (or Redis on flash), sharded by key hash, RF=2",
+    "fields": [
+     "key = entity_type:entity_id (for example card:fp123)",
+     "bins: cnt_1h, cnt_24h, sum_amt_24h, distinct_users_7d_hll, first_seen, last_seen, fraud_neighbors, version_ts"
+    ],
+    "keys": "Primary key entity_type:entity_id; one record per entity holds all its features",
+    "notes": "One record per entity means one read per entity; TTL 90 days since last update."
+   },
+   {
+    "entity": "decisions",
+    "store": "Kafka risk.decisions -> lakehouse (Iceberg/Delta), partitioned by date and event_type",
+    "fields": [
+     "decision_id",
+     "event_id",
+     "event_type",
+     "ts",
+     "entities",
+     "features_snapshot (map)",
+     "score",
+     "decision",
+     "reasons",
+     "model_version",
+     "rules_version"
+    ],
+    "keys": "decision_id unique; Kafka key user_id",
+    "notes": "Logging the snapshot gives exact training features (log-and-wait) and avoids skew."
+   },
+   {
+    "entity": "labels",
+    "store": "Postgres (operational) + lakehouse",
+    "fields": [
+     "decision_id",
+     "label",
+     "source",
+     "category",
+     "label_ts",
+     "amount_lost"
+    ],
+    "keys": "PK (decision_id, source)",
+    "notes": "Multiple sources merged with precedence: chargeback > review > heuristic."
+   },
+   {
+    "entity": "entity graph",
+    "store": "Graph DB (JanusGraph/Neptune) or adjacency tables in a wide-column store",
+    "fields": [
+     "node(type, id, first_seen, flags)",
+     "edge(src, dst, type, first_seen, last_seen, count)"
+    ],
+    "keys": "Adjacency keyed by node id; super-node edges capped and sampled",
+    "notes": "Batch connected-components on Spark nightly plus incremental union-find for fresh links."
+   },
+   {
+    "entity": "cases",
+    "store": "Postgres",
+    "fields": [
+     "case_id",
+     "decision_id",
+     "priority",
+     "queue",
+     "status",
+     "assignee",
+     "sla_due",
+     "outcome"
+    ],
+    "keys": "PK case_id; index (queue, status, priority desc)",
+    "notes": "Priority = score x amount; SKIP LOCKED for analyst dequeue."
+   }
+  ],
+  "classes": [
+   {
+    "name": "DecisionService",
+    "responsibility": "Orchestrates feature fetch, rules, model, policy and emission within a deadline.",
+    "methods": [
+     "evaluate(event, deadline) -> Decision",
+     "fallback(event, reason) -> Decision",
+     "emit(decision)"
+    ]
+   },
+   {
+    "name": "FeatureFetcher",
+    "responsibility": "Builds entity keys, batched multi-get with timeout, request-time feature computation, missing-value handling.",
+    "methods": [
+     "fetch(entities, deadline) -> FeatureVector",
+     "requestTimeFeatures(event) -> map"
+    ]
+   },
+   {
+    "name": "RuleEngine",
+    "responsibility": "Evaluates compiled rule sets by priority with short-circuit; supports shadow evaluation.",
+    "methods": [
+     "evaluate(fv, event) -> RuleResult",
+     "load(version)",
+     "shadow(fv) -> hits"
+    ]
+   },
+   {
+    "name": "ModelScorer",
+    "responsibility": "Runs champion and shadow challengers; produces reason codes.",
+    "methods": [
+     "score(fv) -> (p, contributions)",
+     "shadowScore(fv)"
+    ]
+   },
+   {
+    "name": "ThresholdPolicy",
+    "responsibility": "Maps score and segment to an action; guardrails on block rate.",
+    "methods": [
+     "action(score, segment) -> Action",
+     "recalibrate(targetBlockRate)"
+    ]
+   },
+   {
+    "name": "VelocityAggregator (Flink)",
+    "responsibility": "Keyed sliding-window counters and HLL distinct counts with event-time semantics.",
+    "methods": [
+     "processElement(event, ctx)",
+     "onTimer(ts)",
+     "flush(key)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Deadline-bounded evaluation with graceful degradation",
+    "explain": "Each stage gets a slice of the 100ms budget. If feature fetch misses its slice, the model runs with missing values (GBDTs handle missing natively) and the decision is flagged partial; a partial decision can never escalate to block on its own, only to challenge or review.",
+    "pseudocode": "evaluate(event, deadline=100ms):\n  if cached = idem.get(event.id): return cached\n  t0 = now()\n  fv = fetcher.fetch(event.entities, budget=min(15ms, deadline-t0-30ms))\n  fv += requestTimeFeatures(event)\n  r = rules.evaluate(fv, event)\n  if r.hard_block: return finalize(BLOCK, r.reasons)\n  if r.hard_allow: return finalize(ALLOW, r.reasons)\n  p, contrib = model.score(fv)\n  action = policy.action(p, segment(event))\n  if fv.partial and action == BLOCK: action = REVIEW\n  async: shadowModels.score(fv); emit(decision, fv)\n  return finalize(action, top3(contrib, r.soft_reasons))"
+   },
+   {
+    "name": "Sliding-window velocity with bucketed counters",
+    "explain": "Exact sliding windows per event are costly. Keep per-key ring buffers of 1-minute buckets for the 1h window and 1-hour buckets for 7 days; the window sum is the sum of buckets newer than now minus window. Distinct counts use HyperLogLog (about 1.5KB at 2% error) merged across buckets.",
+    "pseudocode": "on event e for key k:\n  b = floor(e.event_time / 60s)\n  state[k].minute[b % 60].count += 1; .sum += e.amount\n  state[k].hour[(e.event_time/3600) % 168].hll.add(e.user_id)\n  register timer at end of window to expire stale buckets\nfeature cnt_1h(k, now):\n  return sum(bucket.count for bucket in state[k].minute if bucket.ts > now - 3600s)\nfeature distinct_users_7d(k):\n  return HLL.merge(state[k].hour[*]).estimate()"
+   },
+   {
+    "name": "Threshold selection under review capacity",
+    "explain": "Choose thresholds to maximise prevented loss subject to constraints: the block rate on good users must stay under budget and the review band must fit analyst capacity. Computed on matured labels, then adjusted by segment.",
+    "pseudocode": "for t_block in grid(0.5..0.99):\n  for t_review in grid(0.2..t_block):\n    fp_rate = P(score > t_block | legit) + challenge_cost * P(t_review<score<t_block | legit)\n    review_vol = count(t_review < score < t_block) per day\n    if fp_rate > 0.003 or review_vol > capacity: continue\n    value = caught_loss(t_block) + review_catch_rate * caught_loss(review band)\n    keep best value\nreturn (t_review, t_block)"
+   }
+  ],
+  "sequence": "\nCheckout    Decision API     Online store    Rules     Model     Kafka      Case mgmt\n   |  evaluate  |                |            |         |          |            |\n   |----------->| idem check     |            |         |          |            |\n   |            |-- mget 10 keys>|            |         |          |            |\n   |            |<-- features ---|  (8ms)     |         |          |            |\n   |            | request-time feats          |         |          |            |\n   |            |---------------------------->| no hard |          |            |\n   |            |--------------------------------------> score 0.71 |            |\n   |            | policy: review band (0.6-0.85)        |          |            |\n   |<-- review, reasons, decision_id (42ms)   |         |          |            |\n   |            |-- decision + feature snapshot (async) ---------->|            |\n   |            |                |            |         |          |-- case --->|\n   |  hold order, show 'verifying'            |         |          |            |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Card testing: a bot tries 5,000 stolen cards with small 1 INR orders from rotating IPs.",
+   "handling": "Velocity features on merchant-wide decline rate, per-device and per-BIN attempts, HLL distinct cards per device and per account; emergency rule blocks the pattern; challenge with CAPTCHA/3DS on spikes."
+  },
+  {
+   "case": "Hot key: a corporate NAT or public Wi-Fi IP shared by 50,000 legitimate users inflates IP velocity features.",
+   "handling": "Features normalised by IP baseline (z-score vs its own history), IP-type enrichment (mobile carrier CGNAT, corporate), cap IP weight; local cache for super-hot keys in the Decision API."
+  },
+  {
+   "case": "Delayed labels: a new attack started 2 weeks ago, but chargebacks only arrive in 45 days.",
+   "handling": "Use early proxy labels (review outcomes, customer complaints, issuer fraud alerts, RTO spikes), anomaly detection on feature distributions, and analyst-driven rules while labels mature."
+  },
+  {
+   "case": "Duplicate evaluate calls for the same checkout due to client retries.",
+   "handling": "Idempotency on event_id returns the same decision for 24h; velocity counters dedupe by event_id in Flink state so retries do not inflate counts."
+  },
+  {
+   "case": "Out-of-order and late events from mobile apps that were offline.",
+   "handling": "Event-time processing with watermarks and 30s allowed lateness for windows; later events go to a side output and correct offline features; never use arrival time for velocity."
+  },
+  {
+   "case": "Sale-day distribution shift: new users and high-value orders spike, model scores drift up and block rate doubles.",
+   "handling": "Block-rate guardrail per segment auto-raises thresholds or converts blocks to challenges; pre-sale shadow evaluation on last year's sale data; risk war room with live dashboards."
+  },
+  {
+   "case": "Feedback loop bias: orders we blocked never get labels, so the model never learns whether they were good.",
+   "handling": "Hold out a tiny randomised exploration slice (for example 0.5% of medium-score orders allowed with step-up) to get unbiased labels; reweight training with inverse propensity."
+  },
+  {
+   "case": "Fraud ring with 2,000 accounts sharing 30 devices and 5 addresses, each account behaving normally.",
+   "handling": "Graph features (component size, fraud-neighbour count, shared-device count) and nightly community detection; analysts take down the whole component at once."
+  },
+  {
+   "case": "Super-node in the graph (a default device id like 000000 from a buggy SDK, or a common warehouse address) links millions of accounts.",
+   "handling": "Detect high-degree nodes and exclude or down-weight them from link features; cap traversal fan-out; fix the SDK bug and blocklist bogus ids."
+  },
+  {
+   "case": "Account takeover: credentials are valid, device is new, shipping address changed, high-value electronics ordered.",
+   "handling": "Sequence features (address change within 1h of new-device login), consume login risk from the auth system, require step-up before address change or high-value order."
+  },
+  {
+   "case": "Feature store partially unavailable (one shard down).",
+   "handling": "Missing features for affected entities; model handles missing values; partial decisions cannot block, only challenge/review; alert on partial-decision rate."
+  },
+  {
+   "case": "Fraudster probes thresholds by trying increasing amounts.",
+   "handling": "Do not expose scores or exact reasons to users; use generic messages; add features on recent declined attempts per entity; random step-up."
+  },
+  {
+   "case": "Refund abuse: legitimate account repeatedly claims item not received.",
+   "handling": "Customer-level refund ratio features over 90 days, delivery proof signals (OTP-on-delivery), tiered refund policy (instant refund only for low-risk customers)."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Kafka",
+   "layer": "Event backbone",
+   "overview": "Distributed, partitioned, replayable log.",
+   "why": "Decouples producers from feature computation, decisions, graph and lakehouse; replay supports backfills and new features.",
+   "alternatives": "Kinesis/PubSub (managed, similar semantics); RabbitMQ (no long retention or replay)."
+  },
+  {
+   "name": "Apache Flink",
+   "layer": "Streaming feature computation",
+   "overview": "Stateful stream processor with event-time windows, watermarks, keyed state in RocksDB and exactly-once checkpoints.",
+   "why": "Sliding windows over millions of keys with correct handling of late data and consistent state after failures.",
+   "alternatives": "Kafka Streams (simpler deployment, fewer windowing features at this scale); Spark Structured Streaming (micro-batch latency of seconds); custom consumers with Redis INCR (simple, no event time, double counting on retry)."
+  },
+  {
+   "name": "Aerospike (or Redis on flash)",
+   "layer": "Online feature store",
+   "overview": "Distributed key-value store optimised for SSD with predictable sub-millisecond reads.",
+   "why": "About 1.3TB of features at 300k reads/s and 300k writes/s is cheaper on SSD than in RAM, with p99 around 1-2ms.",
+   "alternatives": "Redis Cluster in RAM (faster, about 3-4x cost at this size); Cassandra/ScyllaDB (good write throughput, slightly higher tail latency); DynamoDB (managed, cost at this QPS)."
+  },
+  {
+   "name": "Feature store framework (Feast/Chronon-style)",
+   "layer": "Feature definitions and point-in-time joins",
+   "overview": "Defines features once and materialises them online and offline with time-travel joins.",
+   "why": "Eliminates training-serving skew and makes backfilling new features possible.",
+   "alternatives": "Hand-written duplicate SQL and streaming code (fast to start, skew guaranteed); logging-only approach (exact, but new features cannot be backfilled)."
+  },
+  {
+   "name": "XGBoost / LightGBM",
+   "layer": "Model",
+   "overview": "Gradient-boosted decision trees over tabular features.",
+   "why": "Best accuracy on tabular, heterogeneous features; handles missing values natively; about 0.5ms scoring; explainable with SHAP.",
+   "alternatives": "Deep models (useful for sequences and embeddings, heavier serving); logistic regression (very fast and interpretable, weaker on interactions)."
+  },
+  {
+   "name": "Rules engine (Drools-like or in-house DSL with CEL)",
+   "layer": "Business rules and lists",
+   "overview": "Declarative rules evaluated over features with priorities.",
+   "why": "Analysts can react to new attacks in minutes without a model retrain; hard compliance blocks.",
+   "alternatives": "Model-only (slow to adapt to brand-new attacks); hard-coded rules in services (slow and scattered)."
+  },
+  {
+   "name": "Lakehouse (Iceberg/Delta on object storage) + Spark",
+   "layer": "Offline store, training, backtests",
+   "overview": "Table formats on cheap storage supporting time travel and large batch jobs.",
+   "why": "Two years of events and decisions for point-in-time training and rule backtests.",
+   "alternatives": "Data warehouse such as BigQuery/Snowflake (simpler SQL, cost at petabyte scale)."
+  },
+  {
+   "name": "Graph store (JanusGraph/Neptune) + Spark GraphFrames",
+   "layer": "Entity link analysis",
+   "overview": "Graph database for neighbourhood queries plus batch graph algorithms.",
+   "why": "Analyst investigations need 2-hop neighbourhoods; ring detection needs connected components on billions of edges.",
+   "alternatives": "Adjacency lists in a wide-column store with custom traversal (cheaper, less flexible); Neo4j (great querying, harder to scale writes)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Stream processing with event time, windows and watermarks",
+   "explain": "Fraud features are mostly aggregates over time: how many orders this card placed in the last hour, how many distinct accounts used this device this week. Computing them on a stream raises two questions: which clock, and when is a window complete? Processing time is when the event reaches the processor. Event time is when it actually happened, stamped at the source. Mobile apps buffer events offline and networks reorder them, so processing-time windows give wrong answers and different answers on replay. Event-time processing assigns each event to windows by its own timestamp. Tumbling windows are fixed and non-overlapping (each hour), sliding windows overlap (the last 60 minutes, updated each minute), and session windows close after a gap of inactivity. Because events arrive out of order, the processor needs to know when it has probably seen everything up to time T. A watermark is that assertion, typically 'max event time seen minus allowed delay'. When the watermark passes the end of a window, the window can be finalized. Events that arrive after the watermark are late; you either drop them, send them to a side output, or allow a lateness period during which windows are updated and corrections emitted. The trade-off is freshness versus completeness: a longer delay gives more complete windows but staler features. Stateful processors such as Flink keep per-key window state in an embedded store and checkpoint it, so a failure does not lose or double-count it.",
+   "in_this_design": "Flink computes velocity features keyed by card, device, IP and user with event-time sliding windows (5m, 1h, 24h, 7d) using bucketed counters, watermarks with 30s bounded out-of-orderness, and a side output for very late events that only corrects the offline store.",
+   "key_points": [
+    "Use event time for correctness and reproducibility; processing time drifts with lag.",
+    "Watermarks trade freshness for completeness.",
+    "Allowed lateness plus side outputs handle stragglers explicitly.",
+    "Bucketed counters make long sliding windows cheap."
+   ],
+   "qa": [
+    {
+     "q": "Flink falls 10 minutes behind during a sale. What happens to decisions?",
+     "a": "Features become stale, so velocity is undercounted, which is exactly when attacks hide. The Decision API checks a feature freshness timestamp and, if lag exceeds a threshold, adds conservative request-time checks or routes high-value orders to challenge; we also scale Flink parallelism and alert on lag."
+    },
+    {
+     "q": "Why not just INCR counters in Redis from a consumer?",
+     "a": "No event-time semantics, no window expiry beyond TTL hacks, and retries double count unless you add dedupe. It works for a prototype, but correctness at scale needs stateful processing with checkpoints."
+    },
+    {
+     "q": "How do you handle a 7-day sliding window per key without storing every event?",
+     "a": "Keep hourly buckets (168 per key) with counts, sums and mergeable sketches like HLL, and sum or merge the buckets in range. Precision is limited to bucket size, which is fine for fraud features."
+    }
+   ]
+  },
+  {
+   "name": "Feature stores, point-in-time correctness and training-serving skew",
+   "explain": "A model learns a mapping from features to outcomes. If the features it sees in production are computed differently from those it was trained on, its predictions degrade silently. This is training-serving skew. It creeps in when the online path is written in Java streaming code and the training path in SQL, or when a training query accidentally uses information that was not yet available at decision time. That second failure is leakage: for example, computing 'orders by this card in the last 24 hours' for training using the full day including orders after the decision, or including the chargeback count which only exists because of the order being labelled. The model looks brilliant offline and fails online. A feature store attacks both problems. Features are defined once, as transformations over sources, and the platform materialises them in two places: an online store holding the latest value per entity for low-latency serving, and an offline store holding the full history of values with timestamps. Training sets are built with point-in-time joins: for each labelled decision at time t, fetch each feature value as it was at t, never later. A simpler and very robust complement is log-and-wait: log the exact feature vector used at decision time and train on those logs once labels mature. That guarantees parity, but new features cannot be evaluated historically unless they are backfilled from definitions.",
+   "in_this_design": "Feature definitions drive both Flink (online) and Spark (offline backfill); every decision logs its feature snapshot to the lakehouse; training uses logged snapshots for existing features and point-in-time joins for new ones, with a skew monitor comparing online values to offline recomputation daily.",
+   "key_points": [
+    "Skew: same feature name, different computation online and offline.",
+    "Leakage: using information from after the decision time.",
+    "Point-in-time joins fetch each feature as of the decision timestamp.",
+    "Log-and-wait guarantees parity; definitions enable backfill of new features."
+   ],
+   "qa": [
+    {
+     "q": "A new model gets AUC 0.98 offline but performs like random online. First suspicion?",
+     "a": "Leakage or skew. Check whether any feature used future data (post-decision counts, label-derived fields) and compare the online feature distribution against the training distribution for the top features."
+    },
+    {
+     "q": "Why log feature snapshots if you already have a feature store?",
+     "a": "Snapshots capture exactly what the model saw, including missing values and staleness at that moment, which a recomputation cannot reproduce perfectly. They also make audits and dispute explanations exact."
+    },
+    {
+     "q": "How do you evaluate a brand-new feature without waiting 90 days?",
+     "a": "Backfill it from its definition over historical events using point-in-time logic, train on the matured labels you already have, then shadow it online to verify online values match the backfill."
+    }
+   ]
+  },
+  {
+   "name": "Combining rules and machine learning; thresholds, precision and recall",
+   "explain": "Rules and models do different jobs. Rules encode known patterns and policies precisely: block cards on a stolen list, never allow more than 3 accounts per phone. They are explainable and can be deployed within minutes when a new attack appears, but they are brittle, they multiply into unmaintainable thickets, and attackers learn them. Models learn non-linear combinations of hundreds of weak signals and generalise to variants, but they need labels, take time to retrain, and are harder to explain. Mature systems layer them: hard rules first (lists, compliance), then a model score, then policy thresholds, plus targeted rules for emerging attacks that are retired once the model learns them. A model outputs a score, not a decision. Turning it into an action means choosing thresholds, and every threshold trades precision (of what we flagged, how much was really fraud) against recall (of all fraud, how much we flagged). The right point depends on costs that are asymmetric and business specific: blocking a good customer loses the order and perhaps the customer for life, while missing fraud loses the goods plus a chargeback fee. Because fraud is rare (well under 1% of events), accuracy is meaningless: a model that says 'never fraud' is 99.8% accurate. Use precision-recall curves, dollar-weighted recall, and false-positive rate on good users. Multiple bands (allow, challenge, review, block) add a middle path where friction, not refusal, filters fraud.",
+   "in_this_design": "Rules stage handles lists and emergency patterns; a GBDT per event type scores; ThresholdPolicy maps score to four bands per segment, tuned to keep good-user friction under 0.3% and the review band within analyst capacity.",
+   "key_points": [
+    "Rules: fast to deploy, explainable, brittle. Models: generalise, need labels.",
+    "A score is not a decision; thresholds encode business costs.",
+    "With rare fraud, ignore accuracy; use precision, recall and false-positive rate on good users.",
+    "Challenge bands convert hard trade-offs into friction trade-offs."
+   ],
+   "qa": [
+    {
+     "q": "Fraud is 0.2% of orders. Your model has 99.8% accuracy. Is it good?",
+     "a": "Unknown, and probably useless: predicting 'legit' for everything gives 99.8%. Look at recall at a fixed false-positive rate, precision in the block band, and loss caught in rupees."
+    },
+    {
+     "q": "How do you pick the block threshold?",
+     "a": "From matured labels, compute the expected cost at each threshold: false positives x lifetime value lost plus missed fraud x loss, subject to the constraints of block-rate budget and review capacity, then set it per segment because costs differ (COD versus prepaid, new versus loyal users)."
+    },
+    {
+     "q": "When would you add a rule instead of retraining?",
+     "a": "When a new attack is causing loss now and labels will take weeks. Write a precise rule, backtest it, deploy it in shadow then active within the hour, and retire it once the retrained model covers the pattern."
+    }
+   ]
+  },
+  {
+   "name": "Delayed and biased labels: feedback loops, exploration and champion/challenger",
+   "explain": "Supervised fraud models need labels, and fraud labels are slow, noisy and biased. They are slow because chargebacks arrive 30 to 90 days after the transaction, so the most recent month of data has incomplete labels and the newest attacks are underrepresented. Training only on matured windows makes the model lag the attackers. Teams use proxy labels (analyst decisions, customer reports, issuer alerts) to get earlier signal, while keeping track of which labels are final. They are noisy because some chargebacks are friendly fraud, a real customer disputing a real purchase, and some fraud never results in a chargeback. They are biased because of the model's own actions, the selection bias or feedback loop problem. Orders the model blocked never complete, so we never learn whether they were actually fraud. Over time training data contains only what the previous model allowed, and the model can drift into blind spots, or into blocking a segment forever without evidence. The standard remedies are a small exploration budget, where a random slice of borderline traffic is allowed (often with step-up friction) to collect unbiased outcomes, and propensity weighting of the training data. Model deployment needs the same discipline: a new challenger model is first shadow-scored on live traffic, with its decisions logged but not enforced, then canaried on a small percentage with guardrails on block rate and loss, and only then promoted to champion.",
+   "in_this_design": "Label service merges chargebacks, reviews and support signals with precedence and maturity flags; 0.5% exploration of medium-score orders with step-up; challengers shadow for a week, canary at 5% with block-rate and loss guardrails before promotion.",
+   "key_points": [
+    "Labels lag 30-90 days; use proxies for speed and track maturity.",
+    "Blocked events never get labels, which is selection bias; explore a little.",
+    "Shadow, then canary, then champion; guardrails on block rate and loss.",
+    "Friendly fraud makes labels noisy; categorise chargeback reasons."
+   ],
+   "qa": [
+    {
+     "q": "How do you evaluate a model trained last week when chargebacks take 60 days?",
+     "a": "Offline on a time-based holdout old enough to have matured labels; online through proxy metrics (review hit rate, early disputes, score distribution) and through a canary whose loss is reconciled when labels mature."
+    },
+    {
+     "q": "Why not train on all labels including the last 30 days?",
+     "a": "Recent fraud is under-labelled because chargebacks have not arrived, so those rows look legitimate. That teaches the model that recent patterns are safe. Either exclude immature windows or label them using proxies with appropriate weights."
+    },
+    {
+     "q": "Isn't exploration just letting fraud through on purpose?",
+     "a": "It is a small, controlled cost (for example 0.5% of medium-risk orders, with step-up auth and value caps) that buys unbiased labels. Without it the model's blind spots compound and losses grow larger later."
+    }
+   ]
+  },
+  {
+   "name": "Probabilistic data structures for velocity (HyperLogLog, Count-Min Sketch, Bloom filters)",
+   "explain": "Some fraud signals need distinct counts or membership tests over huge sets: how many different accounts used this device in 7 days, how many different cards were tried from this IP, has this device ever been seen. Storing exact sets per key is expensive when there are hundreds of millions of keys. Probabilistic structures trade a small, bounded error for large memory savings. HyperLogLog estimates the number of distinct elements. It hashes each element, uses the first bits to pick a register and records the longest run of leading zeros seen in the rest, because a long run of zeros is evidence of many distinct elements. With 2^11 registers (about 1.5KB) the standard error is about 2%, regardless of whether there are 10 or 10 million elements. HLLs are mergeable: the union of two sketches is the register-wise maximum, which makes them ideal for summing time buckets in sliding windows. A Count-Min Sketch estimates frequencies of items in a stream using several hash rows of counters, taking the minimum across rows; it overestimates but never underestimates, which suits heavy-hitter detection such as finding the hottest IPs. A Bloom filter answers 'possibly in set' or 'definitely not in set' using a bit array and k hashes, with a tunable false-positive rate and no false negatives, which is good for large blocklists checked on the hot path.",
+   "in_this_design": "HLL per (device, hour bucket) for distinct accounts and per (card, hour) for distinct devices, merged over 7 days; Count-Min Sketch in Flink to find heavy-hitter IPs and BINs during card-testing attacks; Bloom filter of the stolen-card fingerprint list in each Decision API instance with exact confirmation on hit.",
+   "key_points": [
+    "HLL: about 1.5KB for about 2% error on distinct counts; mergeable across buckets.",
+    "Count-Min: frequency estimates that only overestimate; good for heavy hitters.",
+    "Bloom: no false negatives, tunable false positives; confirm hits exactly.",
+    "Trade exactness for memory where decisions tolerate small error."
+   ],
+   "qa": [
+    {
+     "q": "Why is HLL mergeability important here?",
+     "a": "Sliding windows are built from time buckets. Merging 168 hourly HLLs by register-wise max gives the distinct count for 7 days without storing raw ids, and the window slides by dropping the oldest bucket."
+    },
+    {
+     "q": "A Bloom filter says a card fingerprint is on the stolen list. Do you block?",
+     "a": "Confirm with an exact lookup first, because Bloom filters can return false positives. The filter's value is that the 99.9% of cards that are definitely not on the list skip the exact lookup."
+    },
+    {
+     "q": "What does 2% HLL error mean for a rule like 'more than 5 accounts per device'?",
+     "a": "At small counts the estimate is effectively exact (HLL uses linear counting for small cardinalities), so thresholds like 5 are safe. Error matters at large counts, where a 2% difference rarely changes the decision."
+    }
+   ]
+  },
+  {
+   "name": "Graph-based link analysis and entity resolution",
+   "explain": "Per-event models see one transaction and its entities' histories. Organised fraud hides across entities: 2,000 accounts that each look normal but share 30 devices, 5 addresses and a handful of cards. Link analysis models the world as a graph: nodes are accounts, devices, cards, phones, addresses, IPs and payout bank accounts, and edges mean 'used together'. Fraud then shows up as structure. Connected components are groups of nodes reachable from each other; an unusually large component of new accounts tied by a few devices is a ring. A node's neighbourhood (how many known-fraud nodes within 2 hops) is a strong feature. Community detection algorithms such as Louvain or label propagation find dense clusters inside big components. Entity resolution precedes all of this: deciding that '12 MG Road, Blr' and '12, M.G. Rd Bangalore' are the same address, or that two device ids are the same phone after an app reinstall, by normalisation, fuzzy matching and shared-attribute rules. Two practical hazards dominate. Super-nodes (a shared office IP, a default device id from a buggy SDK, a courier hub address) connect millions of unrelated users and must be detected by degree and down-weighted, or every component merges. And graph algorithms on billions of edges are batch jobs, so real-time use combines incremental union-find for new edges with nightly full recomputation that publishes features to the online store.",
+   "in_this_design": "Graph service ingests edges from events; incremental union-find maintains component ids for fresh links; nightly Spark jobs compute components, fraud-neighbour counts and communities, published as features (component_size, fraud_neighbors_2hop); super-nodes above a degree cap are excluded; analysts explore 2-hop neighbourhoods in case management.",
+   "key_points": [
+    "Rings are invisible per event but obvious as graph structure.",
+    "Entity resolution (address, device normalisation) comes first.",
+    "Super-nodes must be capped or they merge everything.",
+    "Batch graph algorithms plus incremental union-find for freshness."
+   ],
+   "qa": [
+    {
+     "q": "How do you use graph signals inside a 100ms decision?",
+     "a": "Precompute: component size, fraud neighbours within 2 hops and community risk are materialised per entity in the online store. The hot path reads them like any other feature; no traversal happens inline."
+    },
+    {
+     "q": "Your connected-components job suddenly reports one component with 40M accounts. Why?",
+     "a": "A super-node, such as a default device id, a shared IP or a common pickup address, is linking everyone. Detect high-degree nodes, exclude them from linkage, and fix the data source."
+    },
+    {
+     "q": "How do you avoid punishing innocent family members sharing a device?",
+     "a": "Graph features feed the model rather than blocking directly; small components with long history and good outcomes are normal. Rings look different: many new accounts, short lifetimes and shared payment instruments."
+    }
+   ]
+  },
+  {
+   "name": "Timeouts, fallbacks and idempotency on a synchronous risk path",
+   "explain": "Putting a decision service inline on checkout makes it part of the most valuable path in the company, so its failure behaviour matters as much as its accuracy. Three disciplines apply. Deadlines and budgets: the caller sets an end-to-end deadline (100ms) and each internal step gets a slice; a step that overruns returns what it has rather than blocking. Callers propagate the deadline so downstream services stop work the caller has already abandoned. Explicit fallbacks: decide in advance what happens on timeout or error, per flow. For a fraud check, 'block on error' turns every incident into a revenue outage, while 'allow on error' invites attackers to induce errors. Typical policy is to allow low-value low-risk transactions, hold high-value ones for asynchronous re-evaluation, and never hard-block on missing data. Idempotency: networks and clients retry. Each evaluation carries a unique event_id, and the service stores the decision under that id so a retry returns the same answer instead of re-scoring, which could give a different result and double-count velocity features. Retries themselves must use exponential backoff with jitter to avoid synchronised retry storms, and be limited by a retry budget, for example no more than 10% extra load. Bulkheads, meaning separate thread pools or deployments per caller or flow, ensure a flood of login scoring cannot starve checkout scoring. Load shedding drops the least valuable work first, such as shadow models and non-critical async flows.",
+   "in_this_design": "Decision API honours a 100ms deadline with a 10-15ms feature budget; partial features can only lead to challenge/review; callers have documented fallbacks (allow under 2,000 INR, hold above); event_id idempotency cache for 24h; separate deployments for checkout, login and refund scoring; shadow scoring is shed first under load.",
+   "key_points": [
+    "Deadline propagation with per-stage budgets.",
+    "Pre-agreed fallback per flow; never fail into hard blocks.",
+    "Idempotency keys keep decisions and counters stable across retries.",
+    "Backoff with jitter, retry budgets, bulkheads and load shedding."
+   ],
+   "qa": [
+    {
+     "q": "Why not fail closed (block) when the fraud service is down?",
+     "a": "It converts an internal incident into a checkout outage for every customer, costing far more than the fraud prevented in that window. Hold high-value orders for re-evaluation instead, which keeps the safety without blocking."
+    },
+    {
+     "q": "Attackers learn that timeouts mean allow. How do you defend?",
+     "a": "Fallback allows only low-value orders, all fallback decisions are re-scored asynchronously with post-facto cancellation before shipment, and attempts to induce latency (giant carts, odd payloads) are capped by input validation."
+    },
+    {
+     "q": "Why must velocity counters dedupe by event_id?",
+     "a": "A retried evaluation or redelivered Kafka event would otherwise count twice, inflating velocity and pushing good users toward blocks. Flink keeps a short-lived dedupe set of event_ids in keyed state."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Feature computation",
+   "options": "Compute on request from raw DB | Precompute in streaming | Batch nightly only",
+   "choice": "Streaming precompute plus a few request-time features",
+   "why": "Raw queries cannot meet 10ms; nightly batch misses attacks that unfold in minutes; streaming gives seconds-fresh features at bounded cost."
+  },
+  {
+   "decision": "Model family",
+   "options": "Logistic regression | GBDT | Deep sequence model",
+   "choice": "GBDT now, sequence embeddings as extra features later",
+   "why": "Best accuracy per millisecond on tabular data, native missing-value handling and SHAP explanations."
+  },
+  {
+   "decision": "Online store",
+   "options": "Redis in RAM | Aerospike on SSD | Cassandra",
+   "choice": "Aerospike on SSD",
+   "why": "1.3TB at sub-2ms p99 for a fraction of the RAM cost; predictable tail latency."
+  },
+  {
+   "decision": "Action on high score",
+   "options": "Block | Challenge | Review",
+   "choice": "Bands: challenge mid, review high, block only very high or hard rules",
+   "why": "Friction recovers good customers that a block would lose; review fits capacity; blocks reserved for high-precision cases."
+  },
+  {
+   "decision": "Fallback on timeout",
+   "options": "Fail open | Fail closed | Tiered by value",
+   "choice": "Tiered by value with async re-score",
+   "why": "Protects revenue and limits attacker gain from induced failures."
+  },
+  {
+   "decision": "Training data",
+   "options": "Recompute features offline | Log features at decision time",
+   "choice": "Both: logs for parity, definitions for backfill",
+   "why": "Logs guarantee no skew for existing features; definitions let new features be evaluated historically."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Decision API latency spike (p99 300ms)",
+   "behavior": "Callers hit their 100ms deadline and apply tiered fallbacks; async re-scoring of fallback decisions; autoscaling and shedding of shadow models; incident paged on fallback rate."
+  },
+  {
+   "failure": "Online feature store shard down",
+   "behavior": "Missing features for affected keys; model scores with missing values; partial decisions limited to challenge/review; replica promotion; partial-decision rate alert."
+  },
+  {
+   "failure": "Flink job lagging or restarting",
+   "behavior": "Features stale but present; Decision API reads feature freshness and adds stricter request-time checks for high-value orders; Flink restores from the last checkpoint (exactly-once state) and catches up."
+  },
+  {
+   "failure": "Bad model deployed (block rate triples)",
+   "behavior": "Canary guardrail auto-rolls back to the champion within minutes; segment block-rate monitors convert blocks to challenges until resolved."
+  },
+  {
+   "failure": "Emergency rule written too broadly",
+   "behavior": "Rules require shadow mode and a backtest; active rules have hit-rate guardrails and auto-disable if hit rate exceeds 5x the backtest estimate."
+  },
+  {
+   "failure": "Kafka cluster degraded",
+   "behavior": "Decisions still return (emission is async with a local buffer); features freeze; audit gaps are back-filled from buffers; alert."
+  },
+  {
+   "failure": "Label pipeline broken for a week",
+   "behavior": "Training paused rather than training on missing labels; dashboards flag label volume anomalies; models continue serving."
+  }
+ ],
+ "metrics": [
+  "Fraud loss in bps of GMV (by event type, payment method, segment), reconciled as labels mature",
+  "False-positive rate: good orders blocked or challenged; challenge pass rate",
+  "Decision distribution (allow/challenge/review/block) per segment with anomaly alerts",
+  "Precision and recall at operating thresholds on matured labels; value-weighted recall",
+  "Decision latency p50/p99, feature fetch latency, partial-decision rate, fallback rate",
+  "Feature freshness (Flink lag) and online store p99",
+  "Feature and score distribution drift (PSI) versus training",
+  "Review queue size, SLA attainment, analyst agreement with model",
+  "Rule hit rates versus backtest estimates",
+  "Chargeback rate as a share of transactions per card network threshold"
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you detect a brand-new attack that neither rules nor the model know?",
+   "a": "Unsupervised signals: sudden shifts in feature distributions, spikes in new-account cohorts sharing attributes, unusual graph component growth, and heavy-hitter detection on BINs, IPs and coupon codes. Alerts go to analysts, who write a targeted rule within the hour."
+  },
+  {
+   "q": "How do you explain a decision to a customer or regulator?",
+   "a": "Reason codes from rules and SHAP-style top contributors map to human-readable categories (unusual device, high velocity on payment method). Customers get a generic message and a path to verify; internal support sees the detailed codes."
+  },
+  {
+   "q": "How does the design change for seller payout fraud?",
+   "a": "Same platform, different event type and model: features on refund ratios, sudden catalogue changes, new bank accounts, links to banned sellers. The action is usually to hold the payout for review rather than a real-time block, so the latency budget is looser."
+  },
+  {
+   "q": "How do you prevent the risk team's rules from becoming a 2,000-rule mess?",
+   "a": "Every rule has an owner, an expiry date, measured hit rate and precision. Rules that the model has absorbed are retired, and a quarterly review removes rules with low precision or no hits."
+  },
+  {
+   "q": "What is the role of 3DS or OTP in this design?",
+   "a": "It is the challenge action. It shifts liability (3DS shifts chargeback liability to the issuer for cards) and filters fraud with friction instead of refusal; challenge pass and fail outcomes are strong, fast labels."
+  },
+  {
+   "q": "How would you scale to multiple countries?",
+   "a": "Per-region deployments for data residency with region-specific models and thresholds, a shared feature platform, and global signals (device and card reputation) shared as hashed, consented aggregates where allowed."
+  },
+  {
+   "q": "What would you build first with a small team?",
+   "a": "Event logging with decision snapshots, a rules engine with lists and backtests, and a handful of streaming velocity features. Then a GBDT trained on the logged data. Graph and exploration come after the feedback loop is solid."
+  }
+ ],
+ "key_points": [
+  "Two paths: a synchronous 100ms decision (features, rules, model, thresholds) and an asynchronous platform (streaming features, graph, cases, labels, training).",
+  "Precompute features with event-time streaming (Flink) into a sharded online store; one batched read per decision.",
+  "Hard rules for known patterns and emergencies; GBDT for generalisation; score to action through segment thresholds with challenge and review bands.",
+  "Measure loss in bps of GMV against false positives on good users; accuracy is meaningless with rare fraud.",
+  "Point-in-time correctness and logged feature snapshots prevent training-serving skew and leakage.",
+  "Labels are delayed 30-90 days and biased by our own blocks; use proxies, exploration and maturity-aware evaluation.",
+  "Graph features catch rings; cap super-nodes.",
+  "Fail safely: deadlines, tiered fallbacks, idempotent event_ids, bulkheads; never hard-block on missing data.",
+  "Ship models through shadow, canary and guardrails; ship rules through backtest and shadow."
+ ],
+ "quiz": [
+  {
+   "q": "Fraud is 0.2% of orders. Which metric best tells you whether the model is useful?",
+   "options": [
+    "Overall accuracy",
+    "Recall of fraud value at a fixed false-positive rate on good users",
+    "Training loss",
+    "Average score across all orders"
+   ],
+   "answer": 1,
+   "why": "Accuracy is about 99.8% even for a model that never flags anything. Value-weighted recall at a business-acceptable false-positive rate captures the real trade-off."
+  },
+  {
+   "q": "A model shows AUC 0.98 offline but performs poorly online. Most likely cause?",
+   "options": [
+    "Too few trees",
+    "Kafka partitions are unbalanced",
+    "Feature leakage or training-serving skew",
+    "The online store uses SSDs"
+   ],
+   "answer": 2,
+   "why": "Suspiciously good offline numbers with poor online results almost always mean the training features contained future information or were computed differently online."
+  },
+  {
+   "q": "Why use event time rather than processing time for velocity windows?",
+   "options": [
+    "Event time is cheaper to compute",
+    "Processing time cannot be checkpointed",
+    "Kafka does not store processing time",
+    "Mobile events arrive late and out of order; event time keeps windows correct and replays reproducible"
+   ],
+   "answer": 3,
+   "why": "Processing-time windows change with lag and replay. Cost is not the reason; the reason is correctness."
+  },
+  {
+   "q": "Roughly how much memory does one HyperLogLog with about 2% standard error need?",
+   "options": [
+    "About 1.5 KB",
+    "About 150 KB",
+    "About 15 MB",
+    "It depends linearly on the number of distinct elements"
+   ],
+   "answer": 0,
+   "why": "HLL size is fixed by register count (2^11 registers is about 1.5KB) and independent of cardinality, which is its whole point."
+  },
+  {
+   "q": "The Decision API cannot get features within its 10ms budget. What should it do?",
+   "options": [
+    "Wait until features arrive, even if it exceeds 100ms",
+    "Block the transaction to be safe",
+    "Score with missing values, flag the decision as partial, and never escalate a partial decision to block",
+    "Return allow without scoring"
+   ],
+   "answer": 2,
+   "why": "GBDTs handle missing values, and capping partial decisions at challenge or review keeps both safety and conversion. Blocking on missing data turns infrastructure problems into lost customers."
+  },
+  {
+   "q": "Orders the model blocks never receive labels. What problem does this cause and what helps?",
+   "options": [
+    "Selection bias; a small randomised exploration slice with step-up plus propensity weighting",
+    "Label leakage; drop recent data",
+    "Concept drift; retrain daily",
+    "Class imbalance; oversample fraud"
+   ],
+   "answer": 0,
+   "why": "The training data only contains outcomes for allowed traffic, so blind spots persist. Retraining more often on biased data does not fix the bias."
+  },
+  {
+   "q": "A components job suddenly finds one cluster containing 40M accounts. Most likely cause?",
+   "options": [
+    "A real fraud ring of 40M accounts",
+    "HLL error",
+    "Watermark misconfiguration",
+    "A super-node such as a default device id or shared IP linking unrelated users"
+   ],
+   "answer": 3,
+   "why": "High-degree nodes collapse the graph. They must be detected by degree and excluded from linkage."
+  },
+  {
+   "q": "Which is the best fallback when the fraud service times out on checkout?",
+   "options": [
+    "Always block",
+    "Tiered: allow low-value orders, hold high-value ones, and re-score all fallback decisions asynchronously",
+    "Always allow with no follow-up",
+    "Retry synchronously until it succeeds"
+   ],
+   "answer": 1,
+   "why": "Always-block causes revenue outages, and always-allow with no follow-up invites attackers to induce timeouts. Unbounded retries blow the latency budget."
+  },
+  {
+   "q": "At 30k evaluations/s, each reading about 10 entity keys in one batched call, roughly how many key reads/s hit the online store?",
+   "options": [
+    "3k",
+    "30k",
+    "300k",
+    "3M"
+   ],
+   "answer": 2,
+   "why": "30,000 x 10 = 300,000 key reads per second, spread across shards. Batching keeps it to one network round trip per decision."
+  },
+  {
+   "q": "A coupon-abuse attack starts today, but chargeback-style labels will not arrive for weeks. The fastest effective response?",
+   "options": [
+    "Wait for labels and retrain",
+    "Backtest and deploy a targeted rule (shadow, then active) within the hour, and retire it later when the model learns the pattern",
+    "Lower all model thresholds globally",
+    "Turn off coupons for everyone"
+   ],
+   "answer": 1,
+   "why": "Rules exist for exactly this case. Lowering global thresholds raises false positives everywhere, and turning off coupons is a business outage."
+  },
+  {
+   "q": "A Bloom filter of stolen card fingerprints reports a hit. What should happen next?",
+   "options": [
+    "Block immediately; Bloom filters have no false positives",
+    "Ignore it; Bloom filters are unreliable",
+    "Rebuild the filter",
+    "Confirm with an exact lookup before acting, since Bloom filters can have false positives but never false negatives"
+   ],
+   "answer": 3,
+   "why": "The guarantee runs the other way: a Bloom filter has no false negatives but does have false positives. Hits need confirmation; misses are definitive."
+  },
+  {
+   "q": "Why should velocity counters in Flink dedupe by event_id?",
+   "options": [
+    "To reduce Kafka storage",
+    "Retries and redeliveries would otherwise double-count and push good users toward blocks",
+    "Flink requires unique keys",
+    "To enable event-time windows"
+   ],
+   "answer": 1,
+   "why": "At-least-once delivery means duplicates happen. Dedupe keeps features accurate; it is unrelated to storage or windowing mechanics."
+  },
+  {
+   "q": "A sale day starts and the block rate doubles within 30 minutes while confirmed fraud has not risen. Best immediate action?",
+   "options": [
+    "Segment-level guardrails convert blocks to challenges or raise thresholds while investigating distribution shift",
+    "Turn the fraud system off",
+    "Retrain the model on today's data",
+    "Lower thresholds to catch more"
+   ],
+   "answer": 0,
+   "why": "This is distribution shift causing false positives. Today's data has no matured labels, so retraining on it is not possible."
+  },
+  {
+   "q": "What is the main reason to log the exact feature snapshot with each decision?",
+   "options": [
+    "To save online store space",
+    "To speed up scoring",
+    "Guaranteed parity between training and serving features, plus exact audits",
+    "Because labels are stored in the snapshot"
+   ],
+   "answer": 2,
+   "why": "Snapshots capture exactly what the model saw, including staleness and missing values. They do not make scoring faster."
+  },
+  {
+   "q": "Which statement about Count-Min Sketch is correct?",
+   "options": [
+    "It can underestimate counts",
+    "It estimates frequencies and never underestimates, making it suitable for heavy-hitter detection",
+    "It counts distinct elements",
+    "It stores every element exactly"
+   ],
+   "answer": 1,
+   "why": "Collisions only add to counters and the minimum over rows is taken, so estimates are greater than or equal to the true count. Distinct counting is HLL's job."
+  },
+  {
+   "q": "The online feature store holds 20B values at 16 bytes each, with 2x key overhead and 2 replicas. Roughly what total size?",
+   "options": [
+    "About 32 GB",
+    "About 13 TB",
+    "About 320 MB",
+    "About 1.3 TB"
+   ],
+   "answer": 3,
+   "why": "20B x 16B = 320GB; x2 overhead = 640GB; x2 replicas is about 1.3TB, which is why SSD-backed stores are attractive."
+  },
+  {
+   "q": "Your watermark allows 30 seconds of lateness. An event arrives 10 minutes late. In this design it should be:",
+   "options": [
+    "Silently dropped",
+    "Sent to a side output that corrects offline features, without changing finalised online windows",
+    "Used to rewrite past decisions",
+    "Treated as a new event at arrival time"
+   ],
+   "answer": 1,
+   "why": "Very late data still matters for training accuracy but must not reopen online windows indefinitely. Using arrival time would corrupt event-time semantics."
+  },
+  {
+   "q": "Why is a challenge band (OTP/3DS) valuable between allow and block?",
+   "options": [
+    "It removes the need for a model",
+    "It is cheaper to compute",
+    "It turns some would-be false positives into successful orders while fraudsters usually fail the challenge, and it produces fast labels",
+    "It guarantees zero fraud"
+   ],
+   "answer": 2,
+   "why": "Friction lets good users prove themselves. It does not replace scoring and does not eliminate fraud."
+  },
+  {
+   "q": "A new challenger model is ready. What is the safest rollout?",
+   "options": [
+    "Replace the champion immediately",
+    "Run it only offline forever",
+    "Deploy to the largest segment first",
+    "Shadow score on live traffic, then canary at a small percentage with block-rate and loss guardrails, then promote"
+   ],
+   "answer": 3,
+   "why": "Shadow mode catches skew and latency issues with no customer impact; the canary limits blast radius. Offline-only evaluation never proves online behaviour."
+  },
+  {
+   "q": "Why should graph features be precomputed instead of traversing the graph during the 100ms decision?",
+   "options": [
+    "Graph traversals over high-degree nodes have unpredictable latency; precomputed per-entity features are a single key read",
+    "Graph databases cannot be read online",
+    "Graph features are not useful for models",
+    "It avoids storing edges"
+   ],
+   "answer": 0,
+   "why": "Tail latency is the issue. Graph stores can be queried online, which is what analysts do, but not reliably inside a tight inline budget."
+  },
+  {
+   "q": "Which training-data choice best handles 30-90 day chargeback delays?",
+   "options": [
+    "Train only on the last 7 days to stay fresh",
+    "Treat unlabelled recent orders as legitimate",
+    "Use matured windows for the main labels, add proxy labels (reviews, early disputes) for recent data, and track label maturity",
+    "Wait 90 days between every model version"
+   ],
+   "answer": 2,
+   "why": "Treating immature rows as legitimate teaches the model that new attacks are safe. Waiting 90 days per release is far too slow against adaptive attackers."
+  }
+ ],
+ "references": [
+  {
+   "title": "Stripe - How we built it: Stripe Radar",
+   "url": "https://stripe.dev/blog/how-we-built-it-stripe-radar"
+  },
+  {
+   "title": "Stripe - A primer on machine learning for fraud detection",
+   "url": "https://stripe.com/in/blog/a-primer-on-machine-learning-for-fraud-detection"
+  },
+  {
+   "title": "InfoQ - How Airbnb fights financial fraud with machine learning",
+   "url": "https://www.infoq.com/news/2018/03/financial-fraud-ml-airbnb/"
+  },
+  {
+   "title": "Stripe developer blog - fraud detection topic",
+   "url": "https://stripe.dev/blog/topic/fraud%20detection"
+  }
+ ]
+}

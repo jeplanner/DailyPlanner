@@ -1,0 +1,1294 @@
+{
+ "slug": "google-maps-navigation",
+ "title": "Design Google Maps (routing, ETA and navigation)",
+ "prompt": "Design Google Maps (routing, ETA and navigation).",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 160,
+ "summary": "Maps is three very different systems glued together: a mostly static, CDN-served tile and place layer; a routing engine that must answer shortest-path queries on a graph of hundreds of millions of road segments in tens of milliseconds; and a live traffic pipeline that turns billions of noisy GPS pings into per-segment speeds and ML-predicted ETAs. The core tension is that classic fast routing relies on heavy precomputation (contraction hierarchies) while traffic changes edge weights every minute, so the design needs customizable preprocessing, a clean split between topology and weights, and an ETA model that corrects what the shortest path cannot know.",
+ "framework": {
+  "clarify": [
+   "Scope: map display (tiles), search/geocoding, route planning with ETA, and turn-by-turn navigation with live rerouting. Street View, transit schedules and offline maps are secondary.",
+   "Scale: assume 1B monthly users, 100M daily active, 50M route requests per hour at peak (about 15k/s), and 20M concurrent navigation sessions at peak each sending a GPS fix every 1-2 s (about 10-20M location updates/s).",
+   "Modes: driving first, then two-wheeler (important in India), walking and cycling; transit uses a different, schedule-based algorithm.",
+   "Latency targets: route computation p99 under 500 ms end to end, tile load under 200 ms from CDN, reroute decision within 2-3 s of leaving the route.",
+   "ETA accuracy: target within 10% of actual for 90% of trips; traffic freshness of about 1-2 minutes.",
+   "Privacy: location traces are personal data; aggregate and anonymise before use, short retention for raw traces, opt-in for history.",
+   "Constraints from mobile networks: patchy connectivity, so the client must keep navigating with the cached route and tiles when offline."
+  ],
+  "design": [
+   "Baseline first: load the road graph into one server and run Dijkstra per request with static speed limits. Correct, but continent-scale Dijkstra explores millions of nodes (seconds per query) and ignores traffic.",
+   "Map data pipeline: ingest sources (OpenStreetMap-style vector data, satellite and Street View derived features, partner and user edits) into a canonical road graph: nodes (intersections), directed edges (segments) with attributes (length, class, speed limit, turn restrictions, tolls).",
+   "Tile service: pre-render vector tiles per zoom level (z0-z20) using a quadtree tile scheme (z/x/y), store in object storage, serve through CDN; clients render vector tiles locally and style them.",
+   "Routing service: graph partitioned into cells (multilevel partitioning); preprocessing with Customizable Contraction Hierarchies or CRP builds shortcuts on topology once; a customization step re-applies live edge weights every few minutes; queries run bidirectional search on the hierarchy in milliseconds.",
+   "Traffic pipeline: navigation clients stream GPS points; a map-matching stage snaps noisy points to road segments (HMM/Viterbi); per-segment speeds are aggregated in 1-minute windows (Kafka + Flink); combined with historical speed profiles per segment per time-of-week to produce current and predicted weights.",
+   "ETA service: route = sequence of segments; base ETA from summed predicted segment times; an ML model (graph neural network over supersegments, as Google and DeepMind described) corrects for turns, signals and congestion propagation.",
+   "Navigation session service: holds the active route per user, receives location updates, detects off-route and arrival, pushes reroutes when a faster route exists (incident ahead) and updates ETA.",
+   "Search and geocoding: places index (inverted index plus geospatial index such as S2 cells) to resolve 'Koramangala 5th block' to coordinates; reverse geocoding for addresses."
+  ],
+  "defend": [
+   "Bottleneck: routing CPU and memory. A country graph (India about 30-50M nodes) with hierarchy fits in tens of GB of RAM per replica; scale by replicating routing servers per region and keeping queries in-memory.",
+   "Scaling reads: tiles are 95%+ CDN cache hits because they change slowly; route requests are largely unique so they scale horizontally with replicas; popular origin-destination pairs can be cached for 1-2 minutes keyed by rounded coordinates and traffic version.",
+   "Scaling writes: GPS ingestion is the write firehose; partition by segment or by geographic cell (S2 level 12) in Kafka; aggregate at the edge and drop redundant points; downsample when stationary.",
+   "Freshness versus precomputation: separate metric-independent preprocessing (hours, on map updates) from customization with live weights (seconds to minutes per region) so traffic can update every 1-2 minutes.",
+   "Failure behaviour: if live traffic is stale, fall back to historical profiles; if routing is overloaded, return the cached route or a coarser hierarchy result; clients keep navigating offline with downloaded route and tiles; regional routing replicas in multiple zones.",
+   "Measure: route latency p50/p99, ETA error distribution (MAPE, percentage within 10%), reroute rate, traffic freshness lag, map-matching confidence, tile CDN hit rate, and navigation session drop rate."
+  ],
+  "script": "Let me split the problem first. Maps is really three systems: map display with tiles and places, routing with ETA, and live navigation fed by traffic. I will assume about 100 million daily users, 15k route requests per second at peak and 20 million concurrent navigation sessions sending a GPS point every second or two, with route p99 under half a second and ETAs within 10% for most trips. The baseline would be Dijkstra on the whole road graph with speed limits, which is correct but takes seconds per query and ignores traffic. So I build an offline pipeline that turns map data into a directed graph and pre-renders vector tiles served from a CDN. For routing I use a hierarchy approach, customizable contraction hierarchies or CRP, which preprocess topology once and re-apply live edge weights every minute or two, so queries take milliseconds even with traffic. Traffic comes from GPS pings that are map-matched with an HMM to segments and aggregated per minute in a stream pipeline, blended with historical speeds, and an ML model, like the graph neural network Google described, corrects the ETA. Navigation sessions track the user, detect when they go off route and push reroutes. To defend it, I will talk about memory per routing replica, CDN hit rates for tiles, partitioning the GPS firehose by geography, falling back to historical speeds when live data is stale, and measuring ETA error rather than just latency."
+ },
+ "brd": {
+  "problem": "People need to know where things are, how to get there, and how long it will take, and businesses (delivery, ride-hailing, logistics) need the same answers through APIs. Static maps and speed-limit-based routing give wrong ETAs in cities like Bengaluru where congestion can triple travel time. The business needs accurate, fast routing with live traffic and reliable navigation on cheap phones and flaky networks, while protecting the privacy of the location data that powers it.",
+  "goals": [
+   "Return a good route with an accurate ETA in under 500 ms p99 for any origin and destination in a country.",
+   "Reflect live traffic within 2 minutes and predict near-future conditions for the duration of the trip.",
+   "Provide reliable turn-by-turn navigation that keeps working through network loss and reroutes quickly.",
+   "Serve map tiles and place search globally with low latency and low bandwidth.",
+   "Support multiple modes (car, two-wheeler, walking, cycling) with mode-specific rules.",
+   "Expose routing and ETA APIs to enterprise customers (delivery and logistics) with SLAs."
+  ],
+  "non_goals": [
+   "Public transit schedule routing (separate RAPTOR-based system).",
+   "Indoor maps and AR navigation.",
+   "Building the map data from scratch (we consume sources and edits).",
+   "Fleet dispatch optimisation (vehicle routing problem) for logistics customers."
+  ],
+  "stakeholders": [
+   {
+    "who": "Drivers and riders (consumers)",
+    "needs": "Fast, accurate routes and ETAs, clear instructions, low data and battery use."
+   },
+   {
+    "who": "Enterprise API customers (food delivery, ride-hailing)",
+    "needs": "High-QPS distance matrix and ETA APIs with stable latency and accurate ETAs for pricing and dispatch."
+   },
+   {
+    "who": "Map data and quality teams",
+    "needs": "Pipelines to ingest, validate and publish map edits quickly and safely."
+   },
+   {
+    "who": "Privacy and legal",
+    "needs": "Anonymisation of traces, retention limits, consent, regional data laws."
+   },
+   {
+    "who": "Local businesses",
+    "needs": "Accurate place listings that appear in search and as destinations."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "ETA accuracy",
+    "target": ">= 90% of trips within 10% of actual travel time"
+   },
+   {
+    "metric": "Route computation latency",
+    "target": "p50 < 50 ms server time, p99 < 500 ms end to end"
+   },
+   {
+    "metric": "Traffic freshness",
+    "target": "Median segment speed age < 2 minutes in covered cities"
+   },
+   {
+    "metric": "Navigation session reliability",
+    "target": "< 0.5% of sessions crash or lose route"
+   },
+   {
+    "metric": "Tile delivery",
+    "target": "> 95% CDN hit rate, p95 < 200 ms"
+   },
+   {
+    "metric": "Wrong-turn / bad-route reports",
+    "target": "< 1 per 10,000 navigations"
+   }
+  ],
+  "constraints": [
+   "Mobile clients on 3G/4G with frequent drops and limited data plans.",
+   "Location data is sensitive and regulated; raw traces must be minimised and anonymised.",
+   "Road graph for a large country is tens of millions of nodes; continent and world graphs are billions of edges.",
+   "Map data changes daily (new roads, closures), traffic changes every minute."
+  ],
+  "risks": [
+   {
+    "risk": "Bad map edit (wrong one-way) sends drivers into danger",
+    "mitigation": "Validation rules, staged publishing, anomaly detection on reroute and off-route rates after a release, quick rollback of graph versions."
+   },
+   {
+    "risk": "Traffic data poisoning (fake phones creating jams)",
+    "mitigation": "Device reputation, plausibility checks (speeds, trajectories), require many independent devices before reporting congestion."
+   },
+   {
+    "risk": "ETA systematically wrong in a city (new metro work, festival)",
+    "mitigation": "Monitor ETA error by region, blend live data more heavily, incident ingestion from authorities."
+   },
+   {
+    "risk": "Privacy breach from location traces",
+    "mitigation": "Aggregate early, strip identifiers, k-anonymity thresholds, short raw retention, access controls."
+   },
+   {
+    "risk": "Routing cluster overload during an event",
+    "mitigation": "Autoscaling replicas, route caching, degrade to historical-only weights."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Commuter driver",
+    "needs": "Fastest route avoiding jams, accurate arrival time, proactive reroute."
+   },
+   {
+    "name": "Two-wheeler rider",
+    "needs": "Routes that use narrow lanes allowed for bikes, voice guidance, low data."
+   },
+   {
+    "name": "Delivery platform engineer",
+    "needs": "Distance matrix and ETA APIs at thousands of QPS with predictable latency."
+   },
+   {
+    "name": "Pedestrian tourist",
+    "needs": "Walking directions, place search, offline maps."
+   }
+  ],
+  "user_stories": [
+   "As a driver, I want the fastest route considering current traffic so that I arrive on time.",
+   "As a driver, I want to be rerouted automatically when an accident blocks my route so that I avoid a long delay.",
+   "As a driver, I want turn-by-turn voice guidance that works in a tunnel without network so that I do not miss a turn.",
+   "As a rider, I want two-wheeler routes that use shortcuts allowed for bikes so that my trip is shorter.",
+   "As a user, I want to search 'petrol pump near me' and pick one on the route so that I can refuel without a big detour.",
+   "As a delivery platform, I want a 50x50 travel-time matrix in under 1 second so that I can assign orders to riders.",
+   "As a user, I want to see alternative routes with their ETAs and trade-offs (tolls, distance) so that I can choose.",
+   "As a user, I want to plan a trip for tomorrow 9 am and see the predicted ETA so that I know when to leave.",
+   "As a map editor, I want my road closure report to affect routing within minutes after verification so that others avoid it."
+  ],
+  "functional": [
+   "Render map tiles (vector) at all zoom levels with styles for day/night and modes.",
+   "Geocoding, reverse geocoding and place search with autocomplete biased to the viewport and user location.",
+   "Route computation: point-to-point with waypoints, modes, avoid options (tolls, highways), alternatives (up to 3).",
+   "ETA for current departure and for a future departure time; distance matrix API.",
+   "Turn-by-turn navigation: maneuver list, lane guidance, voice prompts, off-route detection and rerouting.",
+   "Live traffic layer and incident reporting (accidents, closures) by users and authorities.",
+   "Offline maps: download regions with tiles, graph subset and search index.",
+   "Location history and saved places (opt-in)."
+  ],
+  "non_functional": [
+   {
+    "name": "Route latency",
+    "target": "Server compute p50 < 50 ms, p99 < 200 ms; end to end p99 < 500 ms"
+   },
+   {
+    "name": "Tile latency",
+    "target": "p95 < 200 ms with > 95% CDN hit rate"
+   },
+   {
+    "name": "ETA accuracy",
+    "target": "90% of trips within 10%"
+   },
+   {
+    "name": "Traffic freshness",
+    "target": "Segment speeds updated every 1-2 minutes"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for routing and tiles; navigation continues offline"
+   },
+   {
+    "name": "Ingestion throughput",
+    "target": "Up to 20M GPS points/s at peak"
+   },
+   {
+    "name": "Privacy",
+    "target": "Raw traces retained <= 30 days, aggregated outputs k-anonymous (k >= 5 devices per segment window)"
+   },
+   {
+    "name": "Mobile efficiency",
+    "target": "Navigation data use < 1 MB per 30 minutes; GPS updates batched"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "100M DAU; 20M concurrent navigation sessions at global peak.",
+    "Each session sends one GPS fix per second, batched every 5 s; about 50 bytes per point after compression.",
+    "Route requests: 15k/s peak globally (including reroutes and API), distance matrix calls counted separately.",
+    "World road graph about 1B directed edges; India about 50M nodes and 120M edges.",
+    "Tiles: vector tiles average 20 KB; a typical session loads 50 tiles."
+   ],
+   "math": [
+    "GPS ingest: 20M points/s x 50 B = 1 GB/s; per day if average is 30% of peak: 0.3 x 1 GB/s x 86,400 = about 26 TB/day raw (retained 30 days = about 780 TB).",
+    "Segment speed aggregates: 1B edges, but only about 100M have traffic coverage; 1-minute windows x 16 bytes = 1.6 GB per minute of fresh state, kept in memory per region.",
+    "Routing memory: India graph 50M nodes + 120M edges with CH shortcuts (roughly 2x edges) at about 32 bytes per edge = about 8 GB, plus weights per customization; a replica with 64 GB RAM holds it comfortably.",
+    "Routing CPU: a CH query explores a few thousand nodes and takes about 1-5 ms; with path unpacking and alternatives about 20 ms; at 15k req/s that is 300 core-seconds per second = about 300 cores, plus 3x headroom = about 1,000 cores globally.",
+    "Customization: re-applying weights over the hierarchy for India takes a few seconds on a multi-core box, so updating every 60 s is feasible.",
+    "Tiles: 100M DAU x 50 tiles x 20 KB = 100 TB/day egress, almost all from CDN; origin serves < 5%, about 5 TB/day.",
+    "Navigation session state: 20M sessions x 5 KB (route, position, ETA) = 100 GB in memory across the session tier."
+   ],
+   "summary": "The firehose is GPS ingestion at about 1 GB/s at peak; routing is CPU and memory bound but small enough to fit a country graph in RAM per replica, needing around 1,000 cores globally; tiles are a CDN problem at about 100 TB/day egress. Fresh traffic state is only a few GB per minute, so it can be kept in memory and pushed to routing replicas."
+  },
+  "out_of_scope": [
+   "Transit schedule routing, ticketing.",
+   "Street View imagery capture and processing.",
+   "Ads and local business promotions.",
+   "Fleet optimisation and multi-stop vehicle routing (solved by customers using our matrix API)."
+  ]
+ },
+ "hld": {
+  "overview": "An offline map pipeline turns raw sources into a versioned road graph, vector tiles and a places index. Tiles go to object storage and a CDN. The graph is partitioned and preprocessed into a hierarchy that routing servers load in memory per region. Clients stream GPS points to an ingestion tier; a stream pipeline map-matches them, computes per-segment speeds per minute, blends with historical profiles and incidents, and publishes weight updates that routing servers apply through fast customization. The ETA service refines path-based estimates with an ML model. A navigation session service tracks active trips and pushes reroutes and ETA updates over a persistent connection.",
+  "diagram": "\n  Mobile / Web clients                                  Enterprise API clients\n   |  tiles (CDN)   | search   | route/nav (gRPC/WS)  | GPS batches        |\n   v               v          v                       v                    v\n +-----+   +-------------+  +-----------------+  +-------------+   +-------------+\n | CDN |   | Search/     |  | API gateway     |  | Ingestion   |   | Matrix/ETA  |\n +--+--+   | Geocoder    |  +---+---------+---+  | (edge PoPs) |   | API         |\n    |      | (S2 + text) |      |         |      +------+------+   +------+------+\n    v      +-------------+      v         v             v                 |\n +-----------+         +-----------+ +-------------+  +-------------+     |\n | Tile store|         | Routing   | | Navigation  |  | Kafka (by   |     |\n | (obj store|         | servers   | | session svc |  |  S2 cell)   |     |\n +-----------+         | (CCH/CRP) | +------+------+  +------+------+     |\n       ^               +-----+-----+        |                v            |\n       |                     ^  ^           |         +---------------+   |\n +-----+---------------+     |  +-----------+         | Map matching  |   |\n | Map data pipeline   |     |   ETA model svc <------+ + speed agg   |   |\n | graph build, tiles, |     |   (GNN)               | (Flink)       |   |\n | partition + CH prep |-----+   ^                    +-------+-------+   |\n +---------------------+    weights|                         v           |\n                         +---------+----------+    +------------------+  |\n                         | Traffic state store|<---| Historical speed |  |\n                         | (per segment/min)  |    | profiles (week)  |  |\n                         +--------------------+    +------------------+  |\n                                    ^------------------------------------+\n",
+  "components": [
+   {
+    "name": "Map data pipeline",
+    "responsibility": "Merges sources and edits into a versioned canonical graph; validates (connectivity, one-way sanity); emits graph, tiles and place index builds."
+   },
+   {
+    "name": "Tile service + CDN",
+    "responsibility": "Pre-generates vector tiles per z/x/y, stores in object storage, serves via CDN with long TTL and versioned URLs."
+   },
+   {
+    "name": "Search and geocoding",
+    "responsibility": "Autocomplete and place search using an inverted text index combined with S2-cell geospatial filtering and ranking by distance and popularity."
+   },
+   {
+    "name": "Graph partitioner and preprocessor",
+    "responsibility": "Partitions the graph into nested cells (for example PUNCH or inertial flow), computes the metric-independent contraction order and shortcut topology."
+   },
+   {
+    "name": "Routing servers",
+    "responsibility": "Hold the region's graph and hierarchy in memory; apply customizations with fresh weights; answer point-to-point, alternatives and matrix queries."
+   },
+   {
+    "name": "GPS ingestion tier",
+    "responsibility": "Accepts batched location points over HTTPS/gRPC at edge PoPs; validates, strips identifiers into rotating pseudonyms, and writes to Kafka partitioned by S2 cell."
+   },
+   {
+    "name": "Map matching + speed aggregation (stream)",
+    "responsibility": "Snaps traces to segments with an HMM, computes traversal times, aggregates per segment per minute with outlier removal and k-anonymity thresholds."
+   },
+   {
+    "name": "Traffic state store",
+    "responsibility": "Current speed per segment plus confidence, and incidents; versioned snapshots pushed to routing servers every minute."
+   },
+   {
+    "name": "Historical profiles",
+    "responsibility": "Per segment, typical speed per 15-minute slot of the week, learned from months of data; used for future departures and as fallback."
+   },
+   {
+    "name": "ETA model service",
+    "responsibility": "ML model (GNN over supersegments) that predicts travel time given route segments, live and historical speeds and time; corrects path sums."
+   },
+   {
+    "name": "Navigation session service",
+    "responsibility": "Stateful per active trip: current route, progress, off-route detection, periodic rerouting checks and ETA pushes over a persistent connection."
+   },
+   {
+    "name": "Incident service",
+    "responsibility": "Ingests user reports and authority feeds; verifies and turns them into edge closures or penalties."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Route request with live traffic",
+    "steps": [
+     "Client sends origin, destination, mode and departure time to the API gateway.",
+     "Gateway geocodes text input if needed, then snaps origin and destination to nearest graph edges (using an S2 or R-tree index).",
+     "Request is routed to a routing replica for the region (cross-region trips go to a server holding the larger graph or use cell-level overlay).",
+     "Routing server runs bidirectional CH/CRP query using the latest customized weights (traffic version v123), producing a path and up to 2 alternatives (via-node or penalty method).",
+     "Path segments are sent to the ETA model service, which returns a refined ETA and confidence.",
+     "Server returns polyline, maneuvers, ETA, traffic coloring and the traffic version used; client starts navigation."
+    ]
+   },
+   {
+    "name": "GPS to live traffic",
+    "steps": [
+     "Navigation clients buffer 1 Hz GPS fixes and upload every 5 s with a rotating anonymous id.",
+     "Ingestion validates (accuracy < 30 m, plausible speed), writes to Kafka keyed by S2 level-12 cell.",
+     "Flink job runs HMM map matching per device trace in a sliding window, producing segment traversals with travel times.",
+     "Per-segment aggregator computes robust speed (median, trimmed mean) per 1-minute window; requires at least 5 distinct devices before publishing.",
+     "Blender combines live speed with historical profile by confidence and writes to the traffic state store; incidents override.",
+     "Every 60 s a snapshot of changed weights is pushed to routing servers, which run customization and atomically swap weight arrays."
+    ]
+   },
+   {
+    "name": "Navigation and rerouting",
+    "steps": [
+     "Client navigates locally with the route polyline and maneuvers; it uses on-device map matching to decide current position.",
+     "Client sends progress updates; session service updates remaining ETA using the latest traffic.",
+     "Every 1-2 minutes, or when an incident appears on the route, the session service computes a fresh route from current position; if it saves more than a threshold (for example 3 minutes and 10%), it pushes a reroute suggestion or automatic switch.",
+     "If the client detects off-route (distance from route > 50 m for 3 consecutive fixes, heading mismatch), it requests a reroute immediately; offline, it waits and continues guidance with cached tiles where possible.",
+     "On arrival the session closes; anonymised trip summary feeds ETA model training."
+    ]
+   }
+  ],
+  "data_flow": "Static path: map sources -> pipeline -> graph versions, tiles and place index -> routing servers, CDN, search. Dynamic path: GPS -> ingestion -> Kafka -> map matching -> per-segment speeds -> traffic state -> routing customization every minute. Request path: client -> gateway -> routing replica (in-memory) -> ETA model -> client. Feedback path: completed trips (actual times) -> training data for historical profiles and the ETA model, retrained daily or weekly."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/routes:compute",
+    "request": "{origin:{lat,lng}|place_id, destination, waypoints[], mode: DRIVE|TWO_WHEELER|WALK, departure_time, avoid:[TOLLS], alternatives:true}",
+    "response": "{routes:[{polyline, distance_m, duration_s, duration_in_traffic_s, legs[{steps[{maneuver, instruction, distance_m}]}], traffic_spans[]}], traffic_version}",
+    "notes": "Field masks to limit payload; polyline encoded."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/distanceMatrix",
+    "request": "{origins[<=50], destinations[<=50], mode, departure_time}",
+    "response": "{rows:[{elements:[{duration_s, distance_m, status}]}]}",
+    "notes": "Uses many-to-many CH (bucket-based) rather than N*M queries."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/tiles/{style}/{z}/{x}/{y}.mvt?v=2026101101",
+    "request": "-",
+    "response": "Protobuf vector tile",
+    "notes": "Versioned, immutable, CDN TTL 30 days."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/places:autocomplete?q=korama&lat=&lng=&radius=",
+    "request": "query, location bias",
+    "response": "{predictions:[{place_id, text, distance_m}]}",
+    "notes": "Session tokens to group keystrokes for billing."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/locations:batch",
+    "request": "{session_id (rotating), points:[{t, lat, lng, accuracy, speed, heading}]}",
+    "response": "204",
+    "notes": "Batched every 5 s; gzip; anonymous id rotates every 24h."
+   },
+   {
+    "method": "WS",
+    "path": "/v1/navigation/{session_id}",
+    "request": "client: progress {position, segment_id, t}; server: eta_update, reroute, incident_alert",
+    "response": "stream",
+    "notes": "Persistent connection; client resumes with last sequence after reconnect."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/incidents",
+    "request": "{type: ACCIDENT|CLOSURE|POLICE, lat, lng, heading}",
+    "response": "{incident_id, status: PENDING}",
+    "notes": "Verified by multiple reports or authority feed."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Road graph",
+    "store": "Versioned binary files in object storage, loaded into routing server memory",
+    "fields": [
+     "nodes: id, lat, lng",
+     "edges (CSR adjacency): from, to, length_m, road_class, speed_limit, access flags by mode, toll, turn restrictions",
+     "cell ids at each level"
+    ],
+    "keys": "node_id, edge_id (dense integers per graph version)",
+    "notes": "Compressed sparse row arrays for cache-friendly traversal; graph version id."
+   },
+   {
+    "entity": "Hierarchy / overlay",
+    "store": "Routing server memory (built offline)",
+    "fields": [
+     "contraction order",
+     "shortcut edges with middle node for unpacking",
+     "cell boundary nodes and overlay cliques"
+    ],
+    "keys": "edge_id",
+    "notes": "Metric-independent; rebuilt only on map changes."
+   },
+   {
+    "entity": "Traffic speed",
+    "store": "In-memory store (Redis/Bigtable-like) per region",
+    "fields": [
+     "segment_id",
+     "minute_bucket",
+     "speed_kph",
+     "sample_count",
+     "confidence",
+     "source (live/historical/incident)"
+    ],
+    "keys": "(region, segment_id) latest; time series key segment_id#minute",
+    "notes": "Snapshot published every 60 s with a traffic_version."
+   },
+   {
+    "entity": "Historical profile",
+    "store": "Bigtable / columnar store",
+    "fields": [
+     "segment_id",
+     "slot (0..671 for 15-min slots in a week)",
+     "median_speed",
+     "p20/p80"
+    ],
+    "keys": "segment_id",
+    "notes": "Recomputed weekly from aggregated trips."
+   },
+   {
+    "entity": "GPS point (raw)",
+    "store": "Kafka -> cold storage, 30-day retention",
+    "fields": [
+     "anon_device_id",
+     "t",
+     "lat",
+     "lng",
+     "accuracy",
+     "speed",
+     "heading"
+    ],
+    "keys": "Kafka key S2 cell L12; storage partitioned by day and cell",
+    "notes": "Access restricted; used for map matching and model training only."
+   },
+   {
+    "entity": "Navigation session",
+    "store": "In-memory session store (sharded by session_id) with replication",
+    "fields": [
+     "session_id",
+     "route_id",
+     "polyline",
+     "segment list",
+     "progress index",
+     "eta",
+     "traffic_version",
+     "last_seen"
+    ],
+    "keys": "session_id",
+    "notes": "Lost sessions are recreated by client from its cached route."
+   },
+   {
+    "entity": "Place",
+    "store": "Search index (inverted) + S2 cell index",
+    "fields": [
+     "place_id",
+     "names (multilingual)",
+     "category",
+     "lat/lng",
+     "s2_cell",
+     "popularity",
+     "hours"
+    ],
+    "keys": "place_id; S2 cell for geo filter",
+    "notes": "Ranking blends text match, distance and popularity."
+   }
+  ],
+  "classes": [
+   {
+    "name": "Graph",
+    "responsibility": "Compact in-memory road graph.",
+    "methods": [
+     "outEdges(node)",
+     "edgeAttrs(edge)",
+     "nearestEdge(lat, lng) via spatial index"
+    ]
+   },
+   {
+    "name": "CCHRouter",
+    "responsibility": "Customizable contraction hierarchy queries.",
+    "methods": [
+     "customize(weights)",
+     "query(s, t) -> path",
+     "alternatives(s, t, k)",
+     "manyToMany(S, T)"
+    ]
+   },
+   {
+    "name": "MapMatcher",
+    "responsibility": "HMM-based snapping of traces to edges.",
+    "methods": [
+     "candidates(point, radius=30m)",
+     "transitionProb(a, b)",
+     "viterbi(trace) -> edge sequence"
+    ]
+   },
+   {
+    "name": "SpeedAggregator",
+    "responsibility": "Robust per-segment speed per minute.",
+    "methods": [
+     "add(traversal)",
+     "flush(minute) -> speeds",
+     "kAnonymityFilter(minDevices=5)"
+    ]
+   },
+   {
+    "name": "EtaPredictor",
+    "responsibility": "ML-based ETA refinement.",
+    "methods": [
+     "predict(route_segments, departure_time, traffic_version) -> eta, confidence"
+    ]
+   },
+   {
+    "name": "NavigationSession",
+    "responsibility": "Per-trip state machine.",
+    "methods": [
+     "onProgress(position)",
+     "isOffRoute()",
+     "maybeReroute()",
+     "pushEta()"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Bidirectional query on a contraction hierarchy",
+    "explain": "Nodes are ranked by importance. Preprocessing contracts nodes in order, adding shortcuts to preserve shortest paths. A query searches upward only (to higher-ranked nodes) from both source and target; the best meeting node gives the shortest path. It settles a few hundred to a few thousand nodes instead of millions.",
+    "pseudocode": "query(s, t):\n  fwd = dijkstra_up(s)   # only edges to higher rank\n  bwd = dijkstra_up(t)   # on reverse graph\n  best = inf\n  alternate pops from fwd and bwd:\n    u = pop min\n    if dist(u) > best: stop that side\n    if u settled by other side: best = min(best, df[u] + db[u])\n  path = unpack shortcuts recursively via middle nodes\n  return best, path"
+   },
+   {
+    "name": "Customization with live weights (CCH)",
+    "explain": "Topology and contraction order are fixed; when traffic changes, recompute shortcut weights bottom-up: each shortcut's weight is the min over lower triangles. Parallel per cell, a few seconds for a country; then atomically swap.",
+    "pseudocode": "customize(w):\n  for each edge e in original: W[e] = w[e]\n  for node v in contraction order (lowest first):\n    for each pair of upward neighbours (a, b) of v:\n      W[a->b] = min(W[a->b], W[a->v] + W[v->b])\n  swap(activeWeights, W)   # queries never see half-updated weights"
+   },
+   {
+    "name": "HMM map matching (Viterbi)",
+    "explain": "Each GPS point has candidate road positions within a radius; emission probability falls with distance (Gaussian, sigma about 5-10 m); transition probability favours candidate pairs whose route distance matches the straight-line distance. Viterbi finds the most likely sequence.",
+    "pseudocode": "for each point p_i:\n  C_i = candidates(p_i, 30m)\n  for c in C_i:\n    emit[c] = gauss(dist(p_i, c), sigma=7m)\n    score[i][c] = max over c' in C_{i-1} of\n        score[i-1][c'] + log trans(c', c) + log emit[c]\n    back[i][c] = argmax\nbacktrack to get matched edges; compute traversal times per edge"
+   },
+   {
+    "name": "Off-route detection and reroute decision",
+    "explain": "Use hysteresis to avoid flapping in urban canyons with noisy GPS: require several consecutive fixes off the route and heading mismatch; for proactive reroutes, only switch if savings are material.",
+    "pseudocode": "onFix(fix):\n  d = distanceToRoute(fix)\n  if d > 50m and headingDiff > 60deg: offCount += 1 else offCount = 0\n  if offCount >= 3: requestReroute(fix.position, fix.heading)\nevery 120s or on incident:\n  r2 = route(current, dest)\n  if eta(r) - eta(r2) > max(180s, 0.1*eta(r)): offer(r2)"
+   }
+  ],
+  "sequence": "\nClient           Gateway        Geocoder     Routing(CCH)      Traffic state     ETA model\n  |-- route req --->|               |              |                  |                 |\n  |                 |-- geocode --->|              |                  |                 |\n  |                 |<-- latlng ----|              |                  |                 |\n  |                 |-- snap + query(s,t) ------->|                  |                 |\n  |                 |               |              | weights v123 (pushed every 60s) <--|\n  |                 |               |              | bidir CH search  |                 |\n  |                 |<-- path, alts ---------------|                  |                 |\n  |                 |-- predict(segments, t) ---------------------------------------->|\n  |                 |<-- eta, confidence ---------------------------------------------|\n  |<-- routes ------|               |              |                  |                 |\n  |== WS nav session open ==> Nav session svc     |                  |                 |\n  |-- GPS batch (5s) --> Ingestion -> Kafka -> map match -> speeds -->|                 |\n  |<-- eta_update / reroute (if faster by > 3 min) |                  |                 |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "GPS drift in urban canyons or flyovers (point snaps to the road below)",
+   "handling": "HMM with heading, speed and topology continuity; elevation-aware layers for flyovers; require consistent matches before declaring off-route."
+  },
+  {
+   "case": "Driver deliberately takes a different road",
+   "handling": "Off-route hysteresis (3 fixes, 50 m) then reroute from current position and heading; do not keep forcing a U-turn."
+  },
+  {
+   "case": "Network loss in a tunnel or rural area",
+   "handling": "Client keeps the full route, maneuvers and nearby tiles; dead-reckoning with speed and heading; resync on reconnect with session sequence number."
+  },
+  {
+   "case": "Sparse traffic data at night or in small towns",
+   "handling": "Not enough devices for k-anonymity or confidence; fall back to historical profiles for that time slot, then to speed limits by road class."
+  },
+  {
+   "case": "Sudden road closure (accident) not yet visible in GPS speeds",
+   "handling": "Incident reports from users and authorities create a closure or large penalty after verification (multiple reports or trusted source); routing customization picks it up within a minute."
+  },
+  {
+   "case": "Fake traffic from many phones in a cart (traffic spoofing)",
+   "handling": "Detect many devices with identical traces, device reputation, speed plausibility, cap influence of a single cell; require diverse devices."
+  },
+  {
+   "case": "Origin snapped to the wrong side of a divided highway",
+   "handling": "Snap using heading and allow U-turn penalties; consider both directions as candidate start edges and pick the cheapest overall path."
+  },
+  {
+   "case": "Very long trip crossing regions or countries",
+   "handling": "Use a higher-level overlay graph spanning regions (cell boundary cliques) and route at coarse level, then refine within origin and destination cells."
+  },
+  {
+   "case": "Traffic update arrives mid-query",
+   "handling": "Queries pin a weights version; customization writes to a new buffer and atomically swaps the pointer so a query never sees mixed weights."
+  },
+  {
+   "case": "Predicting ETA for departure tomorrow 9 am",
+   "handling": "Use time-dependent weights from historical profiles for the time the car reaches each segment (time-dependent routing or iterative ETA estimation), not today's live speeds."
+  },
+  {
+   "case": "Turn restrictions and U-turn rules (no right turn 8-11 am)",
+   "handling": "Model turns in an edge-based (turn-aware) graph or with turn cost tables; time-dependent restrictions handled as edge penalties by time slot."
+  },
+  {
+   "case": "Two-wheeler allowed on lanes forbidden to cars",
+   "handling": "Per-mode access flags on edges and separate customizations (metrics) per mode on the same topology."
+  },
+  {
+   "case": "Map update changes graph topology during active navigations",
+   "handling": "Sessions keep their graph version; rerouting maps current position to the new graph by coordinates, not by node id."
+  },
+  {
+   "case": "Flash crowd after a cricket match: 200k route requests to the same area",
+   "handling": "Cache popular origin-destination results for 60 s keyed by rounded coordinates and traffic version; autoscale routing replicas; rate limit API clients."
+  },
+  {
+   "case": "Location privacy: trace start and end reveal home and office",
+   "handling": "Trim first and last few hundred meters of traces before aggregation, rotate anonymous ids, aggregate with minimum device counts."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Customizable Contraction Hierarchies / CRP (custom C++)",
+   "layer": "Routing engine",
+   "overview": "Speed-up techniques for shortest paths: precompute a hierarchy on topology, re-apply weights quickly.",
+   "why": "Millisecond queries on country-scale graphs with traffic refresh every minute.",
+   "alternatives": "Plain CH (fast queries but full rebuild when weights change), A* with landmarks (ALT; simpler, slower), open-source OSRM (CH/MLD), Valhalla (tiled hierarchical), GraphHopper."
+  },
+  {
+   "name": "Kafka",
+   "layer": "GPS ingestion log",
+   "overview": "Partitioned, replicated append-only log.",
+   "why": "Absorbs the 1 GB/s GPS firehose, partitioned by S2 cell so map matching for an area is local.",
+   "alternatives": "Pub/Sub or Kinesis (managed), direct writes to stream processor (no replay)."
+  },
+  {
+   "name": "Apache Flink (or Beam/Dataflow)",
+   "layer": "Stream processing",
+   "overview": "Stateful event-time stream processing with windows and checkpoints.",
+   "why": "Map matching per trace and per-minute segment aggregation with late-data handling.",
+   "alternatives": "Spark Structured Streaming (micro-batch, higher latency), custom consumers."
+  },
+  {
+   "name": "S2 geometry cells (or H3)",
+   "layer": "Geospatial indexing",
+   "overview": "Hierarchical cells on a sphere with 64-bit ids; nearby areas share prefixes.",
+   "why": "Partitioning GPS by area, spatial indexing for places and snapping.",
+   "alternatives": "H3 hexagons (uniform neighbours), geohash (simpler, distortion), R-trees (good for polygons, not for partitioning)."
+  },
+  {
+   "name": "Bigtable / HBase / Cassandra",
+   "layer": "Historical and traffic time series",
+   "overview": "Wide-column store with sorted row keys.",
+   "why": "Segment-by-time profiles and large trace aggregates with high write throughput.",
+   "alternatives": "TimescaleDB (simpler, smaller scale), Druid."
+  },
+  {
+   "name": "Vector tiles (MVT) + CDN",
+   "layer": "Map display",
+   "overview": "Protobuf-encoded vector geometry per z/x/y tile, styled on device.",
+   "why": "Smaller than raster, restylable, crisp at any rotation; CDN caches globally.",
+   "alternatives": "Raster PNG tiles (larger, simpler), server-side rendering."
+  },
+  {
+   "name": "TensorFlow / JAX GNN models",
+   "layer": "ETA prediction",
+   "overview": "Graph neural networks over road supersegments predicting travel time.",
+   "why": "Captures congestion spreading across neighbouring segments; Google and DeepMind reported up to 50% fewer large ETA errors in some cities.",
+   "alternatives": "Gradient boosted trees on route features (simpler, strong baseline), pure path sums."
+  },
+  {
+   "name": "gRPC + WebSockets / HTTP2 streams",
+   "layer": "Client protocol",
+   "overview": "Compact binary RPC and persistent streams.",
+   "why": "Low overhead on mobile; server push for reroutes and ETA updates.",
+   "alternatives": "Polling REST (more battery and latency), MQTT."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Shortest path speed-ups: Dijkstra, A*, contraction hierarchies",
+   "explain": "Dijkstra's algorithm finds shortest paths by repeatedly settling the closest unsettled node using a priority queue. It is correct for non-negative weights, but on a road network it explores every node closer than the target, which for a 300 km trip is millions of nodes and can take seconds. A* adds a heuristic (for example straight-line distance divided by max speed) to steer the search toward the target; with landmarks and the triangle inequality (ALT), the heuristic gets tighter, but speed-ups are only about 10x. Contraction hierarchies (CH) exploit the hierarchical nature of roads. Preprocessing ranks nodes by importance and contracts them one by one from least important: removing a node and adding a shortcut edge between its neighbours whenever the only shortest path between them went through it. A query runs a bidirectional Dijkstra where each side only relaxes edges leading to higher-ranked nodes; the two searches meet at a high-ranked node, typically after settling only hundreds to a few thousand nodes, giving sub-millisecond to few-millisecond queries on continental graphs. The final path is recovered by recursively unpacking shortcuts. The cost is preprocessing (minutes to hours) and the fact that shortcut weights depend on edge weights, so changing traffic requires recomputation, which motivates customizable variants.",
+   "in_this_design": "Routing servers hold a country graph with its hierarchy in memory; each request is a bidirectional upward search from snapped origin and destination edges, then path unpacking and maneuver generation. Alternatives come from via-node candidates found during the same search.",
+   "key_points": [
+    "Dijkstra explores everything closer than the target: correct but slow at scale.",
+    "A*/ALT steer the search, roughly 10x faster.",
+    "CH adds shortcuts during preprocessing; queries only go up the hierarchy.",
+    "CH queries settle about 1,000 nodes instead of millions.",
+    "Shortcut weights depend on metrics, so traffic needs customization."
+   ],
+   "qa": [
+    {
+     "q": "Why not just run A* on the full graph?",
+     "a": "Even with good heuristics A* explores far too many nodes on long trips; CH-style preprocessing gives 1,000x speed-ups, which is the difference between 2 s and 2 ms."
+    },
+    {
+     "q": "What is a shortcut edge?",
+     "a": "An edge added when contracting node v between neighbours u and w, with weight w(u,v)+w(v,w), only if u-v-w is the unique shortest path; it remembers v so the path can be unpacked."
+    },
+    {
+     "q": "How do you produce alternative routes?",
+     "a": "Via-node method: consider nodes reached by both searches; a candidate via path is good if it is not much longer (say < 25% longer), shares little with the best path, and is locally optimal."
+    },
+    {
+     "q": "How do you handle turn costs and restrictions?",
+     "a": "Use an edge-based graph where nodes represent road segments and edges represent turns, so turn costs and banned turns become edge weights; it is larger but CH still works."
+    }
+   ]
+  },
+  {
+   "name": "Customizable route planning: separating topology from metrics",
+   "explain": "Road topology changes slowly (new roads weekly) but edge weights (travel times) change every minute with traffic, differ by vehicle type, and vary by user preference (avoid tolls). Plain contraction hierarchies bake weights into the shortcuts, so every traffic change would require hours of re-preprocessing. Customizable approaches split the work into three phases. Phase one is metric-independent: partition the graph into nested cells using small separators (few boundary nodes) or compute a nested-dissection contraction order; this takes hours but only depends on topology. Phase two is customization: given a weight for every edge, compute the weights of shortcuts or of overlay cliques between boundary nodes of each cell, bottom-up. This is embarrassingly parallel per cell and takes seconds for a country. Phase three is the query, which runs on the overlay or hierarchy in milliseconds. Multiple metrics (car, two-wheeler, truck, avoid-tolls) are just multiple customizations over the same topology. This is the architecture used in large commercial routing engines: Microsoft published Customizable Route Planning (CRP) for Bing Maps, and customizable contraction hierarchies follow the same idea.",
+   "in_this_design": "Map releases trigger the offline metric-independent phase. The traffic pipeline publishes a new weight vector every 60 s per region; routing servers run customization in a few seconds on spare cores into a new buffer and atomically swap it. Each mode (car, two-wheeler, walking) has its own customization.",
+   "key_points": [
+    "Topology preprocessing (hours) is separate from weights (seconds).",
+    "Customization is bottom-up and parallel per cell.",
+    "Each vehicle type or preference is just another metric.",
+    "Atomic swap of weight buffers means queries never see half-updated weights.",
+    "This is what makes live traffic and fast queries compatible."
+   ],
+   "qa": [
+    {
+     "q": "Why can't you use plain CH with live traffic?",
+     "a": "Shortcut existence and weights depend on the metric; changing weights invalidates them, and rebuilding takes far longer than the 1-2 minute traffic update cycle."
+    },
+    {
+     "q": "How do you support 'avoid tolls' without another full preprocessing?",
+     "a": "Treat it as another metric: toll edges get infinite or penalised weights, and you run customization for that metric (or cache a customization for common combinations)."
+    },
+    {
+     "q": "What happens to a query in flight when weights are swapped?",
+     "a": "It holds a reference to the old weight version until it finishes; the new version is used only by new queries."
+    },
+    {
+     "q": "What determines customization time?",
+     "a": "Number of shortcuts or overlay edges and parallelism; with good separators a country takes seconds on a multi-core server."
+    }
+   ]
+  },
+  {
+   "name": "Map matching with Hidden Markov Models",
+   "explain": "Raw GPS points are noisy: errors of 5-20 m are common, worse near tall buildings, and points arrive irregularly. To compute traffic speeds or know where a driver is, each point must be assigned to a road segment, and the sequence must be a drivable path. Map matching frames this as a Hidden Markov Model. The hidden states are the true positions on road segments; the observations are GPS points. For each point we generate candidate positions on nearby segments (within about 30 m). Emission probability says how likely the observed point is given a candidate, typically a Gaussian on the distance between them. Transition probability says how likely it is to move from candidate A at time i to candidate B at time i+1; a good model compares the driving distance between them along the network with the straight-line distance between the GPS points, since real movement makes these similar, while a jump to a parallel road would require a long detour. The Viterbi algorithm finds the most likely sequence of candidates by dynamic programming. The output is a list of traversed segments with entry and exit times, from which per-segment travel times follow. Online versions use a sliding window to emit results with small delay.",
+   "in_this_design": "Flink jobs run windowed Viterbi per anonymous device trace (window about 30-60 s), keyed by device inside S2-cell partitions. Output segment traversal times feed per-minute speed aggregation. The same algorithm, lighter, runs on device to keep navigation position on the route.",
+   "key_points": [
+    "GPS noise makes nearest-road snapping wrong at junctions and parallel roads.",
+    "Emission: distance to candidate; transition: network distance vs straight-line distance.",
+    "Viterbi gives the most likely path in O(points x candidates^2).",
+    "Sliding windows give near-real-time output.",
+    "Output is per-segment travel time, the input to traffic speeds."
+   ],
+   "qa": [
+    {
+     "q": "Why not just snap each point to the nearest road?",
+     "a": "At junctions, flyovers and parallel service roads the nearest road is often wrong, and independent snapping produces impossible paths; HMM enforces continuity."
+    },
+    {
+     "q": "How do you handle a long gap (tunnel) between points?",
+     "a": "Allow transitions with larger network distances, treat the gap as unknown, and break the trace if the gap is too long or inconsistent."
+    },
+    {
+     "q": "What is the cost driver of map matching at scale?",
+     "a": "Shortest-path computations between candidate pairs for transitions; bound them with radius limits and caching of local routes."
+    },
+    {
+     "q": "How do you know the matching is reliable?",
+     "a": "Track match confidence (probability margin), fraction of points with no candidates, and validate against ground-truth drives."
+    }
+   ]
+  },
+  {
+   "name": "Geospatial indexing (S2 / geohash / H3) and partitioning",
+   "explain": "Computers index one-dimensional keys well, but locations are two-dimensional. Geospatial indexes map 2D positions to 1D keys that preserve locality. Geohash interleaves bits of latitude and longitude to form a string where nearby points usually share prefixes; a prefix is a rectangular cell. Google's S2 library projects the sphere onto a cube and uses a Hilbert curve on each face to number cells at 30 levels, producing 64-bit cell ids; level 12 cells are about 3-6 km across, level 16 about 150 m. Because the Hilbert curve keeps nearby cells numerically close, a region can be covered by a few ranges of cell ids, which become simple range scans in any sorted key-value store. Uber's H3 uses hexagons, which have uniform neighbour distances useful for aggregation. These indexes serve two purposes in a maps system. First, finding things near a point: nearest road edge for snapping, places for search, incidents along a route. Second, partitioning work: sharding GPS streams, traffic aggregation and routing regions by cell so that related data is processed on the same machines.",
+   "in_this_design": "GPS ingestion keys Kafka partitions by S2 level-12 cell, so traces in an area are processed together; places are indexed by S2 cell ids for range scans; the snapping service uses a cell-to-edges index; routing regions are defined as unions of cells.",
+   "key_points": [
+    "Space-filling curves turn 2D proximity into 1D key ranges.",
+    "S2 uses Hilbert curves on a cube: 64-bit ids, 30 levels.",
+    "Covering a region = a few id ranges = cheap range scans.",
+    "Use cells to partition streams and storage by geography.",
+    "Cell boundaries mean neighbour cells must be checked too."
+   ],
+   "qa": [
+    {
+     "q": "Why partition GPS traffic by cell rather than by device?",
+     "a": "Speed aggregation is per road segment, which belongs to an area; keying by cell keeps each segment's samples on one worker. Map matching needs per-device order, which is preserved within the cell partition for that device's points."
+    },
+    {
+     "q": "What goes wrong at cell boundaries?",
+     "a": "A nearby place or road may be in the neighbouring cell; queries must cover neighbours, and traces crossing cells need handoff or overlap windows."
+    },
+    {
+     "q": "Hot cells (a city centre) overload partitions. What do you do?",
+     "a": "Use finer cell levels in dense areas (adaptive cells), so a dense city spans many partitions while rural areas use coarse cells."
+    },
+    {
+     "q": "S2 or H3 for traffic aggregation?",
+     "a": "Either works; aggregation is per road segment anyway. Cells only shard work, so choose what the stack supports, S2 for Hilbert-ordered range scans, H3 for uniform neighbour analysis."
+    }
+   ]
+  },
+  {
+   "name": "Stream processing with event time, windows and late data",
+   "explain": "A stream processor computes results continuously over unbounded data. Two notions of time matter: processing time (when the system sees an event) and event time (when it happened on the device). Mobile clients batch points and lose connectivity, so events arrive late and out of order; computing traffic speed by processing time would mix old and new observations. Event-time processing assigns each event to windows by its timestamp, such as 1-minute tumbling windows per segment. Watermarks are the system's estimate that all events up to time T have arrived; when the watermark passes the end of a window, the window's result is emitted. Events that arrive after the watermark are late: they can update the result (if allowed lateness is configured) or be dropped. Stateful operators keep state per key (for example per segment) and checkpoint it periodically to durable storage so a crash can resume without losing or double-counting, giving exactly-once state updates. For traffic, freshness matters more than completeness: it is better to emit a minute's speed with 80% of samples quickly than wait five minutes for stragglers.",
+   "in_this_design": "Flink aggregates traversal times per segment in 1-minute event-time windows with a 30 s watermark delay and 2 minutes of allowed lateness; checkpoints every 30 s; outputs carry sample counts and confidence so the blender can weight them.",
+   "key_points": [
+    "Event time, not processing time, for mobile data.",
+    "Watermarks decide when a window closes.",
+    "Late data: update or drop, by policy.",
+    "Checkpointed state gives exactly-once aggregates.",
+    "Trade completeness for freshness explicitly."
+   ],
+   "qa": [
+    {
+     "q": "Why not aggregate by arrival time?",
+     "a": "Batched and delayed uploads would attribute old congestion to the current minute and blur sudden changes."
+    },
+    {
+     "q": "How long should the watermark delay be?",
+     "a": "Long enough to include most points (measure the arrival delay distribution, e.g. p95 at 20 s) but short enough to keep traffic fresh; 30 s is a reasonable start."
+    },
+    {
+     "q": "What happens if the Flink job restarts?",
+     "a": "It restores state from the last checkpoint and replays Kafka from the matching offsets, so aggregates are neither lost nor double counted."
+    },
+    {
+     "q": "How do you avoid a single slow segment key blocking output?",
+     "a": "Windows are per key and emitted independently based on the watermark; skewed keys are rare per segment, but cells can be split to spread load."
+    }
+   ]
+  },
+  {
+   "name": "ETA prediction: historical profiles, live blending and ML",
+   "explain": "The sum of segment travel times along a route is a first approximation of ETA, but it ignores several things: traffic will change during the trip, junctions and signals add delays not captured by segment speeds, and congestion propagates upstream. A layered approach works well. Historical profiles give typical speed per segment for each 15-minute slot of the week, learned from months of data; they capture rush hours and weekly patterns. Live speeds from the last few minutes capture today's deviation. Blending gives more weight to live data for segments the driver will reach soon and to historical data for segments reached later, because live conditions decay toward normal. Time-dependent routing evaluates each segment at the time the vehicle is predicted to arrive there. On top, a machine learning model corrects systematic errors. Google, with DeepMind, described using graph neural networks over supersegments (groups of adjacent segments with shared traffic) that learn how congestion spreads, reporting up to 50% reduction in negative ETA outcomes in some cities. Models are trained on actual completed trips, and accuracy is measured as the fraction of trips within a tolerance and by error tails, not only averages.",
+   "in_this_design": "The ETA service takes the route's segment list, blends live and historical speeds by time-to-reach, adds turn and signal costs, then applies a GNN correction per supersegment. Completed anonymised trips are the training labels; models retrain regularly and are evaluated per city.",
+   "key_points": [
+    "Path-sum ETA is a baseline; real ETA needs prediction over the trip duration.",
+    "Historical profiles per 15-minute weekly slot capture regular patterns.",
+    "Blend live for near segments, historical for far ones.",
+    "GNNs model congestion spreading between neighbouring segments.",
+    "Measure % within 10% and the bad tail, by city."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use current live speeds for the whole route?",
+     "a": "For a 90-minute trip, today's 6 pm jam on the last segment will likely have cleared by 7:30; ignoring that systematically overestimates ETAs for long trips."
+    },
+    {
+     "q": "What would you use as a baseline model before a GNN?",
+     "a": "Gradient-boosted trees on route-level features (distance, road classes, number of turns, signals, time of day, live/historical ratios), trained on completed trips."
+    },
+    {
+     "q": "How do you evaluate ETA quality?",
+     "a": "Mean absolute percentage error, fraction within 10%, and the share of large underestimates (people hate arriving late more than early), sliced by city, distance and time."
+    },
+    {
+     "q": "How does ETA feed back into routing?",
+     "a": "Routing optimises predicted segment costs, so better segment predictions change route choice; the ML correction is usually applied after route selection for latency reasons, or to rerank alternatives."
+    }
+   ]
+  },
+  {
+   "name": "Caching and CDN for immutable, versioned content",
+   "explain": "Content that rarely changes and is read by many users is ideal for caching at the edge. A CDN keeps copies in many points of presence close to users so requests do not travel to origin. The key design choice is how to invalidate. Invalidating specific URLs across thousands of edges is slow and error-prone. Versioned, immutable URLs avoid invalidation entirely: each tile set release gets a version in the URL, so new data has new URLs, and old URLs can be cached for months with Cache-Control immutable. Clients learn the current version from a small manifest with a short TTL. Map tiles fit this perfectly: the world is divided into a quadtree of tiles addressed by zoom z and x/y, each zoom level has 4^z tiles, and most traffic concentrates on populated areas at mid zoom levels. Vector tiles are smaller than images and are rendered on the device, so one tile serves any style, language and rotation. For dynamic data such as traffic overlays, short TTL tiles (60 s) work because many users view the same city at the same time. Origin protection uses request coalescing so that a cache miss storm for a new tile set version results in one origin fetch per tile.",
+   "in_this_design": "Base map tiles are versioned and immutable with 30-day TTL; the client manifest has a 5-minute TTL; traffic overlay tiles have a 60 s TTL; origin shields and request coalescing protect the tile store during version rollouts.",
+   "key_points": [
+    "Version URLs instead of invalidating caches.",
+    "Quadtree tiles: z/x/y, 4^z tiles per level.",
+    "Vector tiles are compact and restylable on device.",
+    "Short TTLs work for shared dynamic layers like traffic.",
+    "Request coalescing protects origin on new releases."
+   ],
+   "qa": [
+    {
+     "q": "How do you roll out a new tile version without overwhelming origin?",
+     "a": "Pre-warm popular tiles in the CDN, roll the manifest version gradually by region, and use an origin shield with request coalescing."
+    },
+    {
+     "q": "Why vector rather than raster tiles?",
+     "a": "Smaller (often 3-5x), crisp at any zoom and rotation, styled and labelled on device in the user's language, which multiplies cache efficiency."
+    },
+    {
+     "q": "Can route responses be cached?",
+     "a": "Partially: popular origin-destination pairs with coordinates rounded and the traffic version in the key, for 30-60 s; most routes are unique, so caching is an overload protection rather than the main strategy."
+    },
+    {
+     "q": "How many tiles exist at zoom 15?",
+     "a": "4^15, about 1 billion, but most are ocean or empty and never requested; only populated tiles are generated or cached."
+    }
+   ]
+  },
+  {
+   "name": "Privacy for location data: anonymisation and k-anonymity",
+   "explain": "Location traces are among the most sensitive personal data: a few points identify where a person lives and works, and research has shown that four spatio-temporal points are enough to uniquely identify most individuals in a mobility dataset. A traffic system needs aggregate speeds, not individual journeys, so the design should strip identity as early as possible. Techniques include: rotating pseudonymous device ids (change every day so long histories cannot be linked), trimming the start and end of trips (which reveal home and destination), aggregating per segment per time window and only publishing aggregates when at least k distinct devices contributed (k-anonymity), adding noise to rare aggregates (differential privacy), and short retention for raw traces with strict access controls. Consent matters: location history features must be opt-in, and users must be able to delete them. These choices have engineering costs: rotating ids complicate long-term per-device modelling, and k thresholds leave low-traffic roads without live data, which must fall back to historical estimates.",
+   "in_this_design": "Ingestion replaces account ids with daily-rotating anonymous ids, trims first and last 200-500 m of trips, aggregates speeds with a minimum of 5 distinct devices per segment-minute, keeps raw traces 30 days in restricted storage, and keeps opt-in location history separate.",
+   "key_points": [
+    "A handful of points can re-identify a person.",
+    "Strip identity at ingestion; rotate pseudonyms.",
+    "Trim trip endpoints.",
+    "Publish only aggregates with k >= 5 devices.",
+    "Short raw retention, opt-in history, deletion on request."
+   ],
+   "qa": [
+    {
+     "q": "Why rotate anonymous ids instead of using one stable hash?",
+     "a": "A stable id lets anyone with the data link months of trips and infer home and work; daily rotation limits linkage while still allowing within-day map matching."
+    },
+    {
+     "q": "What is the cost of k-anonymity thresholds?",
+     "a": "Low-traffic segments often have fewer than k devices per minute, so they get no live speed and rely on historical profiles; you can widen windows to reach k."
+    },
+    {
+     "q": "How would you let users delete their history?",
+     "a": "Opt-in history is stored separately keyed by account; deletion removes it and its derived personal models; aggregated anonymous traffic is not personal data and is unaffected."
+    },
+    {
+     "q": "Is hashing the device id enough anonymisation?",
+     "a": "No; a hash is still a stable identifier and traces themselves are identifying. Rotation, trimming and aggregation are needed."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Routing algorithm",
+   "options": "Dijkstra/A* online vs plain CH vs customizable CH/CRP",
+   "choice": "Customizable CH or CRP",
+   "why": "Millisecond queries plus minute-level traffic updates; plain CH would need hours to absorb weight changes, A* is too slow at country scale."
+  },
+  {
+   "decision": "Where to compute navigation state",
+   "options": "Server-driven every second vs on-device with server assistance",
+   "choice": "On-device guidance, server for reroutes and ETA",
+   "why": "Works through network loss, saves bandwidth and server load; server still sees traffic and pushes reroutes."
+  },
+  {
+   "decision": "Traffic freshness vs accuracy",
+   "options": "Emit speeds every 10 s with few samples vs every 1-2 minutes with more samples",
+   "choice": "1-minute windows with confidence weighting",
+   "why": "Enough samples for robust speeds and k-anonymity while staying fresh enough for routing."
+  },
+  {
+   "decision": "ETA method",
+   "options": "Pure path sum vs ML model",
+   "choice": "Path sum with time-dependent blending plus ML correction",
+   "why": "Path sums are explainable and fast; ML fixes systematic errors like junction delays and congestion spread."
+  },
+  {
+   "decision": "Tiles",
+   "options": "Raster server-rendered vs vector client-rendered",
+   "choice": "Vector tiles",
+   "why": "Smaller, restylable, multilingual, better cache efficiency; cost is client rendering complexity."
+  },
+  {
+   "decision": "GPS partitioning",
+   "options": "By device vs by geographic cell",
+   "choice": "By S2 cell",
+   "why": "Aggregation is per segment, so locality by area minimises shuffles; per-device order still holds within a cell partition."
+  },
+  {
+   "decision": "Proactive rerouting threshold",
+   "options": "Always switch to fastest vs switch only above a savings threshold",
+   "choice": "Threshold (e.g. > 3 min and > 10%)",
+   "why": "Avoids flapping and user distrust; small predicted gains are within ETA error anyway."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Traffic pipeline lag or outage",
+   "behavior": "Routing keeps the last weights; after a staleness threshold (e.g. 10 minutes) segments fall back to historical profiles; ETAs get less accurate but routing works; alert on freshness lag."
+  },
+  {
+   "failure": "Routing replica overload",
+   "behavior": "Load balancer sheds to other replicas; popular routes served from short-lived cache; non-critical features (alternatives) disabled first; API clients rate limited."
+  },
+  {
+   "failure": "Bad map release (wrong one-way)",
+   "behavior": "Detected by spikes in off-route and reroute rates or user reports in a region; roll back to previous graph version on routing servers in minutes."
+  },
+  {
+   "failure": "Client loses connectivity",
+   "behavior": "On-device navigation continues with cached route, maneuvers and tiles; ETA uses last known; sync and reroute when back online."
+  },
+  {
+   "failure": "ETA model service down",
+   "behavior": "Return path-sum ETA with historical blending; mark confidence lower; the route itself is unaffected."
+  },
+  {
+   "failure": "Region (datacenter) loss",
+   "behavior": "DNS and global load balancing move users to another region holding replicas of the same country graphs; navigation sessions reconnect and are rebuilt from client state."
+  },
+  {
+   "failure": "Spoofed traffic event",
+   "behavior": "Plausibility filters and device diversity requirements limit influence; incident verification needs multiple sources; anomalous speed drops on one segment with no neighbouring effect are discounted."
+  }
+ ],
+ "metrics": [
+  "Route compute latency p50/p99 per region and per request type (route, matrix, reroute)",
+  "ETA error: % trips within 10%, MAPE, share of large underestimates, by city and distance bucket",
+  "Traffic freshness: median and p95 age of segment speeds; coverage (% of major road km with live data)",
+  "Map matching confidence and unmatched point rate",
+  "Off-route and reroute rates per region (spikes indicate bad map data)",
+  "Tile CDN hit rate, origin QPS, tile p95 latency",
+  "GPS ingestion rate, Kafka consumer lag, Flink checkpoint duration",
+  "Navigation session drops, reconnect rate, crash-free sessions",
+  "Customization time per region and weight swap frequency"
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you support a distance matrix of 100 x 100 for a delivery company?",
+   "a": "Use a many-to-many CH algorithm: run backward upward searches from all targets storing buckets at settled nodes, then forward searches from each source scanning buckets; cost is about S + T searches instead of S x T queries. Rate-limit by matrix size."
+  },
+  {
+   "q": "How do you route with time-dependent weights for a future departure?",
+   "a": "Use time-dependent profiles per segment and either a time-dependent CH (piecewise linear functions on shortcuts) or iteratively compute the route with predicted arrival times at each segment; most products approximate with the profile at predicted arrival time."
+  },
+  {
+   "q": "How do offline maps work?",
+   "a": "User downloads a region package: vector tiles for zoom ranges, the regional graph with a compact hierarchy, and a local search index; the device runs a simpler routing engine; packages update weekly via diffs."
+  },
+  {
+   "q": "How do you handle India-specific two-wheeler routing?",
+   "a": "Separate access flags for narrow lanes and bike-allowed roads, different speed models from two-wheeler GPS traces, and a separate customization metric on the same topology."
+  },
+  {
+   "q": "How do you detect a new road that is not in the map?",
+   "a": "Cluster GPS traces that do not match any edge but are consistent across many devices; propose candidate roads to the map data pipeline for verification with imagery."
+  },
+  {
+   "q": "How do you avoid sending everyone to the same 'fast' side road, causing a new jam?",
+   "a": "Model route-choice feedback: penalise low-capacity roads, diversify recommendations across alternatives when predicted gains are small, and update weights quickly as conditions change."
+  },
+  {
+   "q": "What do you change if routing must be global in one query?",
+   "a": "Use a multilevel overlay: compute within origin and destination cells at fine level and across countries on a coarse overlay of boundary nodes and inter-cell shortcuts, all customizable."
+  },
+  {
+   "q": "How would you A/B test a new ETA model?",
+   "a": "Shadow mode first, comparing predictions on real trips; then a percentage rollout by user, measuring ETA error, reroute acceptance, and user complaints, sliced by city."
+  }
+ ],
+ "key_points": [
+  "Split it into three systems: tiles and places (CDN, mostly static), routing and ETA (CPU in memory), and live traffic (GPS firehose).",
+  "Dijkstra is the baseline; contraction hierarchies make country-scale queries take milliseconds by searching only upward.",
+  "Customizable CH or CRP separates topology preprocessing (hours) from weights (seconds), which is what makes live traffic possible.",
+  "Traffic: GPS -> Kafka by S2 cell -> HMM map matching -> 1-minute event-time aggregates -> blend with historical -> push weights every 60 s.",
+  "ETA is a prediction: time-dependent blending of live and historical speeds plus an ML correction such as a GNN on supersegments.",
+  "Navigation runs on the device; the server pushes reroutes only when savings exceed a threshold, with hysteresis for off-route detection.",
+  "Versioned immutable vector tiles behind a CDN, so no cache invalidation is needed.",
+  "Degrade gracefully: stale traffic -> historical profiles; overload -> cached routes; offline -> on-device guidance.",
+  "Privacy by design: rotating ids, trimmed trip ends, k-anonymous aggregates, short raw retention.",
+  "Measure ETA error by city and the size of the late-arrival tail, not only latency."
+ ],
+ "quiz": [
+  {
+   "q": "Why is plain Dijkstra unsuitable for country-scale routing at 15k requests/s?",
+   "options": [
+    "It explores millions of nodes per long query, taking seconds",
+    "It gives wrong answers on road networks",
+    "It cannot handle one-way streets",
+    "It needs negative edge weights"
+   ],
+   "answer": 0,
+   "why": "Dijkstra is correct but explores everything closer than the target. 'Wrong answers' is tempting for people who confuse speed with correctness."
+  },
+  {
+   "q": "What does a contraction hierarchy query do differently from Dijkstra?",
+   "options": [
+    "It searches only toward lower-ranked nodes",
+    "It uses a random walk",
+    "It runs bidirectional searches that only relax edges to higher-ranked nodes, using precomputed shortcuts",
+    "It precomputes all-pairs shortest paths"
+   ],
+   "answer": 2,
+   "why": "Upward-only bidirectional search on a hierarchy with shortcuts. All-pairs precomputation would be impossibly large for millions of nodes."
+  },
+  {
+   "q": "Traffic changes every minute. Why do we use customizable CH/CRP instead of plain CH?",
+   "options": [
+    "Plain CH queries are slower",
+    "Plain CH cannot handle turn restrictions",
+    "Customizable CH needs no preprocessing",
+    "Plain CH bakes weights into shortcuts, requiring a long rebuild; customizable variants re-apply weights in seconds"
+   ],
+   "answer": 3,
+   "why": "Separating topology from metrics is the point. Customizable variants still need metric-independent preprocessing, so 'no preprocessing' is wrong."
+  },
+  {
+   "q": "A GPS point in a dense city is 12 m from a flyover and 9 m from the road below it. The driver is on the flyover. What gets it right?",
+   "options": [
+    "Nearest-road snapping",
+    "HMM map matching using continuity of the trace and heading",
+    "Rounding coordinates",
+    "Using only the last point"
+   ],
+   "answer": 1,
+   "why": "Transitions enforce a drivable sequence. Nearest snapping would choose the road below."
+  },
+  {
+   "q": "Roughly how much GPS data per second at 20M sessions, 1 point/s, about 50 bytes per point?",
+   "options": [
+    "About 1 GB/s",
+    "About 100 MB/s",
+    "About 1 MB/s",
+    "About 100 GB/s"
+   ],
+   "answer": 0,
+   "why": "20M x 50 B = 1 GB/s. 100 MB/s assumes 10x fewer sessions."
+  },
+  {
+   "q": "Why partition the GPS Kafka topic by S2 cell?",
+   "options": [
+    "To guarantee global ordering",
+    "Because device ids are not available",
+    "To keep samples for the same roads on the same worker for aggregation",
+    "To compress the data"
+   ],
+   "answer": 2,
+   "why": "Speeds are aggregated per segment, which lives in an area. Global ordering is neither needed nor possible with many partitions."
+  },
+  {
+   "q": "Live traffic data for a region has not updated for 15 minutes. Best behaviour?",
+   "options": [
+    "Stop serving routes in that region",
+    "Keep using 15-minute-old live speeds indefinitely",
+    "Use speed limits only",
+    "Fall back to historical profiles for the time slot, and alert on freshness"
+   ],
+   "answer": 3,
+   "why": "Historical profiles are a good prior. Speed limits alone are much worse in congested cities, though they are a last resort."
+  },
+  {
+   "q": "For a 2-hour trip starting at 5 pm, why not apply current live speeds to every segment?",
+   "options": [
+    "Live speeds are always wrong",
+    "Conditions will change by the time the car reaches distant segments, so time-dependent blending is more accurate",
+    "Live speeds are too expensive to read",
+    "It violates privacy"
+   ],
+   "answer": 1,
+   "why": "Blending by time-to-reach handles decay toward normal. Live speeds are valuable for near segments, not wrong."
+  },
+  {
+   "q": "What does a watermark do in the traffic stream pipeline?",
+   "options": [
+    "Marks when the system believes all events up to time T have arrived so a window can be emitted",
+    "Encrypts GPS data",
+    "Limits the throughput of producers",
+    "Deduplicates device ids"
+   ],
+   "answer": 0,
+   "why": "Watermarks drive event-time window completion. Throttling is backpressure, a different mechanism."
+  },
+  {
+   "q": "How do you avoid users being flip-flopped between two routes every minute?",
+   "options": [
+    "Recompute every 5 s",
+    "Never reroute",
+    "Only switch when predicted savings exceed a threshold, with hysteresis",
+    "Pick a random route"
+   ],
+   "answer": 2,
+   "why": "A savings threshold keeps changes meaningful. Never rerouting misses real incidents."
+  },
+  {
+   "q": "Base map tiles are served from a CDN. What is the best invalidation approach when the map is updated?",
+   "options": [
+    "Purge every tile URL on all edges",
+    "Short 60 s TTL on all tiles",
+    "Disable CDN caching for tiles",
+    "Versioned immutable tile URLs plus a short-TTL manifest pointing to the current version"
+   ],
+   "answer": 3,
+   "why": "Versioned URLs avoid purges and keep hit rates high. Short TTLs on all tiles would multiply origin load."
+  },
+  {
+   "q": "A delivery platform asks for a 100 x 100 travel-time matrix. What is the efficient approach?",
+   "options": [
+    "Run 10,000 independent point-to-point queries",
+    "Many-to-many CH with buckets: about 200 searches total",
+    "Use straight-line distance",
+    "Precompute a global matrix for all points"
+   ],
+   "answer": 1,
+   "why": "Bucket-based many-to-many shares work between searches. 10,000 queries are correct but wasteful."
+  },
+  {
+   "q": "Off-route rate spikes in one city right after a map release. Most likely cause and action?",
+   "options": [
+    "A bad map edit (e.g. wrong one-way); roll back the graph version for that region",
+    "Users are driving badly; ignore",
+    "CDN outage",
+    "Kafka lag"
+   ],
+   "answer": 0,
+   "why": "Spikes after a release point at map data. CDN issues would affect display, not off-route behaviour."
+  },
+  {
+   "q": "Which technique best protects privacy in published traffic speeds?",
+   "options": [
+    "Hash the device id once",
+    "Encrypt traces in transit only",
+    "Publish segment speeds only when at least k distinct devices contributed, with rotating pseudonyms and trimmed trip ends",
+    "Store traces forever but restrict access"
+   ],
+   "answer": 2,
+   "why": "Aggregation thresholds plus rotation and trimming address re-identification. A stable hash is still an identifier."
+  },
+  {
+   "q": "Approximately how much memory does a country graph with about 120M edges plus shortcuts need at 32 bytes per edge (about 2x edges)?",
+   "options": [
+    "About 800 MB",
+    "About 800 GB",
+    "About 80 GB",
+    "About 8 GB"
+   ],
+   "answer": 3,
+   "why": "240M x 32 B is about 7.7 GB. 80 GB assumes 10x more edges."
+  },
+  {
+   "q": "A query is running when new traffic weights arrive. What should happen?",
+   "options": [
+    "The query restarts",
+    "The query finishes on the old weight version; new queries use the new one after an atomic swap",
+    "The query sees a mix of old and new weights",
+    "Weights are locked and the update waits for all queries forever"
+   ],
+   "answer": 1,
+   "why": "Double-buffered weights with atomic swap give consistent queries. Mixed weights can produce invalid paths."
+  },
+  {
+   "q": "Why does on-device navigation matter in India specifically?",
+   "options": [
+    "Frequent connectivity drops on highways and in dense areas; guidance must continue offline",
+    "Phones are faster",
+    "Maps are smaller",
+    "GPS is more accurate"
+   ],
+   "answer": 0,
+   "why": "Patchy networks require local guidance. GPS is not more accurate, a tempting but irrelevant claim."
+  },
+  {
+   "q": "What is the main benefit of a GNN-based ETA model over a per-segment model?",
+   "options": [
+    "It needs no training data",
+    "It removes the need for routing",
+    "It learns how congestion propagates across neighbouring segments",
+    "It runs faster than path sums"
+   ],
+   "answer": 2,
+   "why": "Graph structure captures spatial dependencies. It is not faster than summing segment times."
+  },
+  {
+   "q": "Which ETA metric best reflects user pain?",
+   "options": [
+    "Average ETA error only",
+    "CDN hit rate",
+    "Number of route requests",
+    "Share of trips that arrive much later than predicted, sliced by city"
+   ],
+   "answer": 3,
+   "why": "Late arrivals hurt trust most and averages hide tails. Average error alone is the tempting but incomplete metric."
+  },
+  {
+   "q": "Flash crowd: 200k people leave a stadium and request routes at once. Best immediate protection?",
+   "options": [
+    "Turn off traffic updates",
+    "Cache routes keyed by rounded origin, destination and traffic version for 60 s, autoscale replicas, shed alternatives",
+    "Serve raster tiles",
+    "Increase Kafka partitions"
+   ],
+   "answer": 1,
+   "why": "Many requests share origins and destinations; short caching plus shedding protects routing. Kafka is the ingestion path, not the query path."
+  },
+  {
+   "q": "Why use an edge-based (turn-aware) graph?",
+   "options": [
+    "Turn costs and banned turns become edge weights so the router respects them",
+    "It is smaller",
+    "It eliminates preprocessing",
+    "It improves tile rendering"
+   ],
+   "answer": 0,
+   "why": "Turn modelling needs states per incoming segment. It is larger, not smaller, which makes that distractor wrong."
+  }
+ ],
+ "references": [
+  {
+   "title": "Traffic prediction with advanced Graph Neural Networks (DeepMind)",
+   "url": "https://deepmind.google/discover/blog/traffic-prediction-with-advanced-graph-neural-networks/"
+  },
+  {
+   "title": "Exact Routing in Large Road Networks Using Contraction Hierarchies (Transportation Science)",
+   "url": "https://pubsonline.informs.org/doi/fpi/10.1287/trsc.1110.0401"
+  },
+  {
+   "title": "How Can Graph Neural Networks Help Google Maps Make Better ETA Predictions (AIM)",
+   "url": "https://analyticsindiamag.com/how-can-graph-neural-networks-help-google-maps-make-better-eta-predictions/"
+  },
+  {
+   "title": "Instant routes: how navigation apps master speed (DEV)",
+   "url": "https://dev.to/greygoose/instant-routes-how-navigation-apps-master-speed-km3"
+  }
+ ]
+}

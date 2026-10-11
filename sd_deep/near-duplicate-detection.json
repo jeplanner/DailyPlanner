@@ -1,0 +1,1086 @@
+{
+ "slug": "near-duplicate-detection",
+ "title": "Design a deduplication system for similar content (near-duplicate detection)",
+ "prompt": "Design a deduplication system for similar content.",
+ "group": "search",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "Exact duplicates are easy - hash the bytes. The hard part is near-duplicates: product listings with a changed word, re-uploaded images with a watermark, crawled pages that differ only in ads and timestamps. Comparing every new item against billions of existing ones is impossible, so the design rests on similarity-preserving sketches (SimHash, MinHash, perceptual hashes, embeddings) plus locality-sensitive hashing to retrieve a handful of candidates, followed by precise verification and a clustering step that picks a canonical item. The core tension is precision versus recall versus cost, tuned per use case.",
+ "framework": {
+  "clarify": [
+   "What content? I will assume e-commerce listings (title, description, attributes, images) and also design for text documents generally; images use perceptual hashes or embeddings in a parallel path.",
+   "What counts as a duplicate? Define tiers: exact (byte-identical), near-duplicate (Jaccard of 5-word shingles >= 0.8, or SimHash Hamming distance <= 3 of 64), and semantic duplicate (same product, different wording; embedding cosine >= 0.92 plus attribute match).",
+   "Action on detection: block at upload, merge into a cluster with a canonical item, or just demote in search? I will assume cluster-and-canonicalise online, with blocking only for high-confidence spam.",
+   "Scale: 2B existing items, 50M new or edited items per day (~600/s average, ~3,000/s peak).",
+   "Latency: online check within 200 ms p99 at upload; offline full re-clustering can run daily.",
+   "Precision vs recall: false merges hide legitimate sellers (costly, reputational), so target precision >= 99% for auto-merge and route the grey zone to review; recall >= 90%.",
+   "Multi-tenant or global? Dedupe within a category and across sellers globally, but never merge items that differ in key attributes (size, colour, model number)."
+  ],
+  "design": [
+   "Baseline: exact SHA-256 of normalised content in a hash table catches byte-identical copies. Explain why it misses near-duplicates (one changed character changes the whole hash) and why all-pairs comparison (2B x 2B) is infeasible.",
+   "Sketch: normalise text, shingle into 5-word shingles, compute a 64-bit SimHash and a 128-permutation MinHash signature; for images, compute a 64-bit pHash and a CLIP-style embedding.",
+   "Candidate retrieval: LSH. MinHash signatures split into 32 bands of 4 rows; each band hash is a key in a band index (KV store) mapping to item ids. SimHash uses 4 permuted tables of the 64 bits for Hamming distance <= 3. Embeddings go to an ANN index (HNSW).",
+   "Verify: for each candidate (typically 0-50), compute exact Jaccard on shingle sets or attribute-aware similarity, plus guard rules (model number, size, price band).",
+   "Cluster: union-find assigns items to duplicate clusters; a canonical item is chosen by quality score; downstream search and catalog use cluster_id.",
+   "APIs and flow: POST /v1/dedup/check (sync at upload) returns cluster decision; a Kafka stream processes edits asynchronously; a nightly Spark job re-clusters everything to fix drift and threshold changes."
+  ],
+  "defend": [
+   "Bottleneck: hot LSH buckets (boilerplate text like 'free shipping, 100% original' collides everywhere). Mitigate with boilerplate stripping, IDF-weighted shingles, bucket size caps, and dropping bands whose bucket exceeds 10k ids.",
+   "Scale reads: band index is a sharded KV (key = band_id + band_hash); each check does 32 point lookups in parallel; cache recent signatures; ANN index sharded by category.",
+   "Scale writes: inserts are append-only to band lists; batch and async-insert after the sync decision; nightly rebuild compacts band lists.",
+   "Failure: if the dedup service times out at upload, accept the item as 'pending dedup' and let the async path cluster it later - never block selling on dedup availability.",
+   "Measure: precision from human-labelled samples weekly, recall estimated by planted duplicates, candidates per check, bucket size distribution, p99 latency, merge reversal rate (appeals).",
+   "Tuning: the LSH S-curve threshold is about (1/b)^(1/r); with b=32, r=4 it is ~0.42, giving high recall at Jaccard 0.8 with cheap verification removing false positives."
+  ],
+  "script": "Let me pin down what duplicate means first, because that drives everything. Exact duplicates are byte-identical; near-duplicates are, say, Jaccard similarity of 5-word shingles above 0.8; semantic duplicates are the same product described differently. I will assume a catalog of 2 billion items with 50 million new or edited per day, a 200 millisecond online check at upload, and a strong preference for precision because a wrong merge hides a legitimate seller. Exact hashing handles the easy case but misses a one-word change, and comparing every pair is impossible at this scale. So I compute similarity-preserving sketches: MinHash and SimHash for text, perceptual hashes and embeddings for images. Locality-sensitive hashing turns these into a few dozen bucket lookups that return a small candidate set, which I verify exactly, with attribute guard rules like model number and size. Union-find groups items into clusters with a canonical representative. To defend it: hot buckets from boilerplate are the bottleneck, so I strip boilerplate and cap buckets; the check fails open so selling is never blocked; and I measure precision with labelled samples and recall with planted duplicates."
+ },
+ "brd": {
+  "problem": "The marketplace has millions of duplicate and near-duplicate listings: sellers clone top listings, re-list the same product with tiny edits to game ranking, and re-upload the same images. This clutters search results, splits reviews across copies, enables counterfeit and spam, wastes index and storage costs, and frustrates shoppers who see the same item ten times.",
+  "goals": [
+   "Detect exact and near-duplicate listings at upload within 200 ms p99.",
+   "Group duplicates into clusters with a canonical listing so search shows one result per product with seller offers underneath.",
+   "Achieve >= 99% precision on automatic merges and >= 90% recall on near-duplicates.",
+   "Reduce duplicate results on the first search page by 70%.",
+   "Provide explainable decisions and an appeal path for sellers."
+  ],
+  "non_goals": [
+   "Counterfeit and IP infringement adjudication (consumes our signals but is a separate policy system).",
+   "Plagiarism detection for long-form content such as books.",
+   "Video deduplication (frame-level fingerprinting is a separate pipeline).",
+   "Real-time dedup of chat messages."
+  ],
+  "stakeholders": [
+   {
+    "who": "Shoppers",
+    "needs": "Clean results without repeated items; reviews aggregated per product."
+   },
+   {
+    "who": "Honest sellers",
+    "needs": "Never wrongly merged or hidden; a fair buy-box among offers on a canonical listing."
+   },
+   {
+    "who": "Catalog and search teams",
+    "needs": "A cluster_id and canonical id per item to collapse results and aggregate signals."
+   },
+   {
+    "who": "Trust and safety",
+    "needs": "Signals for spam rings that mass-clone listings."
+   },
+   {
+    "who": "Finance / infra",
+    "needs": "Lower storage and index cost from fewer redundant items and images."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Auto-merge precision (weekly labelled sample of 2,000 pairs)",
+    "target": ">= 99%"
+   },
+   {
+    "metric": "Near-duplicate recall (planted duplicate test set)",
+    "target": ">= 90%"
+   },
+   {
+    "metric": "Duplicate results on first search page",
+    "target": "-70% vs baseline"
+   },
+   {
+    "metric": "Online check latency",
+    "target": "p99 < 200 ms"
+   },
+   {
+    "metric": "Seller appeal overturn rate",
+    "target": "< 0.5% of merges"
+   }
+  ],
+  "constraints": [
+   "Must not block listing creation when the dedup service is degraded (fail open).",
+   "Multilingual content (English, Hindi, Tamil and mixed scripts).",
+   "Image storage is in object storage with a CDN; reading full images at check time is expensive.",
+   "Decisions must be explainable to sellers (which listing, which similarity)."
+  ],
+  "risks": [
+   {
+    "risk": "False merges of legitimately different variants (size 8 vs size 9)",
+    "mitigation": "Attribute guard rules on model number, size, colour, pack quantity; grey zone goes to human review."
+   },
+   {
+    "risk": "Adversarial sellers perturb text or images to evade detection",
+    "mitigation": "Multiple sketches (text, image pHash, embeddings), character normalisation, and seller-level behavioural signals."
+   },
+   {
+    "risk": "Boilerplate creates giant buckets and latency spikes",
+    "mitigation": "Boilerplate stripping, IDF weighting, bucket caps."
+   },
+   {
+    "risk": "Threshold changes cause mass re-clustering and churn in search",
+    "mitigation": "Offline evaluation, shadow mode, gradual rollout, stable cluster ids."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Seller uploading a listing",
+    "needs": "Immediate feedback if the product already exists so they can attach an offer instead of a new listing."
+   },
+   {
+    "name": "Catalog quality analyst",
+    "needs": "Review grey-zone pairs with side-by-side diffs and similarity scores."
+   },
+   {
+    "name": "Search engineer",
+    "needs": "Stable cluster_id and canonical_id fields to collapse results."
+   }
+  ],
+  "user_stories": [
+   "As a seller, I want to be told at upload that my product already exists so that I can add my offer to the existing listing.",
+   "As a shopper, I want to see each product once with multiple seller offers so that I can compare prices easily.",
+   "As an analyst, I want a queue of uncertain pairs with highlighted differences so that I can decide quickly.",
+   "As a seller, I want to appeal a merge and see why it happened so that mistakes are corrected.",
+   "As a search engineer, I want cluster ids that rarely change so that caches and ranking features stay stable.",
+   "As a trust and safety analyst, I want to see sellers who mass-clone listings so that I can act on spam rings.",
+   "As a catalog owner, I want edits to listings re-checked so that a listing edited into a copy is caught."
+  ],
+  "functional": [
+   "Exact dedup via normalised content hash (SHA-256) and image byte hash.",
+   "Near-duplicate text detection via MinHash LSH (Jaccard) and SimHash (Hamming).",
+   "Near-duplicate image detection via perceptual hash (pHash, Hamming <= 8 of 64) and embedding ANN.",
+   "Candidate verification with exact similarity plus attribute guard rules.",
+   "Cluster maintenance with union-find and canonical selection by quality score.",
+   "Sync check API at upload and async processing of edits via events.",
+   "Human review queue for grey-zone scores with feedback into thresholds.",
+   "Nightly batch re-clustering and drift repair."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "Sync check p50 < 60 ms, p99 < 200 ms"
+   },
+   {
+    "name": "Throughput",
+    "target": "3,000 checks/s peak, 10,000/s burst during bulk uploads"
+   },
+   {
+    "name": "Precision / recall",
+    "target": "Auto-merge precision >= 99%, recall >= 90% at Jaccard >= 0.8"
+   },
+   {
+    "name": "Availability",
+    "target": "99.9%; fail open on timeout so uploads never block"
+   },
+   {
+    "name": "Freshness",
+    "target": "New items findable as candidates within 60 s"
+   },
+   {
+    "name": "Stability",
+    "target": "< 1% of cluster ids change per day outside actual merges/splits"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "2B items; 50M new or edited per day; 5x peak factor.",
+    "MinHash: 128 x 32-bit values = 512 bytes per item; SimHash 8 bytes; pHash 8 bytes; embedding 256 dims x 1 byte (int8 quantised) = 256 bytes.",
+    "LSH: 32 bands; each band entry stores an 8-byte item id under a band key.",
+    "Average candidates per check after bucket caps: ~30."
+   ],
+   "math": [
+    "Checks: 50M/day / 86,400 = ~580/s average, ~2,900/s peak.",
+    "MinHash signatures: 2B x 512 B = ~1 TB (stored for verification and rebuilds).",
+    "Band index: 2B items x 32 bands x ~12 B per entry (id + overhead) = ~770 GB; sharded across ~16 KV nodes with 3x replication.",
+    "Band lookups: 2,900 checks/s x 32 = ~93k KV point reads/s at peak - fine for a sharded KV with SSD.",
+    "Verification: 30 candidates x ~20 microseconds Jaccard on precomputed shingle hashes = < 1 ms CPU per check.",
+    "Embedding ANN: 2B x 256 B = 512 GB of vectors plus HNSW graph (~1.5x) = ~1.3 TB, sharded by category across ~20 nodes.",
+    "Nightly batch: 2B items through LSH grouping in Spark - bucket by band key, emit pairs within buckets (capped), verify ~10-20B candidate pairs; a few hours on a ~500-core cluster."
+   ],
+   "summary": "About 3k checks/s at peak, each doing 32 band lookups (~93k KV reads/s) and verifying ~30 candidates. Storage is dominated by ~770 GB of LSH band index, ~1 TB of MinHash signatures and ~1.3 TB of embedding index, all sharded."
+  },
+  "out_of_scope": [
+   "Legal takedown workflows.",
+   "Deduplicating customer reviews (separate, simpler system).",
+   "Video and audio fingerprinting.",
+   "Cross-marketplace (external web) duplicate detection."
+  ]
+ },
+ "hld": {
+  "overview": "A Dedup Service exposes a synchronous check used at upload and an asynchronous consumer for edits. Each item is normalised and sketched by a Feature Extractor (exact hash, shingles, MinHash, SimHash, image pHash and embedding). Candidate Retrieval queries the exact-hash table, the LSH band index, the SimHash tables and the ANN index in parallel; the Verifier computes exact similarity with attribute guard rules and produces a decision: duplicate (auto-merge), grey zone (review queue) or unique. The Cluster Store maintains union-find clusters and canonical ids, published as events to catalog and search. A nightly Spark job recomputes clusters over the full corpus to repair drift and apply new thresholds.",
+  "diagram": "\n Seller upload / edit\n        |\n [Listing Service] --sync check (200 ms budget)--> [Dedup API]\n        |  (fail open on timeout)                       |\n        |                                     [Feature Extractor]\n        |                     normalise, shingle, MinHash, SimHash, pHash, embedding\n        |                                               |\n        |               +---------------+---------------+---------------+\n        |               v               v               v               v\n        |        [Exact hash KV] [LSH band index] [SimHash tables]  [ANN (HNSW)]\n        |               +---------------+-------+-------+---------------+\n        |                                       v\n        |                     [Verifier: Jaccard, Hamming, cosine, attribute guards]\n        |                         |                  |                   |\n        |                     duplicate          grey zone            unique\n        |                         v                  v                   v\n        |                 [Cluster Store]     [Review queue]     [index sketches]\n        |                  union-find, canonical      |\n        v                         v                   v\n [Kafka: listing.changes] -> async path      [Kafka: dedup.decisions] -> Catalog, Search\n                                                   ^\n [Nightly Spark: full LSH re-cluster] -------------+\n",
+  "components": [
+   {
+    "name": "Dedup API",
+    "responsibility": "Sync check endpoint for uploads with a 200 ms budget; returns decision, cluster and evidence; fails open."
+   },
+   {
+    "name": "Feature Extractor",
+    "responsibility": "Normalises text (case, Unicode NFKC, transliteration, boilerplate stripping), builds shingles, computes SHA-256, MinHash-128, SimHash-64; fetches thumbnail for pHash and embedding."
+   },
+   {
+    "name": "Exact hash store",
+    "responsibility": "KV map from content hash to item ids for byte-identical and normalised-identical items."
+   },
+   {
+    "name": "LSH band index",
+    "responsibility": "Sharded KV: key (band_no, band_hash) -> list of item ids, capped per bucket; 32 bands of 4 rows."
+   },
+   {
+    "name": "SimHash tables",
+    "responsibility": "4 tables keyed by 16-bit blocks of permuted SimHash for Hamming <= 3 lookups."
+   },
+   {
+    "name": "ANN index",
+    "responsibility": "HNSW vector index per category for semantic and image embedding neighbours."
+   },
+   {
+    "name": "Verifier",
+    "responsibility": "Exact Jaccard / Hamming / cosine on candidates, attribute guard rules, and a calibrated classifier producing a duplicate probability."
+   },
+   {
+    "name": "Cluster Store",
+    "responsibility": "Union-find with path compression over item ids, canonical selection, stable cluster ids, merge/split history for audit and appeals."
+   },
+   {
+    "name": "Review queue and labelling tool",
+    "responsibility": "Grey-zone pairs for humans; labels feed threshold calibration and classifier training."
+   },
+   {
+    "name": "Nightly batch re-clusterer (Spark)",
+    "responsibility": "Full-corpus LSH grouping and verification; reconciles with online clusters; applies threshold changes in shadow first."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Sync check at upload",
+    "steps": [
+     "Listing Service calls POST /v1/dedup/check with title, description, attributes and image URLs.",
+     "Feature Extractor normalises text, strips boilerplate, builds 5-word shingles (hashed to 64-bit), computes SHA-256, MinHash-128 and SimHash-64; fetches a 256 px thumbnail and computes pHash; embedding computed by a GPU model server (20 ms).",
+     "Candidate retrieval in parallel: exact-hash lookup, 32 LSH band lookups, 4 SimHash table lookups, ANN top-20 in the category. Union of ids, deduplicated, capped at 100.",
+     "Verifier loads stored signatures for candidates, computes estimated Jaccard (matching MinHash slots / 128), Hamming distances, cosine; applies guards (model number, size, colour, pack size must match).",
+     "Decision: probability >= 0.97 -> duplicate of cluster C; 0.80-0.97 -> grey zone (accept listing, enqueue review); else unique.",
+     "Respond in ~60 ms typical with decision and evidence; Listing Service suggests 'add your offer to existing product' when duplicate.",
+     "Asynchronously insert the new item's sketches into all indexes and emit a dedup.decisions event."
+    ]
+   },
+   {
+    "name": "Async edit and cluster update",
+    "steps": [
+     "Listing edit emits listing.changes keyed by item_id.",
+     "Consumer recomputes sketches; if signature changed materially, removes old band entries and inserts new ones.",
+     "Re-runs candidate retrieval and verification; may move the item to another cluster or split it out.",
+     "Cluster Store updates union-find; if the canonical item changed, emits a canonical-changed event so search re-collapses."
+    ]
+   },
+   {
+    "name": "Nightly batch re-clustering",
+    "steps": [
+     "Spark reads all signatures from the lakehouse.",
+     "For each band, group by band hash; skip buckets over the cap (boilerplate) and log them.",
+     "Emit candidate pairs within buckets, deduplicate pairs, verify with exact similarity and guards.",
+     "Connected components over verified edges produce clusters; map to existing cluster ids by maximum overlap to keep ids stable.",
+     "Diff against online clusters; apply changes in batches and record metrics on churn."
+    ]
+   }
+  ],
+  "data_flow": "Uploads and edits flow from Listing Service to the Dedup API (sync) and to Kafka listing.changes (async). Sketches are written to the signature store and the retrieval indexes. Decisions and cluster changes go to Kafka dedup.decisions, consumed by Catalog (to attach offers to canonical products) and Search (to collapse by cluster_id). All signatures and decisions are archived to the lakehouse, where the nightly Spark job re-clusters and labelled review outcomes are used to recalibrate thresholds."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/dedup/check",
+    "request": "{item_id?, seller_id, category_id, title, description, attributes{}, image_urls[], mode: sync}",
+    "response": "{decision: duplicate|grey|unique, cluster_id?, canonical_id?, score, evidence:[{item_id, jaccard, hamming, cosine, matched_guards}]}",
+    "notes": "200 ms budget; returns decision=unknown on timeout (fail open)."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/clusters/{cluster_id}",
+    "request": "path param",
+    "response": "{cluster_id, canonical_id, members:[item_id], created_at, history:[...]}",
+    "notes": "Used by catalog and analysts."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/clusters/{cluster_id}/split",
+    "request": "{item_ids[], reason, actor}",
+    "response": "{new_cluster_id}",
+    "notes": "Appeals and analyst corrections; adds a 'cannot-link' constraint."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/review/{pair_id}/label",
+    "request": "{label: dup|not_dup|variant, actor}",
+    "response": "{ok}",
+    "notes": "Feeds calibration; 'not_dup' writes a cannot-link edge."
+   },
+   {
+    "method": "EVENT",
+    "path": "kafka: dedup.decisions",
+    "request": "{item_id, cluster_id, canonical_id, decision, score, version}",
+    "response": "n/a",
+    "notes": "Key = cluster_id for consumers that maintain cluster views."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "ItemSignature",
+    "store": "Cassandra / ScyllaDB (or Bigtable)",
+    "fields": [
+     "item_id",
+     "category_id",
+     "content_sha256",
+     "minhash blob (128 x uint32)",
+     "simhash uint64",
+     "phash uint64",
+     "shingle_count",
+     "guard attrs (model_no, size, colour, pack)",
+     "version",
+     "updated_at"
+    ],
+    "keys": "Partition key item_id",
+    "notes": "~1 TB; read for verification of candidates."
+   },
+   {
+    "entity": "LSHBucket",
+    "store": "ScyllaDB (wide rows)",
+    "fields": [
+     "band_no (0-31)",
+     "band_hash uint64",
+     "item_id (clustering column)",
+     "added_at"
+    ],
+    "keys": "Partition key (band_no, band_hash); clustering item_id",
+    "notes": "Bucket size capped at 10k; oversized buckets flagged as boilerplate and ignored."
+   },
+   {
+    "entity": "SimHashBlock",
+    "store": "ScyllaDB",
+    "fields": [
+     "table_no (0-3)",
+     "block16",
+     "item_id",
+     "simhash"
+    ],
+    "keys": "Partition (table_no, block16)",
+    "notes": "Pigeonhole: Hamming <= 3 means one of 4 16-bit blocks matches exactly."
+   },
+   {
+    "entity": "Cluster",
+    "store": "Postgres (sharded by cluster_id) + cache",
+    "fields": [
+     "cluster_id",
+     "canonical_id",
+     "member_count",
+     "parent pointers (union-find)",
+     "cannot_link pairs",
+     "updated_at"
+    ],
+    "keys": "PK cluster_id; item_to_cluster table keyed by item_id",
+    "notes": "Transactional merges and splits; history table for audit."
+   },
+   {
+    "entity": "ExactHash",
+    "store": "Redis cluster backed by ScyllaDB",
+    "fields": [
+     "content_sha256",
+     "item_ids"
+    ],
+    "keys": "Key content_sha256",
+    "notes": "Fast exact-match path."
+   }
+  ],
+  "classes": [
+   {
+    "name": "Normalizer",
+    "responsibility": "Unicode NFKC, lowercase, transliterate Indic scripts, strip HTML, remove boilerplate phrases and seller contact info, canonicalise units.",
+    "methods": [
+     "normalize(text) -> str",
+     "strip_boilerplate(text) -> str"
+    ]
+   },
+   {
+    "name": "Sketcher",
+    "responsibility": "Builds shingles and computes MinHash, SimHash, SHA-256 and pHash.",
+    "methods": [
+     "shingles(text, k=5) -> set[uint64]",
+     "minhash(shingles, n=128) -> [uint32]",
+     "simhash(weighted_tokens) -> uint64",
+     "phash(image) -> uint64"
+    ]
+   },
+   {
+    "name": "CandidateRetriever",
+    "responsibility": "Parallel lookups across exact, LSH, SimHash and ANN indexes with caps.",
+    "methods": [
+     "retrieve(sig) -> set[item_id]",
+     "bands(minhash) -> [(band_no, hash)]"
+    ]
+   },
+   {
+    "name": "Verifier",
+    "responsibility": "Exact similarity, guard rules and calibrated duplicate probability.",
+    "methods": [
+     "score(sig_a, sig_b) -> float",
+     "guards_pass(a, b) -> bool",
+     "decide(scores) -> Decision"
+    ]
+   },
+   {
+    "name": "ClusterManager",
+    "responsibility": "Union-find with cannot-link constraints, canonical selection, stable ids.",
+    "methods": [
+     "find(item) -> cluster",
+     "union(a, b) -> cluster",
+     "split(items)",
+     "choose_canonical(cluster) -> item"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "MinHash with LSH banding",
+    "explain": "MinHash approximates Jaccard similarity: for a random hash function, the probability that two sets have the same minimum hash equals their Jaccard similarity. With 128 hash functions, the fraction of matching slots estimates Jaccard with standard error about 0.04. LSH splits the 128 values into b=32 bands of r=4; two items become candidates if any band matches entirely. The probability of becoming candidates is 1 - (1 - s^r)^b, an S-curve that is ~0.99 at s=0.6 and ~1.0 at s=0.8, while at s=0.3 it is ~0.23.",
+    "pseudocode": "def minhash(shingles, n=128):\n    sig = [UINT32_MAX] * n\n    for sh in shingles:                  # sh is a 64-bit shingle hash\n        for i in range(n):\n            h = (A[i] * sh + B[i]) % P % 2**32\n            if h < sig[i]: sig[i] = h\n    return sig\n\ndef bands(sig, b=32, r=4):\n    return [(i, hash64(tuple(sig[i*r:(i+1)*r]))) for i in range(b)]\n\ndef candidates(sig):\n    ids = set()\n    for band_no, h in bands(sig):\n        bucket = band_index.get(band_no, h, limit=10_000)\n        if bucket.size >= 10_000: continue        # boilerplate bucket\n        ids |= bucket.ids\n    return ids\n\ndef est_jaccard(a, b):\n    return sum(x == y for x, y in zip(a, b)) / len(a)"
+   },
+   {
+    "name": "SimHash and Hamming lookup with permuted tables",
+    "explain": "SimHash builds a 64-bit fingerprint where each bit is the sign of a weighted sum of token hash bits; similar documents have fingerprints differing in few bits. To find all fingerprints within Hamming distance 3, split the 64 bits into 4 blocks of 16; by pigeonhole at least one block must match exactly, so store 4 tables keyed by each block and check candidates exactly.",
+    "pseudocode": "def simhash(tokens_with_weights):\n    v = [0] * 64\n    for tok, w in tokens_with_weights:       # w = tf-idf weight\n        h = hash64(tok)\n        for i in range(64):\n            v[i] += w if (h >> i) & 1 else -w\n    return sum(1 << i for i in range(64) if v[i] > 0)\n\ndef near(fp, k=3):\n    out = set()\n    for t in range(4):\n        block = (fp >> (16 * t)) & 0xFFFF\n        for cand_id, cand_fp in simhash_table[t].get(block):\n            if popcount(fp ^ cand_fp) <= k: out.add(cand_id)\n    return out"
+   },
+   {
+    "name": "Union-find with cannot-link constraints",
+    "explain": "Clusters are connected components of verified duplicate edges. Union-find with path compression and union by size makes find/union nearly O(1). Human 'not duplicate' labels add cannot-link constraints checked before a union to prevent transitive chaining from merging different products (A~B, B~C but A!~C).",
+    "pseudocode": "def find(x):\n    while parent[x] != x:\n        parent[x] = parent[parent[x]]        # path halving\n        x = parent[x]\n    return x\n\ndef union(a, b):\n    ra, rb = find(a), find(b)\n    if ra == rb: return ra\n    if violates_cannot_link(ra, rb): return None\n    if size[ra] < size[rb]: ra, rb = rb, ra\n    parent[rb] = ra; size[ra] += size[rb]\n    canonical[ra] = best_quality(canonical[ra], canonical[rb])\n    return ra"
+   }
+  ],
+  "sequence": "\nListingSvc    DedupAPI     Extractor     Indexes(KV/ANN)    Verifier     ClusterStore   Kafka\n   | check()    |              |               |                 |              |           |\n   |----------->|              |               |                 |              |           |\n   |            |--sketch----->|               |                 |              |           |\n   |            |<-sigs--------|               |                 |              |           |\n   |            |--32 bands + 4 simhash + ANN->|                 |              |           |\n   |            |<--~30 candidate ids----------|                 |              |           |\n   |            |--verify(candidates)--------------------------->|              |           |\n   |            |<--p=0.985, guards ok, cluster C----------------|              |           |\n   |            |--union(item, C)--------------------------------------------->|           |\n   |<-duplicate-|              |               |                 |              |--decision>|\n   |            |--async insert sketches------>|                 |              |           |\n   |   total ~60 ms typical, 200 ms budget, fail open on timeout                           |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Variants: 'Running shoe size 8' vs 'size 9' have Jaccard 0.95.",
+   "handling": "Attribute guard rules: differing size, colour, model number or pack quantity block auto-merge and mark as variants of the same product family instead."
+  },
+  {
+   "case": "Transitive chaining: A~B (0.85), B~C (0.85) but A vs C is 0.6, merging different products.",
+   "handling": "Require verification against the canonical item or a cluster centroid, cap cluster diameter, and honour cannot-link labels."
+  },
+  {
+   "case": "Boilerplate text (return policy, '100% genuine') makes unrelated listings similar.",
+   "handling": "Strip known boilerplate, IDF-weight shingles, and ignore LSH buckets larger than 10k items."
+  },
+  {
+   "case": "Very short titles (3-4 words) produce few shingles and unstable Jaccard.",
+   "handling": "Use character n-grams for short text and lean on attributes, images and embeddings; require stronger evidence before merging."
+  },
+  {
+   "case": "Adversarial perturbation: homoglyphs (Cyrillic 'a'), zero-width characters, inserted random words.",
+   "handling": "Unicode NFKC and confusables mapping, strip zero-width chars, IDF weighting reduces the impact of inserted junk; image pHash still matches."
+  },
+  {
+   "case": "Same image cropped, mirrored, or with a watermark.",
+   "handling": "pHash tolerates resizing and mild edits; add a flipped pHash; embedding similarity catches crops and watermarks."
+  },
+  {
+   "case": "Two near-identical items uploaded concurrently, each checking before the other is indexed.",
+   "handling": "Both pass as unique online; async consumer re-checks after insert, and the nightly batch catches anything left, merging them."
+  },
+  {
+   "case": "Edit turns a unique listing into a copy of a top seller's listing.",
+   "handling": "Edits re-run dedup asynchronously; a big jump in similarity to a high-traffic item triggers review and a trust signal."
+  },
+  {
+   "case": "Multilingual duplicates (Hindi and English descriptions of the same product).",
+   "handling": "Multilingual embeddings for semantic candidates; transliteration in normalisation; text shingles alone will not match across languages."
+  },
+  {
+   "case": "Hot cluster with 500k members (a commodity item like a phone charger).",
+   "handling": "Store membership in a separate table, paginate, and avoid loading whole clusters on the hot path; canonical id cached."
+  },
+  {
+   "case": "Threshold change would re-shuffle millions of clusters.",
+   "handling": "Shadow-run new thresholds, measure churn and precision on labels, roll out by category, and map new components to old ids by maximum overlap."
+  },
+  {
+   "case": "Seller appeal after a wrong merge.",
+   "handling": "Split API removes items, records a cannot-link constraint so automated jobs do not re-merge, and logs for threshold calibration."
+  },
+  {
+   "case": "Feature extractor image fetch is slow (CDN miss).",
+   "handling": "Time-box image features to 80 ms; decide on text alone if images are late and re-check asynchronously with images."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "MinHash + LSH (custom library, or datasketch for prototyping)",
+   "layer": "Similarity sketching",
+   "overview": "MinHash estimates Jaccard similarity of shingle sets using minimum hash values; LSH banding retrieves likely-similar pairs without comparing all pairs.",
+   "why": "Tunable recall/precision via bands and rows; signatures are compact and comparable in microseconds.",
+   "alternatives": "SimHash only (smaller, good for web-page near-dups but less precise for short text); pure embeddings (catch paraphrase but cost GPU and are less explainable)."
+  },
+  {
+   "name": "SimHash (Charikar) with permuted tables",
+   "layer": "Similarity sketching",
+   "overview": "64-bit fingerprint where similar documents differ in few bits; Google used it at web scale for crawling dedup with Hamming distance 3.",
+   "why": "8 bytes per item and fast Hamming lookups; a strong complement to MinHash for longer descriptions.",
+   "alternatives": "MinHash with more permutations (more storage); b-bit MinHash to shrink signatures."
+  },
+  {
+   "name": "Perceptual hash (pHash / dHash)",
+   "layer": "Image similarity",
+   "overview": "DCT-based 64-bit hash robust to resizing, compression and small edits.",
+   "why": "Cheap detection of re-uploaded product images.",
+   "alternatives": "CNN/CLIP embeddings (robust to crops and watermarks, heavier); SIFT/ORB keypoints (robust, expensive)."
+  },
+  {
+   "name": "HNSW vector index (FAISS, Milvus or OpenSearch k-NN)",
+   "layer": "Semantic candidate retrieval",
+   "overview": "Graph-based approximate nearest neighbour index over embeddings.",
+   "why": "Finds paraphrased or cross-language duplicates that shingles miss; per-category sharding keeps graphs small.",
+   "alternatives": "IVF-PQ (less memory, lower recall); ScaNN; brute force on GPU for small categories."
+  },
+  {
+   "name": "ScyllaDB / Cassandra",
+   "layer": "Signature store and LSH buckets",
+   "overview": "Wide-column, horizontally scalable stores optimised for high-throughput point reads and writes.",
+   "why": "~93k point reads/s and append-heavy bucket writes with predictable latency; partition by (band, hash).",
+   "alternatives": "Bigtable/HBase (similar model); Redis (fast but expensive at ~1 TB); RocksDB embedded in the service (fast, but harder to scale and replicate)."
+  },
+  {
+   "name": "Apache Spark",
+   "layer": "Batch re-clustering",
+   "overview": "Distributed batch processing with shuffles and graph operations (GraphFrames connected components).",
+   "why": "Full-corpus LSH grouping and connected components nightly over billions of items.",
+   "alternatives": "Flink batch; BigQuery with UDFs; Dataflow."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Events",
+   "overview": "Partitioned durable log.",
+   "why": "Decouples listing changes from dedup and propagates decisions to catalog and search.",
+   "alternatives": "Pulsar; managed queues like SQS (no replay, weaker ordering)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Shingling and Jaccard similarity",
+   "explain": "To compare documents for near-duplication you first need a representation where small edits cause small changes. Shingling breaks a document into overlapping sequences of k consecutive tokens (word shingles) or characters (character n-grams). The sentence 'red cotton t shirt for men' with k=3 word shingles yields {red cotton t, cotton t shirt, t shirt for, shirt for men}. Each shingle is hashed to a 64-bit integer to save space. Two documents are then compared with Jaccard similarity: the size of the intersection of their shingle sets divided by the size of the union. Identical documents score 1.0, completely different ones 0. Changing a single word affects only the k shingles that contain it, so a long document with one edit still scores very high, whereas a cryptographic hash of the whole document would change completely. The choice of k matters: small k (like 2) makes unrelated documents look similar because common phrases are shared; large k (like 9) makes the measure brittle because any edit breaks many shingles. Five word shingles or 5-9 character shingles are common choices for product text and web pages. Weighting shingles by inverse document frequency reduces the influence of boilerplate that appears everywhere. Jaccard is exact but computing it for all pairs among billions of documents is impossible, which motivates sketches like MinHash that estimate it cheaply.",
+   "in_this_design": "Normalised title plus description are shingled into 5-word shingles (character 4-grams for short titles), hashed to 64-bit, with boilerplate removed and IDF weighting. Jaccard >= 0.8 on these sets is the near-duplicate definition, and verification computes it exactly or via MinHash estimate.",
+   "key_points": [
+    "Shingles turn small edits into small set differences.",
+    "Jaccard = |A intersect B| / |A union B|; 1 means identical sets.",
+    "k too small inflates similarity; k too large makes it brittle.",
+    "Strip and down-weight boilerplate before shingling.",
+    "Exact Jaccard is the verification step, not the retrieval step."
+   ],
+   "qa": [
+    {
+     "q": "Why not use edit distance (Levenshtein) instead of Jaccard?",
+     "a": "Edit distance is O(n*m) per pair and sensitive to reordering paragraphs, while shingle sets are order-insensitive at the paragraph level and compress to sketches that support LSH retrieval. Edit distance can be used as a final check on short titles."
+    },
+    {
+     "q": "What k would you choose for product titles of 8-12 words?",
+     "a": "Word shingles of 5 give too few shingles for short titles, so I use character 4- or 5-grams there and word 5-grams for descriptions, combining the two similarities."
+    },
+    {
+     "q": "How does boilerplate hurt Jaccard?",
+     "a": "If 40% of every description is the same return policy, two unrelated listings share those shingles and their Jaccard rises artificially. Removing known boilerplate and IDF-weighting fixes this."
+    }
+   ]
+  },
+  {
+   "name": "MinHash (estimating Jaccard with compact signatures)",
+   "explain": "MinHash, introduced by Andrei Broder for AltaVista's web dedup, compresses a set into a short signature such that comparing signatures estimates Jaccard similarity. Take a random hash function h and apply it to every element of set A; record the minimum value. Do the same for set B. The key property: the probability that the two minimums are equal is exactly the Jaccard similarity of A and B. Why? Consider the union of A and B; under a random hash, each element of the union is equally likely to have the smallest hash. The minimums are equal exactly when that smallest element lies in the intersection, which happens with probability |A intersect B| / |A union B|. Repeat with n independent hash functions to build an n-value signature; the fraction of positions where two signatures agree is an unbiased estimate of Jaccard with standard error about sqrt(J(1-J)/n), roughly 0.04 for n=128 at J=0.5. Signatures have fixed size regardless of document length, so a 5,000-word description and a 20-word title both become 128 integers (512 bytes). Variants reduce cost: one-permutation hashing computes a single hash and partitions into bins, and b-bit MinHash stores only the lowest few bits of each value to cut storage by 8x with slight accuracy loss.",
+   "in_this_design": "Every item stores a 128-value MinHash signature (512 bytes, ~1 TB total). Verification estimates Jaccard from signatures in microseconds without reloading text, and the signature feeds LSH banding for candidate retrieval.",
+   "key_points": [
+    "P(min-hash equal) = Jaccard similarity.",
+    "n hash functions give an estimate with error ~ 1/sqrt(n).",
+    "Fixed-size signatures regardless of document length.",
+    "One-permutation and b-bit variants cut compute and storage."
+   ],
+   "qa": [
+    {
+     "q": "Why does the min-hash equality probability equal Jaccard?",
+     "a": "Under a random permutation, each element of the union is equally likely to be first. The minimums coincide exactly when the first element of the union is in both sets, which has probability |intersection| / |union|."
+    },
+    {
+     "q": "How many hash functions would you use and why?",
+     "a": "128 gives about 0.04 standard error which is enough when we verify near the 0.8 threshold and use guards; 256 halves variance but doubles storage and LSH cost. The grey zone absorbs residual uncertainty."
+    },
+    {
+     "q": "Can MinHash measure containment, such as a short listing contained in a long one?",
+     "a": "Plain MinHash estimates Jaccard, which is low when sizes differ a lot even if one is contained. For containment use the estimated Jaccard plus set sizes to derive containment, or use specialised LSH Ensemble."
+    }
+   ]
+  },
+  {
+   "name": "Locality-sensitive hashing (LSH) banding",
+   "explain": "Even with compact signatures, comparing a new item against 2 billion existing ones is far too slow. Locality-sensitive hashing flips the goal of ordinary hashing: instead of spreading similar inputs apart, it deliberately makes similar inputs collide in the same bucket with high probability while dissimilar inputs rarely collide. For MinHash, LSH works by banding: split the n-value signature into b bands of r rows each (n = b x r). Hash each band to a bucket. Two items become candidates if they share a bucket in at least one band. If their Jaccard is s, the probability a specific band matches entirely is s^r, so the probability that at least one of b bands matches is 1 - (1 - s^r)^b. Plotted against s, this is an S-shaped curve with a steep rise around the threshold (1/b)^(1/r). Increasing r makes the curve steeper and shifts it right (fewer false positives, more false negatives); increasing b shifts it left (more recall, more candidates). LSH families exist for other measures too: random hyperplanes for cosine similarity (which is what SimHash is), and bit sampling for Hamming distance. The output of LSH is only a candidate set; a verification step with the true similarity removes false positives, so you tune LSH for recall and rely on verification for precision.",
+   "in_this_design": "128-value MinHash split into 32 bands of 4 rows gives a threshold near 0.42: items at Jaccard 0.8 become candidates with probability ~1.0, at 0.5 with ~0.87, at 0.3 with ~0.23. Bucket caps of 10k ignore boilerplate buckets. Verification then enforces the 0.8 threshold and guards.",
+   "key_points": [
+    "LSH makes similar items collide on purpose.",
+    "Candidate probability = 1 - (1 - s^r)^b; threshold about (1/b)^(1/r).",
+    "Tune LSH for recall; verification provides precision.",
+    "SimHash is LSH for cosine via random hyperplanes.",
+    "Cap oversized buckets - they are boilerplate and kill latency."
+   ],
+   "qa": [
+    {
+     "q": "Recall is too low at Jaccard 0.7. What do you change?",
+     "a": "Increase bands or reduce rows per band to move the S-curve left, for example 64 bands of 2 rows with 128 values, accepting more candidates; or increase signature length to 256 with 64 bands of 4. Then verify candidates more aggressively."
+    },
+    {
+     "q": "What happens if one bucket holds 2 million items?",
+     "a": "That band hash represents boilerplate; returning it would blow up verification cost and latency. Cap and skip it, log it for boilerplate stripping, and rely on other bands, which still give high recall for true duplicates."
+    },
+    {
+     "q": "Why not just use an ANN index for everything?",
+     "a": "ANN over embeddings captures semantic similarity but is less precise for near-identical text, costs GPU for embeddings, and is harder to explain to sellers. MinHash LSH is cheap, deterministic and explainable; I use both and merge candidates."
+    }
+   ]
+  },
+  {
+   "name": "SimHash and Hamming-distance search",
+   "explain": "SimHash, from Moses Charikar's work and used by Google for web crawling near-duplicate detection (Manku, Jain and Das Sarma, WWW 2007), produces a single fixed-size fingerprint, typically 64 bits, where similar documents get fingerprints that differ in only a few bit positions. To compute it, extract features (tokens or shingles) with weights, hash each feature to 64 bits, and for each bit position add the weight if the feature's bit is 1 and subtract it if 0. The final fingerprint has bit i set if the running sum for position i is positive. Changing a few low-weight features changes few sums enough to flip their sign, so the fingerprint barely moves. Similarity is measured by Hamming distance - the number of differing bits, computed with XOR and popcount in one CPU instruction. Google reported that for 8 billion web pages, 64-bit fingerprints with a Hamming distance threshold of 3 worked well. Finding all fingerprints within distance k efficiently uses the pigeonhole principle: split the 64 bits into k+1 blocks; if two fingerprints differ in at most k bits, at least one block matches exactly. Build one table per block keyed on that block's bits (using permutations so each block becomes a prefix), look up exact matches, and check the full Hamming distance on the results. SimHash is tiny and fast but less discriminative than MinHash for short texts.",
+   "in_this_design": "A tf-idf weighted 64-bit SimHash per item with 4 tables of 16-bit blocks finds items within Hamming distance 3; it complements MinHash on long descriptions and is cheap to store (8 bytes per item).",
+   "key_points": [
+    "One 64-bit fingerprint; similar docs differ in few bits.",
+    "Hamming distance via XOR plus popcount.",
+    "Pigeonhole: k+1 blocks guarantee an exact block match for distance <= k.",
+    "Google used 64-bit SimHash with k=3 for billions of pages."
+   ],
+   "qa": [
+    {
+     "q": "How do you find all fingerprints within Hamming distance 3 among 2 billion?",
+     "a": "Split into 4 blocks of 16 bits; build 4 tables keyed by each block. Any fingerprint within distance 3 matches at least one block exactly, so 4 lookups plus exact popcount checks on the matching rows find them all."
+    },
+    {
+     "q": "Why weight features in SimHash?",
+     "a": "Without weights, frequent filler words dominate. Tf-idf weights make distinctive terms like brand and model drive the fingerprint, improving precision."
+    },
+    {
+     "q": "When does SimHash underperform MinHash?",
+     "a": "On short texts, where a single word change flips many bits relative to the fingerprint's resolution, and when you need a calibrated similarity score; MinHash's agreement ratio directly estimates Jaccard."
+    }
+   ]
+  },
+  {
+   "name": "Union-find and clustering of duplicate graphs",
+   "explain": "Once you have verified pairs of duplicates, you need groups. Treat items as nodes and verified duplicate pairs as edges; each connected component is a cluster. Union-find (disjoint set union) maintains components incrementally: each element points to a parent, the root identifies the component, find follows parents to the root, and union links two roots. With path compression (pointing visited nodes closer to the root) and union by size or rank, a sequence of m operations costs nearly O(m), formally O(m alpha(n)) where alpha is the inverse Ackermann function, effectively under 5. The danger with connected components is transitive chaining: if A resembles B and B resembles C, A and C end up together even when they are not similar, and a chain of small edits can link entirely different products into one giant cluster. Mitigations include verifying a new item against the cluster's canonical member or centroid rather than any member, limiting cluster diameter, using stricter thresholds for edges that would merge two large clusters, and honouring cannot-link constraints from human review. At batch scale, connected components over billions of edges runs in Spark (GraphFrames) using iterative label propagation or the large-star/small-star algorithm. Maintaining stable cluster ids across runs requires mapping new components to old ids by maximum member overlap.",
+   "in_this_design": "Online merges use a union-find in the Cluster Store with cannot-link checks and verification against the canonical; nightly Spark computes connected components over verified edges and maps them to existing cluster ids by overlap.",
+   "key_points": [
+    "Clusters are connected components of verified duplicate edges.",
+    "Union-find with path compression and union by size is near O(1) per op.",
+    "Beware transitive chaining - verify against the canonical, cap diameter.",
+    "Cannot-link constraints encode human corrections.",
+    "Keep cluster ids stable across recomputation."
+   ],
+   "qa": [
+    {
+     "q": "A cluster suddenly has 2 million members mixing unrelated products. What happened and how do you fix it?",
+     "a": "Transitive chaining through borderline edges, often via boilerplate-heavy or very short listings. Fix by requiring similarity to the canonical, raising the threshold for edges that join large clusters, and recomputing the cluster with those rules; add monitoring on cluster size growth."
+    },
+    {
+     "q": "How do you choose the canonical item?",
+     "a": "Highest quality score: complete attributes, best images, oldest verified listing, good seller rating, and most reviews. Keep it sticky unless a much better candidate appears, to avoid churn."
+    },
+    {
+     "q": "How do you keep cluster ids stable after a nightly recomputation?",
+     "a": "For each new component, find the old cluster id with the largest member overlap and reuse it; only genuinely new or split components get new ids. Publish only the diff."
+    }
+   ]
+  },
+  {
+   "name": "Precision, recall and threshold calibration with human-in-the-loop",
+   "explain": "A dedup system is a classifier over pairs: duplicate or not. Precision is the fraction of predicted duplicates that are truly duplicates; recall is the fraction of true duplicates found. Raising the threshold improves precision and lowers recall, and the right operating point depends on the cost of each error. Here a false merge hides an honest seller's listing and can cost them sales and trust, while a missed duplicate just leaves clutter, so precision matters more for automatic actions. A standard technique is a three-zone decision: above a high threshold act automatically, below a low threshold do nothing, and send the grey zone in between to human review. Thresholds should be set from labelled data, not intuition: sample pairs stratified by score, have reviewers label them, plot precision and recall against threshold, and pick the point meeting the precision target. Raw similarity scores are not probabilities, so calibrate them (for example with a logistic regression over Jaccard, Hamming, cosine and guard features) so a score of 0.97 really means about 97% of such pairs are duplicates. Measuring recall is harder because you cannot label all pairs; plant synthetic duplicates (perturbed copies of real items) and measure how many are found, and periodically run expensive exhaustive comparison on a small random subset. Labels from appeals and reviews feed back into calibration and model training.",
+   "in_this_design": "A calibrated classifier over Jaccard, SimHash Hamming, embedding cosine, image pHash distance and guard matches outputs a probability; >= 0.97 auto-merges, 0.80-0.97 goes to review, below is unique. Weekly 2,000-pair labelled samples track precision; planted duplicates track recall.",
+   "key_points": [
+    "Choose the operating point by the cost of each error type.",
+    "Three zones: auto-act, human review, ignore.",
+    "Calibrate scores into probabilities with labelled data.",
+    "Measure recall with planted duplicates; measure precision with labelled samples.",
+    "Feed reviews and appeals back into calibration."
+   ],
+   "qa": [
+    {
+     "q": "Business asks to auto-merge more aggressively. How do you answer?",
+     "a": "Show the precision-recall curve from labelled data: moving the threshold from 0.97 to 0.92 might add 15% more merges but drop precision from 99% to 96%, meaning thousands of wrong merges a day. Offer to expand reviewer capacity or improve features to move the curve instead."
+    },
+    {
+     "q": "How do you estimate recall when you cannot label all pairs?",
+     "a": "Plant perturbed copies of real items with known edits (word swaps, reorderings, image crops) and measure detection rate; also exhaustively compare a small random sample within categories offline to find misses."
+    },
+    {
+     "q": "Why calibrate scores at all?",
+     "a": "Combining Jaccard, Hamming and cosine needs a common scale, and thresholds should mean the same thing across categories. Calibration makes 0.97 mean 97% duplicates, so policy is stable as features change."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Sketch type for text",
+   "options": "Exact hash vs SimHash vs MinHash vs embeddings",
+   "choice": "Exact hash + MinHash LSH + SimHash, with embeddings as an extra candidate source",
+   "why": "Each catches different duplicates; MinHash gives calibrated Jaccard, SimHash is tiny, embeddings catch paraphrases and cross-language copies."
+  },
+  {
+   "decision": "LSH parameters",
+   "options": "b=16,r=8 (strict) vs b=32,r=4 (balanced) vs b=64,r=2 (loose)",
+   "choice": "b=32, r=4",
+   "why": "Threshold ~0.42 gives near-100% recall at Jaccard 0.8 with manageable candidate counts; verification restores precision."
+  },
+  {
+   "decision": "Online vs offline detection",
+   "options": "Sync only vs async only vs sync + async + nightly batch",
+   "choice": "All three",
+   "why": "Sync gives immediate seller feedback; async catches races and edits; batch repairs drift and applies threshold changes."
+  },
+  {
+   "decision": "Action on duplicates",
+   "options": "Block vs merge into cluster vs demote in search",
+   "choice": "Merge into cluster with canonical; block only high-confidence spam",
+   "why": "Merging keeps honest sellers selling via offers while cleaning results; blocking has the highest cost of a false positive."
+  },
+  {
+   "decision": "Failure policy",
+   "options": "Fail closed (block upload) vs fail open",
+   "choice": "Fail open",
+   "why": "Revenue from listings outweighs temporary duplicates, which async and batch paths clean up."
+  },
+  {
+   "decision": "Clustering method",
+   "options": "Connected components vs centroid/canonical-based vs correlation clustering",
+   "choice": "Union-find with canonical verification and cannot-link constraints",
+   "why": "Near-linear and incremental, with guards against transitive chaining; correlation clustering is better quality but too expensive at this scale."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Dedup service timeout at upload",
+   "behavior": "Listing proceeds as 'pending dedup'; async consumer processes it within a minute; metric tracks fail-open rate."
+  },
+  {
+   "failure": "LSH bucket store partition slow (hot boilerplate bucket)",
+   "behavior": "Per-lookup timeout of 30 ms; skip that band; recall drops slightly for that request; bucket flagged for capping."
+  },
+  {
+   "failure": "Embedding model server down",
+   "behavior": "Skip semantic candidates; rely on MinHash, SimHash and pHash; mark decisions as text-only and re-check later."
+  },
+  {
+   "failure": "Bad threshold deploy causes mass merges",
+   "behavior": "Shadow mode and rate limits on merges per hour per category trip a circuit breaker; merges are reversible from history; roll back the threshold."
+  },
+  {
+   "failure": "Nightly batch fails midway",
+   "behavior": "Online clusters remain authoritative; batch is idempotent and restarts from checkpointed stages; no partial diff is applied."
+  },
+  {
+   "failure": "Cluster Store primary failover",
+   "behavior": "Merges queue in Kafka and apply after failover; reads served from replicas and cache."
+  }
+ ],
+ "metrics": [
+  "Auto-merge precision from weekly labelled samples, per category.",
+  "Recall on planted duplicates, per perturbation type.",
+  "Sync check latency p50/p99 and fail-open rate.",
+  "Candidates per check and LSH bucket size distribution (max, p99).",
+  "Grey-zone volume, reviewer backlog and review turnaround.",
+  "Merges and splits per hour, cluster size distribution, largest cluster growth.",
+  "Seller appeal rate and overturn rate.",
+  "Duplicate rate on search first page (offline evaluation on sampled queries)."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you extend this to images only, such as detecting re-uploaded product photos?",
+   "a": "Compute pHash and dHash at upload with a Hamming-distance multi-index (same pigeonhole tables), plus CLIP embeddings in an ANN index for crops and watermarks. Verify with keypoint matching (ORB) for borderline cases."
+  },
+  {
+   "q": "How do you handle the web-crawl variant of this problem at 10B pages?",
+   "a": "SimHash 64-bit per page with Hamming distance 3 and permuted tables, as Google described; strip navigation and ads before fingerprinting; batch-process in MapReduce/Spark and keep online lookups for freshly crawled pages."
+  },
+  {
+   "q": "Why not compare the new item against all items in the same category?",
+   "a": "Large categories have tens of millions of items; even at microseconds each, that is tens of seconds per check. LSH reduces it to ~30 candidates."
+  },
+  {
+   "q": "How would you detect a spam ring cloning listings with small changes?",
+   "a": "Look at the graph: many near-duplicate edges from new sellers to the same popular listings in a short window, shared images, and similar account features. Feed cluster events into trust and safety models."
+  },
+  {
+   "q": "How do you avoid oscillation where an item keeps moving between clusters on edits?",
+   "a": "Hysteresis: require a meaningfully higher score to move than to stay, sticky canonical selection, and rate-limit cluster moves per item."
+  },
+  {
+   "q": "What would you do differently for a small startup with 1M items?",
+   "a": "Everything in memory on one machine: MinHash LSH with datasketch in Python, Postgres for clusters, nightly full recompute. No ANN index until paraphrase duplicates become a problem."
+  },
+  {
+   "q": "How do you handle deletes?",
+   "a": "Remove the item from band buckets lazily (tombstone and filter on read, compact nightly); if it was a canonical, elect a new canonical and emit a canonical-changed event."
+  }
+ ],
+ "key_points": [
+  "Define duplicate tiers first: exact, near (Jaccard >= 0.8 on shingles), semantic - each needs a different technique.",
+  "Exact hashes miss one-word edits; all-pairs comparison is impossible at 2B items.",
+  "MinHash estimates Jaccard; LSH banding retrieves ~30 candidates in 32 lookups; verification restores precision.",
+  "SimHash with pigeonhole block tables gives Hamming-distance search in 8 bytes per item.",
+  "Attribute guards prevent merging variants; cannot-link labels stop transitive chaining.",
+  "Union-find clusters with a sticky canonical and stable ids feed catalog and search.",
+  "Three-zone decisions: auto-merge at high confidence, human review in the grey zone.",
+  "Fail open at upload; async and nightly batch repair races and drift.",
+  "Measure precision with labelled samples and recall with planted duplicates."
+ ],
+ "quiz": [
+  {
+   "q": "Why does a SHA-256 of the listing text fail to catch near-duplicates?",
+   "options": [
+    "SHA-256 collisions are too frequent",
+    "Any single-character change produces a completely different hash",
+    "SHA-256 is too slow at scale",
+    "Hashes cannot be stored in a KV store"
+   ],
+   "answer": 1,
+   "why": "Cryptographic hashes are designed to avalanche on tiny changes. Collisions are astronomically rare, so that tempting answer is wrong."
+  },
+  {
+   "q": "The probability that two sets have the same MinHash value under a random hash equals:",
+   "options": [
+    "Their cosine similarity",
+    "Their Hamming distance divided by 64",
+    "Their Jaccard similarity",
+    "The ratio of their sizes"
+   ],
+   "answer": 2,
+   "why": "The smallest element of the union is equally likely to be any element; matching requires it to be in the intersection. Cosine is what SimHash approximates - the tempting confusion."
+  },
+  {
+   "q": "With b=32 bands of r=4 rows, the LSH threshold is approximately:",
+   "options": [
+    "0.42",
+    "0.80",
+    "0.25",
+    "0.95"
+   ],
+   "answer": 0,
+   "why": "(1/32)^(1/4) = ~0.42. 0.8 is the verification threshold, not the LSH threshold."
+  },
+  {
+   "q": "Recall at Jaccard 0.7 is too low. Which LSH change helps most directly?",
+   "options": [
+    "Increase rows per band",
+    "Decrease the number of bands",
+    "Increase the bucket cap only",
+    "Increase bands or decrease rows per band"
+   ],
+   "answer": 3,
+   "why": "More bands or fewer rows shifts the S-curve left, increasing candidate probability. More rows per band does the opposite - tempting because it sounds more thorough."
+  },
+  {
+   "q": "To find all 64-bit SimHash fingerprints within Hamming distance 3, how many exact-match block tables does the pigeonhole approach need at minimum?",
+   "options": [
+    "3",
+    "4",
+    "8",
+    "64"
+   ],
+   "answer": 1,
+   "why": "k+1 = 4 blocks guarantee at least one block matches exactly. 3 tables are insufficient because 3 differing bits could fall in 3 different blocks."
+  },
+  {
+   "q": "Two listings, 'Shoe size 8' and 'Shoe size 9', score Jaccard 0.95. What should the system do?",
+   "options": [
+    "Auto-merge since 0.95 > 0.8",
+    "Block the second upload",
+    "Treat as variants via attribute guard rules, not duplicates",
+    "Ignore attributes and rely on images"
+   ],
+   "answer": 2,
+   "why": "Key attribute mismatches must veto merging. Auto-merging on the score alone is the tempting precision failure."
+  },
+  {
+   "q": "A single LSH bucket contains 3 million items. The most likely cause is:",
+   "options": [
+    "Boilerplate text shared across listings",
+    "A hash function bug",
+    "Too many bands",
+    "Too few rows per band globally"
+   ],
+   "answer": 0,
+   "why": "Common boilerplate produces identical bands for unrelated items. Few rows per band increase collisions overall, but a single giant bucket points to shared content."
+  },
+  {
+   "q": "Roughly how many KV point reads per second does the online check need at 2,900 checks/s with 32 bands?",
+   "options": [
+    "~9,000",
+    "~930,000",
+    "~93,000",
+    "~2,900"
+   ],
+   "answer": 2,
+   "why": "2,900 x 32 = 92,800. 2,900 forgets the per-band lookups."
+  },
+  {
+   "q": "Why use a three-zone decision (auto, review, ignore)?",
+   "options": [
+    "To reduce storage",
+    "Because LSH requires it",
+    "To make the system faster",
+    "To keep precision high on automatic actions while still catching borderline duplicates"
+   ],
+   "answer": 3,
+   "why": "The grey zone defers uncertain cases to humans. It adds latency and cost, so speed is not the motivation."
+  },
+  {
+   "q": "A cluster grows to mix unrelated products after a chain of borderline matches. What is this called and the best mitigation?",
+   "options": [
+    "Transitive chaining; verify against the canonical and use cannot-link constraints",
+    "Hash collision; use SHA-512",
+    "Data skew; add shards",
+    "Clock skew; use vector clocks"
+   ],
+   "answer": 0,
+   "why": "Connected components chain A~B~C even if A!~C. Data skew is real but does not cause wrong merges."
+  },
+  {
+   "q": "The dedup service is timing out during a bulk upload event. Best behaviour?",
+   "options": [
+    "Reject uploads until it recovers",
+    "Fail open: accept listings as pending dedup and process asynchronously",
+    "Retry synchronously up to 10 times",
+    "Disable the nightly batch"
+   ],
+   "answer": 1,
+   "why": "Selling must not block on dedup; async and batch paths clean up. Synchronous retries amplify load - the tempting wrong answer."
+  },
+  {
+   "q": "With 128 MinHash values, the standard error of the Jaccard estimate around J=0.5 is about:",
+   "options": [
+    "0.004",
+    "0.4",
+    "0.04",
+    "0.0004"
+   ],
+   "answer": 2,
+   "why": "sqrt(0.25/128) = ~0.044. 0.004 would need ~16,000 hashes."
+  },
+  {
+   "q": "Why weight tokens by tf-idf when computing SimHash?",
+   "options": [
+    "To make distinctive terms like brand and model drive the fingerprint",
+    "To make the hash cryptographically secure",
+    "Because SimHash requires integers",
+    "To reduce fingerprint length"
+   ],
+   "answer": 0,
+   "why": "Weighting reduces the influence of common filler words. It has nothing to do with security or fingerprint size."
+  },
+  {
+   "q": "Which technique best catches a Hindi and an English description of the same product?",
+   "options": [
+    "MinHash on word shingles",
+    "Multilingual embeddings with ANN retrieval",
+    "SimHash",
+    "SHA-256 after lowercasing"
+   ],
+   "answer": 1,
+   "why": "Shingle-based methods need shared tokens; multilingual embeddings map meaning across languages. Transliteration helps shingles only partially."
+  },
+  {
+   "q": "How should recall be measured?",
+   "options": [
+    "Count merges per day",
+    "Seller appeal rate",
+    "Average similarity score",
+    "Planted perturbed duplicates and exhaustive checks on small samples"
+   ],
+   "answer": 3,
+   "why": "You need known positives to measure recall. Appeals measure precision problems, the tempting mix-up."
+  },
+  {
+   "q": "Two near-identical listings are uploaded at the same millisecond and both are marked unique. What catches this?",
+   "options": [
+    "The async re-check after insertion and the nightly batch",
+    "Nothing; it is acceptable forever",
+    "A distributed lock on every check",
+    "Raising the LSH threshold"
+   ],
+   "answer": 0,
+   "why": "Post-insert re-checks and batch close the race cheaply. A global lock serialises uploads and kills throughput."
+  },
+  {
+   "q": "Which statement about LSH is correct?",
+   "options": [
+    "It guarantees finding all pairs above the threshold",
+    "It replaces the need for verification",
+    "It retrieves candidates probabilistically; verification provides precision",
+    "It only works for Euclidean distance"
+   ],
+   "answer": 2,
+   "why": "LSH is probabilistic retrieval. Believing it guarantees recall or precision is the common misconception; families exist for Jaccard, cosine and Hamming."
+  },
+  {
+   "q": "Why keep cluster ids stable across nightly recomputation?",
+   "options": [
+    "Required by union-find",
+    "Downstream caches, search collapsing and ranking features depend on them",
+    "To save storage",
+    "Because Spark cannot generate new ids"
+   ],
+   "answer": 1,
+   "why": "Churning ids invalidate downstream state. Union-find has no such requirement."
+  },
+  {
+   "q": "Storage for 2B MinHash signatures of 128 x 32-bit values is roughly:",
+   "options": [
+    "100 GB",
+    "10 TB",
+    "1 TB",
+    "100 TB"
+   ],
+   "answer": 2,
+   "why": "2B x 512 B = ~1 TB. 10 TB would correspond to ~5 KB per item."
+  },
+  {
+   "q": "A new threshold improves recall offline. What is the safest rollout?",
+   "options": [
+    "Shadow mode, measure precision and churn on labels, then roll out per category with merge rate limits",
+    "Deploy globally and fix complaints",
+    "Apply only in the nightly batch immediately",
+    "Lower the threshold for the largest category first"
+   ],
+   "answer": 0,
+   "why": "Shadow and gradual rollout catch precision regressions before they merge millions of items. Batch-only immediate application still changes millions of clusters at once."
+  },
+  {
+   "q": "Perceptual hash (pHash) of an image is best described as:",
+   "options": [
+    "A cryptographic hash of the image bytes",
+    "An embedding from a neural network",
+    "A keypoint descriptor set",
+    "A DCT-based 64-bit hash robust to resizing and compression"
+   ],
+   "answer": 3,
+   "why": "pHash uses low-frequency DCT coefficients. Neural embeddings are more robust to crops but are a different technique."
+  }
+ ],
+ "references": [
+  {
+   "title": "Detecting Near-Duplicates for Web Crawling (Manku, Jain, Das Sarma, WWW 2007)",
+   "url": "https://www.www2007.cpsc.ucalgary.ca/papers/paper215.pdf"
+  },
+  {
+   "title": "Low Level Design: Content Fingerprinting and Near-Duplicate Detection",
+   "url": "https://www.techinterview.org/post/3233473208/lld-content-fingerprinting/"
+  },
+  {
+   "title": "Plagiarism and Near-Duplicate Detection using Shingling, MinHashing and LSH",
+   "url": "https://medium.com/@salma_s/plagiarism-and-near-duplicate-detection-using-shingling-minhashing-and-locality-sensitive-hashing-9c7fb76f2608"
+  },
+  {
+   "title": "Near-duplicate document detection for web crawling (Google patent US8140505)",
+   "url": "https://patents.google.com/patent/US8140505"
+  }
+ ]
+}

@@ -94,6 +94,7 @@
         }
         p.done = new Set(j.done || []);
         p.mock = j.mock || {};
+        p.quiz = j.quiz || {};
         var flag = legacyKey + "__synced";
         var synced = false;
         try { synced = localStorage.getItem(flag) === "1"; } catch (_) {}
@@ -126,6 +127,18 @@
       return r;
     };
 
+    /* A full quiz run (0-100). The server keeps the best; 80%+ marks the
+       entry studied. */
+    p.quizScore = async function (id, pct) {
+      var r = await api("/api/prep/progress", { method: "POST",
+        body: JSON.stringify({ bank: bank, id: id, quiz_pct: pct }) });
+      p.quiz = p.quiz || {};
+      p.quiz[id] = r.best;
+      if (r.done) p.done.add(id);
+      writeLocal();
+      return r;
+    };
+
     p.set = async function (id, isDone) {
       if (isDone) p.done.add(id); else p.done.delete(id);
       writeLocal();
@@ -152,7 +165,10 @@
     if (!PATHS[tab]) tab = "overview";
     current = tab;
     document.querySelectorAll(".ip-tab").forEach(function (a) {
-      a.setAttribute("aria-selected", a.dataset.tab === tab ? "true" : "false");
+      var on = a.dataset.tab === tab;
+      a.setAttribute("aria-selected", on ? "true" : "false");
+      // On a phone the tab row scrolls; keep the active tab in view.
+      if (on) { var row = a.parentNode; row.scrollLeft = a.offsetLeft - (row.clientWidth - a.clientWidth) / 2; }
     });
     document.querySelectorAll(".ip-panel").forEach(function (s) {
       s.hidden = s.dataset.panel !== tab;
@@ -161,6 +177,7 @@
       try { history.pushState({ tab: tab }, "", PATHS[tab]); } catch (_) {}
     }
     if (!loaded[tab] && loaders[tab]) { loaded[tab] = true; loaders[tab](); }
+    else if (tab === "design" && window.PrepDeep) window.PrepDeep.route();
     if (window.feather) window.feather.replace();
   }
 
@@ -173,9 +190,14 @@
       window.scrollTo({ top: 0 });
     }
   });
+  function tabForPath(path) {
+    var tab = Object.keys(PATHS).find(function (k) { return PATHS[k] === path; });
+    // A deep dive has its own path under the design tab.
+    if (!tab && path.indexOf("/interview-prep/design/") === 0) tab = "design";
+    return tab || "overview";
+  }
   window.addEventListener("popstate", function () {
-    var tab = Object.keys(PATHS).find(function (k) { return PATHS[k] === location.pathname; });
-    activate(tab || "overview", false);
+    activate(tabForPath(location.pathname), false);
   });
 
   /* ── Overview ────────────────────────────────────────────────────── */
@@ -787,12 +809,14 @@
   /* ── Boot ────────────────────────────────────────────────────────── */
   loaders.overview = function () { if (window.Gamify) window.Gamify.mount($("gamebar")); };
   loaders.behavioral = loadBank;
-  loaders.design = loadSDBank;
+  // The design tab opens on the deep dives; the 128-entry quick reference
+  // loads only when its view is picked (prep_deep.js calls loadQuick).
+  loaders.design = function () { if (window.PrepDeep) window.PrepDeep.load(); };
   loaders.cases = function () { if (window.PrepCases) window.PrepCases.load(); };
 
   window.PrepHub = { api: api, esc: esc, reflow: reflow, say: say, hrs: hrs, makeProgress: makeProgress,
                      activate: activate, topicFromUrl: topicFromUrl, reloadOverview: reload,
-                     progressLine: progressLine };
+                     progressLine: progressLine, loadQuick: loadSDBank };
 
   var initial = document.getElementById("ip").dataset.initialTab || "overview";
   // An old Day Board link for a behavioural question lands on /interview-prep?topic=.

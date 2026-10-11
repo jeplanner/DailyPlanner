@@ -1,0 +1,1269 @@
+{
+ "slug": "multi-region-dr",
+ "title": "Design multi-region failover and disaster recovery",
+ "prompt": "Design multi-region failover and disaster recovery.",
+ "group": "reliability",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 150,
+ "summary": "Multi-region DR is a negotiation between RPO, RTO, cost and consistency: synchronous cross-region replication buys zero data loss with 30-100 ms of write latency, asynchronous replication is fast but loses the replication lag on failover, and active-active forces you to solve write conflicts. The design picks a strategy per data tier, makes regions statically stable with pre-provisioned capacity, and treats failover as a rehearsed, mostly automated runbook with fencing to prevent split brain.",
+ "framework": {
+  "clarify": [
+   "What are the RPO and RTO per tier? Assume orders and payments: RPO about 0-1 s, RTO 5 min; catalog and browse: RPO 5 min, RTO 1 min (read-only fine); analytics: RPO 24 h, RTO 24 h.",
+   "What failure are we designing for: an AZ loss (handled in-region), a full region outage, a regional network partition, or a logical disaster like bad data or ransomware? Each needs a different mechanism.",
+   "Regions and geography: assume two Indian regions (Mumbai and Hyderabad, about 10-15 ms RTT apart) plus a third for quorum/backups; data residency requires user data to stay in-country.",
+   "Active-active or active-passive? Is the business willing to accept write conflicts or per-user home regions in exchange for lower RTO and better utilization?",
+   "Traffic profile: assume 200k RPS reads, 20k RPS writes peak, 50 TB of OLTP data, 2 PB of object storage.",
+   "Who decides to fail over: automation, humans, or automation with a human gate? What is the cost of a false failover?",
+   "Budget: can we run a second region at full capacity (2x cost) or only warm standby (about 1.3x)?",
+   "How often do we test? Assume quarterly region evacuation drills and monthly table-top exercises."
+  ],
+  "design": [
+   "Baseline: classify services and data into DR tiers and map each to a strategy (backup-restore, pilot light, warm standby, active-active).",
+   "Two serving regions in active-active for stateless and read paths, with each user homed to one region for writes (home-region partitioning), so no cross-region write conflicts on core entities.",
+   "Data replication: payments ledger uses a quorum-replicated database across three regions (Spanner/CockroachDB style, RPO 0); orders and carts use async replication with about 1 s lag plus idempotent replay; object storage uses cross-region replication; backups are immutable and in a separate account.",
+   "Global traffic management: GeoDNS/GSLB plus anycast edge with health checks every 10 s, DNS TTL 30-60 s; edge routes users to their home region and can drain a region within minutes.",
+   "Failover controller: region health aggregated from multiple independent probes; a failover runbook automated as a state machine with a human approval gate for writes and fencing tokens to ensure only one region is primary per partition.",
+   "Static stability: each region pre-provisioned at N+1 (each of 2 regions sized at about 60% utilization so one can absorb all traffic after load shedding), with control-plane independence so failover does not depend on the failed region."
+  ],
+  "defend": [
+   "Bottleneck: cross-region bandwidth and replication lag during peaks; we monitor lag per partition and throttle bulk jobs before it exceeds RPO.",
+   "Scale reads: every region serves reads locally from replicas; cross-region reads only for read-your-writes immediately after a home-region move.",
+   "Scale writes: writes go to the user's home region, so write capacity scales by adding regions/cells; only the payments ledger pays quorum latency.",
+   "Failure behaviour: detect within 1 minute, decide within 2, shift traffic within 2 (DNS TTL plus client retry); fencing prevents split brain; replay of the unreplicated tail by idempotent reconciliation after the old region returns.",
+   "Measure: replication lag versus RPO, failover drill RTO, capacity headroom per region, DNS propagation time, data reconciliation discrepancies, and backup restore time verified monthly.",
+   "Logical disasters: point-in-time recovery and immutable, delayed backups because replication faithfully copies corruption to every region."
+  ],
+  "script": "Multi-region DR starts with numbers, so I would first agree RPO and RTO per tier: for orders and payments near-zero data loss and a 5 minute recovery; for catalog, minutes of staleness is fine; for analytics, a day. I would also separate the failure types: an AZ loss is handled inside a region, a region loss needs failover, and a logical disaster like a bad migration needs backups, because replication copies the corruption. Then the design: two active serving regions plus a third for quorum and backups; users are homed to one region for writes so we avoid conflicts; the payment ledger uses quorum replication across three regions for RPO zero; orders replicate asynchronously with about a second of lag and idempotent reconciliation. Global DNS and anycast steer traffic with health checks and short TTLs. Each region is pre-provisioned to absorb the other, because failover must not depend on scaling or the dead region's control plane. A failover controller uses independent health signals and fencing tokens to avoid split brain. Finally I would defend it with drill results: we evacuate a region every quarter and measure the real RTO and RPO."
+ },
+ "brd": {
+  "problem": "The platform runs in one cloud region with three availability zones. A region-wide event (power, network, control-plane failure, or a bad global config push) would stop all ordering for hours; cloud providers have had multi-hour regional incidents. At sale-day revenue rates, each hour of total outage is a very large GMV loss plus reputational damage, and regulators expect a tested business continuity plan for payment systems. We need to survive the loss of a region with bounded data loss and downtime, at an acceptable cost.",
+  "goals": [
+   "Survive a full region loss with RTO <= 5 min and RPO <= 1 s for orders, RPO 0 for payments.",
+   "Keep browsing available (read-only if needed) within 1 minute of a region loss.",
+   "Recover from logical corruption (bad deploy, ransomware) to any point in the last 7 days.",
+   "Prove recovery through quarterly region evacuation drills with measured RTO/RPO.",
+   "Keep total infrastructure cost increase under 60% versus single region.",
+   "Meet data residency: all customer PII stays within India."
+  ],
+  "non_goals": [
+   "Multi-cloud active-active in v1 (large complexity, revisit later).",
+   "Zero-downtime failover for every internal tool.",
+   "Global strong consistency for all data types.",
+   "Serving users outside the residency boundary from foreign regions."
+  ],
+  "stakeholders": [
+   {
+    "who": "Customers",
+    "needs": "Shopping and orders keep working; no lost or duplicate orders or charges."
+   },
+   {
+    "who": "Executive leadership and Board",
+    "needs": "Quantified risk reduction and cost; evidence from drills."
+   },
+   {
+    "who": "Payments, Finance and Regulators",
+    "needs": "RPO 0 for ledger, audit trail, documented BCP and test results."
+   },
+   {
+    "who": "SRE and service owners",
+    "needs": "Clear runbooks, automation, per-service DR tier and responsibilities."
+   },
+   {
+    "who": "Security",
+    "needs": "Immutable backups isolated from production credentials; residency compliance."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Measured RTO in region evacuation drill",
+    "target": "<= 5 min for tier-1 flows"
+   },
+   {
+    "metric": "Measured data loss in drill (orders)",
+    "target": "<= 1 s of writes, all reconciled within 1 h"
+   },
+   {
+    "metric": "Payment ledger data loss",
+    "target": "0"
+   },
+   {
+    "metric": "Drills completed per year",
+    "target": ">= 4 full evacuations, 12 table-tops"
+   },
+   {
+    "metric": "Steady-state replication lag p99 (orders)",
+    "target": "< 1 s"
+   },
+   {
+    "metric": "Backup restore test success",
+    "target": "100% monthly, restore of 1 TB in < 4 h"
+   }
+  ],
+  "constraints": [
+   "Data residency in India limits region choices to 2-3 in-country regions.",
+   "Inter-region RTT about 10-30 ms; synchronous replication adds that to every write it covers.",
+   "Cost ceiling of +60% infrastructure.",
+   "Legacy services with hard-coded regional endpoints must be migrated."
+  ],
+  "risks": [
+   {
+    "risk": "Split brain: both regions accept writes for the same entity",
+    "mitigation": "Home-region ownership with lease and fencing tokens; quorum-based leadership for the ledger."
+   },
+   {
+    "risk": "False failover triggered by a monitoring partition",
+    "mitigation": "Multiple independent probe sources from outside both regions; human approval for write failover; automatic only for read traffic."
+   },
+   {
+    "risk": "Standby region lacks capacity when needed",
+    "mitigation": "Pre-provisioned capacity, regular drills at peak-like load, capacity reservations."
+   },
+   {
+    "risk": "Replication copies a logical corruption everywhere",
+    "mitigation": "Point-in-time recovery, delayed replicas, immutable backups in a separate account."
+   },
+   {
+    "risk": "Runbooks rot because failover is rare",
+    "mitigation": "Quarterly evacuation drills; automation as code; game days."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Shopper",
+    "needs": "Uninterrupted browsing and ordering, no duplicate charges."
+   },
+   {
+    "name": "Incident commander / SRE",
+    "needs": "Clear health picture, one-command failover, confidence it will work."
+   },
+   {
+    "name": "Service owner",
+    "needs": "Know their DR tier, replication setup and what they must do during failover."
+   }
+  ],
+  "user_stories": [
+   "As a shopper, I want to keep browsing when a region fails so that I do not see an error page.",
+   "As a shopper, I want my order placed just before an outage to be honoured exactly once so that I am not double charged or lose my order.",
+   "As an incident commander, I want a single dashboard showing region health, replication lag and failover readiness so that I can decide quickly.",
+   "As an incident commander, I want an automated, step-by-step failover runbook with approval gates so that failover takes minutes and is consistent.",
+   "As a payments owner, I want the ledger to commit only when replicated to a quorum of regions so that no committed payment is lost.",
+   "As a service owner, I want a declared DR tier and automated tests that verify my service runs in the secondary region so that I know it works before a disaster.",
+   "As security, I want backups that production credentials cannot delete so that ransomware cannot destroy our recovery point.",
+   "As finance, I want a reconciliation report after failover listing any orders that were in-flight so that we can resolve them."
+  ],
+  "functional": [
+   "DR tier registry per service and datastore with RPO/RTO, strategy and owner.",
+   "Global traffic management with geo and home-region routing, health checks, weighted shifting and drain.",
+   "Home-region assignment per user with a directory service replicated to all regions.",
+   "Replication per store: quorum-replicated ledger, async replicated order DB with lag monitoring, cross-region object replication, Kafka MirrorMaker for event streams.",
+   "Failover controller: health aggregation, state machine (detect, decide, fence, promote, shift, verify), approval gates, audit.",
+   "Fencing: per-partition leadership leases with monotonically increasing epochs checked by storage on every write.",
+   "Failback: resync of the recovered region, reconciliation of the unreplicated tail, gradual traffic return.",
+   "Backups: daily snapshots plus continuous log archiving for PITR, immutable with retention lock, cross-account and cross-region copies.",
+   "Drill tooling: region evacuation, traffic shift percentages, synthetic transactions verifying end-to-end flows."
+  ],
+  "non_functional": [
+   {
+    "name": "RTO tier-1",
+    "target": "<= 5 min writes, <= 1 min reads"
+   },
+   {
+    "name": "RPO",
+    "target": "0 for ledger; <= 1 s for orders; <= 5 min for catalog"
+   },
+   {
+    "name": "Steady-state write latency",
+    "target": "Orders p99 < 50 ms (local); ledger p99 < 120 ms (cross-region quorum)"
+   },
+   {
+    "name": "Capacity headroom",
+    "target": "Each region can carry 100% of tier-1 traffic (with tier-3 shed)"
+   },
+   {
+    "name": "Detection time",
+    "target": "< 60 s to declare a region unhealthy"
+   },
+   {
+    "name": "Backup recoverability",
+    "target": "PITR to any second within 7 days; 35-day snapshots"
+   },
+   {
+    "name": "Residency",
+    "target": "100% of PII stored in India regions only"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "Peak 200k read RPS, 20k write RPS overall; average write record 1 KB.",
+    "OLTP data 50 TB; object storage 2 PB growing 5 TB/day.",
+    "Two serving regions split about 50/50 by home region; third region holds ledger quorum replica and backups.",
+    "Inter-region RTT Mumbai-Hyderabad about 15 ms; ledger writes 2k TPS."
+   ],
+   "math": [
+    "Replication bandwidth: 20k writes/s x 1 KB = 20 MB/s of row data; with indexes and log overhead about 3x = 60 MB/s = about 480 Mbps steady, plus 5 TB/day objects = 58 MB/s = 460 Mbps. Provision 2 x 10 Gbps links for burst and resync.",
+    "Async data loss window: at 10k writes/s per region and 1 s lag, a region loss loses up to about 10k order writes, which reconciliation must recover from the payment ledger and client retries.",
+    "Ledger latency: quorum commit needs the nearest other region: about 15 ms RTT plus consensus overhead, so p99 about 60-120 ms versus 10 ms single region.",
+    "Capacity: if each region normally runs at 50% of its capacity, losing one doubles load on the survivor to 100%; at 60% utilization the survivor would need 120%, so shed tier-3 (about 20% of load) during failover.",
+    "Cost: active-active 2 regions at 50% utilization is about 2x compute of a single region at 100%; but single region must also keep AZ headroom (about 67% max), so the true increase is about 1.35x compute plus replication and storage, within the 60% budget.",
+    "DNS failover time: health check interval 10 s x 3 failures = 30 s detect, plus TTL 60 s, plus client resolver caching variance: 1-3 min for most clients; anycast edge with origin failover reduces this to under 1 min."
+   ],
+   "summary": "Replication needs about 1 Gbps steady, an async 1 s lag means up to about 10k writes to reconcile on a region loss, quorum replication adds about 50-100 ms only to the ledger, and running two regions at 50-60% utilization costs about 1.35x compute while letting one region absorb the other after shedding low-priority load."
+  },
+  "out_of_scope": [
+   "Multi-cloud failover.",
+   "Desktop and office IT DR.",
+   "Third-party SaaS vendor outages beyond documented fallbacks.",
+   "Global (non-India) expansion and cross-border replication."
+  ]
+ },
+ "hld": {
+  "overview": "Users reach an anycast edge/CDN and GeoDNS that route them to their home region. Two serving regions (A and B) run the full stack, each sized to absorb the other after shedding. A third region (C) holds a ledger quorum replica, backup vaults and the out-of-band health probes. Each region is a set of cells; services are stateless and read from local replicas. Data stores replicate per their DR tier. A failover controller, deployed in all three regions with its own consensus, aggregates health and orchestrates promotion and traffic shifts. Nothing in a region's data path depends on another region's control plane.",
+  "diagram": "                  Users (mobile/web)\n                        |\n            Anycast edge / CDN + GeoDNS (TTL 60s, health checks 10s)\n              /                                         \\\n   +------------- Region A (Mumbai) ------+   +----- Region B (Hyderabad) ------+\n   | gateway -> cells (stateless svcs)    |   | gateway -> cells (stateless)    |\n   | User directory (replica)             |   | User directory (replica)        |\n   | Orders DB: primary for A-homed users |<->| Orders DB: primary for B-homed  |\n   |   async replica of B partitions      |   |   async replica of A partitions |\n   | Kafka  <--- MirrorMaker --->         |   | Kafka                           |\n   | Object store  <--- CRR --->          |   | Object store                    |\n   | Ledger node (Raft/Paxos)             |   | Ledger node                     |\n   +------------------+-------------------+   +----------------+----------------+\n                      \\                                       /\n                       +------- Region C (witness/backup) ----+\n                       | Ledger node (quorum), health probes  |\n                       | Failover controller (3-node quorum)  |\n                       | Immutable backup vault (other acct)  |\n                       +--------------------------------------+\n",
+  "components": [
+   {
+    "name": "Anycast edge / CDN",
+    "responsibility": "Terminates TLS near users, serves cached content, routes to healthy origin region, can fail over origin in seconds."
+   },
+   {
+    "name": "GeoDNS / GSLB",
+    "responsibility": "Maps hostnames to regional endpoints using health checks, weights and geo; TTL 60 s."
+   },
+   {
+    "name": "Home-region directory",
+    "responsibility": "Maps user_id to home region and epoch; replicated everywhere; used by edge and services to route writes."
+   },
+   {
+    "name": "Regional cells",
+    "responsibility": "Independent stacks of stateless services, caches and queues; failures stay within a cell; regions contain several cells."
+   },
+   {
+    "name": "Orders DB (partitioned by home region)",
+    "responsibility": "Each partition has a primary in its home region and async replicas in the other; promotion on failover."
+   },
+   {
+    "name": "Payment ledger (consensus-replicated)",
+    "responsibility": "Raft/Paxos groups with replicas in A, B, C; commit requires 2 of 3, so RPO 0 on any single region loss."
+   },
+   {
+    "name": "Event replication (Kafka MirrorMaker 2)",
+    "responsibility": "Mirrors topics cross-region with offset translation for consumer failover."
+   },
+   {
+    "name": "Object storage cross-region replication",
+    "responsibility": "Async copy of images, invoices, documents; 15 min replication SLA for 99.9% objects."
+   },
+   {
+    "name": "Failover controller",
+    "responsibility": "Quorum-deployed state machine: aggregates health, proposes failover, waits for approval when required, fences, promotes, shifts traffic, verifies."
+   },
+   {
+    "name": "Health probe mesh",
+    "responsibility": "Synthetic transactions from region C and external vantage points; signals feed the controller."
+   },
+   {
+    "name": "Backup and PITR vault",
+    "responsibility": "Snapshots and continuous WAL archive, immutable retention locks, separate account; restore tests monthly."
+   },
+   {
+    "name": "Reconciliation service",
+    "responsibility": "After failover/failback, compares the old primary's unreplicated tail against the new primary and the ledger; resolves or flags."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Steady-state order write",
+    "steps": [
+     "User U (home A) places order; edge routes to region A based on directory lookup cached at edge.",
+     "Order service writes to Orders DB partition primary in A (local commit about 5 ms).",
+     "Payment authorization writes to the ledger: commit after A and C (or A and B) acknowledge, about 60 ms.",
+     "Order row replicates async to B (lag p99 < 1 s); event mirrored to B's Kafka.",
+     "Response returned; idempotency key stored with the order."
+    ]
+   },
+   {
+    "name": "Region A failure and failover",
+    "steps": [
+     "Probes from C and external vantage points fail for A's synthetic checkout for 3 consecutive 10 s intervals; in-region signals unavailable.",
+     "Controller declares A unhealthy (needs 2 of 3 controller nodes, B and C, to agree).",
+     "Read traffic shifts immediately: edge marks A origin down; GeoDNS removes A records.",
+     "Write failover: on-call approves (or auto after 3 min if no response, per policy); controller increments epoch for A-homed partitions and writes fencing token.",
+     "B promotes its async replicas of A partitions to primary under the new epoch; any late writes from A carrying an old epoch are rejected by storage.",
+     "Directory updates A-homed users to B with new epoch; services in B begin accepting their writes; tier-3 workloads shed to fit capacity.",
+     "Ledger continues uninterrupted (B and C still a quorum).",
+     "Verify: synthetic transactions pass in B; dashboard shows RTO achieved."
+    ]
+   },
+   {
+    "name": "Failback and reconciliation",
+    "steps": [
+     "Region A returns; its stores are fenced (old epoch) and treated as stale.",
+     "Reconciliation extracts A's writes that never replicated (the lag tail), compares with B and the ledger.",
+     "Orders with matching ledger payments are replayed idempotently into B; conflicts are flagged for ops.",
+     "A is rebuilt as a replica of B (resync), then caught up.",
+     "Traffic for A-homed users moves back gradually (1%, 10%, 50%, 100%) with a planned, lossless switchover (drain writes, wait lag 0, flip epoch)."
+    ]
+   }
+  ],
+  "data_flow": "Reads are local everywhere. Writes go to the home region for orders and carts, to a cross-region quorum for the ledger. Change streams flow A <-> B through database replication and MirrorMaker; objects flow through CRR. Backups flow continuously to the vault in C under a separate account. Health signals flow from probes to the controller; control decisions flow from the controller to DNS/edge, the directory and databases."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/dr/status",
+    "request": "none",
+    "response": "per region health, per store replication lag, epochs, capacity headroom, readiness score",
+    "notes": "Served from every region's controller replica."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/dr/failover",
+    "request": "{from_region, to_region, scope: reads|writes|partition_ids, reason, approver}",
+    "response": "{failover_id, state}",
+    "notes": "Idempotent on failover_id; requires approval for write scope unless policy auto-approves."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/dr/failover/{id}/approve",
+    "request": "approver identity, MFA",
+    "response": "{state}",
+    "notes": "Two-person rule for production write failover."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/dr/failback",
+    "request": "{region, scope, mode: planned}",
+    "response": "{failback_id}",
+    "notes": "Planned switchover: drain, wait lag 0, flip epoch, shift traffic in steps."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/directory/users/{user_id}",
+    "request": "user_id",
+    "response": "{home_region, epoch}",
+    "notes": "Cached at edge and services, TTL 30 s with push invalidation on epoch change."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/dr/drill",
+    "request": "{region, percent, duration, abort_conditions}",
+    "response": "{drill_id}",
+    "notes": "Gradual evacuation for drills with automatic abort on SLO breach."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "RegionState",
+    "store": "Failover controller (etcd/Raft across A, B, C)",
+    "fields": [
+     "region",
+     "health",
+     "serving_reads",
+     "serving_writes",
+     "last_change",
+     "failover_id"
+    ],
+    "keys": "PK region",
+    "notes": "Replicated by consensus; any controller node can serve status."
+   },
+   {
+    "entity": "PartitionOwnership",
+    "store": "Controller consensus store",
+    "fields": [
+     "partition_id",
+     "primary_region",
+     "epoch",
+     "lease_expires_at"
+    ],
+    "keys": "PK partition_id; epoch monotonically increasing",
+    "notes": "Fencing token = epoch; storage rejects writes with stale epoch."
+   },
+   {
+    "entity": "UserHome",
+    "store": "Directory (globally replicated KV, e.g. DynamoDB global table or Cassandra)",
+    "fields": [
+     "user_id",
+     "home_region",
+     "partition_id",
+     "epoch",
+     "updated_at"
+    ],
+    "keys": "PK user_id; partitioned by hash(user_id)",
+    "notes": "Writes only by controller; read everywhere."
+   },
+   {
+    "entity": "Order",
+    "store": "Orders DB (MySQL/Postgres per partition, async replicated)",
+    "fields": [
+     "order_id",
+     "user_id",
+     "partition_id",
+     "status",
+     "amount",
+     "idempotency_key",
+     "written_epoch",
+     "created_at"
+    ],
+    "keys": "PK order_id (ULID with region prefix); index (user_id, created_at)",
+    "notes": "written_epoch lets reconciliation identify writes made under an old epoch."
+   },
+   {
+    "entity": "LedgerEntry",
+    "store": "Spanner/CockroachDB-style consensus DB across A, B, C",
+    "fields": [
+     "entry_id",
+     "account_id",
+     "order_id",
+     "amount",
+     "direction",
+     "commit_ts"
+    ],
+    "keys": "PK entry_id; range-partitioned by account_id",
+    "notes": "Leaseholders pinned to A or B for latency; C is a voting replica."
+   },
+   {
+    "entity": "BackupCatalog",
+    "store": "Vault metadata DB in region C",
+    "fields": [
+     "store",
+     "snapshot_id",
+     "taken_at",
+     "wal_range",
+     "checksum",
+     "retention_lock_until",
+     "last_restore_test"
+    ],
+    "keys": "PK (store, snapshot_id)",
+    "notes": "Immutable; restore tests recorded."
+   }
+  ],
+  "classes": [
+   {
+    "name": "FailoverController",
+    "responsibility": "Orchestrates failover state machine with approvals and verification.",
+    "methods": [
+     "evaluate(signals)",
+     "propose(from, to, scope)",
+     "approve(id, user)",
+     "execute(id)",
+     "abort(id)"
+    ]
+   },
+   {
+    "name": "HealthAggregator",
+    "responsibility": "Combines probes from multiple vantage points and in-region signals into a region health verdict.",
+    "methods": [
+     "ingest(probe)",
+     "verdict(region) -> HEALTHY|DEGRADED|DOWN"
+    ]
+   },
+   {
+    "name": "EpochFencer",
+    "responsibility": "Issues new epochs and pushes fencing to storage and directory.",
+    "methods": [
+     "bump(partition) -> epoch",
+     "fence(region, epoch)"
+    ]
+   },
+   {
+    "name": "TrafficShifter",
+    "responsibility": "Updates GSLB weights, edge origin pools and directory caches.",
+    "methods": [
+     "drain(region, scope)",
+     "shift(weights)",
+     "verify()"
+    ]
+   },
+   {
+    "name": "Reconciler",
+    "responsibility": "Compares unreplicated tail with the new primary and ledger; replays or flags.",
+    "methods": [
+     "extractTail(region, since_lsn)",
+     "match(order) -> REPLAY|DUPLICATE|CONFLICT",
+     "report()"
+    ]
+   },
+   {
+    "name": "DrillRunner",
+    "responsibility": "Runs gradual evacuations with abort conditions.",
+    "methods": [
+     "start(plan)",
+     "step()",
+     "abortIf(slo_breach)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Failover decision with independent signals and approval",
+    "explain": "Require agreement from multiple independent vantage points and a controller quorum before declaring a region down, to avoid failing over because the monitor itself is partitioned. Reads fail over automatically; writes require approval or a timeout policy.",
+    "pseudocode": "def evaluate(region):\n    votes = [p.verdict(region) for p in probes]      # C, external, peer region\n    down = sum(v == 'DOWN' for v in votes)\n    if down >= 2 and duration_down(region) >= 30s:\n        if not quorum_agrees(region, 'DOWN'): return\n        traffic.drain(region, scope='reads')         # automatic\n        fo = propose(region, peer(region), scope='writes')\n        wait_for(approval(fo) or elapsed(fo) > AUTO_APPROVE_AFTER)\n        execute(fo)\n\ndef execute(fo):\n    for p in partitions_owned_by(fo.from_region):\n        e = fencer.bump(p)                           # epoch++ via consensus\n        storage.fence(p, min_epoch=e)                # reject stale writers\n        db.promote_replica(p, region=fo.to_region, epoch=e)\n        directory.reassign(p, fo.to_region, e)\n    traffic.shift(writes={fo.from_region: 0, fo.to_region: 100})\n    capacity.shed(tier=3)\n    verify_synthetics(fo.to_region)\n"
+   },
+   {
+    "name": "Epoch fencing on writes",
+    "explain": "Every writer carries the epoch under which it believes it owns the partition. Storage (or a proxy in front of it) stores the minimum accepted epoch and rejects anything lower, so a zombie primary that comes back cannot corrupt data.",
+    "pseudocode": "def write(partition, row, writer_epoch):\n    min_e = fence_table[partition]\n    if writer_epoch < min_e:\n        raise StaleEpoch(partition, writer_epoch, min_e)\n    row.written_epoch = writer_epoch\n    commit(row)\n"
+   },
+   {
+    "name": "Post-failover reconciliation",
+    "explain": "Writes committed in the old primary after the last replicated position are the lost tail. Compare each against the new primary and the ledger, which has RPO 0.",
+    "pseudocode": "def reconcile(old_region, last_replicated_lsn):\n    for w in extract_tail(old_region, since=last_replicated_lsn):\n        cur = new_primary.get(w.order_id)\n        paid = ledger.has_payment(w.order_id)\n        if cur is None and paid:      replay_idempotent(w)        # recover\n        elif cur is None and not paid: void_and_notify(w)         # never paid\n        elif cur == w:                 continue                    # duplicate\n        else:                          flag_conflict(w, cur)       # human review\n"
+   }
+  ],
+  "sequence": "Probes(C,ext)  Controller(B,C)   On-call    Edge/DNS   Fencer/DB(B)   Directory\n  | A DOWN x3     |                 |           |            |             |\n  |-------------->| quorum: A DOWN  |           |            |             |\n  |               | drain reads ------------------>| A out    |             |\n  |               | propose write FO|           |            |             |\n  |               |---------------->| approve   |            |             |\n  |               |<----------------|           |            |             |\n  |               | bump epoch, fence A partitions ------------>|             |\n  |               | promote replicas in B ----------------------->|           |\n  |               | reassign A-homed users (epoch e+1) ---------------------->|\n  |               | shift writes to B ----------->| B 100%    |             |\n  |               | verify synthetics in B, shed tier-3        |             |\n  |               | RTO = 4m10s recorded                        |             |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Network partition between A and B while both are healthy to users",
+   "handling": "Do not fail over on peer-to-peer signals alone; use third-region quorum (C) and external probes. Each region keeps serving its own home users; replication catches up after."
+  },
+  {
+   "case": "Old primary in A comes back and keeps accepting writes (zombie)",
+   "handling": "Epoch fencing at storage rejects writes with stale epoch; edge and directory route nobody there; A's services check epoch on startup."
+  },
+  {
+   "case": "Async replication lag spikes to 30 s during a bulk job just before the region dies",
+   "handling": "Lag alerting and throttling of bulk writers when lag > 1 s; RPO breach reported; reconciliation covers the tail using ledger and client idempotency keys."
+  },
+  {
+   "case": "DNS clients ignore TTL and keep resolving to dead region for 10+ minutes",
+   "handling": "Anycast edge with origin failover so the hostname never changes; mobile apps use multiple endpoints with client-side failover; short TTL plus health-aware edge."
+  },
+  {
+   "case": "Survivor region lacks capacity at sale peak",
+   "handling": "Pre-provisioned N+1 capacity and reservations; automatic shedding of tier-3 (recommendations, analytics, batch); queue non-urgent writes."
+  },
+  {
+   "case": "Logical corruption (bad migration) replicated to all regions in seconds",
+   "handling": "PITR from continuous WAL archive; delayed replica (1 h lag) for fast rollback; immutable backups. Region failover does not help here."
+  },
+  {
+   "case": "Ledger quorum loses two of three regions",
+   "handling": "Ledger becomes unavailable for writes (CP choice); checkout blocks payments with a clear message; manual emergency procedure with forced quorum reconfiguration only with leadership approval."
+  },
+  {
+   "case": "User mid-checkout when failover happens",
+   "handling": "Idempotency key on order and payment; client retries to the new region; ledger (RPO 0) is source of truth for payment state; duplicate prevention by key."
+  },
+  {
+   "case": "Cache in survivor region is cold for failed-over users",
+   "handling": "Caches pre-warmed by replicating hot keys or by serving some cross-region traffic in steady state; database sized for cold-start read amplification."
+  },
+  {
+   "case": "Failover controller itself loses quorum",
+   "handling": "Deployed across 3 regions; if quorum lost, manual runbook with break-glass credentials stored offline; actions are idempotent."
+  },
+  {
+   "case": "Clock skew across regions affecting last-write-wins data",
+   "handling": "Avoid LWW on critical data; use home-region ownership; for LWW stores use hybrid logical clocks and accept skew bounds."
+  },
+  {
+   "case": "Unique constraints across regions (e.g. coupon redemption once per user)",
+   "handling": "Constraint checked in user's home region only; global constraints (limited-stock flash sale) go through a single-region or quorum service."
+  },
+  {
+   "case": "Third-party dependency (payment gateway) whitelisted only region A IPs",
+   "handling": "Pre-register egress IPs for both regions; DR test includes third-party connectivity."
+  },
+  {
+   "case": "Secrets or KMS keys are regional and unavailable in B",
+   "handling": "Multi-region keys replicated in advance; secrets synced; drill verifies decryption in B."
+  },
+  {
+   "case": "Failback causes a second outage",
+   "handling": "Planned switchover with drain, lag 0 wait and gradual traffic steps; no rush to fail back."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Anycast CDN/edge (Cloudflare, Akamai, CloudFront)",
+   "layer": "Global traffic",
+   "overview": "Single IP announced from many POPs; edge proxies route to healthy origins.",
+   "why": "Failover without waiting for DNS caches; health-based origin pools; DDoS absorption.",
+   "alternatives": "Pure GeoDNS (simpler, but slower failover due to TTL caching); cloud global load balancers."
+  },
+  {
+   "name": "Route 53 / NS1 GeoDNS with health checks",
+   "layer": "DNS / GSLB",
+   "overview": "DNS answering by geography, latency, weight and health.",
+   "why": "Region-level steering and draining with 60 s TTL; failover records.",
+   "alternatives": "Anycast-only; client-side endpoint lists."
+  },
+  {
+   "name": "Spanner or CockroachDB (multi-region)",
+   "layer": "Ledger datastore",
+   "overview": "Distributed SQL with Paxos/Raft replication and configurable replica placement.",
+   "why": "RPO 0 with automatic leader failover; survives region loss with 3-region placement; serializable transactions.",
+   "alternatives": "Single-region Postgres plus sync replication to a second region (RPO 0 but leader failover manual and blocking on standby loss); async only (cheaper, RPO > 0)."
+  },
+  {
+   "name": "MySQL/Postgres with async cross-region replicas (or Aurora Global Database)",
+   "layer": "Orders and cart OLTP",
+   "overview": "Mature relational databases with streaming replication; managed global variants offer about 1 s lag and fast promotion.",
+   "why": "Low local write latency for 20k writes/s; well understood; promotion in about a minute.",
+   "alternatives": "Distributed SQL everywhere (simpler model, higher write latency and cost); DynamoDB global tables (multi-writer with LWW conflicts)."
+  },
+  {
+   "name": "Apache Kafka with MirrorMaker 2",
+   "layer": "Event streaming",
+   "overview": "Cross-cluster replication of topics with consumer offset translation.",
+   "why": "Consumers in B can resume from translated offsets after failover; events replay for reconciliation.",
+   "alternatives": "Confluent Cluster Linking; stretched clusters across regions (higher latency, risky)."
+  },
+  {
+   "name": "Object storage cross-region replication (S3 CRR or equivalent)",
+   "layer": "Blob storage",
+   "overview": "Asynchronous replication of objects between buckets in different regions.",
+   "why": "Durable copies of images, invoices; replication time control for predictable lag.",
+   "alternatives": "Application dual-writes (complex, inconsistent); backups only (long RTO)."
+  },
+  {
+   "name": "etcd / Consul (cross-region)",
+   "layer": "Failover controller state",
+   "overview": "Raft-based consistent KV with leases and watches.",
+   "why": "Stores region state and epochs with consensus across three regions; leases for ownership.",
+   "alternatives": "ZooKeeper; cloud-native control services (may be regional themselves)."
+  },
+  {
+   "name": "Backup vault with object lock (WORM)",
+   "layer": "Backups",
+   "overview": "Immutable storage with retention locks, in a separate account.",
+   "why": "Protects recovery points from ransomware and operator error; PITR via WAL archive.",
+   "alternatives": "Regular snapshots in same account (deletable by compromised credentials)."
+  },
+  {
+   "name": "Terraform + GitOps (Argo CD)",
+   "layer": "Infrastructure as code",
+   "overview": "Declarative infrastructure and deployment state.",
+   "why": "Both regions built from the same code; drift detection; standby kept identical.",
+   "alternatives": "Manual console setups (drift, failover surprises)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "RPO, RTO and DR strategy tiers",
+   "explain": "Recovery Point Objective (RPO) is how much data, measured in time, you can afford to lose: an RPO of 1 second means after recovery you might be missing up to the last second of writes. Recovery Time Objective (RTO) is how long the service may be unavailable before it is restored. Both are business decisions with costs, and they map to standard strategies. Backup and restore keeps backups in another region and rebuilds infrastructure on demand: cheapest, RPO of hours, RTO of hours to a day. Pilot light keeps data replicated and core infrastructure (databases) running in the standby region while compute is off: RPO minutes or seconds, RTO tens of minutes as you scale up. Warm standby runs a smaller but fully functional copy of the stack that can take traffic immediately and scale out: RTO minutes. Multi-site active-active serves production traffic from multiple regions at all times: RTO near zero for reads and seconds to minutes for writes, at the highest cost and complexity. Different parts of one system should use different tiers: the payment ledger and checkout deserve active-active or near it, analytics can use backup and restore. Defining tiers per service prevents both over-spending and nasty surprises when a 'non-critical' service turns out to block checkout.",
+   "in_this_design": "Tier-1 (checkout, orders, ledger): active-active with RTO 5 min and RPO 0-1 s. Tier-2 (catalog, search): active-active reads, RPO 5 min. Tier-3 (recommendations, analytics, batch): warm standby or backup and restore, shed during failover.",
+   "key_points": [
+    "RPO = acceptable data loss; RTO = acceptable downtime.",
+    "Backup-restore, pilot light, warm standby, active-active: increasing cost, decreasing RTO/RPO.",
+    "Assign tiers per service and data store, not one for the whole company.",
+    "Measure achieved RTO/RPO in drills, not on paper.",
+    "Dependencies inherit the strictest tier of anything that needs them."
+   ],
+   "qa": [
+    {
+     "q": "The business asks for RPO 0 and RTO 0 for everything. How do you respond?",
+     "a": "Quantify the cost: RPO 0 needs synchronous or quorum replication, which adds cross-region latency to every write and roughly doubles infrastructure. Propose tiers: RPO 0 for the ledger, about 1 s for orders, minutes for catalog, and show the cost and latency of each."
+    },
+    {
+     "q": "What is the difference between pilot light and warm standby?",
+     "a": "Pilot light keeps data live but compute mostly off, so recovery requires provisioning and scaling (tens of minutes). Warm standby runs a smaller functional stack that can serve immediately and scale out (minutes)."
+    },
+    {
+     "q": "Why must dependencies inherit the tier?",
+     "a": "If checkout (tier-1) calls a fraud service planned as backup-restore, checkout's effective RTO becomes hours. Map the dependency graph and either raise the dependency's tier or make it a soft dependency with a fallback."
+    }
+   ]
+  },
+  {
+   "name": "Synchronous vs asynchronous replication (and quorum replication)",
+   "explain": "Replication copies writes from one copy of the data to others. In synchronous replication the primary waits for the replica to acknowledge before confirming the write to the client. If the primary is lost, the replica has everything that was acknowledged: RPO 0. The price is latency (each write pays at least one network round trip to the replica, 10-30 ms between nearby regions, 60-200 ms across continents) and availability (if the only synchronous replica is unreachable, writes block or must degrade to async). In asynchronous replication the primary confirms immediately and ships changes in the background. Writes are fast and the primary does not depend on the replica, but on failover you lose whatever had not yet shipped: the replication lag becomes your RPO. Quorum or consensus replication (Paxos, Raft) generalises synchronous replication: with three replicas, a write commits when two acknowledge, so one slow or dead region does not block writes and no acknowledged write is lost if any single region fails. Leader election is built in. Systems such as Spanner and CockroachDB use this per data range. Choosing among these is the core DR trade-off and is best made per data type based on the cost of losing a write versus the cost of slower writes.",
+   "in_this_design": "Ledger: 3-region quorum (A, B, C), 2 of 3 commit, p99 about 60-120 ms, RPO 0. Orders and carts: async to the peer region with lag p99 < 1 s; the lost tail is reconciled from the ledger and idempotency keys. Objects: async CRR with a 15-minute SLA.",
+   "key_points": [
+    "Synchronous: RPO 0, pays RTT per write and depends on replica availability.",
+    "Asynchronous: fast writes, RPO = replication lag at failure time.",
+    "Quorum (2 of 3): RPO 0 and tolerates one region loss without blocking.",
+    "Choose per data type: the cost of a lost write vs the cost of latency.",
+    "Monitor lag continuously; it is your live RPO."
+   ],
+   "qa": [
+    {
+     "q": "Why use three regions for the ledger rather than two?",
+     "a": "With two, synchronous replication blocks writes whenever the other region is down, or you must fall back to async and lose RPO 0. With three and a 2-of-3 quorum, losing any one region keeps both durability and availability."
+    },
+    {
+     "q": "How do you bound data loss with async replication?",
+     "a": "Monitor lag per partition and alert or throttle writers before it exceeds RPO; make writes idempotent so the lost tail can be replayed from clients, logs or the ledger; keep the old primary's data for reconciliation when it returns."
+    },
+    {
+     "q": "Why not make everything synchronous across regions?",
+     "a": "Every write would pay cross-region latency and depend on the remote region; at 20k writes/s, tail latency and availability coupling would hurt the user experience more than the rare data loss of async for non-financial data."
+    }
+   ]
+  },
+  {
+   "name": "CAP and PACELC in multi-region design",
+   "explain": "The CAP theorem says that when a network partition occurs, a distributed system must choose between consistency (every read sees the latest write or errors) and availability (every request gets a non-error response). Regions are exactly the case where partitions happen: inter-region links fail, routes flap, and a region can be cut off while still running. PACELC extends CAP: if there is a Partition, choose Availability or Consistency; Else, even when the network is fine, choose Latency or Consistency. This second half explains everyday behaviour: a strongly consistent multi-region database pays cross-region latency on every write even when nothing is broken, while an eventually consistent one replies locally and fast. Real systems make different choices for different data. A payment ledger is PC/EC: it would rather refuse writes than risk inconsistency, and it accepts higher latency always. A shopping cart or product catalog is often PA/EL: stay available and fast, reconcile later. A useful middle ground is partitioning ownership: each user's data has one home region, so within a region it is consistent and fast, and only cross-region movements of ownership need careful coordination.",
+   "in_this_design": "Ledger: PC/EC via quorum. Orders: consistent within the home region, async to the peer (EL), and during a partition each region serves its own users (PA for home users). Catalog: PA/EL with stale reads allowed.",
+   "key_points": [
+    "Partitions between regions are real and must be designed for.",
+    "CAP: under partition, choose consistency or availability.",
+    "PACELC: otherwise, choose latency or consistency.",
+    "Pick per data type; ledger PC/EC, catalog PA/EL.",
+    "Home-region ownership gives local consistency with low latency."
+   ],
+   "qa": [
+    {
+     "q": "During an A-B partition, can a user homed in A place an order?",
+     "a": "Yes if they reach A: A owns their partition and the ledger still has quorum with C. Users who can only reach B cannot write A-owned data until a failover reassigns ownership; that is the C choice for that partition."
+    },
+    {
+     "q": "What does PACELC add that CAP misses?",
+     "a": "The latency versus consistency trade-off in normal operation, which dominates user experience because partitions are rare but every request pays the latency."
+    },
+    {
+     "q": "Can you have strong consistency and low latency globally?",
+     "a": "Not for writes that must be coordinated across distant regions: physics sets the RTT floor. You can get low-latency strongly consistent reads with leases or local leaders, and stale-but-fast reads with bounded staleness."
+    }
+   ]
+  },
+  {
+   "name": "Leader election, leases and fencing (split-brain prevention)",
+   "explain": "Many stores have a single writer (primary) per partition. During failover a new primary is chosen. The danger is split brain: the old primary did not actually die, it was only unreachable, and now two nodes accept writes for the same data, producing divergent histories that are painful to merge. Leader election via a consensus system (Raft, Paxos, ZooKeeper, etcd) ensures that only one candidate is chosen per term, but the old leader may not know it has been replaced; it may be paused by GC or cut off. Leases help: a leader holds authority only until its lease expires and must stop acting before then, assuming bounded clock drift. The robust protection is fencing: each new leader gets a monotonically increasing token (epoch or term), and every write carries it. The storage layer remembers the highest token seen and rejects writes with an older one. Then even if the old leader wakes up and tries to write, its writes fail. In multi-region failover, the fencing token should be checked as close to the data as possible (the database or a proxy in front of it), and the directory used for routing should be updated with the same epoch so clients converge.",
+   "in_this_design": "PartitionOwnership in the controller's consensus store holds primary_region and epoch per partition. Failover bumps the epoch, writes a fence (min_epoch) to storage, promotes B's replica, and updates the directory. Writes carry the epoch; stale-epoch writes from a zombie A are rejected.",
+   "key_points": [
+    "Split brain = two writers for the same data; prevent it, do not merge it.",
+    "Consensus elects one leader per term.",
+    "Leases bound authority in time but rely on clock assumptions.",
+    "Fencing tokens enforced at storage make stale leaders harmless.",
+    "Update routing with the same epoch."
+   ],
+   "qa": [
+    {
+     "q": "Why is a lease not enough without fencing?",
+     "a": "A process can pause (GC, VM freeze) past its lease expiry and resume believing it is still leader, then write. Fencing tokens checked by storage reject that write regardless of what the process believes."
+    },
+    {
+     "q": "Who should run the election for region failover?",
+     "a": "A consensus group spanning three regions (A, B, C), so that the decision itself survives a region loss and a two-region partition cannot produce two winners."
+    },
+    {
+     "q": "What happens to writes the old primary accepted after the fence?",
+     "a": "With fencing at storage there should be none; any accepted before the fence but not replicated are the RPO tail and go to reconciliation."
+    }
+   ]
+  },
+  {
+   "name": "Global traffic management (GeoDNS, anycast, health checks)",
+   "explain": "To fail over a region you must move users' traffic. DNS-based global server load balancing answers queries for a hostname with the IP of a chosen region based on geography, latency, weights and health checks. It is simple and universal, but DNS answers are cached by resolvers and clients for the TTL, and some ignore TTL, so failover takes at least the TTL and often longer for a tail of clients. Short TTLs (30-60 s) help at the cost of more DNS queries. Anycast announces the same IP address from many locations; the internet's routing (BGP) sends each user to the nearest point of presence. An anycast edge proxy then forwards to a healthy origin region, so changing origins is a configuration change at the edge, effective in seconds without any DNS change. Health checks should test real functionality (a synthetic checkout) from multiple vantage points, with thresholds (3 consecutive failures at 10 s) to avoid flapping. Mobile apps can add client-side resilience by holding multiple regional endpoints and retrying another on failure. Traffic shifting should also be gradual for planned moves (drills, failback) to warm caches and detect capacity problems early.",
+   "in_this_design": "Anycast edge with origin pools per region and 10 s health checks; GeoDNS TTL 60 s as a second layer; home-region routing via a directory cached at the edge; drills shift 1%, 10%, 50%, 100% with abort conditions.",
+   "key_points": [
+    "DNS failover is bounded below by TTL and resolver caching.",
+    "Anycast edge + origin failover moves traffic in seconds.",
+    "Health checks should be functional and multi-vantage.",
+    "Use thresholds to avoid flapping.",
+    "Shift gradually for planned moves."
+   ],
+   "qa": [
+    {
+     "q": "Why not set DNS TTL to 1 second?",
+     "a": "Many resolvers clamp low TTLs, query volume and cost rise, and DNS latency becomes part of more requests. It still would not fix clients that cache beyond TTL. An anycast edge is the better tool for fast failover."
+    },
+    {
+     "q": "How do you avoid failing over because a health checker is broken?",
+     "a": "Use multiple independent vantage points and require a majority, plus in-region signals and human confirmation for write failover."
+    },
+    {
+     "q": "How do mobile apps behave during failover?",
+     "a": "They retry with backoff; with an anycast edge their endpoint is unchanged. Apps can also hold a secondary endpoint and switch after repeated failures."
+    }
+   ]
+  },
+  {
+   "name": "Active-active write conflicts and home-region partitioning",
+   "explain": "If two regions can both accept writes to the same record, concurrent updates can conflict: a user changes their address in A while a support agent changes it in B. Options for handling this include last-writer-wins by timestamp (simple, but silently loses one update and depends on clocks), application-level merge (for example union of cart items), CRDTs (data types whose merges are mathematically guaranteed to converge, such as counters and sets), or avoiding conflicts entirely by ensuring a single writer per record. The most practical approach for transactional systems is home-region partitioning: each user (or tenant, or order) is assigned a home region that owns writes for its data, while other regions hold read replicas. This gives local write latency for most users and no conflicts, at the cost of having to move ownership during failover (with fencing) and occasionally routing a user's writes to a remote region if they travel. Global constraints that span users, like a limited-stock flash sale or a globally unique username, must go through a single owner (one region or a quorum service), because no amount of local checking can enforce them across regions without coordination.",
+   "in_this_design": "Users are hashed into partitions, each with a home region recorded in the directory; orders and carts are written only in the home region; carts use a merge rule when reconciling; flash-sale stock and coupons with global limits go through quorum-backed services.",
+   "key_points": [
+    "Multi-writer means conflicts; decide how they resolve.",
+    "LWW is simple but silently drops updates and depends on clocks.",
+    "CRDTs converge for specific data types.",
+    "Home-region ownership avoids conflicts for transactional data.",
+    "Global invariants need a single owner or quorum."
+   ],
+   "qa": [
+    {
+     "q": "Why not use last-writer-wins for orders?",
+     "a": "An order status regression or lost payment update can cost money; LWW would pick a winner by timestamp and drop the other silently. Single-writer ownership avoids the conflict entirely."
+    },
+    {
+     "q": "A user from A-home travels near B. Where do their writes go?",
+     "a": "Still to A (one extra RTT of about 15 ms), or the system can migrate their home with an ownership move if it persists. Reads can be served from B's replica."
+    },
+    {
+     "q": "How do you enforce one coupon per user across regions?",
+     "a": "Perform the check in the user's home region (single writer). For globally limited coupons, use a quorum-replicated counter service, accepting higher latency for that path."
+    }
+   ]
+  },
+  {
+   "name": "Static stability, cells and pre-provisioned capacity",
+   "explain": "A failover plan that depends on things you must do during the disaster is fragile. If the plan requires launching thousands of instances in the surviving region, it competes with every other customer of that cloud doing the same, and depends on the provider's control plane, which may be impaired too. Static stability means the surviving region already has what it needs: capacity is pre-provisioned, configuration and secrets are already present, DNS records and certificates exist, and the data plane does not call the failed region's control plane. The cost is idle or under-utilised capacity; with two regions each sized to carry the full load you run about 50% utilization, though load shedding of non-critical work lets you run somewhat hotter. Cell-based architecture complements this: each region is split into independent cells, each serving a subset of users with its own stack, so most failures (bad deploy, poison request) affect one cell rather than a region, and failover can be done per cell. Together they shrink blast radius and make region evacuation a routine, rehearsed operation rather than an improvisation.",
+   "in_this_design": "Each serving region runs at about 50-60% utilization of tier-1 capacity; tier-3 load is shed on failover; secrets, KMS keys and third-party allowlists exist in both regions; cells of about 5% of users each allow partial evacuations and limit deploy blast radius.",
+   "key_points": [
+    "Do not depend on scaling or the failed region during failover.",
+    "Pre-provision capacity; shed low-priority work to fit.",
+    "Pre-stage secrets, keys, certificates and partner allowlists.",
+    "Cells limit blast radius and allow partial evacuation.",
+    "Rehearse evacuations so they are routine."
+   ],
+   "qa": [
+    {
+     "q": "Why not auto-scale the survivor on failover instead of keeping spare capacity?",
+     "a": "Scaling takes minutes, depends on the provider's control plane and capacity availability during a regional event when everyone is scaling; pre-provisioned capacity works immediately."
+    },
+    {
+     "q": "How do cells help multi-region DR?",
+     "a": "They make the unit of failure and failover smaller; you can move a cell's users between regions in drills without moving everyone, and most incidents stay inside one cell."
+    },
+    {
+     "q": "How do you justify the cost of idle capacity to finance?",
+     "a": "Compare the expected loss of a multi-hour outage at sale-day GMV and regulatory exposure against about 35% extra compute; the standby also serves live traffic in active-active, so it is not idle."
+    }
+   ]
+  },
+  {
+   "name": "Backups, point-in-time recovery and logical disasters",
+   "explain": "Replication protects against losing hardware or a region, but it does not protect against bad data. If a migration deletes a column, a bug corrupts balances, or an attacker encrypts tables, replication copies the damage to every replica within seconds. Recovery from logical disasters needs history: backups and point-in-time recovery (PITR). PITR combines periodic full snapshots with a continuous archive of the database's write-ahead log, so you can restore a snapshot and replay the log up to the second before the bad change. Delayed replicas (a replica that applies changes one hour behind) give a fast path to recover recent mistakes. Backups must be isolated: stored in a separate account with different credentials and retention locks (write once, read many) so that a compromised production credential cannot delete them. And they must be tested: a backup that has never been restored is a hope, not a backup. Restore time matters for RTO; restoring tens of terabytes can take hours, so large systems restore selectively (one table or one tenant) and practise it regularly.",
+   "in_this_design": "Daily snapshots retained 35 days, continuous WAL archive for 7-day PITR, a 1-hour delayed replica for orders, object lock in a separate account in region C, monthly restore tests of 1 TB measured against a 4 h target.",
+   "key_points": [
+    "Replication copies corruption; backups provide history.",
+    "PITR = snapshot + continuous log replay.",
+    "Delayed replicas speed recovery from recent mistakes.",
+    "Immutable, cross-account backups resist ransomware.",
+    "Untested backups do not count."
+   ],
+   "qa": [
+    {
+     "q": "A bad deploy corrupted 2% of order rows 3 hours ago. Does region failover help?",
+     "a": "No, the corruption replicated to B. Use PITR or the delayed replica to extract correct rows as of before the deploy, then repair the affected rows in place, rather than restoring the whole database."
+    },
+    {
+     "q": "Why keep backups in a separate account?",
+     "a": "So that the same compromised credentials or automation that damaged production cannot delete or encrypt the backups."
+    },
+    {
+     "q": "How do you know RTO for restore?",
+     "a": "Measure it in regular restore drills at realistic size, and design selective restores so you rarely need a full restore."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Active-active vs active-passive",
+   "options": "Active-active with home regions vs warm standby passive region",
+   "choice": "Active-active for tier-1 and tier-2 with home-region writes.",
+   "why": "The standby is exercised every day by real traffic, so failover is far less risky, and utilization is better; home-region ownership avoids conflict complexity."
+  },
+  {
+   "decision": "Replication mode for orders",
+   "options": "Synchronous cross-region vs async with reconciliation",
+   "choice": "Async (lag < 1 s) with idempotent reconciliation from the ledger.",
+   "why": "Keeps write latency local at 20k writes/s; the small lost tail is recoverable because payments are RPO 0."
+  },
+  {
+   "decision": "Replication mode for payments ledger",
+   "options": "Async vs 2-region sync vs 3-region quorum",
+   "choice": "3-region quorum.",
+   "why": "RPO 0 without blocking on a single region loss; latency of about 60-120 ms is acceptable for payment commits."
+  },
+  {
+   "decision": "Automatic vs human-approved failover",
+   "options": "Fully automatic vs human gate vs hybrid",
+   "choice": "Automatic for reads; writes need approval or auto-approve after 3 min of confirmed outage.",
+   "why": "False write failovers cause data loss and split-brain risk; reads are safe to move automatically."
+  },
+  {
+   "decision": "DNS vs anycast for traffic steering",
+   "options": "GeoDNS only vs anycast edge vs both",
+   "choice": "Both, anycast primary.",
+   "why": "Anycast avoids DNS cache delays; GeoDNS remains as a coarse layer and fallback."
+  },
+  {
+   "decision": "Capacity headroom",
+   "options": "Each region at 100% of total load vs 80% plus shedding",
+   "choice": "Size for 100% tier-1 + tier-2, shed tier-3.",
+   "why": "Balances cost against risk; tier-3 is about 20% of load and safe to drop temporarily."
+  },
+  {
+   "decision": "Failback timing",
+   "options": "Immediate vs planned",
+   "choice": "Planned, after the region is fully resynced, in gradual steps.",
+   "why": "Rushed failback is a common cause of second outages and data loss."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Full loss of region A",
+   "behavior": "Reads move in under 1 min via edge; writes fail over in about 5 min with fencing; ledger unaffected; up to about 1 s of order writes reconciled."
+  },
+  {
+   "failure": "Partition between A and B (both alive)",
+   "behavior": "Each serves home users; ledger remains available in whichever side has C; replication lag grows then catches up; no failover unless external probes see a region down."
+  },
+  {
+   "failure": "Region A degraded (50% errors), not down",
+   "behavior": "Health aggregator marks DEGRADED; gradual traffic shift of reads; write failover only if SLO burn persists; per-cell evacuation where only some cells are bad."
+  },
+  {
+   "failure": "Bad global config push breaks both regions",
+   "behavior": "Failover does not help; staged per-region, per-cell rollouts limit blast radius; rollback is the remedy."
+  },
+  {
+   "failure": "Logical data corruption",
+   "behavior": "PITR or delayed replica restore of affected data; replication does not help."
+  },
+  {
+   "failure": "Failover controller loses quorum",
+   "behavior": "No automatic actions; manual break-glass runbook; data plane keeps serving with current routing."
+  },
+  {
+   "failure": "Survivor region near capacity",
+   "behavior": "Shed tier-3 and batch, enable brownout of optional features, queue non-urgent writes."
+  }
+ ],
+ "metrics": [
+  "Replication lag per partition and store (p50/p99), compared to RPO.",
+  "Ledger commit latency and quorum health per region.",
+  "Region health verdicts from each vantage point and disagreement count.",
+  "Capacity headroom per region for tier-1 load (can it absorb the peer?).",
+  "Drill results: achieved RTO, RPO, number of manual steps, issues found.",
+  "DNS/edge traffic distribution and time to drain a region.",
+  "Reconciliation outcomes after failover: replayed, duplicate, conflict counts.",
+  "Backup freshness, restore test success and restore duration.",
+  "Fencing rejections (stale epoch writes) as a split-brain signal."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you prevent split brain?",
+   "a": "Single writer per partition via ownership in a 3-region consensus store, epoch fencing enforced at storage, and failover decisions requiring a quorum that includes the third region, so a two-way partition cannot elect two primaries."
+  },
+  {
+   "q": "What if the cloud provider's global control plane fails?",
+   "a": "Our data plane is statically stable: running instances, routes and caches keep working without control-plane calls. We avoid needing new resources during failover, and the failover controller runs on our own infrastructure in three regions."
+  },
+  {
+   "q": "How do you test this without risking production?",
+   "a": "Gradual region evacuations (1% to 100%) with automatic abort conditions in off-peak windows, game days that fail individual stores, and continuous synthetic transactions in both regions. Each drill produces measured RTO/RPO and action items."
+  },
+  {
+   "q": "Why not multi-cloud?",
+   "a": "It doubles platform engineering, loses managed-service features, and adds egress cost; most outages are region-level, which multi-region within one provider addresses. We keep backups exportable and revisit if the risk profile changes."
+  },
+  {
+   "q": "How do you handle the 1 second of lost order writes?",
+   "a": "Payments are RPO 0 in the ledger; reconciliation finds paid orders missing in the new primary and replays them idempotently; unpaid ones are voided; clients retry with idempotency keys. The old region's data is kept for the reconciler when it returns."
+  },
+  {
+   "q": "How long until a user on mobile sees recovery?",
+   "a": "With anycast edge and origin failover, reads recover in under a minute; writes after the approved failover, about 5 minutes. Clients retry with backoff, so most users see a short error or spinner rather than a hard failure."
+  },
+  {
+   "q": "What is the biggest operational risk?",
+   "a": "Drift between regions (config, secrets, partner allowlists, capacity) that only shows up at failover. Infrastructure as code, active-active traffic and regular drills keep the standby honest."
+  }
+ ],
+ "key_points": [
+  "Start with RPO and RTO per tier; they drive every other choice and its cost.",
+  "Region failover handles infrastructure loss; backups and PITR handle logical disasters.",
+  "Replication mode per data type: quorum for the ledger (RPO 0), async with reconciliation for orders.",
+  "Home-region ownership gives local writes without multi-writer conflicts.",
+  "Prevent split brain with a 3-region quorum and epoch fencing at storage.",
+  "Steer traffic with an anycast edge; DNS TTL alone is too slow and leaky.",
+  "Be statically stable: pre-provisioned capacity, pre-staged secrets, no dependency on the failed region.",
+  "Automate reads failover, gate writes failover, fail back slowly.",
+  "Drill quarterly; only measured RTO and RPO count."
+ ],
+ "quiz": [
+  {
+   "q": "An async replica lags 2 s when the primary region is destroyed. What is the effective RPO for that event?",
+   "options": [
+    "About 2 s of writes lost",
+    "0, because replicas exist",
+    "Equal to the DNS TTL",
+    "Equal to the RTO"
+   ],
+   "answer": 0,
+   "why": "With async replication the lag at failure time is the data lost. Assuming 0 because a replica exists is the common misconception."
+  },
+  {
+   "q": "Why place the third ledger replica in region C rather than a second replica in region A?",
+   "options": [
+    "To reduce latency",
+    "For residency compliance",
+    "Because C is cheaper",
+    "So that losing any one region still leaves a 2-of-3 quorum"
+   ],
+   "answer": 3,
+   "why": "Two replicas in A would mean losing A loses quorum. Latency is actually slightly worse with C, which is the tempting wrong reason."
+  },
+  {
+   "q": "A bad schema migration corrupted data 2 hours ago in both regions. Best recovery?",
+   "options": [
+    "Fail over to region B",
+    "Wait for replication to fix it",
+    "Point-in-time recovery or delayed replica to extract correct data",
+    "Restart all services"
+   ],
+   "answer": 2,
+   "why": "Replication spread the corruption, so failover does not help. PITR provides the history needed."
+  },
+  {
+   "q": "Which mechanism makes a zombie old primary harmless after failover?",
+   "options": [
+    "Shorter DNS TTL",
+    "Epoch fencing tokens checked by storage",
+    "More health checks",
+    "Larger replication bandwidth"
+   ],
+   "answer": 1,
+   "why": "Storage rejects writes with a stale epoch regardless of what the zombie believes. DNS changes route users away but do not stop internal writers."
+  },
+  {
+   "q": "Under PACELC, a 3-region quorum ledger is best described as:",
+   "options": [
+    "PC/EC",
+    "PA/EL",
+    "PA/EC",
+    "PC/EL"
+   ],
+   "answer": 0,
+   "why": "It sacrifices availability under partition (no quorum, no writes) and pays latency normally for consistency. PA/EL describes eventually consistent stores like a catalog cache."
+  },
+  {
+   "q": "GeoDNS TTL is 60 s, health checks run every 10 s with 3 failures to trip. Roughly the minimum failover time for well-behaved clients?",
+   "options": [
+    "About 10 s",
+    "About 10 min",
+    "About 5 s",
+    "About 90 s"
+   ],
+   "answer": 3,
+   "why": "30 s to detect plus up to 60 s TTL is about 90 s. Misbehaving resolvers can be much worse, which is why anycast edges are preferred."
+  },
+  {
+   "q": "Two regions each run at 50% utilization. One fails. Survivor utilization becomes approximately:",
+   "options": [
+    "50%",
+    "75%",
+    "100%",
+    "150%"
+   ],
+   "answer": 2,
+   "why": "Its own 50% plus the peer's 50% equals 100%, with no headroom, which is why tier-3 shedding is planned. 75% would assume only half of the traffic moves."
+  },
+  {
+   "q": "Which approach avoids write conflicts in active-active for orders?",
+   "options": [
+    "Last-writer-wins using wall clocks",
+    "Home-region ownership per user with read replicas elsewhere",
+    "Writing to both regions and merging nightly",
+    "Random region per request"
+   ],
+   "answer": 1,
+   "why": "Single writer per record means no conflicts. LWW resolves conflicts but silently loses updates and relies on clocks."
+  },
+  {
+   "q": "What is the main risk of fully automatic write failover?",
+   "options": [
+    "A monitoring partition can trigger a false failover, risking data loss and split brain",
+    "It is too slow",
+    "It costs more",
+    "DNS cannot be automated"
+   ],
+   "answer": 0,
+   "why": "False positives are costly for writes. Automatic failover is fast, not slow, which is why it is tempting."
+  },
+  {
+   "q": "Pilot light differs from warm standby mainly in that pilot light:",
+   "options": [
+    "Has no data replicated",
+    "Requires synchronous replication",
+    "Serves production traffic",
+    "Keeps data live but compute mostly off, so RTO includes scale-up time"
+   ],
+   "answer": 3,
+   "why": "Pilot light replicates data but must provision compute on failover. 'No data replicated' describes backup and restore."
+  },
+  {
+   "q": "Why is anycast edge failover faster than DNS failover?",
+   "options": [
+    "Anycast uses UDP",
+    "BGP converges in milliseconds always",
+    "The client keeps the same IP; the edge changes origin routing instantly without waiting on DNS caches",
+    "Anycast skips TLS"
+   ],
+   "answer": 2,
+   "why": "Origin changes at the edge bypass resolver caching. BGP convergence is not the mechanism being used for origin failover."
+  },
+  {
+   "q": "Steady replication of 20k writes/s at 1 KB with 3x overhead needs roughly:",
+   "options": [
+    "48 Mbps",
+    "480 Mbps",
+    "4.8 Gbps",
+    "48 Gbps"
+   ],
+   "answer": 1,
+   "why": "20k x 1 KB x 3 = 60 MB/s = 480 Mbps. 4.8 Gbps comes from a factor-of-ten slip."
+  },
+  {
+   "q": "Which is the best first response when region A shows 50% errors but is not down?",
+   "options": [
+    "Mark DEGRADED, shift read traffic gradually, evacuate bad cells, and gate write failover on sustained SLO burn",
+    "Immediate full write failover",
+    "Ignore until 100% errors",
+    "Restart region A"
+   ],
+   "answer": 0,
+   "why": "Partial failures warrant proportional responses. Immediate full failover risks data loss for a problem that may be cell-local."
+  },
+  {
+   "q": "Why must backups be in a separate account with object lock?",
+   "options": [
+    "Cheaper storage",
+    "Required for replication",
+    "Faster restores",
+    "Compromised production credentials cannot delete or encrypt them"
+   ],
+   "answer": 3,
+   "why": "Isolation is about ransomware and operator error. Faster restore is not a property of a separate account."
+  },
+  {
+   "q": "A user's order was paid (ledger has it) but the order row was in the unreplicated tail of the lost region. Reconciliation should:",
+   "options": [
+    "Refund automatically",
+    "Ignore it",
+    "Replay the order idempotently into the new primary",
+    "Ask the user to re-order"
+   ],
+   "answer": 2,
+   "why": "The ledger is RPO 0 and authoritative for payment, so the order is recreated. Refunding loses a valid sale."
+  },
+  {
+   "q": "Which global constraint cannot be enforced by local checks in each region?",
+   "options": [
+    "A user's own cart contents",
+    "A flash-sale item limited to 1,000 units across all users",
+    "A user's address format",
+    "Product image size"
+   ],
+   "answer": 1,
+   "why": "Cross-user limits need a single owner or quorum. A cart belongs to one user and can be owned by their home region."
+  },
+  {
+   "q": "Why is failback done as a planned, gradual switchover?",
+   "options": [
+    "Rushed failback risks a second outage and data loss; draining and waiting for lag 0 makes it lossless",
+    "To save cost",
+    "Because DNS cannot change quickly",
+    "To test the CDN"
+   ],
+   "answer": 0,
+   "why": "Planned switchover can be lossless. DNS speed is not the reason; the risk is data and capacity."
+  },
+  {
+   "q": "What does static stability imply for the surviving region?",
+   "options": [
+    "It scales out on demand during failover",
+    "It shares one control plane with the failed region",
+    "It runs no traffic until failover",
+    "It already has capacity, config, secrets and certificates needed to serve, without calling the failed region"
+   ],
+   "answer": 3,
+   "why": "Pre-provisioned and pre-staged is the essence. Scaling on demand is the anti-pattern it avoids."
+  },
+  {
+   "q": "Ledger commits need A and C, or A and B, or B and C. Losing region C alone causes:",
+   "options": [
+    "Ledger outage",
+    "Data loss",
+    "No outage; A and B form a quorum",
+    "Split brain"
+   ],
+   "answer": 2,
+   "why": "Any two of three can commit. Outage would only occur if two regions were lost or partitioned away."
+  },
+  {
+   "q": "Which metric is your live RPO for async stores?",
+   "options": [
+    "CPU utilization",
+    "Replication lag",
+    "DNS TTL",
+    "Error rate"
+   ],
+   "answer": 1,
+   "why": "Lag at the moment of failure is the data lost. DNS TTL relates to RTO for traffic, not data loss."
+  },
+  {
+   "q": "Why use a third region for health probes and the failover controller?",
+   "options": [
+    "A neutral vantage point and quorum member prevents A and B each declaring the other dead during a partition",
+    "Lower latency",
+    "Regulatory requirement",
+    "Cheaper compute"
+   ],
+   "answer": 0,
+   "why": "The tiebreaker avoids dual failover. Lower latency is not a benefit here."
+  },
+  {
+   "q": "Cells inside each region primarily help by:",
+   "options": [
+    "Lowering replication lag",
+    "Eliminating DNS",
+    "Removing the need for backups",
+    "Limiting blast radius and enabling partial evacuations"
+   ],
+   "answer": 3,
+   "why": "Cells contain failures like bad deploys and allow moving a subset of users. They do not affect backup needs."
+  },
+  {
+   "q": "Mobile clients ignore DNS TTL and cache the region A IP for 15 minutes. Best mitigation?",
+   "options": [
+    "Lower TTL to 1 s",
+    "Ask users to restart apps",
+    "Anycast edge IPs so the client address never changes, plus client-side secondary endpoints",
+    "Use HTTP redirects from region A"
+   ],
+   "answer": 2,
+   "why": "Anycast removes dependence on DNS re-resolution. Redirects from region A fail because A is down."
+  },
+  {
+   "q": "For a 20k writes/s order system, why not use synchronous cross-region replication everywhere?",
+   "options": [
+    "It loses data",
+    "Every write pays cross-region RTT and depends on the remote region's availability",
+    "It is not supported by databases",
+    "It increases RPO"
+   ],
+   "answer": 1,
+   "why": "Sync costs latency and couples availability. It reduces RPO, not increases it."
+  }
+ ],
+ "references": [
+  {
+   "title": "AWS whitepaper: Disaster recovery options in the cloud",
+   "url": "https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-options-in-the-cloud"
+  },
+  {
+   "title": "AWS Architecture Blog: DR architecture on AWS, Part I",
+   "url": "https://aws.amazon.com/blogs/architecture/disaster-recovery-dr-architecture-on-aws-part-i-strategies-for-recovery-in-the-cloud"
+  },
+  {
+   "title": "Why and how do we build a multi-region active-active architecture (Adrian Hornsby)",
+   "url": "https://adhorn.substack.com/p/why-and-how-do-we-build-a-multi-region-active-active-architecture-6d81acb7d208"
+  },
+  {
+   "title": "QCon: How Netflix leverages multiple regions to increase availability",
+   "url": "https://qconlondon.com/london-2014/london-2014/presentation/How%20Netflix%20Leverages%20Multiple%20Regions%20to%20Increase%20Availability-%20An%20Active-Active%20Case%20Study.html"
+  },
+  {
+   "title": "Google SRE book: Addressing Cascading Failures",
+   "url": "https://sre.google/sre-book/addressing-cascading-failures/"
+  }
+ ]
+}

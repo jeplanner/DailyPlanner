@@ -1,0 +1,1112 @@
+{
+ "slug": "signed-urls",
+ "title": "Design signed URLs (secure media access)",
+ "prompt": "Design signed URLs for secure media access.",
+ "group": "security",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "Private media (invoices, KYC documents, paid videos, seller images before launch, chat attachments) must be served from a CDN at massive scale without the CDN calling back to an auth service on every request. Signed URLs solve this by moving the authorization decision into a short-lived, tamper-proof capability embedded in the URL that the edge can verify locally. The core tensions are expiry length versus cacheability and leak risk, symmetric versus asymmetric keys at the edge, and how to revoke a bearer credential that is designed to need no lookup.",
+ "framework": {
+  "clarify": [
+   "What media and who may access it: private user documents (invoices, KYC), paid or entitlement-gated video, chat attachments, unreleased product images? Each has a different TTL and sharing model.",
+   "Read only, or also uploads? I will cover both: signed GET for downloads and streaming, signed PUT or POST policies for direct-to-storage uploads.",
+   "Scale: assume 1B media fetches per day (mostly images), 20M video plays per day, and about 30k URL-signing requests per second at peak.",
+   "Delivery path: CDN in front of object storage (S3 / GCS style) with a private origin - the bucket must never be publicly readable.",
+   "Required properties: expiry, scope to one object or a path prefix, optional binding to user, IP or session, and the ability to revoke a user's access quickly (for example account takeover or subscription cancelled).",
+   "Threat model: URL leakage via logs, referrer headers, screenshots and sharing; enumeration of object keys; replay; key compromise; hotlinking from other sites.",
+   "Latency and caching expectations: media should still be cached at the edge - signed URLs must not destroy cache hit ratio.",
+   "Compliance: KYC documents are sensitive personal data; access must be audited."
+  ],
+  "design": [
+   "Baseline: app asks a Media Access Service for a URL; the service checks authorization (does this user own or have entitlement to this object?) and returns https://media.cdn.example/{path}?exp=...&kid=...&sig=... ; the CDN verifies the signature and expiry at the edge and fetches from a private origin using its own origin credentials.",
+   "Signature = HMAC-SHA256 or Ed25519 over a canonical string of method, host, path (or path prefix), expiry, and optional claims (user id hash, IP prefix, content-disposition). Key id (kid) selects the key for rotation.",
+   "For streaming (HLS/DASH with hundreds of segment URLs), sign a path prefix and deliver it as a signed cookie or token in the path so segments need no individual signing.",
+   "Uploads: client requests an upload policy; service returns a presigned PUT (or POST policy) with content-length range, content-type and key fixed; storage event triggers scanning before the object becomes downloadable.",
+   "APIs: POST /v1/media/{id}/access-url, POST /v1/media/uploads, POST /v1/keys/rotate (internal), POST /v1/revocations.",
+   "Critical path: request -> CDN edge -> parse token -> lookup key by kid in edge key store -> verify HMAC in constant time -> check exp with skew allowance -> check revocation epoch -> cache lookup with signature stripped from cache key -> origin fetch on miss with origin auth."
+  ],
+  "defend": [
+   "Bottleneck: signing is cheap (microseconds); the real load is the authorization check behind it - cache entitlements and batch-sign URLs for a page (one call returns 50 URLs).",
+   "Cache hit ratio: strip exp, sig and kid from the cache key so all users' signed URLs for the same object share one cached copy; verification happens before cache lookup.",
+   "Revocation: short TTLs (5 minutes for documents, segment-scoped tokens for video) bound exposure; for faster revocation embed a per-user or per-object epoch in the token and push a small revocation list to the edge.",
+   "Key management: keys in KMS/HSM, distributed to edge via the CDN key store; rotate every 30-90 days with overlap (sign with new kid, accept old and new); emergency rotation invalidates all URLs signed with a compromised key.",
+   "Failure behaviour: edges verify locally so the auth service being down only stops new URL issuance; clients get URLs ahead of time and re-request on 403 with jittered backoff; signing service is stateless and multi-region.",
+   "Measure: 403 rate by reason (expired, bad signature, revoked), cache hit ratio, signing latency and QPS, clock-skew rejections, origin direct-access attempts (should be zero)."
+  ],
+  "script": "I will start by clarifying what we are protecting and from whom: private documents like invoices and KYC, paid video, and chat attachments, served from a CDN at around a billion fetches a day. The key idea is that we do not want the CDN to call our auth service on every request, so we move the authorization decision into a short-lived capability in the URL. Our Media Access Service checks that the user may see the object, then signs the path, an expiry and optional claims with a key the edge also has; the edge verifies the signature and expiry locally in microseconds and fetches from a private bucket. For video I would sign a path prefix via a cookie so hundreds of segments work with one token, and for uploads I would issue presigned PUTs with size and type locked. To defend it, I will cover keeping cache hit ratio high by excluding the signature from the cache key, key rotation with key ids, revocation since bearer tokens cannot be recalled, clock skew, URL leakage, and what we measure."
+ },
+ "brd": {
+  "problem": "The platform stores billions of media objects. Some are public (catalogue images), but many are private or entitlement-gated: GST invoices, KYC and seller documents, return-request photos, chat attachments, paid video content and embargoed product images for upcoming sale launches. Serving them through application servers does not scale and adds latency; making the bucket public leaks data (and enumerable keys have caused real breaches across the industry). The business needs CDN-speed delivery of private media where only authorised users can fetch an object, access expires automatically, and leaked links cause bounded damage.",
+  "goals": [
+   "Serve private media through the CDN at the same latency as public media (p95 TTFB under 100ms from cache).",
+   "Ensure the origin bucket is never publicly accessible; all access is via signed URLs or origin credentials.",
+   "Bound the damage of leaked URLs with short expiry and optional binding.",
+   "Revoke a user's access to sensitive media within 60 seconds when needed.",
+   "Support direct-to-storage uploads without proxying bytes through app servers.",
+   "Provide an audit trail for access to sensitive documents (KYC, invoices)."
+  ],
+  "non_goals": [
+   "DRM for premium video (Widevine, FairPlay) - signed URLs control access to bytes, not copying after download.",
+   "Watermarking and forensic tracing of leaked media.",
+   "General user authentication and session management.",
+   "Public catalogue images, which remain unsigned and fully cacheable."
+  ],
+  "stakeholders": [
+   {
+    "who": "Buyers and sellers",
+    "needs": "Fast access to their own documents and attachments; confidence that others cannot see them."
+   },
+   {
+    "who": "Content and video teams",
+    "needs": "Entitlement-gated streaming that works on all players without breaking caching."
+   },
+   {
+    "who": "Security and privacy",
+    "needs": "No public buckets, short-lived scoped credentials, key rotation, audit of sensitive access."
+   },
+   {
+    "who": "CDN and infra team",
+    "needs": "High cache hit ratio, cheap edge verification, low origin egress."
+   },
+   {
+    "who": "Compliance",
+    "needs": "Evidence for DPDP and RBI-style audits that personal documents are access-controlled."
+   },
+   {
+    "who": "Product engineers",
+    "needs": "A simple SDK call to get a URL for an object."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "CDN cache hit ratio for private media",
+    "target": "> 90% for images, > 95% for video segments"
+   },
+   {
+    "metric": "Signing API latency p99",
+    "target": "< 20ms including entitlement check"
+   },
+   {
+    "metric": "Public or unsigned access to private objects",
+    "target": "0 (verified by origin logs and bucket policy scans)"
+   },
+   {
+    "metric": "Revocation propagation time",
+    "target": "< 60s to all edges"
+   },
+   {
+    "metric": "False 403 rate (valid user rejected)",
+    "target": "< 0.05% of requests"
+   }
+  ],
+  "constraints": [
+   "CDN edge logic is limited (small edge functions, a few ms CPU, small key-value store).",
+   "Mobile clients may have device clocks wrong by minutes; server-side expiry must not depend on client clocks.",
+   "Existing apps cache URLs in memory and local storage; URLs must survive realistic screen lifetimes.",
+   "Players (ExoPlayer, AVPlayer) fetch HLS segments themselves and cannot add custom headers easily."
+  ],
+  "risks": [
+   {
+    "risk": "Signing key leak lets attackers mint URLs for any object.",
+    "mitigation": "Keys in KMS/HSM, edge holds only verification or per-kid keys, rotation with kid, prefer asymmetric signatures so the edge cannot sign."
+   },
+   {
+    "risk": "Long TTLs make leaked links effectively public.",
+    "mitigation": "Per-class TTL policy (5 minutes for KYC), binding to user or IP prefix for sensitive classes, revocation epochs."
+   },
+   {
+    "risk": "Signature in cache key destroys hit ratio and floods origin.",
+    "mitigation": "Normalised cache key excluding token parameters; origin shield."
+   },
+   {
+    "risk": "URLs leak through Referer headers or analytics logs.",
+    "mitigation": "Referrer-Policy no-referrer, strip query strings in logs, short TTL."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Buyer",
+    "needs": "Download an invoice or view chat photo instantly."
+   },
+   {
+    "name": "Seller",
+    "needs": "Upload KYC documents and catalogue images directly and securely."
+   },
+   {
+    "name": "Subscriber watching video",
+    "needs": "Smooth streaming without re-auth per segment."
+   },
+   {
+    "name": "Attacker",
+    "needs": "(Adversary) Enumerate object keys, reuse leaked links, tamper with expiry."
+   },
+   {
+    "name": "Support agent",
+    "needs": "Temporary, audited access to a customer's document during a ticket."
+   }
+  ],
+  "user_stories": [
+   "As a buyer, I want to download my invoice from a link that works for a few minutes so that my documents stay private.",
+   "As a seller, I want to upload KYC documents directly from my phone so that large files upload fast and reliably.",
+   "As a subscriber, I want video to start in under 2 seconds and not stall when tokens rotate.",
+   "As a security engineer, I want to revoke all access for a compromised account within a minute.",
+   "As a support agent, I want time-boxed access to a customer's uploaded photo so that I can resolve a return claim, with my access logged.",
+   "As a product engineer, I want to call one SDK method to get a URL so that I do not handle crypto.",
+   "As a marketing lead, I want embargoed sale images to be inaccessible until launch time."
+  ],
+  "functional": [
+   "Issue signed GET URLs for a single object with expiry, optional binding (user hash, IP prefix) and response overrides (content-disposition).",
+   "Issue prefix-scoped signed cookies or path tokens for adaptive streaming manifests and segments.",
+   "Issue presigned upload URLs or POST policies with fixed key, content-type, max size and expiry.",
+   "Verify signatures at the CDN edge with constant-time comparison and clock-skew tolerance.",
+   "Support multiple active keys with key ids for rotation and emergency revocation of a key.",
+   "Support revocation by user, object or epoch with propagation to edges.",
+   "Batch signing API for pages with many media objects.",
+   "Audit log for access URL issuance on sensitive classes."
+  ],
+  "non_functional": [
+   {
+    "name": "Signing latency",
+    "target": "p99 < 20ms incl. entitlement; pure signing < 50 microseconds"
+   },
+   {
+    "name": "Edge verification cost",
+    "target": "< 0.5ms CPU per request"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for media delivery; signing 99.95%"
+   },
+   {
+    "name": "Security",
+    "target": "HMAC-SHA256 or Ed25519; keys rotated every 90 days; no public origin"
+   },
+   {
+    "name": "Revocation",
+    "target": "< 60s propagation"
+   },
+   {
+    "name": "Cache efficiency",
+    "target": "Token params excluded from cache key; hit ratio unchanged versus public"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "1B private media fetches per day, average 150 KB (images, documents).",
+    "20M video plays per day, average 15 minutes at 1.5 Mbps, 6-second segments.",
+    "Each page view requests about 20 signed URLs; 130M page views per day with private media.",
+    "Peak is 4x average."
+   ],
+   "math": [
+    "Image fetches: 1B / 86,400 = about 11.6k/s average, about 46k/s peak edge verifications.",
+    "Image egress: 1B x 150 KB = 150 TB/day, about 14 Gbps average.",
+    "Video: 15 min x 60 x 1.5 Mbps / 8 = about 169 MB per play; 20M plays = about 3.4 PB/day, about 310 Gbps average.",
+    "Video segments: 15 min / 6 s = 150 segments per play x 20M = 3B segment requests/day, about 35k/s average, 140k/s peak - why per-segment signing calls are not acceptable and prefix tokens are.",
+    "URL signing: 130M views x 20 URLs = 2.6B signatures/day, about 30k/s average, 120k/s peak; HMAC-SHA256 at about 1 microsecond each = 0.12 CPU cores - trivial; entitlement lookups dominate, so batch per page.",
+    "Revocation list: assume 100k active revoked user epochs x 16 B = 1.6 MB, fits easily in the edge key-value store."
+   ],
+   "summary": "Crypto cost is negligible; the design is driven by cache efficiency (3.4 PB/day of video must come from cache), avoiding per-segment signing, and entitlement lookup load on the signing service."
+  },
+  "out_of_scope": [
+   "DRM licence servers and encryption of content at rest beyond storage defaults.",
+   "Image transformation service (resizing) - assumed to sit behind the same signing scheme.",
+   "Malware scanning internals (we only gate availability on the scan result).",
+   "User login and session issuance."
+  ]
+ },
+ "hld": {
+  "overview": "Authorization is decided once by the Media Access Service and encoded as a short-lived signed token. The CDN edge verifies the token locally using keys distributed through a key store, normalises the cache key, and serves from cache or fetches from a private origin using origin access identity credentials. Uploads use presigned PUTs to object storage, followed by an event-driven scan and promotion pipeline. A key management plane handles rotation, and a revocation plane pushes epochs to the edge.",
+  "diagram": "\n  Client app / player\n     |  1. need media for object X\n     v\n  [API Gateway] --> [Media Access Service] --entitlement--> [Entitlement / Ownership DB + cache]\n     ^                    |  sign(path, exp, kid, claims)        |\n     |  2. signed URL     |<-- signing keys (KMS-wrapped) -- [Key Mgmt / KMS]\n     |                                                           | distribute verify keys\n  Client --3. GET /m/X?exp&kid&sig--> [CDN edge function] <------+\n                                     | verify sig, exp, revocation epoch\n                                     | cache key = path (token stripped)\n                                     v\n                                [Edge cache] -miss-> [Origin shield] -OAC/SigV4-> [Private bucket]\n                                                                                 ^\n  Uploads: client --presigned PUT------------------------------------------------+\n                         bucket event --> [Scan + promote worker] --> object state = ready\n  Revocations: [Revocation service] --push epochs (<60s)--> [Edge KV store]\n",
+  "components": [
+   {
+    "name": "Media Access Service",
+    "responsibility": "Authorize user to object, choose policy by media class (TTL, binding), produce signed URLs or cookies, batch signing, audit sensitive issuance."
+   },
+   {
+    "name": "Entitlement and ownership store",
+    "responsibility": "Who owns or may access each object (owner id, order id, subscription, ACL); cached in Redis with short TTL."
+   },
+   {
+    "name": "Key management (KMS/HSM)",
+    "responsibility": "Generate and wrap signing keys, track kid lifecycle (active, verify-only, retired), rotate on schedule or emergency."
+   },
+   {
+    "name": "CDN edge verifier",
+    "responsibility": "Edge function that parses tokens, verifies signature in constant time, checks expiry with skew tolerance and revocation, normalises cache key."
+   },
+   {
+    "name": "Edge KV store",
+    "responsibility": "Holds verification keys by kid and revocation epochs; globally replicated within seconds."
+   },
+   {
+    "name": "Origin shield and private bucket",
+    "responsibility": "Mid-tier cache to collapse misses; bucket accessible only via CDN origin credentials (origin access control)."
+   },
+   {
+    "name": "Upload service and scan pipeline",
+    "responsibility": "Issue presigned PUT/POST policies; on object-created events run AV and content scans, then mark object ready."
+   },
+   {
+    "name": "Revocation service",
+    "responsibility": "Bump per-user or per-object epochs on account takeover, entitlement loss or takedown and publish to edges."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Download a private invoice",
+    "steps": [
+     "App calls POST /v1/media/{id}/access-url with the user session.",
+     "Media Access Service checks ownership (invoice.owner_id == user) via cache then DB.",
+     "It selects policy class 'document': TTL 300s, bind to user hash, content-disposition attachment.",
+     "It builds the canonical string 'GET\\nmedia.cdn.example\\n/inv/ab12...\\nexp=1760190300\\nuid=h(u)\\nep=7' and signs with HMAC-SHA256 using the current kid.",
+     "Client fetches the URL; the edge looks up the key by kid, recomputes and compares in constant time, checks exp + 30s skew, and checks ep against the user's current epoch in the edge KV.",
+     "Edge strips token params, looks up cache key /inv/ab12...; on miss fetches from origin shield and the private bucket with origin credentials.",
+     "Response sent with Cache-Control private for documents and Referrer-Policy no-referrer."
+    ]
+   },
+   {
+    "name": "Stream an entitled video",
+    "steps": [
+     "Player asks for a playback session; service checks subscription entitlement.",
+     "Service returns the manifest URL plus a signed cookie (or path token) scoped to /v/{video_id}/* valid for 2 hours with a 10-minute refresh.",
+     "Player fetches manifest and segments; the edge validates the prefix token once per request using the cookie, no per-segment signing.",
+     "Before expiry the app refreshes the token silently; if entitlement ended, refresh fails and playback stops at the next segment boundary."
+    ]
+   },
+   {
+    "name": "Direct upload of KYC document",
+    "steps": [
+     "App calls POST /v1/media/uploads with type kyc and size.",
+     "Service generates a random object key (128-bit), returns a presigned PUT valid for 10 minutes with content-type and content-length-range fixed.",
+     "Client uploads directly to object storage; storage emits object-created event.",
+     "Scan worker checks malware, file type magic bytes and size, then marks the object ready and links it to the seller; only then can access URLs be issued."
+    ]
+   }
+  ],
+  "data_flow": "Control plane: entitlements and keys flow into the Media Access Service; verification keys and revocation epochs flow to the edge KV store. Data plane: bytes flow from the private bucket through origin shield to edge caches to clients, gated by token verification at the edge. Upload bytes go straight from client to storage; events drive scanning and state changes. Issuance and access logs flow to the security data lake for audit."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/media/{object_id}/access-url",
+    "request": "{disposition?: 'inline|attachment', ttl_hint?: 300}",
+    "response": "{url: 'https://media.cdn.example/inv/ab12?exp=1760190300&kid=k42&ep=7&sig=...', expires_at}",
+    "notes": "Server enforces max TTL by media class; client hint can only shorten."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/media/access-urls:batch",
+    "request": "{object_ids: [up to 100]}",
+    "response": "{urls: {id: url}, denied: [id]}",
+    "notes": "One entitlement query per batch; used by listing and chat screens."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/playback/{video_id}/session",
+    "request": "{device_id}",
+    "response": "{manifest_url, cookie: 'CDN-Token=...; Path=/v/{video_id}/; Secure; HttpOnly', refresh_after: 600}",
+    "notes": "Prefix-scoped token; refresh endpoint re-checks entitlement."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/media/uploads",
+    "request": "{media_class: 'kyc', content_type: 'application/pdf', size: 2400000}",
+    "response": "{upload_url, method: 'PUT', headers: {Content-Type}, object_id, expires_at}",
+    "notes": "Random 128-bit key; content-length-range enforced by policy."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/v1/revocations",
+    "request": "{scope: 'user|object', id, reason}",
+    "response": "{new_epoch, propagated_by}",
+    "notes": "Bumps epoch; pushes to edge KV."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/v1/keys/rotate",
+    "request": "{emergency: false}",
+    "response": "{new_kid, previous_kid_state: 'verify_only'}",
+    "notes": "Normal rotation keeps old kid verifiable for max TTL + skew; emergency marks it retired immediately."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "MediaObject",
+    "store": "PostgreSQL (sharded by owner_id) or DynamoDB",
+    "fields": [
+     "object_id",
+     "storage_key (random)",
+     "owner_id",
+     "media_class",
+     "state (uploading|scanning|ready|blocked)",
+     "acl_ref",
+     "created_at"
+    ],
+    "keys": "PK object_id; GSI owner_id",
+    "notes": "Storage key is random and unrelated to business ids to prevent enumeration."
+   },
+   {
+    "entity": "Entitlement",
+    "store": "Redis cache over subscription/order DBs",
+    "fields": [
+     "user_id",
+     "resource",
+     "valid_until"
+    ],
+    "keys": "ent:{user_id}:{resource}",
+    "notes": "TTL 60s; invalidated on change events."
+   },
+   {
+    "entity": "SigningKey",
+    "store": "KMS/HSM + key metadata table",
+    "fields": [
+     "kid",
+     "alg (HS256|Ed25519)",
+     "state (active|verify_only|retired)",
+     "created_at",
+     "not_after"
+    ],
+    "keys": "kid",
+    "notes": "Edge receives only keys in active or verify_only state."
+   },
+   {
+    "entity": "RevocationEpoch",
+    "store": "Edge KV store + source DB",
+    "fields": [
+     "scope:id",
+     "epoch",
+     "updated_at"
+    ],
+    "keys": "u:{user_hash} or o:{object_id}",
+    "notes": "Missing key means epoch 0; only non-zero entries replicated."
+   },
+   {
+    "entity": "AccessAudit",
+    "store": "Kafka -> data lake",
+    "fields": [
+     "ts",
+     "user_id",
+     "object_id",
+     "media_class",
+     "kid",
+     "exp",
+     "issuer"
+    ],
+    "keys": "partition by date",
+    "notes": "Only for sensitive classes to control volume."
+   }
+  ],
+  "classes": [
+   {
+    "name": "UrlSigner",
+    "responsibility": "Canonicalize request parts and compute signature with the active key.",
+    "methods": [
+     "sign(path, exp, claims) -> Token",
+     "canonical(method, host, path, params) -> bytes"
+    ]
+   },
+   {
+    "name": "PolicyResolver",
+    "responsibility": "Map media class to TTL, binding and disposition rules.",
+    "methods": [
+     "policyFor(object, user) -> Policy"
+    ]
+   },
+   {
+    "name": "EntitlementChecker",
+    "responsibility": "Answer can(user, object) with cache and batch support.",
+    "methods": [
+     "can(user, object) -> bool",
+     "canBatch(user, objects) -> map"
+    ]
+   },
+   {
+    "name": "EdgeVerifier",
+    "responsibility": "Runs in the CDN edge function; verifies tokens and normalises cache key.",
+    "methods": [
+     "verify(request) -> Allow|Deny(reason)",
+     "cacheKey(request) -> string"
+    ]
+   },
+   {
+    "name": "KeyRotator",
+    "responsibility": "Lifecycle of kids and propagation to edge.",
+    "methods": [
+     "rotate()",
+     "retire(kid)",
+     "publish(keys)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Sign and verify with canonicalization and constant-time compare",
+    "explain": "Both sides must build byte-identical input or verification fails; any field not in the signed string can be tampered with. Compare MACs in constant time to avoid timing side channels.",
+    "pseudocode": "def canonical(method, host, path, exp, claims):\n    p = normalize_path(path)            # percent-encoding, no '..', lowercase host\n    items = sorted(claims.items())      # deterministic order\n    return '\\n'.join([method, host.lower(), p, f'exp={exp}'] +\n                     [f'{k}={v}' for k, v in items]).encode()\n\ndef sign(path, ttl, claims, key):\n    exp = now_server() + ttl\n    mac = hmac_sha256(key.secret, canonical('GET', HOST, path, exp, claims))\n    return {'exp': exp, 'kid': key.kid, **claims, 'sig': b64url(mac[:16])}\n\ndef verify(req):\n    key = edge_kv.get('key:' + req.q.kid)\n    if key is None or key.state == 'retired': return DENY('bad_kid')\n    exp = int(req.q.exp)\n    if now_edge() > exp + SKEW_S: return DENY('expired')\n    claims = {k: req.q[k] for k in SIGNED_CLAIMS if k in req.q}\n    mac = hmac_sha256(key.secret, canonical(req.method, req.host, req.path, exp, claims))\n    if not const_time_eq(b64url(mac[:16]), req.q.sig): return DENY('bad_sig')\n    if int(claims.get('ep', 0)) < edge_kv.get_epoch(claims.get('uid')): return DENY('revoked')\n    return ALLOW"
+   },
+   {
+    "name": "Expiry bucketing for cacheable URLs",
+    "explain": "If every URL has a unique exp, browsers and app image caches see a new URL each time and refetch. Rounding exp up to a bucket (for example the next 5-minute boundary plus the TTL) makes URLs for the same object identical within a window, improving client-side caching while still bounding lifetime.",
+    "pseudocode": "def bucketed_exp(ttl, bucket=300):\n    t = now_server()\n    return ((t + ttl) // bucket + 1) * bucket   # lifetime in [ttl, ttl+bucket)"
+   },
+   {
+    "name": "Key rotation with overlap",
+    "explain": "Introduce the new key to edges first, then start signing with it, keep the old one verify-only for max TTL plus skew, then retire it.",
+    "pseudocode": "def rotate():\n    new = kms.generate(); publish_verify(new)        # edges learn new kid\n    wait_until_all_edges_ack(new.kid)\n    set_active(new.kid)                              # signer switches\n    old.state = 'verify_only'\n    schedule(retire, old.kid, after=MAX_TTL + SKEW + margin)"
+   }
+  ],
+  "sequence": "\nApp        API/MediaAccess     EntitlementCache   KMS(cached key)   CDN Edge        EdgeKV   Origin\n |--access-url-->|                   |                  |              |              |        |\n |               |--can(u, obj)----->|                  |              |              |        |\n |               |<--yes-------------|                  |              |              |        |\n |               |-- HMAC(canonical) with kid k42 ----->|              |              |        |\n |<--signed URL--|                   |                  |              |              |        |\n |--GET /inv/ab12?exp&kid&ep&sig------------------------------------->|              |        |\n |               |                   |                  |              |--key k42---->|        |\n |               |                   |                  |              |--epoch(uid)->|        |\n |               |                   |                  |              | verify, exp   |        |\n |               |                   |                  |              | cache key=path|        |\n |               |                   |                  |              |--miss: SigV4 GET----->|\n |               |                   |                  |              |<----object-----------|\n |<--200 bytes (cached for next user with own valid token)-------------|              |        |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Client device clock is 20 minutes behind and the app decides a URL is still valid.",
+   "handling": "Expiry is checked only by the edge using server time; app treats any 403 'expired' as a signal to refresh the URL. Never compute exp on the client."
+  },
+  {
+   "case": "Edge node clock drifts relative to the signer.",
+   "handling": "NTP on all nodes and a 30-60s skew allowance on expiry; reject tokens with exp unreasonably far in the future (greater than max TTL + skew) to block forged long-lived tokens from a leaked key."
+  },
+  {
+   "case": "URL leaks via the Referer header when a document page links to an external site.",
+   "handling": "Referrer-Policy: no-referrer on media and document pages; short TTL; optional user binding so the leaked URL fails for others."
+  },
+  {
+   "case": "Attacker modifies the path from /inv/A to /inv/B keeping the signature.",
+   "handling": "Path is in the signed canonical string; verification fails. If a prefix is signed, the prefix boundary must end with '/' to avoid /inv/A matching /inv/AB."
+  },
+  {
+   "case": "Path normalisation mismatch: signer signs /a%2Fb, CDN normalises to /a/b, verification fails or worse is bypassed.",
+   "handling": "Define one canonical form, normalise identically in signer and edge, reject paths with '..', double encoding or mixed case in percent-encoding."
+  },
+  {
+   "case": "HLS player fetches 150 segments; signing each would need 150 tokens and app involvement.",
+   "handling": "Prefix-scoped signed cookie or token embedded in the path segment (/v/tok/{token}/vid/...) so relative segment URLs inherit it."
+  },
+  {
+   "case": "Subscription cancelled mid-movie.",
+   "handling": "Token TTL is 2 hours but refresh every 10 minutes re-checks entitlement; for immediate cut-off bump the user epoch and push to edges."
+  },
+  {
+   "case": "Signature in the cache key causes every user's URL to miss cache, origin melts during a sale.",
+   "handling": "Cache key excludes exp, kid, sig, ep and binding params; verification happens before cache lookup so correctness is preserved."
+  },
+  {
+   "case": "Sensitive document cached at the edge is served to another user who has a valid token for it - is that a leak?",
+   "handling": "Only users with a valid token reach the cache, so it is correct; for documents use Cache-Control private or no-store at the browser and short edge TTL, and never cache error-sensitive responses keyed without auth."
+  },
+  {
+   "case": "Object enumeration: attacker guesses sequential object keys and requests signed URLs for them.",
+   "handling": "Random 128-bit storage keys, entitlement check before signing, rate limits and anomaly alerts on access-url denials."
+  },
+  {
+   "case": "Signing key leaked from a misconfigured service.",
+   "handling": "Emergency rotation: mark kid retired at the edge (all its URLs fail), issue new kid, clients transparently re-request URLs; prefer asymmetric keys so the edge copies cannot sign."
+  },
+  {
+   "case": "Presigned upload URL reused to overwrite an existing approved document.",
+   "handling": "Each upload gets a new random key; object becomes immutable after scan (versioning plus deny overwrite), and the URL expires in 10 minutes."
+  },
+  {
+   "case": "Mobile network switches from Wi-Fi to cellular mid-stream and IP changes; IP-bound tokens fail.",
+   "handling": "Avoid strict IP binding for mobile; bind to a /16 or ASN for sensitive classes, or bind to a session id in an HttpOnly cookie instead."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "CDN with edge compute (CloudFront Functions / Lambda@Edge, Akamai EdgeWorkers, Fastly Compute, Cloudflare Workers)",
+   "layer": "Edge delivery and verification",
+   "overview": "Globally distributed caches with small programmable functions that run per request.",
+   "why": "Verifies tokens close to users without origin round trips and normalises cache keys; native signed URL features (CloudFront key groups, Akamai token auth) exist.",
+   "alternatives": "Proxying through app servers (simple but costly and slow); native CDN token features only (less flexible claims)."
+  },
+  {
+   "name": "Object storage (S3 / GCS) with private buckets",
+   "layer": "Origin",
+   "overview": "Durable blob storage with IAM, bucket policies and presigned SigV4 URLs.",
+   "why": "11 nines durability, cheap, supports presigned PUT for direct uploads and origin access control so only the CDN can read.",
+   "alternatives": "Self-hosted MinIO or Ceph (control and cost at scale, more ops)."
+  },
+  {
+   "name": "KMS / HSM",
+   "layer": "Key management",
+   "overview": "Managed key storage with hardware-backed protection, envelope encryption and audit.",
+   "why": "Root of trust for signing keys, rotation and access logging.",
+   "alternatives": "HashiCorp Vault (portable, self-managed); keys in config (unacceptable)."
+  },
+  {
+   "name": "HMAC-SHA256",
+   "layer": "Signature algorithm",
+   "overview": "Keyed hash MAC; fast and simple, same secret signs and verifies.",
+   "why": "Microsecond cost, supported in every edge runtime.",
+   "alternatives": "Ed25519 or ECDSA P-256 (edge can verify but not sign - better blast radius; slightly more CPU)."
+  },
+  {
+   "name": "Redis",
+   "layer": "Entitlement cache",
+   "overview": "In-memory key-value store.",
+   "why": "Sub-ms entitlement checks for 120k signatures per second peak.",
+   "alternatives": "Local in-process caches with event invalidation (faster, staler)."
+  },
+  {
+   "name": "Edge KV store (CloudFront KeyValueStore, Workers KV, Fastly KV)",
+   "layer": "Edge config",
+   "overview": "Globally replicated small key-value store readable from edge functions.",
+   "why": "Distributes verification keys and revocation epochs within seconds.",
+   "alternatives": "Baking keys into function code (requires redeploy to rotate)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Events and audit",
+   "overview": "Durable log for object-created events, revocations and audit.",
+   "why": "Decouples scan pipeline and audit from request paths.",
+   "alternatives": "Cloud native event buses (SNS/SQS, Pub/Sub)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Message authentication codes (HMAC) and digital signatures",
+   "explain": "A message authentication code proves that a message was produced by someone holding a secret key and was not modified. HMAC builds a MAC from a hash function: HMAC(K, m) = H((K xor opad) || H((K xor ipad) || m)). The double hashing with inner and outer padded keys defends against length-extension attacks that break the naive H(K || m) construction with SHA-256. Verification recomputes the MAC and compares; the comparison must be constant time, otherwise an attacker can learn the correct MAC byte by byte by timing early-exit comparisons. HMAC is symmetric: whoever can verify can also sign. Digital signatures (RSA, ECDSA, Ed25519) are asymmetric: a private key signs, a public key verifies, so verifiers cannot forge. Signatures are larger (64 bytes for Ed25519 versus 16-32 bytes truncated HMAC) and verification costs tens of microseconds instead of about one. A MAC or signature provides integrity and authenticity, not confidentiality - the URL contents are still readable. Neither prevents replay by itself; that needs expiry, nonces or binding.",
+   "in_this_design": "The canonical string (method, host, path, exp, claims) is signed with HMAC-SHA256 truncated to 128 bits, or Ed25519 when the edge runs on a third-party CDN, so that a compromise of edge config cannot mint URLs. The edge verifies with constant-time comparison.",
+   "key_points": [
+    "HMAC proves integrity and authenticity with a shared secret.",
+    "Never use H(key || message) - length extension; use HMAC.",
+    "Constant-time comparison prevents timing attacks.",
+    "Asymmetric signatures let the edge verify without being able to sign.",
+    "Signatures do not hide content and do not stop replay alone."
+   ],
+   "qa": [
+    {
+     "q": "Why not just encrypt the object path instead of signing it?",
+     "a": "Encryption gives confidentiality, not integrity by default; unauthenticated encryption can be malleable. We need tamper-proofing, which a MAC gives directly. If we also want to hide claims we use authenticated encryption (AES-GCM), which includes a MAC."
+    },
+    {
+     "q": "Is truncating HMAC-SHA256 to 128 bits safe?",
+     "a": "Yes for this use: forging requires guessing 128 bits, and expiry limits the window; NIST permits truncation to at least 64 bits with care. It shortens URLs."
+    },
+    {
+     "q": "When would you choose Ed25519 over HMAC?",
+     "a": "When the verifier is less trusted than the signer - a third-party CDN or many edge functions - so leaked verification material cannot create new URLs. The cost is larger tokens and a bit more CPU, still under 100 microseconds."
+    },
+    {
+     "q": "Why does constant-time compare matter over the internet with network jitter?",
+     "a": "Statistical attacks average many requests to remove jitter; timing leaks have been exploited remotely. Constant-time comparison is free, so there is no reason to risk it."
+    }
+   ]
+  },
+  {
+   "name": "Canonicalization of signed requests",
+   "explain": "A signature is only as good as agreement on exactly what bytes were signed. Canonicalization defines a single representation of a request so signer and verifier compute the same input regardless of incidental differences: header case, query parameter order, percent-encoding variants, trailing slashes, default ports, Unicode normalisation. AWS Signature Version 4 is a well-known example: it builds a canonical request from method, URI-encoded path, sorted query string, selected lowercase headers and a payload hash, then signs a string-to-sign that includes the date and scope. Canonicalization bugs are a classic vulnerability class: if the verifier normalises differently from the component that later uses the request (for example the cache or origin decodes %2F into /), an attacker can craft a request that verifies for one path but serves another. The principles are: sign everything that changes meaning, reject ambiguous inputs rather than guessing, normalise in exactly one shared library, and make the verifier and the consumer interpret the URL identically.",
+   "in_this_design": "We sign method, lowercase host, the normalised path (or a prefix ending in '/'), exp, kid and sorted claims. The edge rejects requests with '..', double-encoded characters or unexpected query params mixed into the signed set. The cache key and origin request use the same normalised path the signature covered.",
+   "key_points": [
+    "Sign exactly what determines access: method, host, path, expiry, claims.",
+    "One shared canonicalization library for signer and verifier.",
+    "Reject ambiguous encodings rather than normalising them silently.",
+    "Prefix scopes must end at a path boundary.",
+    "Mismatch between verifier and consumer parsing is how bypasses happen."
+   ],
+   "qa": [
+    {
+     "q": "What happens if you do not sign the host?",
+     "a": "A URL signed for one CDN hostname could be replayed against another hostname or bucket sharing the key, possibly with different access rules. Signing the host binds the token to the intended service."
+    },
+    {
+     "q": "Why must a prefix scope end with a slash?",
+     "a": "A token for /v/123 without a trailing slash would also authorize /v/1234/..., another user's video. Requiring /v/123/ makes the boundary unambiguous."
+    },
+    {
+     "q": "A user adds an extra query parameter like &download=1. Should verification fail?",
+     "a": "Unsigned params should be either ignored by everything downstream or rejected. If the origin or an image service acts on them, they must be signed; otherwise attackers can alter behaviour such as resize parameters to cause expensive work."
+    }
+   ]
+  },
+  {
+   "name": "Bearer capability tokens, expiry and revocation",
+   "explain": "A signed URL is a bearer capability: whoever holds it can use it, with no identity check at use time. Capability-based security grants rights by possession of an unforgeable token, which is what makes it scale - the verifier needs no database lookup. The cost is that capabilities are hard to revoke: the verifier does not consult anyone. The main tools are short expiry (exposure is bounded by TTL), narrow scope (one object, one method), binding (tie the token to something the legitimate holder also presents, such as a session cookie hash or IP prefix, making a leaked URL useless alone), and revocation lists or epochs that the verifier consults cheaply. An epoch scheme stores a small counter per user or object; tokens carry the epoch at issuance and are rejected if lower than the current one, so one write revokes all outstanding tokens for that subject. The same trade-off appears in JWT access tokens and OAuth: short-lived bearer tokens plus refresh against a stateful authority is the standard compromise between scalability and control.",
+   "in_this_design": "TTLs by class: KYC and invoices 5 minutes, chat attachments 1 hour, video prefix tokens 2 hours with 10-minute refresh, embargoed images not issued before launch time. Sensitive classes carry a user hash claim and a revocation epoch; bumping a user's epoch in the edge KV revokes everything within 60 seconds.",
+   "key_points": [
+    "A signed URL is a bearer token - possession equals access.",
+    "Short TTL is the primary revocation mechanism.",
+    "Epochs give O(1) mass revocation per user or object.",
+    "Binding to session or network limits leaked-link reuse.",
+    "Refresh against a stateful authority re-checks entitlement."
+   ],
+   "qa": [
+    {
+     "q": "Why not make TTL 7 days so URLs survive in app caches?",
+     "a": "A leaked 7-day URL is effectively public for a week, and you cannot revoke it without lookups. Keep TTL short and have clients re-request URLs; use exp bucketing to keep client caches effective."
+    },
+    {
+     "q": "How would you revoke one specific leaked URL?",
+     "a": "Bump the object's epoch (all URLs for that object fail), or if the object should remain shared, move it to a new random storage key. Per-URL deny lists work but grow unbounded; TTL bounds their size."
+    },
+    {
+     "q": "Does user binding break sharing an invoice with an accountant?",
+     "a": "Yes by design for KYC; for invoices offer an explicit share action that issues a separate unbound, short-TTL or one-time URL with audit logging."
+    }
+   ]
+  },
+  {
+   "name": "CDN caching and cache key design",
+   "explain": "A CDN caches responses at edge locations keyed by a cache key, by default the full URL including the query string. Hit ratio drives both latency and origin cost: at 3 PB a day of video, a 1% drop in hit ratio means 34 TB more origin egress. Cache keys should include everything that changes the response and nothing else. Unique per-request tokens in the URL, if included in the key, make every request a miss - the classic mistake with signed URLs. Tiered caching with an origin shield collapses misses from hundreds of edges into one request to origin, and request coalescing ensures that a burst of misses for the same object results in a single origin fetch. Cache-Control headers separate browser behaviour (private, no-store) from shared cache behaviour (s-maxage). For access-controlled content the rule is: authorize before the cache lookup, then serve from a shared cache entry, because the bytes are the same for every authorized user.",
+   "in_this_design": "The edge function verifies the token first, then strips exp, kid, sig, ep and uid from the cache key, so all authorized users share one cached object. Video segments are cached for days at the edge; documents get short edge TTLs and Cache-Control private, no-store toward the browser. An origin shield in one region per continent collapses misses.",
+   "key_points": [
+    "Authorize first, then look up a shared cache entry.",
+    "Exclude token params from the cache key or hit ratio collapses.",
+    "Origin shield and request coalescing protect the origin.",
+    "Use s-maxage for CDN, private/no-store for browsers on sensitive content.",
+    "Hit ratio is a cost metric at petabyte scale."
+   ],
+   "qa": [
+    {
+     "q": "Isn't sharing one cache entry across users a privacy leak?",
+     "a": "No - the edge only serves it after verifying that request's token for that exact object. Leaks happen when verification is skipped for cache hits or when the cache key ignores something that changes the response, like per-user watermarks."
+    },
+    {
+     "q": "What happens to the origin when a viral sale video launches?",
+     "a": "Thousands of edges miss at once; the origin shield and request coalescing turn that into one origin fetch per segment, and pre-warming the cache before launch removes even that."
+    },
+    {
+     "q": "When should the token be in the path instead of the query string?",
+     "a": "For HLS/DASH, where manifests reference segments by relative paths: a token in a path segment is inherited automatically, while query strings are not carried to relative URLs."
+    }
+   ]
+  },
+  {
+   "name": "Key rotation and key identifiers",
+   "explain": "Any long-lived secret eventually leaks or must be retired for hygiene and compliance. Rotation replaces keys without breaking valid in-flight credentials. The standard technique is a key identifier (kid) carried with each token, so verifiers can hold several keys and pick the right one. A safe rotation is a three-phase process: first distribute the new key to all verifiers (verify-capable), then switch signers to it, then keep the old key verify-only for at least the maximum token lifetime plus clock skew before retiring it. Doing it in the wrong order - signing with a key some verifiers do not yet have - causes widespread failures. Emergency rotation after a compromise skips the grace period and accepts that outstanding tokens fail, which is tolerable when tokens are short-lived and clients know to refresh. Key material should live in a KMS or HSM, with signers using it via API or via short-lived data keys, and verifiers receiving only what they need (public keys for asymmetric schemes). JWKS endpoints in OAuth are the same idea.",
+   "in_this_design": "Each token has kid. KeyRotator publishes a new key to the edge KV store, waits for propagation acknowledgement, then activates it for signing; the old kid is verify-only for max TTL (2 hours) plus 5 minutes, then retired. Rotation every 90 days, emergency rotation on demand.",
+   "key_points": [
+    "kid in every token lets verifiers hold multiple keys.",
+    "Order: publish to verifiers, then sign with new, then retire old after max TTL.",
+    "Emergency rotation trades outstanding tokens for safety.",
+    "Short TTLs make rotation and compromise recovery cheap.",
+    "Keys in KMS/HSM, never in code or config files."
+   ],
+   "qa": [
+    {
+     "q": "What breaks if you start signing with a new key before edges have it?",
+     "a": "Edges that have not received it reject every new URL as bad_kid - a global outage of private media. Always publish and confirm before activating."
+    },
+    {
+     "q": "How does short TTL help with key compromise?",
+     "a": "After emergency retirement, only URLs in flight fail; clients re-request and get new-key URLs. With 7-day TTLs you would either break a week of URLs or leave the compromised key valid."
+    },
+    {
+     "q": "Why prefer asymmetric keys at a third-party CDN?",
+     "a": "The CDN then holds only public keys; a leak of its configuration cannot be used to forge URLs, reducing blast radius."
+    }
+   ]
+  },
+  {
+   "name": "Clock synchronization and skew tolerance",
+   "explain": "Expiry-based security depends on clocks. Each machine's clock drifts (typical quartz drift is tens of parts per million, about a few seconds per day) and is corrected by NTP or a time service like chrony, Amazon Time Sync or Google's leap-smeared NTP, keeping servers within milliseconds. Client devices are much worse: phones can be minutes or hours off, users change time zones and clocks manually. Distributed systems therefore make time-based decisions only on servers, allow a small skew window, and never trust client-supplied time. Skew tolerance is asymmetric in risk: accepting tokens slightly after exp extends exposure by seconds, which is fine; accepting tokens far in the future would allow forged long-lived tokens if a key leaked, so verifiers should cap exp at now + max TTL + skew. Leap seconds and smearing differences between providers can create brief disagreements; using epoch seconds in UTC avoids time-zone and format ambiguity.",
+   "in_this_design": "The signer computes exp from server UTC epoch seconds; the edge allows 30 seconds of skew past exp and rejects exp more than max class TTL plus skew in the future. Apps never compute or check expiry themselves; they react to 403 expired by fetching a new URL.",
+   "key_points": [
+    "Only servers decide expiry; client clocks are untrustworthy.",
+    "Allow small skew after exp; cap how far in the future exp may be.",
+    "Use UTC epoch seconds.",
+    "NTP keeps servers within milliseconds; phones can be off by hours."
+   ],
+   "qa": [
+    {
+     "q": "A user reports links fail immediately on their phone. Could the phone clock be the cause?",
+     "a": "Not if the app does not check expiry locally and the server signs exp. If the app pre-validates using device time, a fast clock makes fresh URLs look expired - remove client-side checks."
+    },
+    {
+     "q": "Why cap the future exp at verification?",
+     "a": "If a signing key leaks, attackers could mint tokens valid for years. Capping exp to the maximum issued TTL limits forged token lifetime even before the key is rotated."
+    },
+    {
+     "q": "How much skew allowance is right?",
+     "a": "Enough to cover server drift and edge propagation - 30 to 60 seconds - which is small relative to a 5-minute TTL."
+    }
+   ]
+  },
+  {
+   "name": "Least privilege and direct-to-storage uploads (presigned PUT and POST policies)",
+   "explain": "Least privilege means every component and credential has only the access it needs, for only as long as needed. Instead of giving clients storage credentials or proxying uploads through app servers, the server issues a presigned upload: a request pre-authorised for one object key, one method, a content type and a size range, valid for minutes. The client then streams bytes directly to object storage, removing app servers from the data path (no bandwidth or memory bottleneck, resumable multipart uploads possible). Presigned POST policies can enforce conditions such as content-length-range and key prefix, which plain presigned PUT cannot always constrain. Because the client controls the bytes, uploaded content must be treated as untrusted until validated: check magic bytes, scan for malware, strip metadata such as GPS EXIF, and only then mark the object usable. The origin bucket itself should deny all public access and allow reads only from the CDN's origin identity, so the only path to bytes is through the signed edge.",
+   "in_this_design": "Uploads get a random 128-bit key under a class prefix, fixed content-type and size range, 10-minute expiry. Object-created events trigger scanning; only objects in state ready can have access URLs issued. Bucket policy blocks public access and allows GetObject only from the CDN origin access control principal.",
+   "key_points": [
+    "Presigned uploads remove app servers from the byte path.",
+    "Constrain key, type, size and expiry in the policy.",
+    "Uploaded bytes are untrusted until scanned and validated.",
+    "Private bucket readable only by the CDN identity.",
+    "Random keys prevent enumeration and overwrite."
+   ],
+   "qa": [
+    {
+     "q": "Why not let the client choose the object key?",
+     "a": "It could overwrite another user's object or create predictable keys; the server generates a random key and binds it into the signature."
+    },
+    {
+     "q": "How do you handle a 2 GB video upload on a flaky mobile network?",
+     "a": "Use multipart upload with each part presigned, so failed parts retry independently and the upload resumes; complete-multipart is called by the server after verifying parts."
+    },
+    {
+     "q": "What stops someone from serving malware through your CDN?",
+     "a": "Objects are not downloadable until scanned and type-validated, and responses for user content use a separate domain with Content-Disposition and X-Content-Type-Options nosniff."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "HMAC vs asymmetric signatures",
+   "options": "HMAC-SHA256 shared secret; Ed25519 or ECDSA public key verification",
+   "choice": "HMAC on our own edge; Ed25519 on third-party CDNs",
+   "why": "HMAC is fastest and simplest, but anyone who can verify can sign. Where verification material is spread across many third-party nodes, asymmetric keys limit blast radius at a small CPU and token-size cost."
+  },
+  {
+   "decision": "Signed URL vs signed cookie",
+   "options": "Per-object query token; cookie scoped to a path",
+   "choice": "URLs for single objects and sharing; cookies or path tokens for streaming",
+   "why": "URLs work everywhere including email and image tags; cookies or path tokens avoid signing hundreds of segment URLs but are scoped by domain and harder to share."
+  },
+  {
+   "decision": "TTL length",
+   "options": "Minutes; hours; days",
+   "choice": "Per media class: 5 minutes to 2 hours",
+   "why": "Shorter TTL bounds leak damage and simplifies revocation; longer TTL improves client caching and reduces signing load. Exp bucketing recovers most caching benefit."
+  },
+  {
+   "decision": "Pure stateless verification vs revocation lookup",
+   "options": "Signature and exp only; plus edge KV epoch check",
+   "choice": "Epoch check for sensitive classes only",
+   "why": "The lookup is a local edge KV read (sub-ms) and enables 60-second revocation for account takeover; public-ish classes skip it for simplicity."
+  },
+  {
+   "decision": "Proxy through app servers vs CDN with signed URLs",
+   "options": "App streams bytes after auth; CDN verifies tokens",
+   "choice": "CDN with signed URLs",
+   "why": "Proxying 3 PB/day through app servers is expensive and slow; signed URLs push the authorization result to the edge."
+  },
+  {
+   "decision": "Bind to IP vs bind to session",
+   "options": "Exact IP; IP prefix or ASN; session cookie hash",
+   "choice": "Session hash for sensitive documents, none for video",
+   "why": "Mobile IPs change frequently and carrier NAT shares IPs; session binding is more reliable and still defeats a forwarded link."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Media Access Service down",
+   "behavior": "Existing URLs keep working until expiry because edges verify locally; new URL issuance fails, clients retry with jittered exponential backoff; multi-region deployment limits impact."
+  },
+  {
+   "failure": "Edge KV propagation delayed",
+   "behavior": "New keys are not activated until propagation is acknowledged, so no bad_kid outage; revocations may take longer than 60s - alert on propagation lag."
+  },
+  {
+   "failure": "Origin bucket region outage",
+   "behavior": "Cached content keeps serving; misses fail over to a cross-region replica bucket configured as secondary origin."
+  },
+  {
+   "failure": "Mass 403 spike after a deploy",
+   "behavior": "403 reasons are tagged (bad_sig, expired, bad_kid, revoked); a bad_sig spike signals canonicalization mismatch - roll back the signer or edge function, which are versioned together."
+  },
+  {
+   "failure": "Entitlement cache stale after subscription cancellation",
+   "behavior": "Bounded by 60s cache TTL plus token refresh interval; invalidation events and epoch bump for immediate cut-off."
+  },
+  {
+   "failure": "Signing key compromise",
+   "behavior": "Emergency rotation retires kid at all edges in under a minute; outstanding URLs fail and clients transparently re-request."
+  }
+ ],
+ "metrics": [
+  "Edge 403 rate split by reason: expired, bad_sig, bad_kid, revoked, skew.",
+  "Cache hit ratio and origin egress for private media classes.",
+  "Signing API QPS, p50/p99 latency, entitlement cache hit ratio.",
+  "Time from revocation request to edge enforcement (synthetic probe).",
+  "Key age per kid and rotation success; propagation lag of edge KV.",
+  "Direct origin access attempts (should be zero) and public bucket policy drift.",
+  "Upload success rate, scan latency and rejection reasons.",
+  "Anomalies: one user requesting thousands of access URLs, many denials (enumeration)."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just put an auth check at the CDN that calls your auth service?",
+   "a": "That turns every one of tens of thousands of requests per second into an auth service call with cross-region latency and makes media availability depend on the auth service. Signed tokens move the decision to issuance time and let the edge verify with local data."
+  },
+  {
+   "q": "How do you handle a user sharing a video link with a friend?",
+   "a": "Prefix tokens are bound to a session cookie and are short-lived, so the friend cannot use it. If sharing is a product feature, issue a dedicated share capability with its own TTL, limits and audit."
+  },
+  {
+   "q": "Could you use JWTs instead of a custom token format?",
+   "a": "Yes - a compact JWT with exp, scope and kid works and has library support; but JWTs are verbose for URLs and have historical pitfalls (alg none, algorithm confusion). A minimal custom format with fixed algorithm per kid is shorter and safer for this narrow use."
+  },
+  {
+   "q": "How do you prevent hotlinking of public-ish product images by other sites?",
+   "a": "Signed URLs with hour-level TTLs plus bucketed exp, or referer checks as a weak extra layer; for truly public catalogue images, hotlinking is usually accepted and rate-limited rather than signed."
+  },
+  {
+   "q": "What about embargoed sale images that must be invisible until launch?",
+   "a": "Do not issue URLs before launch time (entitlement check uses a not_before), store under random keys, and pre-warm the CDN with an internal token so launch traffic hits cache."
+  },
+  {
+   "q": "How would you test this?",
+   "a": "Property tests that signer and verifier agree for fuzzed paths and encodings; negative tests for tampered paths, expired and future-dated tokens, wrong kid; canary edge functions comparing old and new verifier verdicts on mirrored traffic."
+  },
+  {
+   "q": "What is the blast radius of an edge function bug?",
+   "a": "Global - so deploy edge verifiers progressively by region with automatic rollback on 403 rate change, and keep the previous version hot."
+  }
+ ],
+ "key_points": [
+  "Signed URLs move authorization to issuance time; the edge verifies locally with no callback.",
+  "Sign a canonical string: method, host, path or prefix, expiry, claims, with kid for rotation.",
+  "HMAC is fast but symmetric; Ed25519 lets untrusted edges verify without signing.",
+  "Exclude token params from the cache key and authorize before cache lookup.",
+  "For streaming, use prefix-scoped cookies or path tokens, not per-segment signing.",
+  "A signed URL is a bearer token: short TTL, narrow scope, optional binding, epochs for revocation.",
+  "Only servers judge expiry; allow small skew and cap future exp.",
+  "Private bucket readable only by the CDN; uploads via presigned PUT with type and size locked, scanned before use.",
+  "Rotate keys in the order publish, activate, retire after max TTL.",
+  "Measure 403 reasons, hit ratio and revocation lag."
+ ],
+ "quiz": [
+  {
+   "q": "Why do we sign URLs instead of having the CDN call the auth service on each request?",
+   "options": [
+    "Signing is more secure than any auth check",
+    "CDNs cannot make network calls",
+    "Signed URLs never expire",
+    "The edge can verify locally, avoiding a per-request network call and dependency on the auth service"
+   ],
+   "answer": 3,
+   "why": "Local verification removes latency and an availability dependency at tens of thousands of requests per second. CDNs can make calls; it is just slow and fragile at this scale."
+  },
+  {
+   "q": "A naive scheme uses sig = SHA256(secret + path + exp). What is the main weakness?",
+   "options": [
+    "Length-extension attacks can forge signatures for extended messages",
+    "SHA-256 is broken",
+    "It is too slow",
+    "It leaks the secret in the URL"
+   ],
+   "answer": 0,
+   "why": "Merkle-Damgard hashes allow appending data to a hashed message without the secret; HMAC's nested construction prevents this. SHA-256 itself is not broken."
+  },
+  {
+   "q": "After launching signed URLs, origin egress triples and cache hit ratio drops. Most likely cause?",
+   "options": [
+    "TTL too short",
+    "HMAC too slow",
+    "Token parameters included in the cache key",
+    "Clock skew"
+   ],
+   "answer": 2,
+   "why": "Unique exp and sig values make every URL a distinct cache key. Short TTL slightly affects client caches but not the shared edge cache when tokens are excluded."
+  },
+  {
+   "q": "An HLS video has 150 segments per play. The best way to authorize segments is:",
+   "options": [
+    "Sign each segment URL individually from the app",
+    "A prefix-scoped signed cookie or path token covering /v/{id}/",
+    "Make segments public and sign only the manifest",
+    "Proxy segments through app servers"
+   ],
+   "answer": 1,
+   "why": "One prefix token covers all segments and works with relative URLs. Signing only the manifest is tempting but leaves segments publicly fetchable."
+  },
+  {
+   "q": "Correct order for routine key rotation:",
+   "options": [
+    "Distribute new key to edges, start signing with it, retire old after max TTL plus skew",
+    "Sign with new key, then distribute to edges, then retire old",
+    "Retire old key, then create new key",
+    "Rotate all at once in one deploy"
+   ],
+   "answer": 0,
+   "why": "Verifiers must know the key before any token uses it, and old tokens need the old key until they expire. Signing first causes bad_kid failures at edges that lack the key."
+  },
+  {
+   "q": "Who should check URL expiry?",
+   "options": [
+    "The mobile app before using the URL",
+    "The origin bucket only",
+    "The CDN edge using server time, with small skew tolerance",
+    "Both app and edge with the app's clock as truth"
+   ],
+   "answer": 2,
+   "why": "Device clocks are unreliable; only server time is trustworthy. App-side checks cause spurious failures when phone clocks are wrong."
+  },
+  {
+   "q": "A signed prefix '/v/123' (no trailing slash) is issued. What risk does this create?",
+   "options": [
+    "None",
+    "It breaks HTTPS",
+    "It disables caching",
+    "It may authorize '/v/1234/...' belonging to another video"
+   ],
+   "answer": 3,
+   "why": "Prefix matching without a path boundary over-grants. Always end prefixes with '/'."
+  },
+  {
+   "q": "Roughly how many HMAC-SHA256 signatures per second can one CPU core produce for short strings?",
+   "options": [
+    "About 100",
+    "About 1 million",
+    "About 10,000",
+    "About 1 billion"
+   ],
+   "answer": 1,
+   "why": "HMAC of a short message costs about a microsecond, so around a million per second per core; 10,000 underestimates by 100x, which is why signing cost is negligible and entitlement checks dominate."
+  },
+  {
+   "q": "Which revocation mechanism gives O(1) revocation of all outstanding URLs for a compromised user?",
+   "options": [
+    "Deny-list every issued URL",
+    "Rotate the global signing key",
+    "Shorten all TTLs to 1 second",
+    "Per-user epoch carried in tokens and checked at the edge"
+   ],
+   "answer": 3,
+   "why": "Bumping one epoch invalidates every token with a lower epoch. Global key rotation also works but breaks every user's URLs."
+  },
+  {
+   "q": "Why prefer Ed25519 signatures when using a third-party CDN's edge functions?",
+   "options": [
+    "The edge holds only public keys, so a config leak cannot mint new URLs",
+    "They are faster than HMAC",
+    "They produce shorter tokens",
+    "HMAC is not supported at the edge"
+   ],
+   "answer": 0,
+   "why": "Asymmetric verification limits blast radius. HMAC is actually faster and shorter, so those are the tempting wrong answers."
+  },
+  {
+   "q": "A user's IP-bound video token keeps failing on mobile. Why?",
+   "options": [
+    "The signature algorithm is wrong",
+    "TTL is too long",
+    "Mobile clients change IPs when switching networks and sit behind carrier NAT",
+    "HLS does not support tokens"
+   ],
+   "answer": 2,
+   "why": "Strict IP binding is brittle on mobile; bind to session or a wide prefix instead."
+  },
+  {
+   "q": "To prevent enumeration of other users' documents, the most important measure is:",
+   "options": [
+    "Using HTTPS",
+    "Random unguessable storage keys plus an entitlement check before signing",
+    "A long TTL",
+    "Hiding the CDN hostname"
+   ],
+   "answer": 1,
+   "why": "Signing only after authorization and using random keys means guessing gives nothing. HTTPS protects transport, not authorization."
+  },
+  {
+   "q": "Presigned upload URLs should constrain:",
+   "options": [
+    "Object key, content type, size range and expiry",
+    "Only the expiry",
+    "Only the bucket",
+    "Nothing - clients are trusted"
+   ],
+   "answer": 0,
+   "why": "Without key, type and size constraints clients can overwrite, upload huge files or wrong types. Expiry alone limits time, not abuse."
+  },
+  {
+   "q": "bad_sig 403s spike right after deploying a new edge function, while expired 403s are flat. Most likely:",
+   "options": [
+    "Clock drift",
+    "Key compromise",
+    "Canonicalization mismatch between signer and verifier",
+    "Origin outage"
+   ],
+   "answer": 2,
+   "why": "Signature failures with normal expiry rates point to signer and verifier building different canonical strings. Clock drift would show in expired counts."
+  },
+  {
+   "q": "For a KYC document, the best browser caching header combination is:",
+   "options": [
+    "Cache-Control public, max-age=31536000",
+    "No headers",
+    "Cache-Control immutable",
+    "Cache-Control private, no-store toward browsers with a short edge TTL"
+   ],
+   "answer": 3,
+   "why": "Sensitive documents should not persist in shared browser caches or devices. Public long caching is right for catalogue images, not KYC."
+  },
+  {
+   "q": "Why round exp up to a 5-minute bucket?",
+   "options": [
+    "To make tokens shorter",
+    "So repeated requests for the same object yield identical URLs, improving client-side caching",
+    "To reduce clock skew",
+    "To make revocation faster"
+   ],
+   "answer": 1,
+   "why": "Identical URLs within a window let apps and browsers reuse cached images. It slightly extends lifetime, which is bounded by the bucket size."
+  },
+  {
+   "q": "A signing key leaked. Which response best limits damage?",
+   "options": [
+    "Wait for natural rotation in 90 days",
+    "Increase TTLs",
+    "Disable the CDN",
+    "Emergency-retire the kid at all edges and issue a new key; clients re-request URLs"
+   ],
+   "answer": 3,
+   "why": "Immediate retirement invalidates forged and real tokens alike; short TTLs make the disruption small. Waiting leaves attackers able to mint URLs."
+  },
+  {
+   "q": "Why should the verifier reject tokens whose exp is far in the future?",
+   "options": [
+    "It limits the lifetime of tokens forged with a leaked key",
+    "It saves CPU",
+    "Browsers cannot handle long URLs",
+    "It improves cache hit ratio"
+   ],
+   "answer": 0,
+   "why": "Capping exp at now + max TTL + skew means forged long-lived tokens are rejected even before rotation."
+  },
+  {
+   "q": "Which component should hold read access to the private bucket?",
+   "options": [
+    "Every client via IAM users",
+    "Anyone with the bucket URL",
+    "Only the CDN origin identity (and internal processors)",
+    "The mobile app"
+   ],
+   "answer": 2,
+   "why": "Origin access control means bytes are reachable only via the signed edge. Giving clients credentials violates least privilege."
+  },
+  {
+   "q": "Approximately how much daily egress for 20M plays of 15 minutes at 1.5 Mbps?",
+   "options": [
+    "About 34 TB",
+    "About 3.4 PB",
+    "About 340 TB",
+    "About 34 PB"
+   ],
+   "answer": 1,
+   "why": "15 min x 60 s x 1.5 Mbps / 8 is about 169 MB per play; times 20M is about 3.4 PB. 340 TB is the tempting off-by-10 answer."
+  }
+ ],
+ "references": [
+  {
+   "title": "Amazon S3 - Download and upload objects with presigned URLs",
+   "url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url"
+  },
+  {
+   "title": "AWS Prescriptive Guidance - Overview of presigned URLs",
+   "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/presigned-url-best-practices/overview.html"
+  },
+  {
+   "title": "Amazon CloudFront - Use signed URLs",
+   "url": "https://docs.aws.amazon.com/pt_pt/AmazonCloudFront/latest/DeveloperGuide/private-content-signed-urls.html"
+  },
+  {
+   "title": "AWS Developer Tools Blog - CloudFront signed URLs and cookies in AWS SDK for Java 2.x",
+   "url": "https://aws.amazon.com/blogs/developer/amazon-cloudfront-signed-urls-and-cookies-are-now-supported-in-aws-sdk-for-java-2-x/"
+  }
+ ]
+}

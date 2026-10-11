@@ -1,0 +1,2590 @@
+{
+ "slug": "uber",
+ "title": "Design Uber (ride-hailing)",
+ "prompt": "Design a ride-hailing matching system (Uber).",
+ "group": "classic",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 240,
+ "summary": "Uber is a real-time two-sided marketplace: millions of drivers stream GPS every 4 seconds, riders expect a car offer in under 2 seconds, and every match must give one driver to exactly one rider while money moves with zero loss. The core tension is that dispatch wants availability and low latency (an AP, in-memory, geo-sharded system where a slightly stale location is fine) while trips and payments want correctness (a CP, durable, idempotent system where a duplicate charge or double-assigned driver is a headline). The design is really about drawing that boundary cleanly and keeping each side failing safely.",
+ "framework": {
+  "clarify": [
+   "Scope: I will cover rider request -> match -> pickup -> trip -> payment -> rating end to end, with deepest focus on location ingestion, geo indexing and dispatch. UberEats, pooled rides and scheduled rides I treat as extensions unless you want them in.",
+   "Scale assumption: about 25M trips per day globally, 5M drivers online at peak, each pinging GPS every 4 s, which is roughly 1.25M location writes per second at peak.",
+   "Latency targets: driver offer within 2 s p95 of a request, nearby-cars map on the rider app refreshed every 3-5 s, live driver position on the rider's map within about 2 s of reality.",
+   "Consistency: a driver must never be assigned to two trips at once, and a rider must never be charged twice. Location data may be a few seconds stale; trip state and money may not.",
+   "Geography: is the market multi-region and multi-country? I will assume yes, with data residency rules in some countries (India, EU), so city -> region pinning matters.",
+   "Matching objective: nearest-driver by ETA, or global efficiency? I will start with greedy nearest-ETA and evolve to batched bipartite matching in dense cities.",
+   "Pricing: is surge in scope? I will assume yes, computed per hexagon per minute from streaming supply and demand, and locked into an upfront fare quote the rider accepts.",
+   "Payments: cards, wallets, UPI and cash; I will assume a PSP (Stripe/Adyen/Razorpay class) does card networking and we own the ledger, idempotency and auth/capture orchestration.",
+   "Mobile reality: drivers move through tunnels and 2G zones, so the client must be designed to survive network drops mid-trip and the server must tolerate out-of-order, late pings."
+  ],
+  "design": [
+   "Baseline first: one region, a stateless API, Postgres with PostGIS, drivers POST location, dispatch runs a radius query and offers the closest driver. Works to a few thousand drivers and then the write rate and the radius query fall over.",
+   "Edge: rider and driver apps hold a persistent connection (WebSocket/MQTT-style over TLS) to a gateway fleet; requests carry an idempotency key; gateways rate-limit per user and device.",
+   "Location ingestion: driver pings go to a Location Service that writes the latest position into an in-memory geo index sharded by city and H3 cell (Ringpop-style consistent hashing), and appends the raw ping to Kafka for trails, ETA training and fraud.",
+   "Geo index: H3 resolution 8-9 cells as keys, each cell holding a set of available driver ids; nearby search = kRing around the rider's cell, filtered by vehicle type and state.",
+   "Dispatch (DISCO-style): Demand Service accepts a ride request with an upfront quote; Matcher takes candidates from the geo index, ranks them by road-network ETA, and either offers greedily or collects a 1-2 s batch and solves a bipartite assignment per city cell.",
+   "Driver lock: before an offer goes out the matcher atomically flips the driver from AVAILABLE to OFFERED with a lease (compare-and-set with a fencing token) so no second matcher can grab the same driver; the lease expires in about 15 s if the driver does not answer.",
+   "Trip Service owns the trip state machine (REQUESTED -> MATCHED -> ARRIVING -> ON_TRIP -> COMPLETED / CANCELLED) in a strongly consistent store (Docstore-like, Raft per partition), with every transition emitted to Kafka via an outbox.",
+   "Payments as a saga: authorize the estimated fare at request time, capture the final fare at completion, refund or void on cancel, every PSP call keyed by a deterministic idempotency key, double-entry ledger as the source of truth, reconciliation daily.",
+   "Pricing: a Flink job reads request and supply events from Kafka, aggregates per H3 cell per minute, smooths, and writes multipliers to a key-value store that the quote API reads in under 5 ms.",
+   "ETA: routing engine on a contraction-hierarchy road graph with live traffic weights, plus an ML residual model (DeepETA-style) that corrects the routing ETA from historical outcomes."
+  ],
+  "defend": [
+   "Bottleneck one is the location write path (1.25M/s). It is absorbed by keeping only the latest position per driver in memory, sharding by geography, batching on the gateway, and sending the durable trail asynchronously through Kafka instead of a database write.",
+   "Scaling reads: nearby-car queries (hundreds of thousands per second) hit the same in-memory shards; we serve them from read replicas of each cell shard and coarsen them (cars shown on the map can be 5 s stale and snapped to a cell), so they never contend with dispatch.",
+   "Scaling writes for trips: trip rows are partitioned by trip_id hash inside each region's Docstore; one trip only ever has one leader, so state transitions serialize cheaply.",
+   "Hot spots: stadium exits and airports overload one cell; we split hot cells to a finer H3 resolution, give airports a dedicated FIFO queue service, and batch match there.",
+   "Failure of matching: the matcher is stateless over the geo index and driver leases; if a shard owner dies, SWIM detects it in a few seconds, Ringpop reassigns its cells, and drivers' next pings (within 4 s) rebuild the index. Requests in flight retry with jitter.",
+   "Region loss: cities are pinned to a home region with an active standby; state that must survive (trip, payment) is replicated; dispatch rebuilds from driver pings and from an encrypted trip digest stored on the driver phone, as Uber described doing.",
+   "Payments safety: CP store, idempotency keys on every hop, auth before match, capture after trip, compensating refund/void steps, and a ledger reconciliation job that alerts on any non-zero imbalance. We would rather delay a capture than double it.",
+   "Degradation ladder: under stress, drop nearby-cars refresh rate first, then fall back from batched to greedy matching, then use cached surge, then serve ETAs from haversine x city factor; never degrade the driver lock or the ledger.",
+   "What I measure: request-to-offer p95, offer acceptance rate, match rate, unfulfilled requests per cell, location ingest lag, ETA error (MAPE), double-assignment count (must be 0), payment capture success, ledger imbalance (must be 0), and websocket connected ratio."
+  ],
+  "script": "Let me clarify scope first. I will design the full ride flow, request to payment, but go deepest on location ingestion, geospatial indexing and dispatch, because that is where the scale is. I will assume 25 million trips a day and 5 million drivers online at peak, each sending GPS every 4 seconds, so about 1.25 million location writes per second. The hard requirements are an offer within 2 seconds, never assigning one driver to two riders, and never charging twice. Locations can be a few seconds stale; trips and money cannot. So my design splits into two worlds. The real-time world is in-memory and AP: drivers stream pings over a persistent connection, a location service keeps only the latest position in a geo index keyed by H3 hexagons and sharded by city with consistent hashing and gossip membership, and the matcher pulls candidates, ranks them by road ETA and locks one driver with a lease before sending the offer. The durable world is CP: the trip state machine lives in a Raft-replicated store, and payments are a saga of authorize then capture, with idempotency keys and a double-entry ledger. Kafka connects the two and feeds surge pricing in Flink. Then I will defend it: the write path, hot cells, the double-assignment race, region loss and what I would measure."
+ },
+ "brd": {
+  "problem": "Riders in a city need a car within minutes at a predictable price, and drivers need a steady stream of nearby, worthwhile trips. Without a central marketplace, riders wait on street corners and drivers drive empty. The business must match supply and demand in real time, price to balance them, move money reliably between three parties (rider, driver, platform), and do it safely in hundreds of cities with different laws, networks and payment habits.",
+  "goals": [
+   "Get a rider matched to a driver within seconds and picked up within the quoted ETA.",
+   "Maximise completed trips per hour per city (marketplace efficiency), not just individual nearest matches.",
+   "Keep driver utilisation high (less dead mileage between trips) so earnings per hour stay attractive and supply stays on the platform.",
+   "Price transparently with an upfront fare and use dynamic pricing to restore balance when demand outruns supply.",
+   "Move money correctly: every completed trip charged exactly once, every driver paid exactly what the ledger says, reconciled daily.",
+   "Stay available through datacenter and region loss, with no trip lost mid-ride.",
+   "Keep riders and drivers safe: verified identities, live trip sharing, SOS, fraud controls.",
+   "Comply per country: data residency, tax invoices, regulator reporting, licensed-driver checks."
+  ],
+  "non_goals": [
+   "Building our own mapping company from scratch on day one; we license base maps and layer our own traffic and pickup-point data.",
+   "Acting as a card network or bank; a PSP handles card rails and settlement.",
+   "Perfect global optimality of every match; near-optimal within a 1-2 s window is the target.",
+   "Autonomous vehicle fleet management and freight logistics in this version.",
+   "Food delivery multi-stop batching (UberEats) beyond reusing the same platform pieces."
+  ],
+  "stakeholders": [
+   {
+    "who": "Riders",
+    "needs": "Fast pickup, accurate ETA, fair and predictable price, safety."
+   },
+   {
+    "who": "Drivers",
+    "needs": "Steady nearby trips, clear earnings, fast payouts, fair ratings, battery and data friendly app."
+   },
+   {
+    "who": "City operations and marketplace teams",
+    "needs": "Levers for surge, incentives, airport queues and events; real-time city dashboards."
+   },
+   {
+    "who": "Finance and compliance",
+    "needs": "Accurate ledger, tax invoices, SOX controls, audit trails, regulator data feeds."
+   },
+   {
+    "who": "Trust and safety",
+    "needs": "Fraud signals, GPS spoof detection, incident replay of trip trails."
+   },
+   {
+    "who": "Platform and SRE",
+    "needs": "Failover playbooks, observability, capacity headroom for New Year's Eve peaks."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Request-to-offer latency",
+    "target": "p95 under 2 s, p99 under 4 s"
+   },
+   {
+    "metric": "Match rate (requests that get a driver)",
+    "target": ">= 95% in core cities outside extreme surge"
+   },
+   {
+    "metric": "Pickup ETA accuracy",
+    "target": "median absolute error under 1 min; 90% within 2 min"
+   },
+   {
+    "metric": "Driver utilisation (time on trip / time online)",
+    "target": "> 60% in dense cities"
+   },
+   {
+    "metric": "Double-assigned drivers",
+    "target": "0 (alert on any)"
+   },
+   {
+    "metric": "Duplicate charges",
+    "target": "0 per million trips; ledger imbalance 0"
+   },
+   {
+    "metric": "Availability of request flow",
+    "target": "99.99% per region per month"
+   },
+   {
+    "metric": "Cancellation rate after match",
+    "target": "< 10% (proxy for bad ETA / matching)"
+   }
+  ],
+  "constraints": [
+   "Mobile clients on flaky 2G/3G/4G networks with GPS noise of 5-50 m, worse in urban canyons.",
+   "Driver phones are battery and data constrained, so ping rate is about 4 s, not 1 s.",
+   "Data residency: some countries require rider PII and trip data to stay in-country.",
+   "Payment rails differ per market: cards, wallets, UPI, cash; PSP latency 300 ms to 3 s.",
+   "Regulatory caps on surge in some cities and on driver working hours in others.",
+   "Peaks are spiky: New Year's Eve, concerts and rain can be 5-10x normal in minutes."
+  ],
+  "risks": [
+   {
+    "risk": "Double-assigning a driver during a network partition between matchers",
+    "mitigation": "Single owner per driver via consistent hashing plus a lease with fencing token in the driver-state store; offer only after CAS succeeds."
+   },
+   {
+    "risk": "Duplicate or lost charges after retries and PSP timeouts",
+    "mitigation": "Deterministic idempotency keys, auth/capture split, ledger as source of truth, daily reconciliation with the PSP settlement file."
+   },
+   {
+    "risk": "Region outage drops in-progress trips",
+    "mitigation": "Replicated trip store, client-held trip digest, warm standby region per city, regular failover drills."
+   },
+   {
+    "risk": "GPS spoofing and fake trips (driver-rider collusion for incentives)",
+    "mitigation": "Speed and teleport checks, device integrity, graph-based collusion detection, payout holds for anomalous earnings."
+   },
+   {
+    "risk": "Surge pricing perceived as gouging during emergencies",
+    "mitigation": "Caps and emergency overrides per city, smoothing, transparent upfront fare, policy team controls."
+   },
+   {
+    "risk": "Hot-cell overload at events breaks dispatch for the whole city shard",
+    "mitigation": "Cell splitting, bulkheaded queues per zone, airport/event FIFO queues, load shedding of non-critical reads first."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Rider (Priya, Bengaluru commuter)",
+    "needs": "Book in two taps at 9 am, see the car approach, pay by UPI automatically, get a receipt for expense claims."
+   },
+   {
+    "name": "Driver (Ravi, full-time driver)",
+    "needs": "Get back-to-back trips near home, see fare and pickup distance before accepting, weekly payout, fair ratings."
+   },
+   {
+    "name": "City ops manager",
+    "needs": "See supply/demand heatmaps, configure airport queues, cap surge during a flood, launch driver incentives."
+   },
+   {
+    "name": "Support / safety agent",
+    "needs": "Replay a trip's GPS trail, issue refunds, act on SOS within seconds."
+   }
+  ],
+  "user_stories": [
+   "As a rider, I want to see nearby cars and an ETA before I request so that I know whether to wait or take another option.",
+   "As a rider, I want an upfront fare before confirming so that I am not surprised by the bill.",
+   "As a rider, I want to be matched within a few seconds so that I am not left wondering.",
+   "As a rider, I want to watch my driver approach on a live map so that I can be at the curb on time.",
+   "As a rider, I want to share my live trip with family so that someone knows where I am.",
+   "As a rider, I want to be charged exactly once even if my app crashes or retries so that I trust the service.",
+   "As a rider, I want to cancel free of charge within a grace window so that a mistake does not cost me.",
+   "As a driver, I want to receive one clear offer at a time with pickup distance and fare so that I can decide in 15 seconds.",
+   "As a driver, I want navigation to the pickup and then the drop so that I do not need another app.",
+   "As a driver, I want my trip to continue even when my network drops in a tunnel so that I am paid for the full distance.",
+   "As a driver, I want to see surge heatmaps so that I can move to where demand is.",
+   "As a driver, I want to rate riders and see my rating breakdown so that bad behaviour has consequences.",
+   "As a city ops manager, I want to cap surge and create event pickup zones so that big events do not become a PR problem.",
+   "As a support agent, I want the full state history of a trip so that I can resolve a dispute with facts."
+  ],
+  "functional": [
+   "Driver goes online/offline; while online, the app streams location every 4 s (every 1-2 s while on trip for smoother tracking).",
+   "Rider app shows nearby available cars by product (Go, Sedan, XL, Auto) refreshed every 3-5 s.",
+   "Fare quote: given pickup and drop, return upfront fare, surge multiplier and pickup ETA; quote valid for 2-5 minutes with a signed quote id.",
+   "Ride request with idempotency key; creates a trip in REQUESTED and starts matching.",
+   "Dispatch: find candidates, rank by ETA and other features, offer to one driver at a time (or batch-assign), with 15 s accept timeout and re-dispatch on decline/timeout.",
+   "Driver accept/decline; on accept, trip moves to MATCHED and both apps get each other's details.",
+   "Live tracking: rider sees driver position and updated ETA during ARRIVING and ON_TRIP.",
+   "Trip lifecycle: arrived, start (with optional PIN), end, cancel by rider/driver with reason and fee rules.",
+   "Fare computation at end: upfront fare honoured unless route materially changed; tolls and waiting time added.",
+   "Payments: pre-authorisation at request, capture on completion, tips, refunds, driver payouts, cash trips recorded as driver-owed commission.",
+   "Ratings: both sides rate 1-5 after trip, with tags; rolling average over last 500 trips.",
+   "Notifications: push for offers (driver), driver arriving (rider), receipts, safety alerts.",
+   "Surge pricing per H3 cell per minute with city caps and manual overrides.",
+   "Safety: SOS button, trip sharing link, route-deviation detection, PIN verification.",
+   "Ops tooling: airport FIFO queues, geofences, incentive campaigns, city config."
+  ],
+  "non_functional": [
+   {
+    "name": "Request-to-offer latency",
+    "target": "p95 < 2 s, p99 < 4 s"
+   },
+   {
+    "name": "Location ingest freshness",
+    "target": "Position visible to dispatch within 1 s p99 of receipt"
+   },
+   {
+    "name": "Availability (request + dispatch)",
+    "target": "99.99% monthly per region"
+   },
+   {
+    "name": "Availability (payments capture)",
+    "target": "99.95%; captures may be delayed but never lost"
+   },
+   {
+    "name": "Consistency of driver assignment",
+    "target": "Linearizable per driver; zero double assignments"
+   },
+   {
+    "name": "Consistency of money",
+    "target": "Exactly-once effect per trip charge; ledger balances to zero per order"
+   },
+   {
+    "name": "Durability of trips and ledger",
+    "target": "RPO 0 within region (Raft quorum), cross-region RPO < 1 s"
+   },
+   {
+    "name": "Region failover",
+    "target": "RTO < 5 min for request flow; in-flight trips continue"
+   },
+   {
+    "name": "Fare quote latency",
+    "target": "p99 < 150 ms including surge lookup and ETA"
+   },
+   {
+    "name": "Client efficiency",
+    "target": "Driver app < 5% battery/hour from location streaming; < 30 MB data/day"
+   },
+   {
+    "name": "Privacy",
+    "target": "Precise location retained 30-90 days per country rules, then coarsened"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "25M trips/day globally (Uber reports about 30M+ trips/day including deliveries).",
+    "5M drivers online at global peak, 1.5M in the busiest region.",
+    "Ping interval 4 s while available, 2 s while on trip; ping payload about 100 bytes (driver id, lat, lng, heading, speed, accuracy, timestamp, state).",
+    "Peak-to-average ratio of 3x daily, 10x on New Year's Eve in hot cities.",
+    "Rider app sessions: 3M concurrent at peak, each polling nearby cars every 5 s.",
+    "Average trip 20 minutes and 8 km; 20 candidate drivers ranked per request.",
+    "Persistent connections: drivers + riders with app open, about 8M concurrent."
+   ],
+   "math": [
+    "Location writes: 5M drivers / 4 s = 1.25M pings/s at peak (Uber designed its geo index for about 1M writes/s).",
+    "Ingest bandwidth: 1.25M x 100 B = 125 MB/s = 1 Gbps inbound; about 10.8 TB/day raw if every ping were kept for a full day at peak rate, ~4-5 TB/day realistic average.",
+    "Geo index memory: 5M drivers x ~200 B (position, state, product, cell, ts) = 1 GB. The whole live world fits in RAM many times over; sharding is for write throughput and blast radius, not for size.",
+    "Ride requests: 25M/day / 86,400 = ~290/s average, ~900/s daily peak, ~3,000/s NYE global, maybe 300/s in one hot city.",
+    "ETA calls: 3,000 req/s x 20 candidates = 60k route queries/s at NYE peak for dispatch, plus quotes (~5 per trip) = 15k/s; CH queries at ~1 ms each = ~75 cores, provision 10x.",
+    "Nearby-cars reads: 3M sessions / 5 s = 600k geo reads/s, more than the dispatch reads; serve from replicas.",
+    "Gateways: 8M connections / 50k per node = 160 nodes; run ~400 across regions for N+1 zone headroom.",
+    "Trip storage: 25M x 5 KB = 125 GB/day, ~45 TB/year before replication (x3 = 135 TB).",
+    "Trip trails: 25M trips x 20 min x 30 pings/min x 40 B = 600 GB/day compressed to ~150 GB in the data lake.",
+    "Kafka: pings + trip events + app events = ~2M msgs/s peak; at 3x replication and 200 B average that is ~1.2 GB/s cluster write, ~100 TB/day before compaction.",
+    "Payments: 25M auths + 25M captures = 50M PSP calls/day = ~600/s average; ledger entries ~4 per trip = 100M rows/day."
+   ],
+   "summary": "The system is dominated by a 1.25M/s stream of tiny, overwrite-only location writes and ~600k/s nearby-car reads, both of which fit easily in memory (about 1 GB of live state) but need horizontal sharding for throughput. Transactional load is modest by comparison (thousands of trips/s, hundreds of PSP calls/s) but must be correct, so it lives in strongly consistent stores sized in the low hundreds of TB per year."
+  },
+  "out_of_scope": [
+   "UberEats restaurant and courier batching logic.",
+   "UberPool / shared rides route insertion (mentioned as an extension of batched matching).",
+   "Driver onboarding, background checks and document verification workflows.",
+   "Building base maps (we license OSM/commercial tiles and maintain our own overlays).",
+   "Corporate travel billing, vouchers and promotions engine details."
+  ]
+ },
+ "hld": {
+  "overview": "The system splits into a real-time plane and a transactional plane joined by Kafka. The real-time plane (gateways, location service, geo index, supply/demand, DISCO matcher, ETA) is in-memory, sharded by city and H3 cell with Ringpop-style consistent hashing and SWIM gossip membership, and is optimised for latency and availability: if a node dies, drivers' next pings rebuild its state within seconds. The transactional plane (trip service, payments, ledger, ratings) runs on a Raft-replicated, strongly consistent document store (Docstore-style, MySQL underneath) and treats every external effect as idempotent. Each city is homed in one region (its cell) with a warm standby region; global services (identity, payments ledger, maps data) replicate across regions. Kafka carries every location ping and every state change to surge pricing (Flink), fraud, ETA model training (Michelangelo-style) and the data lake.",
+  "diagram": "  Rider app                                   Driver app\n  (quote, request, track, pay)                (online, ping 4s, accept, nav)\n      |  HTTPS + WebSocket/MQTT                    |  WebSocket/MQTT (pings, offers)\n      v                                            v\n +------------------------------------------------------------------+\n |  Global edge: GeoDNS / anycast -> city's home region             |\n |  Edge gateways: TLS, auth, rate limit, conn registry, fan-out    |\n +------------------------------------------------------------------+\n      |               |                 |                 |\n      v               v                 v                 v\n +----------+  +-------------+  +----------------+  +---------------+\n | Quote /  |  | Demand svc  |  | Location svc   |  | Push / notify |\n | Pricing  |  | (requests)  |  | (ingest pings) |  | APNs/FCM/SMS  |\n +----------+  +-------------+  +----------------+  +---------------+\n   |    ^            |                 |  latest pos        ^\n   |    | surge KV   v                 v                    |\n   |    |      +-------------+   +------------------------------+\n   |    |      | DISCO       |<--| Geo index (H3 cells, RAM)    |\n   |    |      | matcher     |   | Ringpop ring, SWIM gossip,   |\n   |    |      | (per city)  |   | sharded by city+cell         |\n   |    |      +-------------+   +------------------------------+\n   |    |        |  |   |  lease/CAS            ^\n   |    |        |  |   v                       | supply state\n   |    |        |  | +----------------+   +-----------+\n   |    |        |  | | Driver state   |   | Supply svc|\n   |    |        |  | | store (leases) |   +-----------+\n   |    |        |  v +----------------+\n   |    |        | +-----------+   +------------------------+\n   |    |        | | ETA/Route |   | Trip svc (state mach.) |--> Docstore (Raft, MySQL)\n   |    |        | | CH graph  |   +------------------------+         | outbox\n   |    |        | +-----------+          |                            v\n   |    |        +------------------------+---------> Kafka (regional -> aggregate)\n   |    |                                                 |     |      |      |\n   |  +-----------+                                       v     v      v      v\n   |  | Flink     |<--------------------------------------+  Payments Fraud  Data lake\n   +->| surge job |                                         saga +   (ML)   (Hive/HDFS,\n      +-----------+                                         ledger          Michelangelo)\n                                                              |\n                                                              v\n                                                        PSP (auth/capture)",
+  "components": [
+   {
+    "name": "Rider app",
+    "responsibility": "Quote, request, live map, payment method, ratings; holds an idempotency key per request and resumes trip state from the server on reconnect."
+   },
+   {
+    "name": "Driver app",
+    "responsibility": "Online/offline, GPS streaming with on-device filtering (Kalman smoothing, accuracy gating), offer UI with 15 s timer, navigation, offline buffering of pings and trip events, stores encrypted trip digest."
+   },
+   {
+    "name": "Edge gateway",
+    "responsibility": "TLS termination, auth tokens, per-user and per-device rate limits, persistent connection management (WebSocket/MQTT), connection registry (user -> gateway node) so any service can push to a client."
+   },
+   {
+    "name": "Location service",
+    "responsibility": "Validate pings (timestamps, speed sanity, spoof heuristics), map-match to roads, update the geo index with latest position, append raw ping to Kafka; forwards on-trip pings to the rider's connection."
+   },
+   {
+    "name": "Geo index",
+    "responsibility": "In-memory map from H3 cell -> set of driver entries (id, position, state, product, ts) plus driver -> cell reverse map; sharded by city and cell on a Ringpop ring; answers kRing nearest queries in under 5 ms."
+   },
+   {
+    "name": "Supply service",
+    "responsibility": "Owns driver state machine (OFFLINE, AVAILABLE, OFFERED, EN_ROUTE, ON_TRIP), vehicle capabilities, seats; holds the driver lease and fencing token that prevent double assignment."
+   },
+   {
+    "name": "Demand service",
+    "responsibility": "Accepts ride requests, validates quote id and payment eligibility, creates the trip, hands the request to the matcher, drives re-dispatch on decline or timeout."
+   },
+   {
+    "name": "DISCO matcher",
+    "responsibility": "Per city shard: gather candidates, rank by ETA and features (acceptance probability, heading, trip continuation), then greedy offer or batch bipartite assignment every 1-2 s; can revise future plans."
+   },
+   {
+    "name": "ETA / routing service",
+    "responsibility": "Road graph with contraction hierarchies and live traffic edge weights; many-to-one ETA matrices for dispatch; ML residual correction (DeepETA-like) on top of the routing ETA."
+   },
+   {
+    "name": "Pricing service + surge job",
+    "responsibility": "Flink job aggregates supply and demand per H3 cell per minute and writes multipliers to a KV store; quote API computes upfront fare = base + time + distance x multiplier, signs the quote."
+   },
+   {
+    "name": "Trip service",
+    "responsibility": "Authoritative trip state machine with versioned, conditional transitions in Docstore; writes outbox events; exposes trip history for support."
+   },
+   {
+    "name": "Payments service + ledger",
+    "responsibility": "Saga orchestrator (Cadence-style workflow) for authorize, capture, void, refund, payout; idempotency store; double-entry ledger; reconciliation with PSP settlement files."
+   },
+   {
+    "name": "Notification service",
+    "responsibility": "Delivers via live connection first, then APNs/FCM push, then SMS fallback for critical messages (driver arriving, SOS)."
+   },
+   {
+    "name": "Ratings and reputation",
+    "responsibility": "Collect post-trip ratings, compute rolling averages asynchronously, feed matching (avoid low-rated pairs) and deactivation review."
+   },
+   {
+    "name": "Fraud and safety",
+    "responsibility": "Streaming rules and ML on pings and trip events: GPS spoof detection, collusion graphs, payment fraud scoring at request time, route deviation alerts."
+   },
+   {
+    "name": "Kafka + stream platform",
+    "responsibility": "Regional clusters replicated by uReplicator into aggregate clusters; topics for pings, trip events, payments events; feeds Flink, fraud, data lake."
+   },
+   {
+    "name": "Control plane / city config",
+    "responsibility": "City -> region homing, geofences, airport queues, surge caps, feature flags; failover orchestration."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Driver location ingestion",
+    "steps": [
+     "Driver app samples GPS at 1 Hz, smooths on device, sends one ping every 4 s (2 s on trip) over the persistent connection; batches up to 3 pings if the network was down.",
+     "Gateway authenticates the session (already done at connect time), applies a per-driver rate limit (e.g. max 2 pings/s) and forwards to the Location service shard for the driver's city.",
+     "Location service drops pings older than the last accepted timestamp (out-of-order), rejects impossible jumps (>200 km/h implied speed), map-matches to the road segment.",
+     "It computes the H3 res-9 cell; if the cell changed, it removes the driver from the old cell set and adds to the new one (both may be on different shards: done as two idempotent ops keyed by driver id + ts).",
+     "If the driver is on a trip, the position is forwarded to the rider's gateway node via the connection registry for the live map.",
+     "Ping is appended asynchronously to Kafka topic driver-locations (partitioned by driver_id) for trails, ETA traffic estimation, surge and fraud."
+    ]
+   },
+   {
+    "name": "Quote and request to match",
+    "steps": [
+     "Rider opens app; nearby-cars query hits a geo index replica for kRing(k=2) around the rider's res-8 cell; returns up to 10 car icons, refreshed every 5 s.",
+     "Rider enters drop; Quote API reads the surge multiplier for the pickup cell (KV, < 5 ms), gets route distance/time from ETA service, computes upfront fare, returns a signed quote_id valid for 5 min.",
+     "Rider taps Request with idempotency key K; Demand service creates trip T in REQUESTED (insert-if-absent on K) and kicks off payment authorisation for the estimate.",
+     "Matcher queries the geo index for AVAILABLE drivers of the right product within kRing k=2, expanding to k=4 and k=6 if fewer than 5 candidates.",
+     "ETA service returns a many-to-one road ETA for up to 20 candidates in one call (~10 ms).",
+     "Matcher ranks (ETA plus acceptance probability, heading, destination filters) and attempts CAS AVAILABLE -> OFFERED with lease 15 s on the top driver; on CAS failure it moves to the next candidate.",
+     "Offer is pushed to the driver; on accept the driver goes OFFERED -> EN_ROUTE and trip goes REQUESTED -> MATCHED with a version check; both apps get push updates.",
+     "On decline or lease expiry, the driver returns to AVAILABLE and the matcher re-dispatches excluding that driver; after 3 rounds or 60 s the rider sees no cars available."
+    ]
+   },
+   {
+    "name": "Trip progress and completion",
+    "steps": [
+     "Driver taps Arrived; trip MATCHED -> ARRIVING -> ARRIVED; rider notified via live connection and push.",
+     "Driver enters rider PIN, taps Start; trip -> ON_TRIP; ping rate goes to every 2 s and pings are tagged with trip_id for the trail.",
+     "During the trip, route deviation and long-stop detectors run on the stream for safety alerts; ETA to drop is recomputed every 30 s.",
+     "Driver taps End; trip -> COMPLETED with final distance/time computed from the map-matched trail (server-side, not the phone's odometer).",
+     "Trip service writes the transition and an outbox event TripCompleted in the same transaction; the outbox relay publishes to Kafka.",
+     "Payments saga consumes TripCompleted, computes final fare (upfront fare unless route changed >X%), captures with idempotency key capture:T, writes ledger entries, sends receipt; both sides get rating prompts."
+    ]
+   },
+   {
+    "name": "Surge computation",
+    "steps": [
+     "Flink reads ride-requests, app-opens (eyeballs) and driver-locations from the aggregate Kafka cluster.",
+     "Keys each event by H3 res-8 cell; 1-minute tumbling windows (or 2-minute sliding with 30 s hop) count demand and available supply, with a 10 s watermark for late events.",
+     "Applies smoothing over neighbouring cells (kRing 1) and over time (EWMA) to avoid flicker; ML model predicts short-term demand; applies city caps.",
+     "Writes multiplier per cell with a TTL of 2-3 minutes to a replicated KV store; the quote API reads it; drivers see a heatmap.",
+     "Only the primary region's job writes; other regions compute the same thing from the aggregate cluster as hot standbys (active-active compute, single writer)."
+    ]
+   },
+   {
+    "name": "Region failover mid-trip",
+    "steps": [
+     "Health checks and the control plane declare region A unhealthy for city C; DNS/edge routing for C's clients moves to region B (TTL 30 s, plus client-side failover list).",
+     "Clients reconnect to region B gateways; drivers' next pings rebuild B's geo index in 4-8 s.",
+     "For an in-flight trip unknown to B (replication lag), the driver app uploads its encrypted trip digest; Trip service validates the signature and recreates or reconciles the trip.",
+     "Payments captures queued in A are replayed from the replicated outbox/Kafka in B; idempotency keys make the replay safe."
+    ]
+   }
+  ],
+  "data_flow": "Hot path writes (pings) go client -> gateway -> location service -> in-memory geo index, with a copy to Kafka; nothing on the hot path waits for a disk. Hot path reads (nearby cars, dispatch candidates) read the geo index; dispatch then writes a lease to the driver state store (strongly consistent per driver) and a transition to the trip store (Raft). Every durable change emits an outbox event to Kafka; Kafka fans out to pricing (Flink -> surge KV), payments (saga -> PSP -> ledger), notifications, fraud, ratings aggregation and the data lake (HDFS/Hive) that trains ETA, acceptance and demand models offline. Surge multipliers and model outputs flow back into the hot path as cached reads."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "WS",
+    "path": "/v1/driver/stream (frame: LocationPing)",
+    "request": "{driver_id (from token), seq, ts_device, lat, lng, accuracy_m, heading, speed_mps, state, trip_id?}",
+    "response": "ack {seq} batched every 4 pings; server may push {offer} or {config: ping_interval_s} on the same socket",
+    "notes": "seq lets the server drop duplicates/out-of-order; batch of up to 3 pings after reconnect; rate limit 2/s."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/nearby?lat=&lng=&product=",
+    "request": "rider position, product type",
+    "response": "{cars: [{id_hash, lat, lng, heading}], eta_s, ttl_s: 5}",
+    "notes": "Served from geo index replicas; positions jittered and ids hashed for driver privacy; cacheable per H3 res-9 cell for 2 s."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/quotes",
+    "request": "{pickup, dropoff, product, payment_method_id}",
+    "response": "{quote_id, fare_minor, currency, surge_multiplier, pickup_eta_s, expires_at, signature}",
+    "notes": "quote_id is HMAC-signed over (fare, multiplier, cells, expiry) so it cannot be tampered with; p99 < 150 ms."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/trips",
+    "request": "Header Idempotency-Key; {quote_id, pickup, dropoff, product, payment_method_id}",
+    "response": "201 {trip_id, state: REQUESTED}; replay returns the same 201 body",
+    "notes": "Insert-if-absent on (rider_id, idem_key) with 24 h TTL; rejects expired quote with 409 + fresh quote; one active trip per rider."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/offers/{offer_id}/accept",
+    "request": "{driver_id, fencing_token}",
+    "response": "200 {trip} or 409 {reason: expired|taken}",
+    "notes": "Server does CAS on driver state OFFERED(token) -> EN_ROUTE and trip version check; stale token loses."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/offers/{offer_id}/decline",
+    "request": "{driver_id, fencing_token, reason?}",
+    "response": "204",
+    "notes": "Releases lease immediately; matcher re-dispatches; repeated declines feed acceptance-rate features."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/trips/{trip_id}/events",
+    "request": "{type: ARRIVED|START|END|CANCEL, expected_version, client_ts, pin?, reason?}",
+    "response": "200 {trip, version} or 409 {current_state, version}",
+    "notes": "Optimistic concurrency on version; END triggers server-side fare from the map-matched trail; idempotent per (trip_id, type)."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/trips/{trip_id}",
+    "request": "-",
+    "response": "{trip, driver, vehicle, live_eta_s, state, version, route_polyline}",
+    "notes": "Used on reconnect to resync state; the WebSocket stream sends deltas after."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/payments/authorize",
+    "request": "{idem_key: auth:{trip_id}, rider_id, amount_minor, currency, method_id}",
+    "response": "{auth_id, status: AUTHORIZED|DECLINED|PENDING}",
+    "notes": "PENDING when PSP times out; a poller resolves it by querying the PSP with the same idempotency key, never by blind retry with a new key."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/payments/capture",
+    "request": "{idem_key: capture:{trip_id}, auth_id, final_amount_minor}",
+    "response": "{capture_id, status}",
+    "notes": "If final > authorized by more than PSP tolerance, do incremental auth first; ledger entries written in the same DB transaction as the payment record."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/trips/{trip_id}/rating",
+    "request": "{rater_role, stars 1-5, tags[], comment?}",
+    "response": "204",
+    "notes": "Upsert keyed by (trip_id, rater_role); aggregation async via Kafka."
+   },
+   {
+    "method": "GET",
+    "path": "/internal/surge?cell=",
+    "request": "H3 res-8 cell id",
+    "response": "{multiplier, computed_at, ttl_s}",
+    "notes": "KV read, falls back to last known value or 1.0x capped per city if stale > 5 min."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "DriverLiveLocation",
+    "store": "In-memory geo index (Ringpop shards), replicated to 1 follower",
+    "fields": [
+     "driver_id",
+     "lat",
+     "lng",
+     "h3_res9",
+     "heading",
+     "speed",
+     "state",
+     "product",
+     "updated_at",
+     "seq"
+    ],
+    "keys": "Primary map driver_id -> entry; secondary map h3_cell -> set(driver_id); shard key = city_id + h3_res6 parent",
+    "notes": "No disk; rebuilt from pings within one interval after failover. Entries expire after 30 s with no ping (driver considered offline)."
+   },
+   {
+    "entity": "DriverState (lease)",
+    "store": "Strongly consistent KV (etcd-like or Docstore partition), per city",
+    "fields": [
+     "driver_id",
+     "state",
+     "trip_id",
+     "lease_expires_at",
+     "fencing_token",
+     "version"
+    ],
+    "keys": "driver_id (hash partitioned within city)",
+    "notes": "All transitions are CAS on version; fencing_token monotonically increases per offer; the source of truth for 'is this driver free'."
+   },
+   {
+    "entity": "Trip",
+    "store": "Docstore (Raft per partition over MySQL), region-homed with cross-region replica",
+    "fields": [
+     "trip_id (UUID)",
+     "rider_id",
+     "driver_id",
+     "city_id",
+     "state",
+     "version",
+     "quote_id",
+     "fare_minor",
+     "currency",
+     "pickup",
+     "dropoff",
+     "requested_at",
+     "matched_at",
+     "started_at",
+     "completed_at",
+     "cancel_reason"
+    ],
+    "keys": "Partition by hash(trip_id); secondary indexes on (rider_id, requested_at) and (driver_id, requested_at)",
+    "notes": "State changes via conditional update on version; append-only transition log kept as a child table for audit."
+   },
+   {
+    "entity": "OutboxEvent",
+    "store": "Same Docstore partition as Trip",
+    "fields": [
+     "event_id",
+     "aggregate_id",
+     "type",
+     "payload",
+     "created_at",
+     "published"
+    ],
+    "keys": "event_id; written in the same transaction as the trip change",
+    "notes": "Relay tails it and publishes to Kafka at-least-once; consumers dedupe on event_id."
+   },
+   {
+    "entity": "PaymentIntent / IdempotencyRecord",
+    "store": "Payments DB (Docstore, CP, multi-region sync replication)",
+    "fields": [
+     "idem_key",
+     "trip_id",
+     "operation",
+     "request_hash",
+     "status",
+     "psp_ref",
+     "response_blob",
+     "created_at"
+    ],
+    "keys": "idem_key unique (e.g. capture:{trip_id}); partition by hash(rider_id)",
+    "notes": "request_hash detects same key with different body (reject 422); TTL long (90 days) for money operations."
+   },
+   {
+    "entity": "LedgerEntry",
+    "store": "Ledger DB (append-only, double entry)",
+    "fields": [
+     "entry_id",
+     "order_id",
+     "account_id",
+     "amount_minor (signed)",
+     "currency",
+     "created_at",
+     "version"
+    ],
+    "keys": "Partition by account_id; order_id groups entries that must sum to zero",
+    "notes": "Immutable; corrections are new reversing entries. Example: rider escrow -20, driver +18, platform fee +2."
+   },
+   {
+    "entity": "SurgeMultiplier",
+    "store": "Replicated KV (Redis/Cassandra-class), TTL 3 min",
+    "fields": [
+     "city_id",
+     "h3_res8",
+     "multiplier",
+     "demand",
+     "supply",
+     "computed_at"
+    ],
+    "keys": "h3_res8 cell id",
+    "notes": "Single writer (primary-region Flink); readers tolerate staleness."
+   },
+   {
+    "entity": "LocationTrail",
+    "store": "Kafka -> HDFS/Hive (columnar), cold copy in object storage",
+    "fields": [
+     "driver_id",
+     "trip_id",
+     "ts",
+     "lat",
+     "lng",
+     "accuracy",
+     "speed",
+     "segment_id"
+    ],
+    "keys": "Kafka partition by driver_id; lake partitioned by date/city",
+    "notes": "Used for fare disputes, safety replay, traffic estimation; precise points coarsened after retention window."
+   },
+   {
+    "entity": "Rating",
+    "store": "Docstore + aggregated KV",
+    "fields": [
+     "trip_id",
+     "rater_role",
+     "ratee_id",
+     "stars",
+     "tags",
+     "created_at"
+    ],
+    "keys": "(trip_id, rater_role) unique; aggregate keyed by ratee_id",
+    "notes": "Average over last 500 rated trips, recomputed by a stream job."
+   },
+   {
+    "entity": "ConnectionRegistry",
+    "store": "In-memory, sharded by user id with TTL",
+    "fields": [
+     "user_id",
+     "gateway_node",
+     "conn_id",
+     "last_heartbeat"
+    ],
+    "keys": "user_id",
+    "notes": "Lets any service route a push to the right gateway; TTL 60 s refreshed by heartbeats."
+   }
+  ],
+  "classes": [
+   {
+    "name": "LocationIngestor",
+    "responsibility": "Validate, de-duplicate and map-match pings; update geo index; publish to Kafka.",
+    "methods": [
+     "onPing(ping) -> Ack",
+     "isPlausible(prev, ping) -> bool",
+     "mapMatch(ping) -> SegmentPos",
+     "publish(ping)"
+    ]
+   },
+   {
+    "name": "GeoIndexShard",
+    "responsibility": "Own a set of H3 cells for one city; maintain cell -> drivers and driver -> entry maps.",
+    "methods": [
+     "upsert(driverId, pos, state, ts)",
+     "remove(driverId)",
+     "nearby(cell, k, filter) -> [DriverEntry]",
+     "ownsCell(cell) -> bool"
+    ]
+   },
+   {
+    "name": "RingRouter",
+    "responsibility": "Ringpop-like consistent hash ring with virtual nodes; forwards requests to the owner of a key using SWIM membership.",
+    "methods": [
+     "lookup(key) -> Node",
+     "handleOrForward(key, req)",
+     "onMembershipChange(event)"
+    ]
+   },
+   {
+    "name": "CandidateFinder",
+    "responsibility": "Expand kRings until enough candidates; apply product, state, destination filters.",
+    "methods": [
+     "find(request, minCount=5, maxK=6) -> [Candidate]"
+    ]
+   },
+   {
+    "name": "Matcher",
+    "responsibility": "Rank candidates and choose assignments, greedy or batched per city zone.",
+    "methods": [
+     "dispatch(request)",
+     "batchTick(zone)",
+     "score(request, candidate) -> cost",
+     "solveAssignment(costMatrix) -> pairs"
+    ]
+   },
+   {
+    "name": "DriverLeaseManager",
+    "responsibility": "Atomically reserve a driver with a lease and fencing token; release or expire.",
+    "methods": [
+     "tryReserve(driverId, tripId, ttl) -> Token?",
+     "confirm(driverId, token)",
+     "release(driverId, token)",
+     "expireLoop()"
+    ]
+   },
+   {
+    "name": "TripStateMachine",
+    "responsibility": "Validate and apply trip transitions with optimistic concurrency and outbox.",
+    "methods": [
+     "transition(tripId, event, expectedVersion) -> Trip",
+     "allowed(from, event) -> to?",
+     "writeOutbox(trip, event)"
+    ]
+   },
+   {
+    "name": "EtaService",
+    "responsibility": "CH queries on the live-weighted graph plus ML correction.",
+    "methods": [
+     "eta(from, to) -> seconds",
+     "manyToOne(sources[], target) -> seconds[]",
+     "applyTraffic(segmentSpeeds)",
+     "correct(routeEta, features) -> seconds"
+    ]
+   },
+   {
+    "name": "SurgeCalculator",
+    "responsibility": "Streaming aggregation per cell and window; smoothing; caps.",
+    "methods": [
+     "onWindow(cell, demand, supply) -> multiplier",
+     "smooth(cell)",
+     "applyCaps(city, m)"
+    ]
+   },
+   {
+    "name": "PaymentSaga",
+    "responsibility": "Orchestrate authorize, capture, void, refund with compensations and idempotency.",
+    "methods": [
+     "onTripRequested(trip)",
+     "onTripCompleted(trip)",
+     "onTripCancelled(trip)",
+     "compensate(step)",
+     "resolvePending(idemKey)"
+    ]
+   },
+   {
+    "name": "PushDispatcher",
+    "responsibility": "Deliver a message via live connection, then APNs/FCM, then SMS, with dedupe ids.",
+    "methods": [
+     "send(userId, msg, priority)",
+     "routeToGateway(userId)",
+     "fallback(msg)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Nearby search with expanding H3 kRing",
+    "explain": "Convert the rider point to an H3 res-9 cell (~174 m edge). Ask for drivers in kRing(cell, k) which is all cells within k hex steps; k=2 covers roughly a 0.9 km radius. If fewer than minCount AVAILABLE drivers of the product are found, grow k. Distances are then refined with haversine and finally road ETA. Hex neighbours are all equidistant, so the ring approximates a circle better than geohash squares.",
+    "pseudocode": "function findCandidates(lat, lng, product, minCount=5, maxK=6):\n  origin = h3.latLngToCell(lat, lng, 9)\n  seen = set(); out = []\n  for k in [1, 2, 4, 6]:\n    if k > maxK: break\n    for cell in h3.gridDisk(origin, k) - seen:\n      seen.add(cell)\n      shard = ring.lookup(cityOf(cell), parent(cell, 6))\n      for d in shard.driversIn(cell):\n        if d.state == AVAILABLE and d.product == product and now - d.ts < 15s:\n          out.append(d)\n    if len(out) >= minCount: break\n  out.sort(by = haversine(lat, lng, d.lat, d.lng))\n  return out[:20]   # then road ETA ranks these"
+   },
+   {
+    "name": "Driver reservation with lease and fencing token",
+    "explain": "Prevents double assignment. The driver state row is changed only by compare-and-set on version. Each successful reservation gets a monotonically increasing fencing token; any later write (accept, start trip) must present the current token, so a slow matcher holding an expired lease cannot overwrite a newer assignment.",
+    "pseudocode": "function tryReserve(driverId, tripId, ttl=15s):\n  row = store.get(driverId)              # linearizable read\n  if row.state != AVAILABLE and not (row.state == OFFERED and row.lease < now):\n    return None\n  token = row.fencing_token + 1\n  ok = store.cas(driverId, expectVersion=row.version,\n                 new={state: OFFERED, trip_id: tripId,\n                      lease: now + ttl, fencing_token: token,\n                      version: row.version + 1})\n  return token if ok else None           # lost race -> try next driver\n\nfunction accept(driverId, tripId, token):\n  row = store.get(driverId)\n  if row.fencing_token != token or row.lease < now: return 409\n  store.cas(driverId, row.version, {state: EN_ROUTE, version: +1})\n  trips.transition(tripId, MATCHED, expectedVersion)"
+   },
+   {
+    "name": "Batched bipartite matching (Hungarian / min-cost assignment)",
+    "explain": "Every 1-2 s per dispatch zone, collect open requests R and available drivers D. Build a cost matrix c[r][d] = pickup ETA plus penalties (low acceptance probability, long dead-head after drop, rating mismatch), with infinity where ETA exceeds a cap. Solve min-cost assignment. Hungarian is O(n^3), fine for a few hundred per zone; larger zones use auction algorithms or min-cost flow on a sparse graph. Batching beats greedy because greedy gives the nearest driver to whoever asked first, stealing the only nearby driver of a later rider.",
+    "pseudocode": "every 1500ms for zone in cityZones:\n  R = openRequests(zone); D = availableDrivers(zone, margin=2km)\n  C = matrix(|R| x |D|, INF)\n  for r in R:\n    cands = topK(D near r, 20)\n    etas = eta.manyToOne([d.pos for d in cands], r.pickup)\n    for d, t in zip(cands, etas):\n      if t < 15min: C[r][d] = t + w1*(1-pAccept(d,r)) + w2*deadhead(r,d)\n  pairs = hungarian(C)        # or auction / min-cost flow when large\n  for (r, d) in pairs where C[r][d] < INF:\n    if lease.tryReserve(d, r.trip): sendOffer(d, r)\n    else: requeue(r)          # lost race, next tick"
+   },
+   {
+    "name": "ETA with contraction hierarchies and live traffic",
+    "explain": "Preprocess the road graph by contracting nodes in order of importance and adding shortcut edges that preserve shortest paths. A query runs a bidirectional Dijkstra that only relaxes edges going up the hierarchy, settling a few hundred nodes instead of millions, so continental queries take about 1 ms. Live traffic changes edge weights; full CH re-preprocessing is too slow, so a customizable variant (CCH / CRP) keeps the topology fixed and recomputes only the metric in seconds. An ML model then corrects the route ETA residual.",
+    "pseudocode": "function chQuery(s, t):\n  dF = {s:0}; dB = {t:0}; best = INF\n  pqF = [(0,s)]; pqB = [(0,t)]\n  while pqF or pqB:\n    for (pq, d, other) in [(pqF,dF,dB), (pqB,dB,dF)]:\n      if not pq: continue\n      (k, u) = pq.pop()\n      if k > best: pq.clear(); continue\n      if u in other: best = min(best, d[u] + other[u])\n      for (u, v, w) in upwardEdges(u):      # only to higher rank\n        if d[u] + w < d.get(v, INF): d[v] = d[u] + w; pq.push((d[v], v))\n  return best\n\neta = chQuery(snap(src), snap(dst)) * 1.0\neta = eta + residualModel(eta, hourOfWeek, city, weather, routeFeatures)"
+   },
+   {
+    "name": "Surge multiplier from streaming aggregation",
+    "explain": "Per H3 res-8 cell and 1-minute window, compute demand (requests plus weighted app opens) and supply (available drivers plus drivers finishing trips nearby soon). Ratio maps to a multiplier through a city-tuned curve, smoothed over neighbours and time to avoid flicker, and capped.",
+    "pseudocode": "stream.keyBy(h3_res8).window(Tumbling(60s)).allowedLateness(10s):\n  demand = count(requests) + 0.3 * count(app_opens_with_dest)\n  supply = count(distinct available drivers) + 0.5 * count(trips_ending_in_5min)\n  raw = curve_city(demand / max(supply, 1))   # e.g. 1.0 below ratio 1.2\n  nb = mean(raw over kRing(cell,1))\n  m = 0.6*raw + 0.4*nb\n  m = ewma(prev[cell], m, alpha=0.5)\n  m = min(m, capFor(city)); m = round_to(m, 0.1)\n  kv.put(cell, m, ttl=180s)   # only primary region writes"
+   },
+   {
+    "name": "Trip state machine with optimistic concurrency",
+    "explain": "Allowed transitions are a fixed table. Each update carries expected_version; the store applies it only if the version matches, so concurrent rider cancel and driver start cannot both win. The losing side receives 409 with current state and resolves (e.g. cancel after start becomes a normal trip end).",
+    "pseudocode": "ALLOWED = {REQUESTED:[MATCHED,CANCELLED,EXPIRED], MATCHED:[ARRIVED,CANCELLED],\n           ARRIVED:[ON_TRIP,CANCELLED], ON_TRIP:[COMPLETED], COMPLETED:[], ...}\nfunction transition(tripId, event, expectedVersion):\n  trip = db.get(tripId)\n  if trip.lastEventId == event.id: return trip          # idempotent replay\n  to = target(trip.state, event)\n  if to not in ALLOWED[trip.state]: return 409(trip)\n  tx: ok = db.update(tripId, set state=to, version=v+1, lastEventId=event.id,\n                      where version == expectedVersion)\n      if ok: outbox.insert(TripEvent(tripId, to, v+1))\n  return ok ? trip' : 409(db.get(tripId))"
+   }
+  ],
+  "sequence": "Rider     Gateway    Demand     Matcher    GeoIdx   DriverState  ETA    Trip/DB   Driver   Payments\n  | quote    |          |          |          |          |         |        |        |        |\n  |--------->| quote(p,d) -> Pricing(surge KV) + ETA ------------->|        |        |        |\n  |<---------| fare, quote_id, eta                                 |        |        |        |\n  | request(quote_id, idem_key)    |          |          |         |        |        |        |\n  |--------->|--------->| create trip REQUESTED (idempotent) ------------->|        |        |\n  |          |          |------------------------------------------------- authorize(est) ->|\n  |          |          |--------->| kRing(cell, k=2..4)            |        |        |        |\n  |          |          |          |--------->| candidates (20)    |        |        |        |\n  |          |          |          |--------------------------------> batch ETAs     |        |\n  |          |          |          | rank; CAS AVAILABLE->OFFERED (lease 15s, token t)|        |\n  |          |          |          |------------------->| ok        |        |        |        |\n  |          |<------------------ offer(trip, pickup, fare, token t) ------------------>|      |\n  |          |          |          |          |          |         |        | accept(t)       |\n  |          |<--------------------------------------------------------------------------|     |\n  |          |          |          | CAS OFFERED(t)->ON_TRIP_ASSIGNED   |        |        |     |\n  |          |          |          |------------------->| ok        |        |        |        |\n  |          |          |          | trip REQUESTED->MATCHED (version check) -->|      |        |\n  |<-------- matched(driver, car, eta) via WebSocket push    |         | outbox->Kafka   |        |\n  | ... driver pings every 2s -> rider map; ARRIVED -> ON_TRIP -> COMPLETED ...\n  |          |          |          |          |          |         |        |--capture(idem)->|\n  |<-------- receipt push; rate prompt          |          |         |        |        |        |"
+ },
+ "edge_cases": [
+  {
+   "case": "Two matchers try to offer the same driver to two riders at the same instant",
+   "handling": "Only the CAS on the driver state row wins; the loser sees version mismatch and moves to its next candidate. Ringpop also routes a driver's reservations to one owner, so the race is rare, but correctness relies on the CAS plus fencing token, not on routing."
+  },
+  {
+   "case": "Driver accepts just as the 15 s lease expires and the trip was re-offered",
+   "handling": "Accept carries the fencing token; the re-offer bumped the token, so the stale accept gets 409 'expired'. The driver app shows 'offer no longer available'."
+  },
+  {
+   "case": "Rider taps Request twice, or the app retries after a timeout",
+   "handling": "Same Idempotency-Key -> insert-if-absent returns the original trip. A different key while a trip is active hits the one-active-trip-per-rider constraint and returns the existing trip."
+  },
+  {
+   "case": "Rider cancels at the same moment the driver taps Start",
+   "handling": "Both send expected_version; one commits first. If Start won, cancel returns 409 with ON_TRIP and the app offers 'end trip' instead; if Cancel won, Start gets 409 and the driver app returns to available. No double state."
+  },
+  {
+   "case": "Driver's network drops in a tunnel for 3 minutes mid-trip",
+   "handling": "App keeps recording GPS locally and queues trip events; server keeps the trip ON_TRIP (no auto-cancel on silence during a trip); on reconnect the buffered pings are uploaded in seq order and the trail gap is filled by map-matching the route between last and next points for fare."
+  },
+  {
+   "case": "Driver goes silent while AVAILABLE (app killed, phone died)",
+   "handling": "Geo index entry expires after 30 s without a ping so dispatch stops seeing the driver; the supply state flips to OFFLINE after 2 minutes; if an offer was pending, its lease expires and the request re-dispatches."
+  },
+  {
+   "case": "GPS drift: urban canyon puts the driver on a parallel street or across a river",
+   "handling": "On-device Kalman filter plus server-side map matching (HMM over road segments) using heading and speed; accuracy_m > 50 m pings are down-weighted; fare uses map-matched distance, not raw point-to-point."
+  },
+  {
+   "case": "GPS spoofing apps fake a driver's location near the airport to jump the queue",
+   "handling": "Teleport checks (implied speed), mock-location flags, device attestation, cell-tower/Wi-Fi consistency, and comparing with accelerometer signals; offending accounts are removed from queues and reviewed."
+  },
+  {
+   "case": "Out-of-order pings (older ping arrives after a newer one)",
+   "handling": "Each ping has device seq and timestamp; the location service ignores any ping with seq <= last accepted, so the index never moves a driver backwards."
+  },
+  {
+   "case": "Device clock skew of minutes on cheap phones",
+   "handling": "Server stamps receive time; device ts used only for ordering within a session and corrected by an offset estimated at connect time (NTP-like handshake)."
+  },
+  {
+   "case": "Hot cell: 30,000 people leave a cricket stadium at once",
+   "handling": "Event geofence with dedicated pickup zones; requests queue in a FIFO per zone; batched matching over the zone; surge rises to pull supply; the geo shard for that area is split to a finer resolution or replicated for reads."
+  },
+  {
+   "case": "Driver crosses a shard boundary between two pings",
+   "handling": "Move is two idempotent ops: remove from old cell owner, add to new owner, both keyed by (driver_id, seq). A transient duplicate is harmless because candidates are de-duplicated by driver_id and the lease is authoritative."
+  },
+  {
+   "case": "Rider's pickup is near a city or region boundary",
+   "handling": "Matching uses the rider's home city shard but candidate search spans the kRing across the boundary; cross-city drivers are allowed if regulation permits; the trip is homed where it was requested."
+  },
+  {
+   "case": "No drivers within reach (k=6 exhausted)",
+   "handling": "Return 'no cars available' quickly rather than holding the rider; keep the request in a short waitlist (60 s) in case a nearby driver frees up; feed the unmet demand to surge and supply-positioning."
+  },
+  {
+   "case": "PSP times out on capture: did the charge happen?",
+   "handling": "Mark PENDING, never retry with a new key. Retry with the same idempotency key or query PSP status by key; reconciliation against the settlement file closes anything still unknown within 24 h."
+  },
+  {
+   "case": "Card authorisation fails after the driver is already en route",
+   "handling": "Auth happens at request time before matching; if a later incremental auth fails, switch to backup method or cash, and the trip still completes; debt is recorded against the rider account."
+  },
+  {
+   "case": "Final fare exceeds the authorised amount (long detour, tolls)",
+   "handling": "Incremental authorisation or capture within PSP's over-capture tolerance; otherwise capture the authorised part and charge the remainder as a separate idempotent charge."
+  },
+  {
+   "case": "Duplicate TripCompleted events delivered by Kafka",
+   "handling": "Payments consumer checks processed event_id and idempotency key capture:{trip_id}; the second delivery is a no-op that returns the stored result."
+  },
+  {
+   "case": "Region fails between trip start and trip end",
+   "handling": "Trip row is replicated cross-region; if it lagged, the driver's encrypted trip digest recreates it; end event processed in the new region; capture keyed by trip_id so a replay from the old region's outbox later is harmless."
+  },
+  {
+   "case": "Surge job stops writing (Flink failure)",
+   "handling": "KV entries have a 3 minute TTL; quote API falls back to last known multiplier decayed toward 1.0x, capped; standby region's job is promoted as writer."
+  },
+  {
+   "case": "Upfront quote expires while the rider deliberates",
+   "handling": "Request with expired quote returns 409 plus a fresh quote; the client shows the new price explicitly if it rose by more than a threshold."
+  },
+  {
+   "case": "Driver and rider collude to create fake trips for incentives",
+   "handling": "Graph features (same devices, same pairs repeatedly, short loops, no movement variance) in the fraud model; payouts for flagged trips held for review."
+  },
+  {
+   "case": "Rider requests from a place the car cannot reach (inside a mall, wrong side of a highway)",
+   "handling": "Snap pickup to the nearest suggested pickup point learned from historical pickups; ETA computed to the snapped point; driver sees the exact spot."
+  },
+  {
+   "case": "Airport queue: a driver leaves the lot and returns",
+   "handling": "Geofence exit removes the driver from the FIFO after a grace period; position in queue is not restored to stop gaming; queue lives in a strongly consistent store."
+  },
+  {
+   "case": "Thundering herd on reconnect after a gateway node restarts",
+   "handling": "Clients reconnect with exponential backoff plus full jitter (base 1 s, cap 30 s); gateways admit with a token bucket and shed with Retry-After."
+  },
+  {
+   "case": "Rating submitted twice or very late",
+   "handling": "Upsert keyed by (trip_id, rater_role) with a 7 day window; aggregation is a recompute over the last 500 so late arrivals are naturally included."
+  },
+  {
+   "case": "A matcher node is partitioned but still believes it owns its cells",
+   "handling": "It may compute matches, but it cannot reserve drivers: the lease store is CP and the stale node's CAS fails or its token is stale. Correctness is preserved; only latency is lost until SWIM marks it faulty."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "H3 (hexagonal hierarchical spatial index)",
+   "layer": "Geospatial",
+   "overview": "Uber's open-source grid that tiles the earth with hexagons at 16 resolutions; each cell has a 64-bit id, every child is ~1/7 the area of its parent.",
+   "why": "Uniform neighbour distance makes kRing searches and surge smoothing natural; cell ids are cheap shard and aggregation keys.",
+   "alternatives": "Geohash (simple string prefixes but square cells with edge discontinuities), S2 (Uber's earlier choice, exact hierarchical containment on a Hilbert curve), PostGIS R-tree (great for ad hoc queries, too slow for 1M writes/s)."
+  },
+  {
+   "name": "Ringpop-style consistent hashing + SWIM",
+   "layer": "Application sharding",
+   "overview": "An embedded library that puts service instances on a hash ring and uses SWIM gossip for membership so requests are forwarded to the owner of a key.",
+   "why": "Lets stateful in-memory services (geo index, dispatch) shard by key without a central coordinator and rebalance automatically when nodes join or die.",
+   "alternatives": "Central shard map in ZooKeeper/etcd (simpler reasoning, coordinator dependency), Kubernetes StatefulSets with static assignment (no automatic rebalance), Envoy ring-hash load balancing (no in-process forwarding)."
+  },
+  {
+   "name": "Apache Kafka (+ uReplicator)",
+   "layer": "Event streaming",
+   "overview": "Distributed, partitioned, replicated commit log; Uber runs trillions of messages per day with regional and aggregate clusters.",
+   "why": "Decouples the hot path from every consumer (surge, fraud, payments, lake), gives replay, ordering per key (driver_id, trip_id) and cross-region replication.",
+   "alternatives": "Pulsar (tiered storage and geo-replication built in), Kinesis/PubSub (managed, less control), RabbitMQ (not built for this throughput or replay)."
+  },
+  {
+   "name": "Apache Flink",
+   "layer": "Stream processing",
+   "overview": "Stateful stream processor with event-time windows, watermarks and checkpointed exactly-once state.",
+   "why": "Surge needs per-cell windowed aggregation with seconds-level freshness; Uber runs surge pricing as Flink jobs reading Kafka.",
+   "alternatives": "Spark Structured Streaming (micro-batch, higher latency), Kafka Streams (simpler, library-only, weaker for very large state), Samza/Storm (older)."
+  },
+  {
+   "name": "Docstore (Schemaless evolution) on MySQL",
+   "layer": "Transactional storage",
+   "overview": "Uber's distributed document database: partitions of 3-5 nodes replicated with Raft, MySQL as storage engine, strict serializability per partition.",
+   "why": "Trips, payments and driver state need CP semantics, conditional writes and ACID transactions for the outbox pattern at very high scale.",
+   "alternatives": "Spanner/CockroachDB (global serializable transactions, higher write latency across regions), Cassandra (AP, LWT is slow), sharded Postgres (operational burden)."
+  },
+  {
+   "name": "Redis / in-memory KV",
+   "layer": "Caching and hot state",
+   "overview": "In-memory data structures with replication; also used as a surge multiplier cache and connection registry.",
+   "why": "Sub-millisecond reads for surge lookups and session routing on the quote and push paths.",
+   "alternatives": "Memcached (simpler, no structures), Aerospike (SSD-backed, larger data), local in-process caches with pub/sub invalidation."
+  },
+  {
+   "name": "Routing engine with contraction hierarchies (OSRM-like) + DeepETA",
+   "layer": "ETA",
+   "overview": "Graph search over a preprocessed road network with traffic-aware weights, then an ML model that learns the residual between routing ETA and real arrivals.",
+   "why": "Dispatch needs tens of thousands of ETA queries per second at millisecond latency, and accuracy directly drives cancellations.",
+   "alternatives": "Plain Dijkstra/A* (too slow at scale), commercial routing APIs (cost and latency per call), pure ML ETA without routing (poor generalisation)."
+  },
+  {
+   "name": "WebSockets / MQTT over TLS + APNs/FCM",
+   "layer": "Real-time delivery",
+   "overview": "Persistent bidirectional connections for pings, offers and live tracking, with platform push as fallback when the app is backgrounded.",
+   "why": "Offers need sub-second delivery; polling at 1 s for 8M clients would be 8M req/s of mostly empty responses.",
+   "alternatives": "Long polling (works through every proxy, more overhead), server-sent events (server to client only), HTTP/2 or gRPC streams (good, needs proxy support)."
+  },
+  {
+   "name": "Cadence / Temporal workflows",
+   "layer": "Orchestration",
+   "overview": "Uber-built durable workflow engine: workflow state is persisted after every step and replayed deterministically after crashes.",
+   "why": "The payment saga (authorize, capture, void, refund, payout) spans minutes to days and must survive restarts with retries and compensations.",
+   "alternatives": "Hand-rolled state machine + cron pollers (error prone), AWS Step Functions (managed, vendor lock-in), choreography over Kafka only (harder to see the whole saga)."
+  },
+  {
+   "name": "Michelangelo (ML platform)",
+   "layer": "ML",
+   "overview": "Uber's end-to-end ML platform: feature store, training, deployment and online prediction serving.",
+   "why": "ETA residuals, acceptance probability, demand forecast, fraud scores all need consistent online/offline features and low-latency serving.",
+   "alternatives": "SageMaker/Vertex (managed), Feast + KServe (open source assembly)."
+  },
+  {
+   "name": "HDFS/Hive + Pinot",
+   "layer": "Analytics",
+   "overview": "Data lake for trails and events; Pinot for real-time OLAP dashboards.",
+   "why": "City ops need minute-fresh supply/demand dashboards; models and disputes need long history.",
+   "alternatives": "Druid/ClickHouse for OLAP, Iceberg/Delta on object storage for the lake."
+  },
+  {
+   "name": "TChannel / gRPC with backup requests",
+   "layer": "RPC",
+   "overview": "Multiplexed RPC with tracing, deadlines and request hedging.",
+   "why": "Tail latency control: send a backup request to a second replica after p95 delay and cancel the loser.",
+   "alternatives": "Plain HTTP/1.1 JSON (simpler, slower), Thrift over HTTP."
+  },
+  {
+   "name": "PSP (Stripe / Adyen / Razorpay class)",
+   "layer": "Payments",
+   "overview": "External processor for cards, wallets, UPI; supports idempotency keys, auth, capture, refunds and settlement files.",
+   "why": "Card network compliance (PCI) and local payment rails are not our core business.",
+   "alternatives": "Multiple PSPs with smart routing (resilience, more reconciliation work), direct acquiring (cheaper at huge scale, heavy compliance)."
+  },
+  {
+   "name": "Envoy / edge load balancers + GeoDNS",
+   "layer": "Edge",
+   "overview": "L4/L7 proxies and DNS steering clients to their city's home region.",
+   "why": "City-to-region homing and fast failover by changing routing, not clients.",
+   "alternatives": "Anycast with BGP only, client-side region lists (used together)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Geospatial indexing (geohash, quadtree, S2, H3)",
+   "explain": "A geospatial index answers 'which points are near here' without scanning every point. All practical schemes discretise the earth into cells and give each cell an id, so a proximity query becomes 'look up these few cells'. Geohash interleaves the bits of latitude and longitude and base-32 encodes them; longer strings mean smaller rectangles (5 chars about 4.9 km, 6 chars about 1.2 x 0.6 km, 7 chars about 153 m). Shared prefixes usually mean nearness, which makes it easy to store in any sorted key-value store, but two points a metre apart across a boundary can share no prefix, so every search must also check the 8 neighbouring cells. A quadtree recursively splits a square into four children until each leaf holds at most N points; it adapts to density (tiny leaves downtown, huge ones in the desert) but must split and merge as objects move. Google's S2 projects the sphere onto the six faces of a cube and orders cells along a Hilbert curve; ids are 64-bit integers across 31 levels and a cell's children share its id prefix, so containment and range covering are exact and cheap. Uber's H3 projects onto an icosahedron and tiles it with hexagons at 16 resolutions, each child about one seventh of its parent's area, with 12 unavoidable pentagons placed mostly in oceans. Hexagons have one neighbour distance instead of two (squares) or three (triangles), so a k-ring of cells approximates a circle and flows between neighbours are uniform. H3 parent/child containment is approximate, unlike S2. R-trees (PostGIS) index arbitrary shapes and are ideal for polygon queries but are expensive to update at millions of writes per second.",
+   "in_this_design": "Each driver ping is converted to an H3 res-9 cell (about 174 m edge). The geo index is a hash map of cell -> driver set, so a move is O(1). Candidate search takes gridDisk/kRing around the rider's cell and widens k until enough drivers are found. Surge uses res-8 cells (about 0.74 km^2) for aggregation and smoothing across neighbours. Uber's earlier dispatch used S2 level 12 cells as shard keys; H3 replaced squares where uniform neighbours matter.",
+   "key_points": [
+    "A geo index turns 'near me' into 'these few cell ids', which any hash map or KV store can serve.",
+    "Geohash: simple prefix strings, edge discontinuities, always check 8 neighbours.",
+    "Quadtree: adapts to density but rebalancing moving points is costly.",
+    "S2: Hilbert-curve ordered 64-bit cells with exact hierarchy; great for coverings and sharding.",
+    "H3: hexagons, 16 resolutions, equidistant neighbours, kRing search, ideal for movement and smoothing."
+   ],
+   "qa": [
+    {
+     "q": "Why are hexagons better than squares for ride-hailing?",
+     "a": "Every neighbour of a hexagon is the same distance from its centre, so expanding search rings grow like circles and aggregations like surge smoothing treat all neighbours equally. With squares, diagonal neighbours are 1.41x farther, which distorts both. Hexagons also reduce quantisation error as vehicles move through a city."
+    },
+    {
+     "q": "When would you choose S2 over H3?",
+     "a": "When you need exact hierarchical containment or efficient covering of arbitrary regions with cell ranges, for example indexing geofences or sharding by contiguous id ranges along the Hilbert curve. H3 children do not perfectly tile their parent, so it is weaker for exact region coverings."
+    },
+    {
+     "q": "Why not a quadtree for drivers?",
+     "a": "Quadtrees shine for static, unevenly distributed points. Drivers move every 4 seconds, so you would constantly split and merge nodes and lock subtrees under write load. A fixed grid of cells gives O(1) updates; density is handled by choosing the resolution and by splitting hot shards, not the tree."
+    },
+    {
+     "q": "How do you handle a search near a cell edge?",
+     "a": "Never search only the rider's own cell. Search the ring of neighbours (8 for geohash, kRing for H3) and then refine with true distance and finally road ETA. Cell membership is only a coarse filter."
+    }
+   ]
+  },
+  {
+   "name": "Location update ingestion and write-heavy scaling",
+   "explain": "Write-heavy systems are bounded by how much work each write costs. The usual levers are: make each write cheaper (in memory instead of disk, overwrite instead of append, no secondary index maintenance on the hot path), spread writes across more machines (sharding), reduce the number of writes (client-side batching, adaptive rates, dropping redundant updates) and move durable work off the hot path (write the latest value synchronously, stream the history asynchronously through a log). A location ping is a special kind of write: it is idempotent and superseded, since only the newest value matters for matching, and the previous value has no business meaning once overwritten. That means you can lose a ping without harm, you can rebuild the current state from the next round of pings, and you do not need consensus or fsync for it. History still matters for fares, safety and traffic models, so it goes to an append-only log that batches and compresses well. On the client, GPS is sampled more often than it is sent, filtered with a Kalman filter, and sent less often when stationary. Backpressure matters too: if a shard falls behind, the right response is to drop stale pings (keep only the newest per driver) rather than queue them, because a queued old ping is worse than no ping.",
+   "in_this_design": "5M online drivers pinging every 4 s gives 1.25M writes per second, about 125 MB/s. The location service keeps latest position only, in memory, sharded by city and cell; the raw ping goes to Kafka partitioned by driver_id for trails, ETA traffic models and fraud. Pings carry a sequence number so late arrivals are dropped. Rates adapt: 4 s available, 2 s on trip, slower when stationary or on low battery.",
+   "key_points": [
+    "Latest-value state is overwrite-only and rebuildable, so keep it in memory and skip consensus.",
+    "History goes to a log (Kafka) asynchronously; nothing on the hot path waits for disk.",
+    "Under overload, drop stale pings, never queue them.",
+    "Client-side filtering and adaptive rates are the cheapest scaling lever.",
+    "Sequence numbers make ingestion idempotent and order-safe."
+   ],
+   "qa": [
+    {
+     "q": "Your location service is falling behind. What do you do first?",
+     "a": "Shed the right load: collapse queued pings per driver to the newest, lower the ping interval remotely via config pushed on the socket (4 s to 6 s), and stop forwarding non-essential copies. Then scale out shards for the hot city. Queueing old pings only adds lag."
+    },
+    {
+     "q": "Why not write each ping to Cassandra?",
+     "a": "You could, Cassandra handles high write rates, but you pay replication, commit log and compaction for data whose current value you only need for seconds. Matching would still need an in-memory index for fast spatial reads. Kafka plus a data lake keeps history cheaper."
+    },
+    {
+     "q": "How do you rebuild state after a node dies?",
+     "a": "Do nothing special: every available driver pings within 4 s, so the new owner's index is complete after one interval. Optionally warm it from a follower replica or by replaying the last 10 s of the Kafka topic for those cells."
+    },
+    {
+     "q": "How do you reduce battery drain on the driver app?",
+     "a": "Sample GPS frequently but transmit less, batch when stationary, use fused location providers, keep one persistent connection instead of many HTTP requests, and compress or delta-encode positions."
+    }
+   ]
+  },
+  {
+   "name": "Consistent hashing (Ringpop-style application-layer sharding)",
+   "explain": "Naive sharding with hash(key) mod N remaps almost every key when N changes, which for an in-memory service means rebuilding nearly all state on every deploy or failure. Consistent hashing places both nodes and keys on a ring of hash values (for example 0 to 2^32); a key belongs to the first node clockwise from its hash. When a node leaves, only its keys move, to its successor; when a node joins, it takes keys only from one neighbour. To avoid uneven arcs, each physical node is placed at many points (virtual nodes, typically 100-200), which smooths load and lets heterogeneous machines take proportional shares. Variants include rendezvous (highest random weight) hashing, which needs no ring, and jump consistent hash, which is compact but needs numbered buckets. Ringpop, which Uber open-sourced, embeds a consistent hash ring inside every instance of a service. Any instance can receive a request; it looks up the owner of the request's key on its local copy of the ring and either handles it or forwards it to the owner. The ring's membership comes from a gossip protocol, so there is no central coordinator. This makes stateful services horizontally scalable, but because membership views converge eventually, two nodes can briefly disagree about ownership; the design must tolerate that.",
+   "in_this_design": "The geo index and dispatch are sharded by key on a Ringpop-style ring: the key is city plus the H3 res-6 parent of a cell, so a kRing query touches one or two owners. Pings for a cell are forwarded to its owner; a node failure moves only its arcs. Because ownership can briefly overlap, the driver lease store, not the ring, guarantees no double assignment.",
+   "key_points": [
+    "Consistent hashing moves only about 1/N of keys when membership changes.",
+    "Virtual nodes even out load and handle heterogeneous machines.",
+    "Ringpop = ring + gossip membership + request forwarding embedded in each service.",
+    "Ring ownership is eventually consistent; never use it alone as a lock.",
+    "Choose the key for locality of queries (cell parent), not just even spread."
+   ],
+   "qa": [
+    {
+     "q": "What problem do virtual nodes solve?",
+     "a": "With one point per node the arcs are random and some nodes get several times the average load. With hundreds of points per node the variance shrinks, and when a node fails its load is spread across many successors instead of dumped on one."
+    },
+    {
+     "q": "Why shard by cell parent rather than driver_id?",
+     "a": "Queries are spatial: 'drivers near this point'. With driver_id hashing every nearby query fans out to all shards. With cell-parent keys a query touches one or two shards. The cost is hot spots, handled by finer keys or replicas for busy areas."
+    },
+    {
+     "q": "Two Ringpop nodes both think they own a cell. What breaks?",
+     "a": "Both may hold driver positions and both may compute matches, but both must reserve drivers through the CP lease store, so only one reservation per driver succeeds. Stale ownership costs duplicate work and some latency, not correctness."
+    },
+    {
+     "q": "Rendezvous hashing vs ring?",
+     "a": "Rendezvous hashes the key with every node and picks the highest score; it needs no ring and gives perfect minimal movement, but lookup is O(N) unless you add structure. Rings give O(log N) lookups with virtual nodes and are what Ringpop and Dynamo-style systems use."
+    }
+   ]
+  },
+  {
+   "name": "Gossip and membership (SWIM failure detection)",
+   "explain": "A cluster without a central coordinator still needs every node to know who is alive. All-to-all heartbeats cost O(N^2) messages and false-positive rates grow with N. SWIM (Scalable Weakly-consistent Infection-style Membership, Das, Gupta and Motivala, 2002) separates failure detection from dissemination. Each protocol period, a node pings one random member. If no ack arrives in time, it asks k other members to ping the target indirectly (ping-req), which distinguishes a dead node from a lossy link between two particular nodes. If still nothing, the target is marked suspect rather than dead; the suspect state is gossiped, and the target can refute it by gossiping an alive message with a higher incarnation number. Only after a suspicion timeout is it declared faulty. Membership changes are piggybacked on the ping and ack messages themselves, spreading epidemically in O(log N) rounds, so per-node load is constant regardless of cluster size. The result is weakly consistent: different nodes may see different membership for a few seconds. HashiCorp's memberlist (Consul, Serf) and Uber's Ringpop both use SWIM with extensions such as Lifeguard tuning, which reduces false positives when the detecting node itself is slow.",
+   "in_this_design": "Every geo index and dispatch instance runs SWIM to maintain the Ringpop ring. When a node dies, peers detect it within a few protocol periods (about 1 s each), suspect, then remove it; the ring recomputes and its cells move to successors. Uber reported Ringpop scaling to thousands of nodes with modified SWIM for faster convergence.",
+   "key_points": [
+    "Ping one random member per period; ask k others to ping-req before suspecting.",
+    "Suspect state plus incarnation numbers cut false positives from slow nodes.",
+    "Updates piggyback on pings, so dissemination is O(log N) rounds with constant per-node load.",
+    "Membership is weakly consistent; design the data path to tolerate temporary disagreement.",
+    "Failure detection time is a tunable trade-off against false positives."
+   ],
+   "qa": [
+    {
+     "q": "Why does SWIM use indirect pings?",
+     "a": "A missed ack might be caused by a bad link between the prober and the target, not a dead target. Asking k other nodes to probe gives independent paths, so a node is only suspected when several paths fail, which lowers false positives without many extra messages."
+    },
+    {
+     "q": "How long does it take to detect a failure?",
+     "a": "Roughly a few protocol periods plus the suspicion timeout. With a 1 s period, k=3 and a suspicion timeout of a few seconds, detection is typically 3-10 s; dissemination then takes O(log N) gossip rounds."
+    },
+    {
+     "q": "What is the risk of tuning detection too aggressively?",
+     "a": "Garbage collection pauses or CPU spikes cause healthy nodes to be declared dead, which causes ring churn, state movement and more load, which causes more pauses: a flapping cascade. Lifeguard-style local health awareness and suspicion timeouts guard against it."
+    },
+    {
+     "q": "Gossip vs a ZooKeeper-managed membership list?",
+     "a": "ZooKeeper gives one consistent view and simpler reasoning, but it is a central dependency whose session timeouts and write throughput bound the cluster. Gossip has no single point of failure and scales to thousands of nodes but only gives eventual agreement."
+    }
+   ]
+  },
+  {
+   "name": "Sharding and partitioning by geography (city cells)",
+   "explain": "Partitioning splits data and traffic so that each piece fits on one machine and failures stay local. The partition key decides everything: queries that include the key go to one partition, queries that do not must scatter-gather. Range partitioning keeps adjacent keys together (good for scans, risky for hot ranges); hash partitioning spreads load evenly but destroys locality; directory-based partitioning uses a lookup table that can be edited for rebalancing. Geography is a natural key for physical-world systems because almost every interaction is local: a rider in Chennai is never matched with a driver in Delhi. Partitioning by city gives isolation (a Mumbai incident cannot take down Bengaluru), aligns with regulation and operations (pricing, airport rules, tax are per city), and allows homing each city to the nearest datacenter. Geography is also extremely skewed: a megacity has thousands of times the load of a small town, and inside a city, a stadium or airport can be thousands of times a residential cell. So a geographic scheme needs a second level (cells within a city) and a way to split hot cells. A cell-based architecture takes this further: each cell is a full, independent copy of the stack serving a subset of cities, limiting blast radius.",
+   "in_this_design": "The real-time plane is partitioned first by city (directory: city -> home region and cell), then by H3 res-6 parent within the city on a consistent hash ring. Trips are hash-partitioned by trip_id within the home region's store to avoid a hot shard per big city. Large cities get more shards; airports and stadiums get dedicated zones and FIFO queues.",
+   "key_points": [
+    "Pick the partition key that matches the dominant query; for ride-hailing that is location.",
+    "Two levels: city (isolation, homing, regulation) then cell (throughput).",
+    "Geographic data is heavily skewed; plan for hot-cell splitting and replicas.",
+    "Use hash partitioning for entities accessed by id (trips), not by city.",
+    "A directory (city -> region/cell) makes rebalancing and failover a config change."
+   ],
+   "qa": [
+    {
+     "q": "Why not shard everything by city?",
+     "a": "A megacity would be a single huge shard, and a single city's trips would all land on one database. City is the right isolation and routing key, but within a city you need finer partitioning: spatial cells for the geo index and trip_id hashes for trip storage."
+    },
+    {
+     "q": "A concert ends and one cell gets 50x load. What do you do?",
+     "a": "Split that cell's key to a finer resolution so it spans several owners, add read replicas for nearby-car queries, move matching for the venue into a dedicated zone with batched FIFO assignment, and lean on surge to pull in supply."
+    },
+    {
+     "q": "How do you handle trips that cross city boundaries?",
+     "a": "The trip is homed where it was requested, so all state transitions stay with one owner. Location pings still update whichever cell the driver is in; the trip service does not care which geo shard the driver is on."
+    },
+    {
+     "q": "What is a cell-based architecture and why use it here?",
+     "a": "A cell is a full, self-contained deployment of the stack (gateways, services, storage) that serves a subset of cities. Bugs, bad deploys and overload stay in one cell. You route by a thin global layer (city -> cell), deploy cell by cell, and fail a city over by changing that mapping."
+    }
+   ]
+  },
+  {
+   "name": "Replication and quorum",
+   "explain": "Replication keeps copies of data on several machines for durability and availability. Leader-based replication sends all writes through one leader that ships a log to followers; synchronous followers give durability at the cost of latency, asynchronous ones give speed at the risk of losing the last writes on failover. Consensus protocols such as Raft and Paxos commit a log entry once a majority (quorum) of replicas has it, so with 3 replicas the system survives 1 failure and with 5 it survives 2, and a new leader is guaranteed to have every committed entry. Leaderless (Dynamo-style) replication writes to N replicas and waits for W acks, reads from R; if R + W > N, every read quorum overlaps the latest write quorum, so N=3, W=2, R=2 is the classic setting. Sloppy quorums and hinted handoff keep writes available during partitions at the cost of possible conflicts, which need read repair, version vectors or last-writer-wins. Quorums give a durability and recency guarantee but not automatically linearizability; for compare-and-set you need consensus or a single leader. Placement matters: replicas in different availability zones survive a zone loss; across regions they survive a region loss but every synchronous commit pays the inter-region round trip, typically 30-150 ms.",
+   "in_this_design": "Trips, driver leases and payments live in a Docstore-style store: each partition is a Raft group of 3-5 nodes spread across zones, MySQL as the engine, so a commit survives a zone loss and failover is automatic. Cross-region copies are asynchronous for trips (RPO under a second, backed by the driver digest) and synchronous for the payment ledger where RPO must be 0. The geo index uses one asynchronous follower per shard only to speed recovery.",
+   "key_points": [
+    "Raft/Paxos: commit on majority; 2f+1 replicas tolerate f failures.",
+    "Dynamo quorum: R + W > N gives overlap; N=3, W=2, R=2 is the classic.",
+    "Quorum overlap alone is not linearizable CAS; use consensus or a leader for locks.",
+    "Synchronous cross-region replication costs a WAN round trip per commit; use it only for money.",
+    "Match replication strength to the cost of losing the data."
+   ],
+   "qa": [
+    {
+     "q": "Why use 5 replicas instead of 3 for the payment ledger?",
+     "a": "Five tolerates two simultaneous failures, for example one zone down for maintenance while another node fails. For money the extra storage and slightly slower commits are worth it; for trips, 3 is enough."
+    },
+    {
+     "q": "With N=3, W=1, R=1, what goes wrong?",
+     "a": "Reads and writes may hit different replicas with no overlap, so a reader can see stale data indefinitely until anti-entropy catches up. Fine for counters on dashboards, unacceptable for driver state."
+    },
+    {
+     "q": "Why not replicate the geo index synchronously across regions?",
+     "a": "It changes 1.25M times per second, is worthless after a few seconds, and rebuilds itself from the next pings. Synchronous replication would multiply cost and latency to protect data that regenerates for free."
+    },
+    {
+     "q": "What does a Raft leader failover look like to a client?",
+     "a": "Writes stall for the election timeout (typically a few hundred ms to a couple of seconds), the new leader is elected with all committed entries, and clients retry with the same idempotency keys. No committed write is lost."
+    }
+   ]
+  },
+  {
+   "name": "CAP and PACELC: dispatch vs payments",
+   "explain": "CAP says that when a network partition happens, a distributed system must choose between consistency (every read sees the latest write, as if there were one copy) and availability (every request to a non-failed node gets a response). Partitions are not optional in real networks, so the practical question is what each component does during one. PACELC extends this: if Partitioned, choose Availability or Consistency; Else, in normal operation, choose Latency or Consistency, because even without failures, stronger consistency requires coordination round trips. Dynamo and Cassandra are PA/EL; Spanner and etcd are PC/EC; many systems are mixed. The senior insight is that CAP is a per-operation, per-data-type choice, not a property of a whole product. The cost of inconsistency differs wildly: showing a car icon 20 metres off is harmless, while two drivers sent to one rider wastes a driver, and two charges for one trip is a regulatory and trust incident. Good designs make the boundary explicit, keep the AP side rebuildable and the CP side small, and ensure the AP side never makes an irreversible decision without passing through the CP side.",
+   "in_this_design": "Location ingestion, nearby cars, candidate search, surge reads and ETAs are PA/EL: keep serving possibly stale data during partitions, and prefer low latency in normal operation. Driver leases, trip state transitions and the ledger are PC/EC: refuse or delay writes rather than diverge. The matcher is AP for finding candidates and CP at the moment it commits an assignment.",
+   "key_points": [
+    "CAP is chosen per operation, not per system.",
+    "PACELC: even without partitions, consistency costs latency.",
+    "Dispatch discovery is PA/EL; driver lease, trip and money are PC/EC.",
+    "Irreversible decisions must pass through the CP side.",
+    "Keep the CP surface small so its latency and availability cost stays contained."
+   ],
+   "qa": [
+    {
+     "q": "Is Uber AP or CP?",
+     "a": "Neither as a whole. Location and discovery are AP because stale data is cheap and availability matters most; assignment, trip state and payments are CP because divergence there costs money and trust."
+    },
+    {
+     "q": "During a partition, what does the rider see?",
+     "a": "If the rider's region and its lease store are reachable, everything works. If the matcher cannot reach the lease store, it cannot assign, so the rider waits and retries; the app still shows nearby cars from the AP side. We trade matching availability for no double assignment."
+    },
+    {
+     "q": "Where does PACELC 'else latency' show up in this design?",
+     "a": "A synchronous cross-region ledger commit adds 50-150 ms to every capture. We accept that for money because captures are off the rider's critical path, but we would never put it on the location write path."
+    },
+    {
+     "q": "Could surge be CP?",
+     "a": "It could, but there is no benefit. Surge is an estimate; staleness of a minute is fine. The rider is protected by the signed quote, which is what makes the charged price consistent."
+    }
+   ]
+  },
+  {
+   "name": "Matching and dispatch algorithms (greedy, batched, bipartite)",
+   "explain": "Matching pairs requests with drivers to optimise an objective such as total pickup time, completion probability or driver earnings. Greedy matching serves each request on arrival with the best currently available driver; it has the lowest latency and is simple, but it is myopic: an early request can take the only driver who is close to a later request. Batched matching collects requests and drivers over a short window (one to a few seconds) and solves an assignment problem on the bipartite graph of requests and drivers, where edge weights are costs such as ETA. The Hungarian algorithm solves the min-cost perfect assignment in O(n^3); for hundreds of nodes per zone this is milliseconds. For larger or sparse graphs, auction algorithms, min-cost max-flow, or greedy approximations with local improvement are used. Real dispatch adds constraints and soft costs: vehicle type, driver destination filters, predicted acceptance probability, rider and driver ratings, dead-head distance after drop-off, fairness among drivers, and for pooled rides, route insertion with detour limits. Advanced systems also look ahead: match a driver who will finish a trip nearby in 2 minutes instead of an idle driver 8 minutes away, and revise plans as new information arrives. The window size is a trade-off between solution quality and added latency.",
+   "in_this_design": "Uber's DISCO matches demand to supply using the geo index for candidates and road ETAs for ranking, and can plan into the future (e.g. assign a driver about to drop off nearby). Our design uses greedy nearest-ETA in sparse areas, and in dense zones a 1-2 s batch per zone with a min-cost assignment over costs = ETA + penalties; every chosen pair still goes through the lease CAS before the offer.",
+   "key_points": [
+    "Greedy: lowest latency, myopic. Batched: better global outcome, adds a window of latency.",
+    "Bipartite min-cost assignment: Hungarian O(n^3), auction or min-cost flow at larger scale.",
+    "Rank by road ETA, not straight-line distance; a river or one-way street changes everything.",
+    "Include future supply (drivers finishing nearby) and acceptance probability in costs.",
+    "The optimiser proposes; the lease store disposes."
+   ],
+   "qa": [
+    {
+     "q": "Give a concrete example where batching beats greedy.",
+     "a": "Rider A arrives first: driver X is 1 minute away, Y is 2. Rider B arrives 300 ms later: X is 1 minute away, Y is 10. Greedy gives A X and B Y for 11 minutes total; batching gives A Y and B X for 3 minutes total."
+    },
+    {
+     "q": "How do you pick the batch window?",
+     "a": "Measure: it must be short enough that it is invisible relative to the offer and acceptance time (2 s is small next to a 15 s accept window) and long enough to collect competing requests in dense zones. Make it adaptive per zone by request rate."
+    },
+    {
+     "q": "What if the chosen driver declines?",
+     "a": "Release the lease, mark the pair as excluded, and put the request back into the next batch or greedy round with a priority boost for waiting time, so riders who waited longer do not keep losing."
+    },
+    {
+     "q": "Hungarian is O(n^3). What if a zone has 5,000 requests and 10,000 drivers?",
+     "a": "Sparsify: only connect each request to its top-K nearest drivers by ETA, giving a sparse graph that min-cost flow or an auction algorithm solves quickly. Also split the zone into subzones with overlap margins."
+    }
+   ]
+  },
+  {
+   "name": "ETA and routing (Dijkstra, A*, contraction hierarchies, traffic)",
+   "explain": "A road network is a weighted directed graph: intersections are nodes, road segments are edges, weights are travel times. Dijkstra's algorithm finds shortest paths by settling nodes in order of distance using a priority queue, O(E + V log V); on a country-sized graph with tens of millions of nodes a long query settles millions of nodes and takes seconds. A* adds a heuristic (straight-line distance divided by maximum speed) that never overestimates, steering the search toward the target; it helps but still explores widely. Bidirectional search runs from both ends and meets in the middle. Contraction hierarchies (CH) preprocess the graph: nodes are ordered by importance and contracted one by one, adding shortcut edges whenever removing a node would lengthen a shortest path. A query then runs bidirectional Dijkstra that only relaxes edges toward more important nodes, settling a few hundred nodes, so queries take around a millisecond and many-to-many tables are cheap. The catch is that preprocessing assumes fixed weights. Traffic changes weights constantly, so production systems use customizable approaches (CCH, Customizable Route Planning with multilevel partitions) where topology preprocessing is done once and the metric customisation for new traffic weights takes seconds. Live traffic itself is estimated from probe data: map-matched GPS traces give segment speeds. Finally, route-based ETAs have systematic errors (pickup time, signals, parking), which ML models correct.",
+   "in_this_design": "Dispatch needs ETAs from up to 20 candidate drivers to each pickup (many-to-one), about 60k queries per second at peak, plus quotes. The routing engine runs CH-style queries on a graph with traffic weights derived from the driver ping stream, and a DeepETA-style model predicts the residual between routing ETA and actual arrival, as Uber describes.",
+   "key_points": [
+    "Dijkstra settles nodes in distance order; too slow for country-scale at high QPS.",
+    "A* uses an admissible heuristic to focus the search.",
+    "Contraction hierarchies: preprocess with shortcuts, query upward-only, about 1 ms.",
+    "Traffic needs customizable variants (CCH/CRP) so weights update in seconds.",
+    "Route ETA plus ML residual beats either alone."
+   ],
+   "qa": [
+    {
+     "q": "Why not just use haversine distance for ranking drivers?",
+     "a": "Straight-line distance ignores rivers, one-way streets, flyovers and U-turns. A driver 300 m away across a highway may be 8 minutes away by road. Ranking on haversine causes long pickups and cancellations; it is a fallback only."
+    },
+    {
+     "q": "How do contraction hierarchies cope with traffic?",
+     "a": "Plain CH must be rebuilt when weights change, which takes minutes. Customizable CH keeps the node ordering and shortcut structure from topology alone and recomputes shortcut weights for the new metric in seconds, so traffic can be refreshed every minute or so."
+    },
+    {
+     "q": "Where does live traffic come from?",
+     "a": "From our own drivers: map-matched ping trails give observed speeds per road segment, aggregated in streaming windows and blended with historical speed profiles by hour of week."
+    },
+    {
+     "q": "Why add ML on top of routing?",
+     "a": "Routing ETA misses things like time to find the rider, parking, turn penalties and local patterns. Learning the residual keeps the physical model's generalisation and fixes its systematic biases; Uber's DeepETA is exactly this."
+    }
+   ]
+  },
+  {
+   "name": "Dynamic pricing with streaming aggregation (windows, watermarks)",
+   "explain": "Stream processing computes results continuously over unbounded event streams. Aggregations need windows: tumbling windows are fixed, non-overlapping buckets (every minute); sliding or hopping windows overlap (5 minutes long, every 30 s); session windows close after inactivity. Events carry an event time (when it happened on the device) and arrive at processing time, which can be later and out of order, especially from mobile clients. Watermarks are the processor's estimate that no events older than time T are still coming; a window fires when the watermark passes its end, and allowed lateness keeps the window open a little longer for stragglers. Stateful processors such as Flink keep per-key state (counts per cell), checkpoint it consistently with the input offsets, and restore on failure for exactly-once state updates. Dynamic pricing uses such aggregates: demand (requests, app opens) and supply (available drivers) per area per window feed a function that raises price when demand exceeds supply, both to ration rides and to attract more drivers. Good pricing systems smooth over space and time to avoid flicker, cap increases, and predict short-term demand rather than only reacting.",
+   "in_this_design": "A Flink job reads requests, app opens and driver locations from the aggregate Kafka cluster, keys by H3 res-8 cell, uses 1-minute windows with about 10 s allowed lateness, smooths across kRing neighbours and with an EWMA, applies city caps, and writes multipliers with a TTL to a KV store. As Uber's real-time infrastructure paper describes, each region computes surge in Flink from aggregate Kafka, but only the primary region writes, and freshness is favoured over consistency.",
+   "key_points": [
+    "Tumbling, sliding and session windows answer different questions.",
+    "Event time + watermarks handle out-of-order mobile data; allowed lateness trades accuracy for delay.",
+    "Checkpointed state gives exactly-once state inside the processor.",
+    "Smooth over space and time, cap, and lock the price in a signed quote.",
+    "Surge is an estimate: freshness and availability over consistency."
+   ],
+   "qa": [
+    {
+     "q": "Why not compute surge with a SQL query every minute?",
+     "a": "At hundreds of thousands of events per second, re-scanning a table each minute is expensive and late; a streaming job keeps running counts per cell and emits results the moment a window closes."
+    },
+    {
+     "q": "Events from drivers in tunnels arrive 2 minutes late. Does surge care?",
+     "a": "Mostly no. Allowed lateness is short (about 10 s); very late events are dropped from the live computation and only affect offline analytics. The cost of waiting for them would be stale prices for everyone."
+    },
+    {
+     "q": "How do you run surge across regions?",
+     "a": "Every region's Flink job consumes the same aggregate Kafka stream and computes the same result, but a coordinator designates one primary writer. On region failure, another region is promoted; its state is already warm because it was computing all along."
+    },
+    {
+     "q": "How do you stop riders gaming surge by moving one block?",
+     "a": "Spatial smoothing across neighbouring hexagons makes adjacent cells similar, and multipliers change at most a bounded amount per minute."
+    }
+   ]
+  },
+  {
+   "name": "Event streaming, exactly-once vs at-least-once, and idempotency",
+   "explain": "Message delivery has three guarantees. At-most-once: send and forget; messages can be lost. At-least-once: retry until acknowledged; nothing is lost, but duplicates happen whenever an ack is lost after processing. Exactly-once delivery over an unreliable network is impossible in general (the two generals problem), but exactly-once effect is achievable: deliver at least once and make processing idempotent, so applying a message twice has the same result as once. Kafka offers an idempotent producer (sequence numbers per partition so broker-side retries do not duplicate) and transactions that atomically write output records and consumer offsets, giving exactly-once semantics for read-process-write pipelines that stay inside Kafka. Once a side effect leaves Kafka, such as charging a card or sending an SMS, Kafka transactions cannot help; you need idempotency at the destination, usually a unique key stored with the result. Natural keys (trip_id + operation) are better than random UUIDs because a retry that re-derives the key gets the same one. Ordering is per partition, so partition by the entity whose events must stay ordered (driver_id, trip_id). The transactional outbox pattern avoids the dual-write problem: write the state change and the event to the same database transaction, and a relay publishes the event afterwards.",
+   "in_this_design": "Kafka carries pings (partition by driver_id), trip events (partition by trip_id) and payment events. Trip service writes an outbox row in the same Docstore transaction as each state change. Consumers are at-least-once and idempotent: payments key on capture:{trip_id}, notifications on event_id, ratings on (trip_id, role). Flink uses checkpointed exactly-once state for surge. Uber replicates Kafka across regions with uReplicator into aggregate clusters.",
+   "key_points": [
+    "Exactly-once delivery is impossible; exactly-once effect = at-least-once + idempotency.",
+    "Kafka EOS covers Kafka-to-Kafka pipelines, not external side effects.",
+    "Use deterministic natural keys so retries reproduce the same idempotency key.",
+    "Partition by the entity whose order matters.",
+    "Outbox pattern: state and event in one transaction, relay publishes later."
+   ],
+   "qa": [
+    {
+     "q": "Kafka has exactly-once semantics. Why do you still need idempotency?",
+     "a": "Kafka transactions make a consume-transform-produce loop atomic within Kafka. Calling a PSP or sending a push happens outside that transaction, so a crash after the call but before the offset commit replays the message; only an idempotency key at the PSP and our payments DB prevents a second charge."
+    },
+    {
+     "q": "What is the dual-write problem?",
+     "a": "Updating the database and publishing to Kafka as two separate steps means a crash between them leaves them inconsistent: state changed but no event, or an event for a change that rolled back. The outbox pattern or change data capture fixes it."
+    },
+    {
+     "q": "How do you keep events for one trip in order?",
+     "a": "Key the topic by trip_id so all events for a trip land in one partition, include a version number, and have consumers ignore versions older than what they have applied."
+    },
+    {
+     "q": "Random UUID or natural idempotency key?",
+     "a": "Natural keys like capture:{trip_id} are deterministic: any retry from any service derives the same key. A random UUID generated per attempt defeats the purpose unless it is persisted before the first attempt."
+    }
+   ]
+  },
+  {
+   "name": "Saga and distributed transactions (trip + payment)",
+   "explain": "A distributed transaction changes state in several services or databases that cannot share one local transaction. Two-phase commit (2PC) uses a coordinator: prepare all participants (each locks and promises it can commit), then commit all. It gives atomicity but blocks if the coordinator fails between phases, holds locks for the duration, and requires every participant to support prepare, which external payment processors do not. A saga breaks the business transaction into a sequence of local transactions, each with a compensating action that semantically undoes it (void an authorisation, refund a capture, release a driver). If step 3 fails, compensations for steps 2 and 1 run. Sagas give eventual consistency, not isolation: intermediate states are visible, so the design must make them safe (e.g. 'payment pending'). Sagas can be choreographed (services react to each other's events) or orchestrated (a central workflow tells each service what to do and records progress). Orchestration is easier to reason about and monitor for long, money-moving flows; durable workflow engines such as Uber's Cadence (and its fork Temporal) persist each step so the saga resumes after crashes. Every step must be idempotent because the orchestrator will retry.",
+   "in_this_design": "The ride saga: create trip and authorise the estimated fare (compensation: void auth), match and reserve driver (compensation: release lease, void auth if rider cancels), complete trip and capture final fare with incremental auth if needed (compensation: refund), write ledger entries and schedule driver payout. A Cadence-style workflow orchestrates it with idempotency keys on every PSP call; Uber's Gulfstream uses immutable orders with deterministic ids and double-entry ledger entries that sum to zero.",
+   "key_points": [
+    "2PC blocks and needs every participant to cooperate; PSPs will not.",
+    "Saga = local transactions + compensating actions; eventual, not isolated.",
+    "Orchestration (durable workflow) beats choreography for money flows.",
+    "Every step and compensation must be idempotent and retryable.",
+    "Design intermediate states to be visible and safe."
+   ],
+   "qa": [
+    {
+     "q": "The capture fails after the trip ended. What happens?",
+     "a": "The workflow retries with backoff and the same key; if the card is declined, it tries the backup payment method, and failing that records an outstanding balance on the rider's account and blocks new requests until settled. The driver is still paid from the ledger."
+    },
+    {
+     "q": "Why is auth-then-capture a natural saga?",
+     "a": "Authorisation reserves funds without moving money, so its compensation (void) is cheap and free. Capture happens only after the service is delivered, when the final amount is known."
+    },
+    {
+     "q": "Choreography or orchestration for this flow?",
+     "a": "Orchestration: there are many steps, timeouts and branches (cancel fees, tips, disputes), and finance needs to see the state of every saga. Choreography is fine for side effects like notifications."
+    },
+    {
+     "q": "What about isolation problems in sagas?",
+     "a": "Use semantic locks and state: the trip shows 'payment pending' and the rider cannot start a new trip while an unpaid balance exists; commutative ledger entries avoid lost updates."
+    }
+   ]
+  },
+  {
+   "name": "Real-time push (WebSockets, long polling, SSE, MQTT, mobile push)",
+   "explain": "Servers need to tell clients things the client did not ask for at that moment: a new offer, the driver's position, a cancellation. Short polling (ask every N seconds) is simple but wastes requests and adds up to N seconds of delay. Long polling holds the request open until there is data or a timeout, then the client reconnects; it works through almost any proxy but costs a request per message. Server-sent events stream one-way over HTTP. WebSockets upgrade an HTTP connection to a full-duplex, framed channel with low per-message overhead, ideal for both streaming pings up and offers down. MQTT is a lightweight publish-subscribe protocol designed for unreliable networks, with small headers, keepalives, quality-of-service levels (0 at most once, 1 at least once, 2 exactly once between client and broker) and session resumption; it suits mobile devices on 2G/3G. When the app is backgrounded or killed, the OS closes sockets, so platform push (APNs, FCM) wakes it, with no delivery-time guarantee. Persistent connections create a routing problem: the service that wants to notify a user must know which gateway node holds that user's connection, which calls for a connection registry, plus heartbeats, reconnection with jittered backoff and resynchronisation of missed state.",
+   "in_this_design": "Drivers and riders keep one persistent connection (WebSocket or MQTT-style) to an edge gateway; pings flow up, offers and live driver positions flow down. A connection registry maps user -> gateway node with a 60 s TTL. Critical messages fall back to APNs/FCM and then SMS. On reconnect, the client calls GET /trips/{id} to resync and then receives deltas. 8M concurrent connections at about 50k per node means roughly 160 gateway nodes plus headroom.",
+   "key_points": [
+    "Polling wastes requests; long polling is the universal fallback; WebSocket/MQTT for real time.",
+    "MQTT is built for lossy mobile networks: tiny headers, keepalive, QoS, session resume.",
+    "Platform push wakes backgrounded apps but has no latency guarantee.",
+    "A connection registry routes server-initiated messages to the right gateway.",
+    "Always resync state after reconnect; deltas alone are not enough."
+   ],
+   "qa": [
+    {
+     "q": "Why not use FCM/APNs for driver offers?",
+     "a": "They are best-effort with no latency SLO, can be throttled or delayed by the OS, and the offer window is 15 s. The foreground app uses its own socket; platform push is only the fallback to wake the app."
+    },
+    {
+     "q": "How do you scale to millions of WebSocket connections?",
+     "a": "Gateways are mostly idle memory per connection (tens of KB), so tune file descriptors and kernel buffers to hold about 50k-100k per node, keep them stateless apart from the connection, store routing in a registry, and drain gracefully on deploy with staggered reconnects."
+    },
+    {
+     "q": "What happens to messages sent while a client is reconnecting?",
+     "a": "They are not reliably delivered over the socket. Important state is pulled by the client on reconnect (resync endpoint), offers still valid are re-sent, and critical alerts go via push and SMS."
+    },
+    {
+     "q": "When would you choose long polling?",
+     "a": "When corporate proxies or old networks block WebSocket upgrades. It is a good fallback the client can switch to automatically."
+    }
+   ]
+  },
+  {
+   "name": "Rate limiting",
+   "explain": "Rate limiting caps how often a client can perform an action, protecting the system from abuse, bugs and overload, and keeping one tenant from starving others. Token bucket: a bucket holds up to B tokens and refills at R per second; each request takes a token; it allows bursts up to B and an average of R. Leaky bucket: requests drain at a constant rate from a queue, smoothing bursts. Fixed window counters are cheap but allow double bursts at window edges; sliding window log is exact but stores every timestamp; sliding window counter interpolates between two fixed windows and is a good compromise. In a distributed system, a global limit needs shared state (Redis with atomic Lua scripts) or approximate local limits per node that sync periodically. Limits are applied at several layers: at the edge per IP and device, per authenticated user and endpoint, and internally per caller service. Beyond static limits, adaptive concurrency limits (based on observed latency, like TCP congestion control) and priority-based load shedding protect services under unexpected load. Responses should say how long to wait (429 with Retry-After) so well-behaved clients back off.",
+   "in_this_design": "Gateways enforce per-driver ping limits (about 2/s), per-rider quote and request limits, per-device signup and login limits (against account farming and credential stuffing), and promo-code attempt limits. Internally, ETA and matching services use adaptive concurrency limits and shed low-priority callers (nearby cars) before dispatch.",
+   "key_points": [
+    "Token bucket allows bursts and an average rate; the common default.",
+    "Sliding window counter is the cheap, accurate-enough choice for per-user limits.",
+    "Local limits with periodic sync scale better than a central counter on every request.",
+    "Layer limits: IP/device at edge, user per endpoint, service-to-service internally.",
+    "Prefer priority shedding over uniform rejection under overload."
+   ],
+   "qa": [
+    {
+     "q": "Why rate limit driver pings if you control the app?",
+     "a": "Bugs, modified clients and spoofing tools exist. A single buggy app release sending 10 pings per second would multiply ingest load. A limit protects the shared index and flags abnormal clients."
+    },
+    {
+     "q": "Central Redis counter or local limits?",
+     "a": "A central counter is exact but adds a network hop per request and is a hot dependency. For most per-user limits, a local token bucket on the gateway with sticky routing, or local counters synced every few hundred milliseconds, is accurate enough and far cheaper."
+    },
+    {
+     "q": "How do you rate limit internally during a city spike?",
+     "a": "Assign priorities: dispatch ETAs above quote ETAs above nearby-car ETAs, and use adaptive concurrency limits so when latency rises the service admits fewer low-priority requests."
+    },
+    {
+     "q": "Fixed window problem?",
+     "a": "With 100 per minute, a client can send 100 at 0:59 and 100 at 1:00, 200 in two seconds. Sliding windows or token buckets avoid that."
+    }
+   ]
+  },
+  {
+   "name": "Leader election, distributed locks and fencing (no double-assigned driver)",
+   "explain": "Some decisions must be made by exactly one actor at a time: one node should own a partition, one matcher should assign a driver. Leader election picks such an actor, typically using a consensus service (ZooKeeper ephemeral sequential nodes, etcd leases, Raft itself) so that the choice survives failures. A distributed lock is the same idea scoped to a resource. The trap is that a lock holder can pause (garbage collection, network delay) past its lease expiry, a new holder is granted the lock, and the old one wakes up and writes anyway: two writers. Leases bound how long a crashed holder blocks others, but they cannot stop a paused holder. The fix is fencing tokens: every grant comes with a monotonically increasing number, and the resource (storage) rejects writes carrying a token lower than the highest it has seen. Locks built on asynchronous replication or quorum-less caches (single Redis, or Redlock with clock assumptions) are unsafe for correctness; use them only for efficiency (avoiding duplicate work). For correctness, either use a linearizable store with compare-and-set and fencing, or avoid locks entirely by giving each resource a single owner that serialises operations.",
+   "in_this_design": "Assigning a driver is a conditional write on the driver state row in a linearizable store: CAS AVAILABLE -> OFFERED with a 15 s lease and a new fencing token. Accept and start must present the current token. The surge writer and the outbox relay per partition are elected leaders (one writer). Ringpop ownership is only an efficiency hint, never the lock.",
+   "key_points": [
+    "Leases bound crash blocking; fencing tokens stop paused holders.",
+    "Locks for efficiency can be sloppy; locks for correctness need consensus plus fencing.",
+    "Prefer CAS on the resource itself to an external lock service.",
+    "Single-owner serialisation is often simpler than locking.",
+    "Never trust wall clocks for mutual exclusion."
+   ],
+   "qa": [
+    {
+     "q": "Why not use a Redis SETNX lock to reserve a driver?",
+     "a": "A single Redis node can fail over to a replica that never received the lock, and a paused client can outlive its TTL. Two matchers could then both believe they hold the driver. Use a consensus-backed store with CAS and fencing, so the write itself is the lock."
+    },
+    {
+     "q": "Explain fencing tokens with a concrete failure.",
+     "a": "Matcher A reserves driver D with token 41, then stalls in a GC pause. The lease expires; matcher B reserves D with token 42 and sends an offer, which D accepts. A wakes and tries to confirm with token 41; the store rejects it because 42 is current. Without the token, A would overwrite B's assignment."
+    },
+    {
+     "q": "Where do you need leader election in this design?",
+     "a": "Single writer for surge output per region pair, one outbox relay per partition, Raft leaders inside each Docstore partition, and the control plane that decides city failover."
+    },
+    {
+     "q": "Is a 15 s lease too long?",
+     "a": "It matches the driver's decision window. If the driver app is dead, the rider waits up to 15 s before re-dispatch; we shorten that by releasing early on explicit decline and by not offering to drivers whose last ping is stale."
+    }
+   ]
+  },
+  {
+   "name": "Multi-region active-active and failover",
+   "explain": "Running in multiple regions protects against the loss of a whole datacenter or cloud region and puts compute near users. Active-passive keeps a standby that takes over on failure; it is simpler but the standby is cold-ish, failover is rarely exercised and capacity sits idle. Active-active serves traffic from every region at once; it is efficient and always tested, but concurrent writes to the same data in two regions cause conflicts unless each key has a single home (write locality) or the data type merges automatically (CRDTs). The practical pattern is partitioned active-active: every region is live, but each partition (a city, a user) is homed in one region at a time, with replicas elsewhere ready to be promoted. Failover then involves detecting the failure, deciding (ideally automated with human override), moving traffic (DNS with low TTL, anycast, client-side region lists), promoting data, and rebuilding soft state. RPO (data loss) and RTO (downtime) targets drive the replication mode. Failover must be drilled regularly, capacity in the surviving regions must cover the extra load, and failback must be planned too, since it is often harder than failover.",
+   "in_this_design": "Each city is homed in one region (active), with a designated standby; all regions serve traffic for their own cities. Trips replicate asynchronously (RPO under a second) with the driver-held encrypted trip digest as backstop, as Uber described; the ledger replicates synchronously. Kafka uses regional plus aggregate clusters; surge runs active-active compute with a single primary writer; consumers like payments run active-passive with offset sync.",
+   "key_points": [
+    "Active-active with per-partition homing avoids write conflicts.",
+    "Soft state (geo index) rebuilds itself; replicate only what cannot be rebuilt.",
+    "RPO and RTO per data type decide sync vs async replication.",
+    "Keep N+1 regional capacity or failover causes a second outage.",
+    "Drill failover and failback; untested failover does not exist."
+   ],
+   "qa": [
+    {
+     "q": "Why not let both regions accept writes for the same trip?",
+     "a": "Two regions could apply conflicting transitions (cancel in one, start in the other) and there is no meaningful merge. Homing each trip to one region keeps transitions serialised; the other region only takes over after explicit failover."
+    },
+    {
+     "q": "How does the driver phone help in failover?",
+     "a": "Dispatch periodically gives the driver app an encrypted digest of the trip state. If the new region does not know the trip because replication lagged, the next ping reveals an unknown trip and the app uploads the digest, letting the server restore it without synchronous cross-region replication."
+    },
+    {
+     "q": "What capacity do you keep for failover?",
+     "a": "Enough that losing the largest region still leaves surviving regions under about 80% utilisation at peak; with three regions that means running each at roughly 50-60% normally."
+    },
+    {
+     "q": "How do you avoid split-brain during failover?",
+     "a": "The control plane that re-homes cities is itself consensus-backed, the old region's writes are fenced (epoch number per city home), and stale writes with an old epoch are rejected."
+    }
+   ]
+  },
+  {
+   "name": "Trip lifecycle state machine and optimistic concurrency",
+   "explain": "Business entities that move through stages are best modelled as explicit finite state machines: a fixed set of states, a table of allowed transitions, and guards on each. This makes illegal states unrepresentable (a trip cannot be COMPLETED before ON_TRIP), centralises business rules, and makes auditing simple because every change is a named event. In a distributed system several actors may try to move the same entity concurrently: the rider cancels while the driver starts, a retry arrives after the original succeeded. Pessimistic locking (SELECT FOR UPDATE) serialises them but holds locks across network calls. Optimistic concurrency control instead reads the entity with its version, computes the change, and writes only if the version is unchanged (compare-and-set); the loser gets a conflict and re-reads. It is ideal when conflicts are rare but must be handled correctly. Idempotency fits naturally: store the last applied event id so a retried event returns the current state instead of failing. Every transition should also emit an event (via an outbox) so other services react, and the history of transitions becomes the audit log support teams need.",
+   "in_this_design": "Trip states: REQUESTED -> MATCHED -> ARRIVED -> ON_TRIP -> COMPLETED, with CANCELLED from REQUESTED, MATCHED or ARRIVED and EXPIRED from REQUESTED. Each API call carries expected_version; Docstore applies a conditional update and inserts an outbox event in the same transaction. Driver state (OFFLINE, AVAILABLE, OFFERED, EN_ROUTE, ON_TRIP) is a second state machine kept consistent with the trip via the fencing token.",
+   "key_points": [
+    "Explicit state machines make illegal transitions impossible and audits trivial.",
+    "Optimistic concurrency: read version, write if unchanged, loser re-reads.",
+    "Store last event id for idempotent replays.",
+    "Emit every transition through an outbox for downstream consumers.",
+    "Keep the driver and trip state machines linked by the lease token."
+   ],
+   "qa": [
+    {
+     "q": "Rider cancel and driver start arrive together. Walk me through it.",
+     "a": "Both read version 7. Start commits first and sets version 8, ON_TRIP. Cancel's conditional update with version 7 fails, returns 409 with the current state; the rider app shows the trip has started and offers to end it or contact support."
+    },
+    {
+     "q": "Why not use SELECT FOR UPDATE?",
+     "a": "It holds row locks while the request does other work and can deadlock across tables. With conflicts rare, optimistic CAS gives the same correctness with no lock waits."
+    },
+    {
+     "q": "How do you make transitions idempotent?",
+     "a": "Each client event carries an id; the trip row stores the last applied event id (or a small set). A retry with the same id returns the current trip with 200 rather than a conflict."
+    },
+    {
+     "q": "What if the driver app thinks the trip ended but the server never got it?",
+     "a": "The app keeps the END event queued with its id and resends on reconnect; the server applies it once. Fare uses the server's map-matched trail up to the end timestamp, so the delay does not change the price."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Geospatial index structure",
+   "options": "Geohash strings, quadtree, S2 cells, H3 hexagons, PostGIS R-tree",
+   "choice": "H3 cells (res 8-9) as keys in an in-memory hash map",
+   "why": "O(1) updates for 1.25M writes/s, uniform neighbour distance for kRing search and surge smoothing, integer ids as shard keys. Quadtree adapts to density but rebalancing under constant movement is costly; R-trees are great for ad hoc polygons but slow to update at this rate."
+  },
+  {
+   "decision": "Greedy nearest vs batched global matching",
+   "options": "Offer nearest driver immediately; batch requests for 1-2 s and solve assignment",
+   "choice": "Greedy in sparse areas, batched in dense zones and airports",
+   "why": "Batching lowers total pickup time and improves fairness but adds up to 2 s of latency; it pays off only when several requests compete for the same drivers."
+  },
+  {
+   "decision": "Store for live locations",
+   "options": "Database rows, Redis GEO, custom in-memory sharded index",
+   "choice": "Custom in-memory index on a Ringpop ring with Kafka for durability",
+   "why": "Latest position is overwrite-only and rebuildable in 4 s, so durability on the hot path is wasted cost; Kafka keeps the history for everything else."
+  },
+  {
+   "decision": "Consistency for dispatch vs payments",
+   "options": "AP everywhere, CP everywhere, split",
+   "choice": "AP for location and candidate search; CP for driver lease, trip state and money",
+   "why": "Stale locations cost a few metres; a double-assigned driver or double charge costs trust and money. Pay the latency of consensus only where correctness needs it."
+  },
+  {
+   "decision": "Shard key for the real-time plane",
+   "options": "driver_id hash, geographic cell, city",
+   "choice": "City first, then H3 parent cell within the city",
+   "why": "Queries are spatial so spatial sharding keeps a kRing on one or two shards; city isolation gives blast-radius control and region homing. Cost: hot cells, solved by splitting and read replicas."
+  },
+  {
+   "decision": "Push mechanism to apps",
+   "options": "Polling, long polling, WebSocket, MQTT, platform push only",
+   "choice": "Persistent WebSocket/MQTT-style connection with APNs/FCM fallback and SMS for critical",
+   "why": "Offers have a 15 s window and live tracking needs ~2 s freshness; platform push alone has no delivery guarantee or latency SLO."
+  },
+  {
+   "decision": "Payment timing",
+   "options": "Charge upfront, authorise then capture, charge after trip only",
+   "choice": "Authorise estimate at request, capture final at completion",
+   "why": "Auth proves funds before a driver drives to you; capture after lets the fare change; void on cancel is free. Charging only after the trip risks unpaid trips."
+  },
+  {
+   "decision": "Distributed transaction across trip and payment",
+   "options": "2PC across services, saga with compensations, single shared DB",
+   "choice": "Orchestrated saga (Cadence) with idempotent steps and outbox events",
+   "why": "PSPs cannot participate in 2PC and holding locks across a 3 s network call is fragile; a saga with compensations (void, refund) matches how money really moves."
+  },
+  {
+   "decision": "Multi-region strategy",
+   "options": "Active-passive whole site, active-active with global writes, cities homed to a region with standby",
+   "choice": "Each city active in one home region, warm standby in another; global services active-active with single writer per key",
+   "why": "Dispatch is local by nature, so homing avoids cross-region write conflicts while still giving every region live traffic; failover is per city, limiting blast radius."
+  },
+  {
+   "decision": "Surge granularity",
+   "options": "Per city, per geohash, per H3 res-7/8/9, per road segment",
+   "choice": "H3 res-8 (~0.7 km^2) with neighbour smoothing, 1 minute windows",
+   "why": "Small enough to reflect local imbalance, large enough for statistically meaningful counts; smoothing prevents riders walking 100 m to escape surge."
+  },
+  {
+   "decision": "ETA computation",
+   "options": "Haversine x factor, Dijkstra/A*, contraction hierarchies, ML only",
+   "choice": "CH (customizable for traffic) plus ML residual",
+   "why": "CH gives ms queries for dispatch volume; ML fixes systematic errors like pickup time and signals; haversine is a degradation fallback only."
+  },
+  {
+   "decision": "Delivery semantics on Kafka",
+   "options": "At-most-once, at-least-once + idempotent consumers, Kafka transactions EOS",
+   "choice": "At-least-once with idempotent consumers; Flink checkpoint EOS inside the surge job",
+   "why": "End-to-end exactly-once across PSPs is impossible; idempotency at the effect is the only real guarantee, and it is cheap with natural keys like trip_id."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Whole region (datacenter) lost",
+   "behavior": "Control plane re-homes affected cities to the standby region; GeoDNS and client failover lists move connections within ~1 minute; geo index rebuilds from the next pings; trips come from the replicated store or driver-held digests; payments replay idempotently from replicated Kafka/outbox. New requests may fail for 1-3 minutes; in-progress trips continue on the phones."
+  },
+  {
+   "failure": "Matching service (DISCO) down in one city",
+   "behavior": "Requests queue in Demand service for up to 30 s with a 'finding your ride' UI; a fallback simple greedy matcher (nearest AVAILABLE by haversine with lease) can be enabled by flag; if both are down, return a clear error rather than holding riders indefinitely. Active trips are unaffected because they no longer depend on dispatch."
+  },
+  {
+   "failure": "Geo index shard node crashes",
+   "behavior": "SWIM marks it suspect then faulty in a few seconds; ring ownership of its cells moves to neighbours; the follower replica is promoted or the new owner fills from the next pings within 4 s. Dispatch in those cells sees fewer candidates for a few seconds."
+  },
+  {
+   "failure": "Kafka cluster in a region degraded",
+   "behavior": "Hot path is unaffected because pings update the index synchronously and Kafka is async; producers buffer then fail over to another regional cluster; surge uses last known values with TTL decay; payments outbox keeps events in the DB until Kafka recovers, so nothing is lost."
+  },
+  {
+   "failure": "PSP outage or high latency",
+   "behavior": "Circuit breaker opens on the PSP; new trips proceed with deferred auth for low-risk riders (risk-scored), captures queue in the saga and retry with jittered backoff and the same keys; failover to secondary PSP for new auths."
+  },
+  {
+   "failure": "ETA service overloaded",
+   "behavior": "Bulkheaded pools: dispatch ETAs prioritised over quote and nearby-car ETAs; quote ETA degrades to cached cell-to-cell ETA tables, then haversine x city speed factor; load shedding on low-priority callers."
+  },
+  {
+   "failure": "Network partition between matcher and lease store",
+   "behavior": "Matcher cannot reserve, so it cannot offer; requests wait/retry. This is the deliberate CP choice: we lose availability of matching in that partition rather than risk double assignment."
+  },
+  {
+   "failure": "GPS drift or spoofed pings",
+   "behavior": "Plausibility checks drop teleports; map matching snaps to roads; fare recomputed from the matched trail; repeated anomalies flag the account; dispatch ignores drivers with stale or low-accuracy positions."
+  },
+  {
+   "failure": "Driver network drops mid-trip",
+   "behavior": "Trip stays ON_TRIP server-side; the app buffers events and pings; rider's map shows last known position and 'updating'; on reconnect buffered data is merged in seq order; if the driver never reconnects, support tooling ends the trip using the last known point and the route."
+  },
+  {
+   "failure": "Gateway node dies with 50k connections",
+   "behavior": "Clients reconnect with jittered backoff to other nodes; connection registry entries expire (TTL 60 s) or are overwritten on reconnect; pushes during the gap fall back to APNs/FCM; offers re-sent on reconnect if still valid."
+  },
+  {
+   "failure": "Surge job produces a bad multiplier (bug, bad data)",
+   "behavior": "Guard rails: per-city caps, max delta per minute, anomaly detection on output distribution, kill switch to 1.0x; quotes are signed with the multiplier so riders are charged what they saw."
+  },
+  {
+   "failure": "Clock skew between services",
+   "behavior": "Correctness never depends on wall clocks: ordering uses versions, sequence numbers and fencing tokens; leases are checked by the store's clock only."
+  }
+ ],
+ "metrics": [
+  "Request-to-offer latency p50/p95/p99 per city (SLO p95 < 2 s).",
+  "Offer acceptance rate and time-to-accept; re-dispatch rounds per trip.",
+  "Match rate and unfulfilled requests per H3 cell per minute.",
+  "Location ingest rate, lag from receive to index (p99 < 1 s), and dropped/invalid ping ratio.",
+  "Geo index freshness: share of AVAILABLE drivers with ping older than 15 s.",
+  "Double-assignment detector: count of drivers with two active trips (must be 0, page on 1).",
+  "ETA error: MAPE and median absolute error for pickup and drop ETAs, by city and hour.",
+  "Cancellation rate after match, split by rider and driver, and by pickup ETA bucket.",
+  "Surge pipeline end-to-end latency and staleness of KV entries; multiplier distribution.",
+  "WebSocket connected ratio, reconnect rate, push delivery latency and fallback rate.",
+  "Payments: auth success rate, capture success, PENDING age, duplicate-charge detector, ledger imbalance (must be 0), reconciliation mismatches.",
+  "Kafka consumer lag per critical consumer group (payments, surge, fraud).",
+  "SWIM membership churn, ring rebalances per hour, shard load skew (max/mean).",
+  "Driver utilisation and dead-head kilometres per trip (marketplace health).",
+  "Error budget burn rate per region for the request flow."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just use Redis GEOADD/GEOSEARCH for driver locations?",
+   "a": "Redis GEO is a sorted set keyed by a 52-bit geohash, so it is a fine baseline for one city. At 1.25M writes/s globally you still need to shard it, choose a shard key, and handle cross-shard radius queries yourself, and a single hot key per city would melt. Uber's answer was an in-process sharded index with S2, later H3, cell ids; I would start with Redis per city for an MVP and move to a custom index when one city's write rate exceeds a single node's capacity."
+  },
+  {
+   "q": "How do you guarantee a driver is never assigned to two riders?",
+   "a": "The driver state store is the single source of truth and it is linearizable per driver. Matchers can only offer after a compare-and-set from AVAILABLE to OFFERED succeeds, which also issues a monotonically increasing fencing token and a 15 s lease. Every later step (accept, start) must present the current token. Routing via the ring makes contention rare, but correctness comes from the CAS and token, so even a split-brain matcher cannot double assign."
+  },
+  {
+   "q": "Why H3 instead of geohash?",
+   "a": "Geohash cells are rectangles whose neighbours sit at two different distances, and two points a metre apart across a cell boundary can have completely different prefixes, so proximity search must always check 8 neighbours. H3 hexagons have six equidistant neighbours, so kRing approximates a circle, and smoothing (surge, supply) behaves uniformly. Geohash wins on simplicity and prefix range scans in a B-tree. S2 wins on exact hierarchical containment. For movement and smoothing, hexagons are the better fit."
+  },
+  {
+   "q": "What happens if the matching service goes down in Mumbai at 9 am?",
+   "a": "Active trips continue because they no longer depend on dispatch. New requests are held by Demand service for up to 30 s while the matcher's ring rebalances or a standby instance takes the city shard. If the full matcher stays down, a flag enables a simple greedy fallback matcher that uses the same lease store, so it is still safe. Riders see 'high demand, retrying' rather than a spinner forever. We would page on request-to-offer p95 and match rate for that city within a minute."
+  },
+  {
+   "q": "How would you handle a region going down entirely?",
+   "a": "Cities are homed to one region with a warm standby. Trip and payment data replicate cross-region; the live geo index does not need to, since it rebuilds from pings in seconds. The control plane re-homes the cities, DNS and client failover lists move connections, drivers' next pings fill the index, and any trip the standby has not seen is recreated from the encrypted digest on the driver's phone, which is what Uber described doing. Payments replay from the replicated log with idempotency keys."
+  },
+  {
+   "q": "Is your system CP or AP?",
+   "a": "Both, deliberately by component. Location and candidate search are AP: during a partition we keep serving slightly stale positions. Driver leases, trip state and the ledger are CP: during a partition we refuse writes rather than diverge. In PACELC terms the geo plane is PA/EL and the money plane is PC/EC."
+  },
+  {
+   "q": "Greedy matching is simple. Why bother with batching?",
+   "a": "Greedy assigns the nearest driver to whoever asked first. If rider A is 1 minute from driver X and 2 minutes from Y, and rider B (arriving 200 ms later) is 1 minute from X and 10 minutes from Y, greedy gives total 11 minutes; batching gives 3. In dense cities batching over 1-2 s windows lowers total pickup time and cancellations. In sparse areas there is no competition so we skip the wait."
+  },
+  {
+   "q": "How do you compute ETAs fast enough for dispatch?",
+   "a": "Contraction hierarchies: preprocess the graph by contracting less important nodes and adding shortcuts, so a query is a bidirectional upward-only Dijkstra settling a few hundred nodes, around a millisecond. Traffic changes weights constantly, so we use a customizable variant that recomputes the metric in seconds without redoing the node order. Then an ML model corrects the residual, as Uber's DeepETA does."
+  },
+  {
+   "q": "How do you make the payment flow exactly-once?",
+   "a": "You cannot get exactly-once delivery, but you can get exactly-once effect. Every money operation has a deterministic key (auth:{trip}, capture:{trip}), stored with the request hash and result before and after calling the PSP, which also receives the same key. Retries return the stored result. Unknown outcomes stay PENDING and are resolved by querying the PSP, then reconciled daily against settlement files."
+  },
+  {
+   "q": "Why not a 2PC between trip service and payments?",
+   "a": "The PSP will not join our transaction, 2PC blocks if the coordinator dies, and holding locks across a 3 s card call kills throughput. A saga with compensating actions (void the auth, refund) and an outbox to publish events atomically with state is the standard approach and matches how card networks already work."
+  },
+  {
+   "q": "How do you keep the rider's map smooth when pings arrive every 4 s?",
+   "a": "On trip we raise the rate to 2 s, and the client animates along the map-matched route polyline between points (dead reckoning with speed and heading). The server pushes the latest point over the open socket; the client interpolates, so it looks continuous without more data."
+  },
+  {
+   "q": "How does surge avoid flicker and gaming?",
+   "a": "Smooth spatially across the H3 kRing, smooth temporally with an EWMA, limit the change per minute, and lock the price in a signed quote. Drivers see a heatmap, not exact multipliers per cell, and supply features include drivers about to drop off nearby, so a few drivers going offline together has limited effect."
+  },
+  {
+   "q": "What is the role of Ringpop and why not a load balancer?",
+   "a": "Ringpop embeds a consistent hash ring in each service instance with SWIM gossip membership, so any instance can accept a request and forward it to the key's owner. A plain load balancer spreads requests randomly, which breaks in-memory state locality. The trade-off is that Ringpop is AP: during membership churn two nodes may briefly think they own a key, which is why the lease store, not the ring, guards assignment."
+  },
+  {
+   "q": "How would you shard storage for trips?",
+   "a": "Trips are accessed by trip_id on the hot path, so hash on trip_id within the city's home region for even load. Rider and driver history are secondary indexes, or a separate table keyed by (rider_id, time) populated from the outbox. Avoid sharding trips by city alone because a big city becomes a hot shard."
+  },
+  {
+   "q": "What about data residency in India or the EU?",
+   "a": "City-to-region homing already gives us locality. For residency we pin those cities to in-country regions, keep PII and precise trails there, and replicate only aggregated or pseudonymised data globally. The standby region for those cities must also be in-country, which constrains failover options and is a real cost to call out."
+  },
+  {
+   "q": "How would you rate limit this system?",
+   "a": "At the gateway: per-driver ping limit (2/s), per-rider quote limit (e.g. 30/min) and request limit, per-IP and per-device limits for login and signup, all token buckets kept locally with periodic sync to a shared store. Internally, adaptive concurrency limits and priority shedding protect ETA and matching."
+  },
+  {
+   "q": "What would you do differently for UberPool?",
+   "a": "Pool turns matching into a vehicle routing problem with insertion: for each request, evaluate inserting pickup and drop into existing routes subject to detour limits. It requires batching, a richer cost function and constant re-planning of en-route vehicles, which is why DISCO was designed to revise plans."
+  }
+ ],
+ "key_points": [
+  "Split the system into an AP real-time plane (locations, candidates) and a CP transactional plane (driver lease, trip, money); say this in the first two minutes.",
+  "Location math: 5M drivers / 4 s = 1.25M writes/s, but the live state is only ~1 GB, so keep it in memory, shard for throughput, and stream history to Kafka.",
+  "H3 hexagons give equidistant neighbours, clean kRing search and smoothing; geohash is the simple baseline; S2 and quadtrees are the alternatives you should be able to compare.",
+  "Shard the real-time plane by city then cell with consistent hashing and SWIM gossip (Ringpop); accept that ownership can briefly overlap.",
+  "No double assignment comes from a CAS lease with a fencing token in a linearizable store, not from routing.",
+  "Matching: greedy nearest-ETA in sparse areas, batched bipartite assignment every 1-2 s in dense zones; rank on ETA, not straight-line distance.",
+  "ETA: contraction hierarchies (customizable for traffic) for ms queries, plus an ML residual model; haversine only as a degradation fallback.",
+  "Surge: Flink windowed aggregation per H3 cell per minute from Kafka, smoothed and capped, single-writer from the primary region, locked into a signed upfront quote.",
+  "Payments: authorise at request, capture at completion, saga with void/refund compensations, idempotency keys on every hop, double-entry ledger, daily reconciliation.",
+  "Trip state machine with versioned conditional updates and an outbox gives ordered, replayable events without dual writes.",
+  "Failure story: geo index rebuilds from pings in seconds; trips survive region loss via replication plus a driver-held digest; degrade surge, ETA and map refresh before dispatch.",
+  "Measure request-to-offer p95, match rate, ETA error, double-assignment count (0), ledger imbalance (0) and ingest lag."
+ ],
+ "quiz": [
+  {
+   "q": "5 million drivers are online and each pings every 4 seconds. Roughly how many location writes per second must the system absorb?",
+   "options": [
+    "125,000",
+    "5 million",
+    "20 million",
+    "1.25 million"
+   ],
+   "answer": 3,
+   "why": "5,000,000 / 4 = 1.25M per second, close to the ~1M writes/s Uber said its geo index was designed for. 5 million is the tempting answer if you forget to divide by the interval."
+  },
+  {
+   "q": "Why are H3 hexagons preferred over square grid cells for nearby-driver search and surge smoothing?",
+   "options": [
+    "Hexagons have smaller ids than squares",
+    "Hexagons tile the sphere perfectly with no exceptions",
+    "All six neighbours of a hexagon are equidistant from its centre",
+    "Hexagons perfectly nest inside their parent cells"
+   ],
+   "answer": 2,
+   "why": "Equidistant neighbours make k-rings approximate circles and treat all neighbours equally. H3 actually needs 12 pentagons, and its children only approximately nest in parents, so the 'perfect nesting' option describes S2, not H3."
+  },
+  {
+   "q": "Two points 2 metres apart sit on opposite sides of a geohash cell boundary. What is the practical consequence for a proximity query?",
+   "options": [
+    "They are guaranteed to share the same 6-character prefix",
+    "Geohash automatically merges them into one cell at the next precision",
+    "The query must also search neighbouring cells, not just the point's own cell",
+    "The query must switch to a quadtree for those points"
+   ],
+   "answer": 2,
+   "why": "Prefixes can differ completely across a boundary, so correct search always includes neighbours. The 'same prefix' option is the common misconception that shared prefix equals nearness in both directions."
+  },
+  {
+   "q": "Which statement about Google S2 is most accurate?",
+   "options": [
+    "It uses hexagons on an icosahedron",
+    "It is a dynamic tree that splits when a node exceeds capacity",
+    "It orders cells along a Hilbert curve on a cube projection, giving 64-bit ids with exact hierarchy",
+    "It encodes cells as base-32 strings"
+   ],
+   "answer": 2,
+   "why": "S2 projects onto six cube faces and orders cells on a Hilbert curve; children share their parent's id prefix exactly. Hexagons on an icosahedron is H3; base-32 strings is geohash."
+  },
+  {
+   "q": "Why is a quadtree a poor fit for the live driver index compared with a fixed cell grid?",
+   "options": [
+    "Quadtrees cannot answer range queries",
+    "Quadtrees need a GPU",
+    "Quadtrees only work for one-dimensional data",
+    "Constantly moving points force frequent node splits and merges under heavy write load"
+   ],
+   "answer": 3,
+   "why": "Quadtrees adapt to density but structural changes under 1M+ moves per second are costly and need locking. They can answer range queries fine, so the first option is wrong."
+  },
+  {
+   "q": "The location service is falling behind during a spike. Which response is best?",
+   "options": [
+    "Queue all pings durably and process them in order later",
+    "Write every ping synchronously to the database to avoid losing any",
+    "Collapse queued pings to the newest per driver and raise the ping interval remotely",
+    "Reject all pings from the busiest city until the backlog clears"
+   ],
+   "answer": 2,
+   "why": "A location is superseded by the next one, so old pings have no value; keep the newest and shed rate. Durable queuing adds lag, so drivers appear where they were minutes ago."
+  },
+  {
+   "q": "Approximately how much RAM does the latest position of 5 million drivers need at about 200 bytes each?",
+   "options": [
+    "About 10 MB",
+    "About 1 TB",
+    "About 100 GB",
+    "About 1 GB"
+   ],
+   "answer": 3,
+   "why": "5M x 200 B = 1 GB. Sharding the geo index is for write throughput and blast radius, not size. Guessing 100 GB is the usual over-estimate that leads people to put it on disk."
+  },
+  {
+   "q": "In consistent hashing with virtual nodes, what happens when one of 100 nodes fails?",
+   "options": [
+    "All keys are remapped",
+    "About 50% of keys move to the next node",
+    "About 1% of keys move, spread across many surviving nodes",
+    "No keys move until an operator rebalances"
+   ],
+   "answer": 2,
+   "why": "Only the failed node's keys move, about 1/N, and virtual nodes spread them across many successors. 'All keys remapped' describes hash mod N."
+  },
+  {
+   "q": "Ringpop routes all reservations for a driver's cell to one owner. Why is a separate CAS lease store still needed?",
+   "options": [
+    "Gossip-based membership is eventually consistent, so two nodes may briefly both think they own a key",
+    "Ringpop cannot route requests across machines",
+    "The lease store is faster than the ring",
+    "Ringpop only works for stateless services"
+   ],
+   "answer": 0,
+   "why": "Ring views converge eventually; during churn ownership can overlap. Correctness must come from a linearizable CAS. Ringpop exists precisely to shard stateful services, so the last option is backwards."
+  },
+  {
+   "q": "In SWIM, what is the purpose of the ping-req (indirect probe) step?",
+   "options": [
+    "To elect a new leader",
+    "To distinguish a dead target from a bad link between the prober and the target",
+    "To spread membership updates to all nodes at once",
+    "To measure round-trip latency for load balancing"
+   ],
+   "answer": 1,
+   "why": "Asking k other members to probe the target uses independent paths, so a lossy link does not cause a false suspicion. Dissemination happens by piggybacking, not by ping-req."
+  },
+  {
+   "q": "Why does SWIM mark a node 'suspect' before 'faulty'?",
+   "options": [
+    "To reduce the number of pings sent",
+    "Because faulty nodes must be confirmed by an operator",
+    "To give a slow but alive node a chance to refute with a higher incarnation number",
+    "Because suspicion is required by Raft"
+   ],
+   "answer": 2,
+   "why": "The suspect state with incarnation-number refutation sharply reduces false positives from GC pauses or slow links. It is not about operators or Raft."
+  },
+  {
+   "q": "How does SWIM keep per-node message load constant as the cluster grows?",
+   "options": [
+    "By piggybacking membership updates on protocol pings and acks",
+    "By electing a coordinator that broadcasts membership",
+    "By heartbeating every member every second",
+    "By using multicast"
+   ],
+   "answer": 0,
+   "why": "Each node pings one random member per period and piggybacks updates, so load per node is constant and dissemination takes O(log N) rounds. All-to-all heartbeats grow O(N^2)."
+  },
+  {
+   "q": "Why shard the real-time geo index by city then H3 parent cell rather than by driver_id hash?",
+   "options": [
+    "Spatial queries then touch one or two shards instead of fanning out to all of them",
+    "driver_id hashing is not deterministic",
+    "Cell keys guarantee even load across shards",
+    "driver_id cannot be used as a Kafka key"
+   ],
+   "answer": 0,
+   "why": "Nearby queries are spatial; spatial keys keep them local. Cell keys do not give even load (geography is skewed) which is why hot cells need splitting."
+  },
+  {
+   "q": "Trip records are accessed mostly by trip_id. Which partitioning is best for the trip store inside a region?",
+   "options": [
+    "Hash partition by trip_id",
+    "Range partition by city name",
+    "Single partition per city",
+    "Partition by rider's surname"
+   ],
+   "answer": 0,
+   "why": "Hashing on trip_id spreads load evenly and serves the dominant lookup. Partitioning by city makes a megacity one hot shard."
+  },
+  {
+   "q": "A Raft group has 5 replicas. How many simultaneous replica failures can it tolerate while still committing writes?",
+   "options": [
+    "1",
+    "3",
+    "2",
+    "4"
+   ],
+   "answer": 2,
+   "why": "A majority of 3 out of 5 must remain, so 2 failures are tolerated. 3 is tempting but leaves only 2 nodes, not a majority."
+  },
+  {
+   "q": "In a Dynamo-style store with N=3, which setting guarantees read and write quorums overlap?",
+   "options": [
+    "W=1, R=1",
+    "W=2, R=2",
+    "W=1, R=2",
+    "W=0, R=3"
+   ],
+   "answer": 1,
+   "why": "R + W > N means 2 + 2 = 4 > 3, so every read quorum intersects the latest write quorum. W=1, R=2 sums to 3, which is not greater than N."
+  },
+  {
+   "q": "Why is a quorum read/write (R + W > N) alone not enough to implement a safe driver reservation?",
+   "options": [
+    "Quorums are too slow",
+    "Overlap gives recency, but concurrent conditional writes need linearizable compare-and-set, which needs consensus or a single leader",
+    "Quorums do not replicate data",
+    "Quorums only work with exactly 3 replicas"
+   ],
+   "answer": 1,
+   "why": "Two concurrent writers can both succeed against overlapping-but-different quorums; you need consensus for CAS. Speed is not the core problem."
+  },
+  {
+   "q": "Which PACELC classification best fits the payment ledger in this design?",
+   "options": [
+    "PA/EL",
+    "PC/EC",
+    "PA/EC",
+    "PC/EL"
+   ],
+   "answer": 1,
+   "why": "Under partition the ledger refuses writes (C) and in normal operation pays coordination latency for consistency (C). PA/EL fits the location plane, not money."
+  },
+  {
+   "q": "During a network partition, the matcher can reach the geo index but not the driver lease store. What should happen?",
+   "options": [
+    "Matching stalls and retries; nearby-cars display continues",
+    "Offer drivers anyway using the geo index state",
+    "Assign the driver and reconcile later",
+    "Fail over the whole region immediately"
+   ],
+   "answer": 0,
+   "why": "Assignment is CP by design: without the lease store we cannot guarantee single assignment. Assign-and-reconcile sounds pragmatic but produces two drivers driving to one rider."
+  },
+  {
+   "q": "Rider A arrives first: driver X is 1 min away, Y is 2 min. Rider B arrives 300 ms later: X is 1 min away, Y is 10 min. Total pickup minutes with greedy vs batched matching?",
+   "options": [
+    "Greedy 11, batched 3",
+    "Greedy 2, batched 2",
+    "Greedy 3, batched 11",
+    "Both 11"
+   ],
+   "answer": 0,
+   "why": "Greedy gives A the nearest (X), leaving B with Y: 1 + 10 = 11. Batched gives A Y and B X: 2 + 1 = 3. This is the canonical argument for batched assignment."
+  },
+  {
+   "q": "What is the time complexity of the Hungarian algorithm for an n x n assignment?",
+   "options": [
+    "O(n^3)",
+    "O(n^2)",
+    "O(2^n)",
+    "O(n log n)"
+   ],
+   "answer": 0,
+   "why": "Hungarian (Kuhn-Munkres) runs in O(n^3), fine for hundreds per zone. O(n^2) is a common misremembering; exponential is brute force over permutations."
+  },
+  {
+   "q": "A zone has 5,000 requests and 10,000 drivers in one batch. What is the best approach?",
+   "options": [
+    "Run full Hungarian on a dense 5,000 x 10,000 matrix",
+    "Switch to random assignment",
+    "Increase the batch window to 60 s",
+    "Sparsify to top-K nearest drivers per request and solve with min-cost flow or an auction algorithm, possibly in subzones"
+   ],
+   "answer": 3,
+   "why": "Sparse graphs make the problem tractable; most far pairs are useless anyway. A dense O(n^3) solve is too slow and a 60 s window kills latency."
+  },
+  {
+   "q": "Why should dispatch rank candidates by road ETA rather than straight-line distance?",
+   "options": [
+    "Straight-line distance is harder to compute",
+    "Regulations require ETA ranking",
+    "ETA is always shorter than distance",
+    "Rivers, one-way streets and highways can make a nearby driver many minutes away"
+   ],
+   "answer": 3,
+   "why": "Road topology dominates real pickup time. Haversine is cheaper, not harder, which is why it remains a fallback."
+  },
+  {
+   "q": "What is the main idea of contraction hierarchies?",
+   "options": [
+    "Cache every source-destination pair",
+    "Run Dijkstra on a GPU",
+    "Replace the road graph with a grid",
+    "Preprocess by contracting nodes in importance order and adding shortcuts, then query with an upward-only bidirectional search"
+   ],
+   "answer": 3,
+   "why": "Shortcuts preserve shortest paths, so queries settle only a few hundred nodes (~1 ms). Caching all pairs is quadratic in nodes and infeasible."
+  },
+  {
+   "q": "Plain contraction hierarchies have what weakness for live traffic?",
+   "options": [
+    "They cannot handle one-way streets",
+    "Preprocessing assumes fixed weights, so changing weights requires costly re-preprocessing",
+    "They return approximate paths only",
+    "They need A* heuristics to work"
+   ],
+   "answer": 1,
+   "why": "Customizable variants (CCH, CRP) separate topology from metrics so new traffic weights apply in seconds. CH returns exact shortest paths, so 'approximate' is wrong."
+  },
+  {
+   "q": "What makes A* faster than Dijkstra for point-to-point routing?",
+   "options": [
+    "It skips the priority queue",
+    "It only searches backward from the target",
+    "It uses an admissible heuristic (e.g. straight-line distance / max speed) to steer toward the target",
+    "It uses shortcut edges"
+   ],
+   "answer": 2,
+   "why": "An admissible heuristic never overestimates, so A* stays optimal while exploring fewer nodes. Shortcut edges are CH, not A*."
+  },
+  {
+   "q": "Uber's DeepETA model primarily does what?",
+   "options": [
+    "Replaces the routing engine entirely",
+    "Detects GPS spoofing",
+    "Computes surge multipliers",
+    "Predicts the residual between the routing engine's ETA and actual arrival"
+   ],
+   "answer": 3,
+   "why": "DeepETA post-processes the routing ETA, learning its systematic error. Replacing routing would lose the physical model's generalisation."
+  },
+  {
+   "q": "Roughly how many ETA queries per second does dispatch need at 3,000 requests/s with 20 candidates each?",
+   "options": [
+    "60,000",
+    "6,000",
+    "600",
+    "6 million"
+   ],
+   "answer": 0,
+   "why": "3,000 x 20 = 60,000 per second, before quotes. This is why millisecond CH queries matter."
+  },
+  {
+   "q": "Surge is computed in 1-minute tumbling windows from mobile events that can arrive late. What mechanism decides when a window can be closed?",
+   "options": [
+    "Watermarks with allowed lateness",
+    "Processing-time timers only",
+    "Kafka log compaction",
+    "Consumer group rebalancing"
+   ],
+   "answer": 0,
+   "why": "Watermarks estimate event-time progress; allowed lateness keeps windows open briefly for stragglers. Processing-time-only windows misattribute late mobile events."
+  },
+  {
+   "q": "Why does surge favour freshness and availability over consistency?",
+   "options": [
+    "It is an estimate and the rider is protected by a signed upfront quote, so staleness or dropped late events are cheap",
+    "Surge data is legally required to be eventually consistent",
+    "Flink cannot provide consistency",
+    "Kafka does not keep order"
+   ],
+   "answer": 0,
+   "why": "The quote locks the price the rider sees, so what matters is timely signals. Flink can provide exactly-once state; it is a choice, not a limitation."
+  },
+  {
+   "q": "How does Uber run surge across regions according to its real-time infrastructure paper?",
+   "options": [
+    "One region computes, others are idle",
+    "Each region computes only for its own cities and never fails over",
+    "Every region computes from aggregate Kafka, but a coordinator designates one primary region whose results are written",
+    "Regions vote on each multiplier"
+   ],
+   "answer": 2,
+   "why": "Active-active compute with a single writer gives fast failover because the standby's state is already warm. Idle standbys would need to rebuild large Flink state."
+  },
+  {
+   "q": "Which technique best prevents surge flicker between adjacent hexagons?",
+   "options": [
+    "Spatial smoothing over kRing neighbours plus EWMA over time",
+    "Smaller cells",
+    "Rounding multipliers to integers",
+    "Computing surge once per hour"
+   ],
+   "answer": 0,
+   "why": "Smoothing over neighbours and time removes sharp edges and jitter. Smaller cells make counts noisier and flicker worse."
+  },
+  {
+   "q": "Kafka offers exactly-once semantics. Why must the payments consumer still be idempotent?",
+   "options": [
+    "Kafka EOS is disabled by default",
+    "Kafka EOS only covers consume-transform-produce within Kafka; a PSP call is an external side effect",
+    "Idempotency is only needed for ordering",
+    "Payments do not use Kafka"
+   ],
+   "answer": 1,
+   "why": "A crash after charging but before committing the offset replays the message; only an idempotency key at the effect prevents a second charge. Defaults are irrelevant to the core issue."
+  },
+  {
+   "q": "What is the dual-write problem, and the standard fix?",
+   "options": [
+    "Two services writing the same row; fix with sharding",
+    "Updating the DB and publishing an event separately can leave them inconsistent; fix with a transactional outbox or CDC",
+    "Writing to two replicas; fix with quorum",
+    "Two clients writing concurrently; fix with locks"
+   ],
+   "answer": 1,
+   "why": "A crash between the two writes loses an event or publishes a phantom one. Writing the event in the same transaction and relaying it fixes it."
+  },
+  {
+   "q": "Which idempotency key is best for the capture call on a completed trip?",
+   "options": [
+    "A random UUID generated on each attempt",
+    "capture:{trip_id}",
+    "The current timestamp",
+    "The rider's user id"
+   ],
+   "answer": 1,
+   "why": "A deterministic natural key is reproduced by every retry from any service. A per-attempt UUID defeats idempotency; rider id would collide across trips."
+  },
+  {
+   "q": "Events for a trip must be consumed in order. What should the Kafka partition key be?",
+   "options": [
+    "trip_id",
+    "Event type",
+    "A random key for load balance",
+    "Timestamp"
+   ],
+   "answer": 0,
+   "why": "Kafka orders within a partition, so all of a trip's events must share a key. Random keys balance load but destroy per-trip order."
+  },
+  {
+   "q": "Why is 2PC a poor fit for trip + payment?",
+   "options": [
+    "2PC is too fast",
+    "2PC requires Kafka",
+    "The PSP cannot participate in prepare/commit and 2PC blocks with locks if the coordinator fails",
+    "2PC cannot handle more than two services"
+   ],
+   "answer": 2,
+   "why": "External processors expose auth/capture/void, not prepare; 2PC also holds locks across slow calls. 2PC handles many participants, so the last option is wrong."
+  },
+  {
+   "q": "In the ride saga, what is the compensating action for an authorisation when the rider cancels before pickup?",
+   "options": [
+    "Void the authorisation",
+    "Capture then refund",
+    "Refund",
+    "Chargeback"
+   ],
+   "answer": 0,
+   "why": "Voiding releases the hold without moving money. Capture-then-refund moves money twice and costs fees; refund applies only after capture."
+  },
+  {
+   "q": "Why orchestrate the payment saga with a durable workflow engine (Cadence/Temporal) rather than pure event choreography?",
+   "options": [
+    "A central, persisted workflow makes long multi-step money flows visible, retryable and resumable after crashes",
+    "Choreography cannot use Kafka",
+    "Orchestration avoids the need for idempotency",
+    "Workflow engines provide 2PC"
+   ],
+   "answer": 0,
+   "why": "Durable orchestration gives a single place to see and resume state. Steps still need idempotency because the engine retries."
+  },
+  {
+   "q": "A PSP capture call times out. What should the payments service do?",
+   "options": [
+    "Mark PENDING and resolve by retrying or querying with the same idempotency key; reconcile later",
+    "Mark the trip unpaid and move on",
+    "Retry immediately with a new idempotency key",
+    "Charge the backup card"
+   ],
+   "answer": 0,
+   "why": "The charge may have succeeded; a new key could double charge. Charging a backup card without knowing the first outcome risks two charges."
+  },
+  {
+   "q": "In a double-entry ledger, a 20 unit fare (18 to driver, 2 platform fee) produces entries that must sum to what?",
+   "options": [
+    "20",
+    "0",
+    "18",
+    "2"
+   ],
+   "answer": 1,
+   "why": "Double entry means every order's entries sum to zero: -20 rider escrow, +18 driver, +2 platform. Uber's Gulfstream describes this model; any non-zero sum signals a bug."
+  },
+  {
+   "q": "Why do drivers' apps use a persistent WebSocket/MQTT connection for offers instead of relying on FCM/APNs?",
+   "options": [
+    "Platform push is more expensive",
+    "FCM cannot carry JSON",
+    "WebSockets are encrypted, push is not",
+    "Platform push is best-effort with no latency guarantee, and offers expire in about 15 s"
+   ],
+   "answer": 3,
+   "why": "The offer window is short; OS push can be delayed or throttled. Push is still used as a fallback to wake backgrounded apps."
+  },
+  {
+   "q": "A notification service must push a message to rider R. How does it know which gateway node holds R's connection?",
+   "options": [
+    "Broadcast to all gateways",
+    "DNS lookup of the rider's IP",
+    "A connection registry mapping user -> gateway node with TTL",
+    "The rider polls for it"
+   ],
+   "answer": 2,
+   "why": "A registry routes server-initiated messages precisely. Broadcasting to hundreds of gateways for every message wastes bandwidth."
+  },
+  {
+   "q": "Which protocol property makes MQTT attractive for drivers on flaky 2G/3G networks?",
+   "options": [
+    "It requires HTTP/2",
+    "It guarantees exactly-once end-to-end to the database",
+    "It is the only protocol supporting TLS",
+    "Small headers, keepalives, QoS levels and session resumption"
+   ],
+   "answer": 3,
+   "why": "MQTT was designed for constrained, unreliable links. Its QoS 2 is exactly-once between client and broker only, not end-to-end to downstream systems."
+  },
+  {
+   "q": "8 million concurrent connections at 50,000 per gateway node need roughly how many nodes before headroom?",
+   "options": [
+    "16",
+    "160",
+    "1,600",
+    "16,000"
+   ],
+   "answer": 1,
+   "why": "8,000,000 / 50,000 = 160. Production runs more for zone failure and deploy headroom."
+  },
+  {
+   "q": "A gateway node with 50,000 connections dies. What prevents a reconnect storm from overloading the remaining nodes?",
+   "options": [
+    "Clients reconnect immediately in a tight loop",
+    "Exponential backoff with full jitter on the client plus admission control on gateways",
+    "Increasing DNS TTL",
+    "Disabling TLS during reconnect"
+   ],
+   "answer": 1,
+   "why": "Jitter spreads reconnects over time; token-bucket admission sheds the rest with Retry-After. Tight loops create a thundering herd."
+  },
+  {
+   "q": "What does a fixed-window rate limiter allow that a token bucket or sliding window prevents?",
+   "options": [
+    "A burst of up to twice the limit around a window boundary",
+    "Any requests at all",
+    "Limits per user",
+    "Retry-After headers"
+   ],
+   "answer": 0,
+   "why": "With 100/min, 100 at 0:59 and 100 at 1:00 is 200 in seconds. Token buckets bound bursts by bucket size."
+  },
+  {
+   "q": "Why rate limit driver pings when the company controls the driver app?",
+   "options": [
+    "To save Kafka storage only",
+    "To make GPS more accurate",
+    "Regulators require it",
+    "Buggy releases, modified clients and spoofing tools can flood the ingest path"
+   ],
+   "answer": 3,
+   "why": "A bad client release multiplying ping rate would overload shared shards; limits contain it and flag abnormal devices."
+  },
+  {
+   "q": "Matcher A reserves a driver with a 15 s lease, then pauses for 20 s in garbage collection. Matcher B reserves the same driver. What prevents A from overwriting B when it wakes?",
+   "options": [
+    "A's lease is still valid locally",
+    "Ringpop forwards A's write to B",
+    "Fencing token: the store rejects A's write with an older token",
+    "NTP clock synchronisation"
+   ],
+   "answer": 2,
+   "why": "Monotonic fencing tokens let the storage reject stale holders regardless of their local belief. Clocks cannot guarantee mutual exclusion."
+  },
+  {
+   "q": "Why is a single-instance Redis SETNX lock unsafe for preventing double assignment?",
+   "options": [
+    "Redis is too slow",
+    "SETNX does not support expiry",
+    "Failover to an async replica can lose the lock, and a paused client can outlive its TTL",
+    "Redis cannot store integers"
+   ],
+   "answer": 2,
+   "why": "Async replication and process pauses both break mutual exclusion. Such locks are fine for efficiency, not correctness. SET with NX and PX does support expiry."
+  },
+  {
+   "q": "Where in this design is leader election (single writer) appropriate?",
+   "options": [
+    "For the surge output writer and each outbox relay partition",
+    "For every location ping",
+    "For nearby-car reads",
+    "For rider app rendering"
+   ],
+   "answer": 0,
+   "why": "One writer avoids conflicting multipliers and duplicate relays. Electing leaders on the ping path would bottleneck 1.25M writes/s."
+  },
+  {
+   "q": "A whole region hosting Bengaluru fails. What is the fastest way to restore the live driver index in the standby region?",
+   "options": [
+    "Restore it from last night's backup",
+    "Let drivers' next pings rebuild it within one ping interval",
+    "Synchronously replicate it continuously",
+    "Ask drivers to log in again"
+   ],
+   "answer": 1,
+   "why": "Soft state regenerates for free from pings in about 4 s. Synchronous replication of 1.25M writes/s across regions would be expensive and unnecessary."
+  },
+  {
+   "q": "Uber described storing what on the driver's phone to survive datacenter failover?",
+   "options": [
+    "The full map",
+    "The surge table",
+    "The rider's payment card",
+    "An encrypted digest of trip state"
+   ],
+   "answer": 3,
+   "why": "Dispatch periodically sends an encrypted state digest; after failover, an unknown trip is restored from it, avoiding synchronous cross-region trip replication."
+  },
+  {
+   "q": "Why home each city in one region rather than letting all regions accept writes for any trip?",
+   "options": [
+    "It reduces the number of regions needed",
+    "Cities cannot be served from more than one region by law",
+    "It avoids conflicting concurrent transitions on the same trip that cannot be merged",
+    "It makes surge more accurate"
+   ],
+   "answer": 2,
+   "why": "Per-partition homing gives active-active capacity without write conflicts. Data residency applies to some countries, not universally."
+  },
+  {
+   "q": "With three regions and N+1 failover capacity, roughly what peak utilisation should each region run at normally?",
+   "options": [
+    "95%",
+    "50-60%",
+    "80-90%",
+    "20%"
+   ],
+   "answer": 1,
+   "why": "If one fails, the other two absorb its load: 1.5x their normal load must stay under about 80-90%, so roughly 55-60% each. Running at 80% means failover causes a second outage."
+  },
+  {
+   "q": "Rider cancel and driver start arrive simultaneously at the trip service. With optimistic concurrency, what happens?",
+   "options": [
+    "Both succeed and the trip is both CANCELLED and ON_TRIP",
+    "The database deadlocks",
+    "The first conditional update wins; the second gets a version conflict (409) with the current state",
+    "The later timestamp wins regardless of order"
+   ],
+   "answer": 2,
+   "why": "Version checks serialise transitions without locks. Timestamp-wins is last-writer-wins, which silently discards a valid transition."
+  },
+  {
+   "q": "The trip state store is Docstore-like. What gives it strict serializability per partition?",
+   "options": [
+    "Gossip membership",
+    "Client-side caching",
+    "Kafka ordering",
+    "Raft consensus with a single leader per partition over MySQL"
+   ],
+   "answer": 3,
+   "why": "Each partition is a Raft group; writes go through the leader and commit on quorum. Gossip is eventual and gives no ordering guarantees."
+  },
+  {
+   "q": "Schemaless stores data as immutable cells keyed by row key, column name and ref key. How is an update represented?",
+   "options": [
+    "Overwrite the cell in place",
+    "Append a new cell with a higher ref key; the highest ref key is current",
+    "Delete and recreate the row",
+    "Store a diff in a separate table"
+   ],
+   "answer": 1,
+   "why": "Append-only versions make cells a change log that triggers can follow. In-place overwrite is exactly what Schemaless avoids."
+  },
+  {
+   "q": "GPS in an urban canyon puts a driver on a parallel street. Which technique best corrects the trail used for fares?",
+   "options": [
+    "Average all points",
+    "Map matching (e.g. HMM over road segments) using heading and speed",
+    "Ignore points with speed > 0",
+    "Use the rider's GPS instead"
+   ],
+   "answer": 1,
+   "why": "Map matching snaps noisy points to the most likely road path. Averaging smears across streets and the rider's phone has the same urban canyon problem."
+  },
+  {
+   "q": "An older ping arrives after a newer one for the same driver. How should the location service handle it?",
+   "options": [
+    "Apply it, since all pings are valid",
+    "Average it with the newer position",
+    "Drop it because its sequence number is not greater than the last accepted",
+    "Store it and re-sort the index"
+   ],
+   "answer": 2,
+   "why": "Per-driver sequence numbers make updates monotonic so the driver never jumps backwards. Averaging introduces a fake position."
+  },
+  {
+   "q": "A ride request is retried by the app after a timeout, with the same Idempotency-Key. What should POST /trips return?",
+   "options": [
+    "A second trip",
+    "The original 201 response for the existing trip",
+    "409 Conflict always",
+    "500 so the client stops"
+   ],
+   "answer": 1,
+   "why": "Insert-if-absent on (rider_id, key) returns the stored result. Always 409 forces clients to treat success as failure."
+  },
+  {
+   "q": "Where should the payment authorisation happen in the ride flow?",
+   "options": [
+    "After trip completion",
+    "At weekly settlement",
+    "When the driver arrives",
+    "At request time, before or alongside matching"
+   ],
+   "answer": 3,
+   "why": "Authorising at request confirms funds before a driver drives to the rider; capture comes after. Authorising only at completion risks unpaid trips."
+  },
+  {
+   "q": "The surge Flink job crashes and stops writing. What should the quote API do?",
+   "options": [
+    "Return errors until the job recovers",
+    "Recompute surge synchronously per quote",
+    "Set every cell to maximum surge",
+    "Use last known multipliers decaying toward 1.0x, capped, while the standby writer is promoted"
+   ],
+   "answer": 3,
+   "why": "Graceful degradation keeps rides flowing. Per-quote recomputation would hammer stores and still lack the windowed state."
+  },
+  {
+   "q": "Which failure is the design deliberately willing to turn into unavailability rather than inconsistency?",
+   "options": [
+    "Nearby-cars display",
+    "Driver assignment when the lease store is unreachable",
+    "Surge lookup",
+    "ETA for quotes"
+   ],
+   "answer": 1,
+   "why": "Assignment is CP: no lease, no offer. The others degrade with stale or approximate data."
+  },
+  {
+   "q": "What is the main benefit of a cell-based architecture for this system?",
+   "options": [
+    "It removes the need for databases",
+    "Failures, bad deploys and overload stay contained to the cities served by one cell",
+    "It gives global strong consistency",
+    "It eliminates network partitions"
+   ],
+   "answer": 1,
+   "why": "Cells limit blast radius and allow staged deploys. They do not change consistency guarantees or prevent partitions."
+  },
+  {
+   "q": "The ETA service is overloaded during a spike. Which degradation order is best?",
+   "options": [
+    "Prioritise dispatch ETAs; degrade quote ETAs to cached tables, then haversine x city factor",
+    "Shed dispatch ETAs first",
+    "Return zero for every ETA",
+    "Turn off matching to save ETA capacity"
+   ],
+   "answer": 0,
+   "why": "Dispatch ETAs directly create trips; quote and display ETAs can be approximate. Shedding dispatch first breaks the core flow."
+  },
+  {
+   "q": "Roughly how much trip-row storage per day for 25M trips at 5 KB each, before replication?",
+   "options": [
+    "1.25 GB",
+    "12.5 GB",
+    "1.25 TB",
+    "125 GB"
+   ],
+   "answer": 3,
+   "why": "25,000,000 x 5 KB = 125 GB/day, ~45 TB/year before 3x replication. Trails are separate and larger."
+  },
+  {
+   "q": "Why are multipliers written to the KV store with a TTL of a few minutes?",
+   "options": [
+    "To save memory",
+    "To force riders to refresh",
+    "Because KV stores require TTLs",
+    "So that if the writer stops, stale surge expires and the fallback path kicks in instead of serving old prices indefinitely"
+   ],
+   "answer": 3,
+   "why": "TTL bounds staleness; readers detect missing entries and use a safe fallback. Memory is trivial here."
+  },
+  {
+   "q": "Which signal would most directly reveal a double-assignment bug in production?",
+   "options": [
+    "CPU usage of the matcher",
+    "WebSocket reconnect rate",
+    "Kafka consumer lag",
+    "Count of drivers with more than one active trip"
+   ],
+   "answer": 3,
+   "why": "An invariant check (must be 0) catches the bug directly. The others are health signals that would not isolate it."
+  },
+  {
+   "q": "When is batched matching NOT worth its extra latency?",
+   "options": [
+    "In dense downtown zones at rush hour",
+    "At airports with long queues",
+    "In sparse areas where requests rarely compete for the same drivers",
+    "During stadium exits"
+   ],
+   "answer": 2,
+   "why": "Batching helps only when requests compete; in sparse areas greedy gives the same result faster. The other three are exactly where batching pays off."
+  }
+ ],
+ "references": [
+  {
+   "title": "H3: Uber's Hexagonal Hierarchical Spatial Index (Uber Engineering)",
+   "url": "https://www.uber.com/en/blog/h3/"
+  },
+  {
+   "title": "How Uber Scales Their Real-time Market Platform (High Scalability)",
+   "url": "https://highscalability.com/how-uber-scales-their-real-time-market-platform/"
+  },
+  {
+   "title": "Designing Schemaless, Uber Engineering's Scalable Datastore Using MySQL",
+   "url": "https://www.uber.com/en/blog/schemaless-part-one-mysql-datastore/"
+  },
+  {
+   "title": "Evolving Schemaless into a Distributed SQL Database (Docstore)",
+   "url": "https://www.uber.com/blog/schemaless-sql-database/"
+  },
+  {
+   "title": "DeepETA: How Uber Predicts Arrival Times Using Deep Learning",
+   "url": "https://www.uber.com/en-CA/blog/deepeta-how-uber-predicts-arrival-times/"
+  },
+  {
+   "title": "Meet Michelangelo: Uber's Machine Learning Platform",
+   "url": "https://eng.uber.com/michelangelo-machine-learning-platform/"
+  },
+  {
+   "title": "Real-time Data Infrastructure at Uber (SIGMOD 2021 paper)",
+   "url": "https://arxiv.org/pdf/2104.00087"
+  },
+  {
+   "title": "Uber's Multi-Region Kafka for Disaster Recovery (InfoQ)",
+   "url": "https://www.infoq.com/news/2021/01/uber-multi-region-kafka/"
+  },
+  {
+   "title": "Money Scale and Strong Data at Uber (Gulfstream payments platform)",
+   "url": "https://www.uber.com/blog/money-scale-strong-data/"
+  },
+  {
+   "title": "Cadence: Uber's open source orchestration engine",
+   "url": "https://www.uber.com/blog/open-source-orchestration-tool-cadence-overview"
+  },
+  {
+   "title": "Ringpop: scalable, fault-tolerant application-layer sharding",
+   "url": "https://libraries.io/npm/ringpop/3.0.4"
+  },
+  {
+   "title": "Uber's Ringpop with Jeff Wolski (Software Engineering Daily)",
+   "url": "https://softwareengineeringdaily.com/2016/08/26/ubers-ringpop-with-jeff-wolski/"
+  },
+  {
+   "title": "SWIM: Scalable Weakly-consistent Infection-style Process Group Membership Protocol",
+   "url": "https://courses.grainger.illinois.edu/cs425/fa2022/dsn02-SWIM.pdf"
+  },
+  {
+   "title": "SWIM: The scalable membership protocol (Brian Storti)",
+   "url": "https://www.brianstorti.com/swim/"
+  },
+  {
+   "title": "Uber's Failover Architecture (arXiv 2026)",
+   "url": "https://arxiv.org/pdf/2603.07345"
+  }
+ ]
+}

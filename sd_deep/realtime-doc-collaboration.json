@@ -1,0 +1,1141 @@
+{
+ "slug": "realtime-doc-collaboration",
+ "title": "Design Real-Time Collaboration for a Shared Document (sync layer)",
+ "prompt": "Design real-time collaboration for a shared document.",
+ "group": "realtime",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 180,
+ "summary": "This is the sync layer underneath a collaborative editor: how concurrent edits from many clients, some offline, converge to the same document without losing anyone's intent. The core tension is between a central ordering authority (Operational Transformation with a server per document, simple to reason about but dependent on that server) and convergent data types (CRDTs, which merge in any order and work offline but carry metadata overhead). The senior answer picks one deliberately, routes each document to a single session owner for ordering and fan-out, persists an operation log with snapshots, and treats cursors and presence as separate ephemeral state.",
+ "framework": {
+  "clarify": [
+   "What is the document model: plain text, rich text with formatting, or a structured tree (like a design canvas)? Assume rich text with a tree of blocks.",
+   "How many concurrent editors per document? Assume typically 1-5, up to 100 editors and 1,000 viewers for a large meeting doc.",
+   "Offline editing: must users edit offline for hours and merge later? Assume yes, on mobile and desktop apps.",
+   "Latency target: assume local edits apply instantly (0 ms, optimistic) and remote edits appear within 200 ms p95 in-region.",
+   "Scale: assume 10M daily active editors, 1M documents open concurrently at peak.",
+   "Is the server allowed to see content (no end-to-end encryption)? Assume yes, so the server can order, validate and snapshot.",
+   "Do we need version history and undo per user? Assume named versions and per-user undo are required.",
+   "Are we building the editor UI, comments and permissions? Assume no: we provide the sync engine, sessions, cursors and offline merge; permissions are checked via an existing ACL service."
+  ],
+  "design": [
+   "Baseline: lock the document or use last-writer-wins on the whole document. Simple, but concurrent typists overwrite each other, so it fails the core requirement.",
+   "Choose the merge algorithm: server-ordered OT (Google Docs style) or a sequence CRDT (Yjs/Automerge style). Recommended here: a CRDT, because offline editing for hours is required and CRDT merges are order independent; keep a server in the loop for ordering, auth, persistence and fan-out.",
+   "Session layer: each open document is owned by one collaboration session server (actor per doc) chosen by consistent hashing with a lease; all clients for that doc connect to it over WebSocket.",
+   "Op pipeline: client applies edit locally, sends op with (client_id, seq, deps); session server validates permission, assigns a server sequence number, appends to the op log (durable), broadcasts to other clients, and acks the sender.",
+   "Persistence: append-only op log per document in a partitioned store, plus periodic compacted snapshots every 1,000 ops or 60 s; load = latest snapshot + tail ops.",
+   "Awareness channel: cursors, selections and who-is-here sent as ephemeral, coalesced messages through the same session server but never persisted.",
+   "Offline merge: client stores its pending ops locally (IndexedDB/SQLite), reconnects, exchanges state vectors with the server, and both sides send only the missing ops; the CRDT guarantees convergence."
+  ],
+  "defend": [
+   "Bottleneck: one session server per hot doc. A doc with 100 editors typing at 5 ops/s is 500 ops/s in and 50k messages/s out; batch ops every 50 ms and fan out viewers through read replicas of the session.",
+   "Scaling reads: viewers (read-only) subscribe to a fan-out tier that relays the server-ordered op stream, so the owner handles only editors.",
+   "Scaling writes: documents are independent, so scale horizontally by doc id; the op log is partitioned by doc id; snapshots bound replay time.",
+   "Failure: if a session server dies, its lease expires (10 s), another node acquires the doc with a higher fencing token, loads snapshot plus log, and clients reconnect and resend unacked ops idempotently.",
+   "Degradation: if the session tier is unavailable, clients keep editing offline and sync later; if the log store is slow, the server stops acking and clients buffer, but never lose ops.",
+   "Measure: remote edit latency p95, op ack latency, ops per doc, reconnect and resync rates, divergence checks (periodic document hash comparison), snapshot lag and CRDT metadata size."
+  ],
+  "script": "Let me scope this as the real-time sync layer, not the whole editor. I will assume rich text with blocks, usually a handful of editors but up to 100 plus 1,000 viewers, offline editing for hours on mobile, local edits applied instantly and remote edits visible within 200 ms, and 1 million documents open at peak. Locking or last-writer-wins loses work, so the real choice is OT versus CRDT. OT needs a central server to order and transform operations and is hard to get right offline; a CRDT merges in any order, which suits long offline sessions, so I would use a CRDT but still route every document to one session server for auth, ordering, persistence and fan-out. Clients apply edits optimistically, send ops with client id and sequence numbers, the server appends them to a per-document log, broadcasts and acks, and snapshots every thousand ops. Cursors travel on a separate ephemeral channel. To defend it: the hot-document session server is the bottleneck, so I batch and offload viewers to a fan-out tier; session failover uses leases and fencing tokens with idempotent resend; and I would track remote edit latency, ack latency, resync rate and periodic hash checks for divergence."
+ },
+ "brd": {
+  "problem": "Teams co-author documents, but today edits are saved whole and conflicting saves overwrite each other or produce conflict copies. People email versions around, lose work, and cannot see what colleagues are doing. We need a real-time collaboration layer that lets many people edit the same document simultaneously, online or offline, with every keystroke preserved and everyone converging to the same content.",
+  "goals": [
+   "Let multiple users edit the same document simultaneously with no lost edits and guaranteed convergence.",
+   "Show remote edits and cursors within 200 ms p95 in-region.",
+   "Support offline editing for hours with automatic merge on reconnect.",
+   "Provide durable history: every acknowledged edit survives server failure, with version history and per-user undo.",
+   "Scale to 1M concurrently open documents at a predictable cost per active document."
+  ],
+  "non_goals": [
+   "Building the rich-text editor UI, comments or suggestion mode UI.",
+   "End-to-end encryption of document content (would change the design substantially).",
+   "Real-time collaboration on binary files such as images or spreadsheets with formulas.",
+   "Search indexing of document content."
+  ],
+  "stakeholders": [
+   {
+    "who": "Document authors",
+    "needs": "Edits never lost, instant local typing, see collaborators live."
+   },
+   {
+    "who": "Editor product team",
+    "needs": "A clean sync API (apply local op, receive remote ops, awareness) that hides networking and merge logic."
+   },
+   {
+    "who": "Infrastructure and SRE",
+    "needs": "Horizontally scalable sessions, clear failover, bounded storage growth."
+   },
+   {
+    "who": "Security and compliance",
+    "needs": "Permission checks on every op, audit history, and data deletion support."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Remote edit latency in-region",
+    "target": "p95 under 200 ms, p99 under 500 ms"
+   },
+   {
+    "metric": "Lost acknowledged edits",
+    "target": "zero"
+   },
+   {
+    "metric": "Divergence incidents (clients disagree after sync)",
+    "target": "zero; checked by periodic hash comparison"
+   },
+   {
+    "metric": "Offline merge success without manual intervention",
+    "target": "over 99.9% of reconnects"
+   },
+   {
+    "metric": "Document open time (load snapshot plus tail)",
+    "target": "p95 under 1 s for docs under 1 MB"
+   },
+   {
+    "metric": "Session failover time",
+    "target": "under 15 s, invisible except for a brief reconnect"
+   }
+  ],
+  "constraints": [
+   "Clients include web (browser, IndexedDB), iOS, Android and desktop apps.",
+   "Mobile networks with high latency and frequent disconnects.",
+   "Documents up to 10 MB of text with up to 10 years of history.",
+   "Must integrate with the existing ACL service for permission checks."
+  ],
+  "risks": [
+   {
+    "risk": "Subtle merge bugs cause clients to diverge silently.",
+    "mitigation": "Use a well-tested CRDT library, property-based and fuzz tests, periodic hash checks with automatic resync."
+   },
+   {
+    "risk": "CRDT metadata and tombstones grow without bound.",
+    "mitigation": "Snapshot compaction, garbage collection of tombstones once all replicas have seen them, binary encoding."
+   },
+   {
+    "risk": "Viral document with thousands of viewers overwhelms one session server.",
+    "mitigation": "Fan-out relay tier for viewers, batching, and a cap on concurrent editors."
+   },
+   {
+    "risk": "Long-offline client returns with a huge divergent history.",
+    "mitigation": "State-vector based diff sync, chunked upload, and a server-side merge budget with a fallback to a conflict copy for extreme cases."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Co-author in a live meeting",
+    "needs": "Type at the same time as others, see their cursors, never lose a sentence."
+   },
+   {
+    "name": "Mobile commuter",
+    "needs": "Edit offline on a train and have changes merge cleanly when back online."
+   },
+   {
+    "name": "Viewer",
+    "needs": "Watch edits appear live in a large shared doc without slowing editors down."
+   }
+  ],
+  "user_stories": [
+   "As a co-author, I want my typing to appear instantly on my screen so that the editor feels local.",
+   "As a co-author, I want to see others' edits within a fraction of a second so that we can work together live.",
+   "As a co-author, I want to see colleagues' cursors and selections with their names so that we do not edit the same sentence.",
+   "As a mobile user, I want to edit offline and have my changes merged automatically when I reconnect so that I do not lose work.",
+   "As an author, I want undo to revert only my own changes so that I do not wipe a colleague's work.",
+   "As an author, I want to see version history and restore a named version so that I can recover from mistakes.",
+   "As a viewer, I want to see the doc update live without being able to edit so that I can follow along.",
+   "As an admin, I want edits from a user whose access was revoked to be rejected immediately so that permissions are enforced."
+  ],
+  "functional": [
+   "Client SDK applies local edits optimistically and produces ops with client id, sequence number and causal dependencies.",
+   "Session server validates permissions, orders, persists and broadcasts ops to all connected clients of the document.",
+   "Acknowledge each op to its sender after durable append; clients retain unacked ops and resend after reconnect.",
+   "Initial load returns latest snapshot plus tail ops; reconnect sync exchanges state vectors to send only missing ops.",
+   "Awareness channel for cursors, selections, names and colours, coalesced at 10-20 Hz, not persisted.",
+   "Snapshot compaction and tombstone garbage collection.",
+   "Version history: list snapshots and named versions; restore creates new ops rather than rewriting history.",
+   "Per-user undo implemented as inverse ops of the user's own changes, transformed or merged against later edits."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "local apply 0 ms; remote edit p95 under 200 ms in-region; ack p95 under 150 ms"
+   },
+   {
+    "name": "Durability",
+    "target": "acknowledged ops never lost: replicated append (quorum) before ack"
+   },
+   {
+    "name": "Consistency",
+    "target": "strong eventual consistency: all replicas that have seen the same ops have identical state"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95% for sync; offline editing always available on the client"
+   },
+   {
+    "name": "Scale",
+    "target": "1M open docs, 5M connected clients, about 1M ops/s peak"
+   },
+   {
+    "name": "Load time",
+    "target": "document open p95 under 1 s for docs under 1 MB"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "10M DAU editors; 1M documents open concurrently at peak with 5M connected clients (editors and viewers).",
+    "About 30% of open docs have someone actively typing; a typing user produces about 5 ops/s, batched every 50 ms.",
+    "Average 2 editors per active doc; op size about 50 bytes encoded plus 30 bytes metadata.",
+    "Cursor updates at up to 10 Hz per active user, coalesced."
+   ],
+   "math": [
+    "Active typists: 1M docs x 30% x 2 editors x 50% typing at any instant = about 300k typists; x 5 ops/s = 1.5M ops/s raw, about 600k batched messages/s after 50 ms batching.",
+    "Fan-out: each op goes to the other participants, average about 2.5 recipients = about 1.5M outbound messages/s, plus cursor traffic of similar size after coalescing.",
+    "Op log ingest: 1.5M ops/s x 80 B = 120 MB/s, about 10 TB/day raw; compaction into snapshots and tiering old logs to object storage keeps hot storage small.",
+    "Session servers: at 20k connections and 10k ops/s per node, 5M clients / 20k = 250 nodes; ops are well under node capacity, so connections are the limiting factor.",
+    "Snapshots: 1M open docs x average 200 KB = 200 GB of hot snapshots in cache; total corpus of 2B docs x 100 KB = 200 TB in object storage.",
+    "Hot doc: 100 editors x 5 ops/s = 500 ops/s in; to 1,100 participants = 550k messages/s out unbatched, about 22k frames/s with 50 ms batching per client."
+   ],
+   "summary": "About 1.5M ops/s and 5M connections at peak; connections, not ops, size the session tier at about 250 nodes. The op log grows about 10 TB/day raw, which snapshots and tiering compact; hot documents need batching and a viewer relay tier."
+  },
+  "out_of_scope": [
+   "Editor UI, comments, suggestions and track changes UI.",
+   "End-to-end encrypted collaboration.",
+   "Spreadsheet formula recalculation and binary file merge.",
+   "Full-text search and AI features over documents."
+  ]
+ },
+ "hld": {
+  "overview": "Clients run a sync SDK containing the CRDT document, a local persistence store and an outbound queue of unacknowledged ops. A routing layer maps each document to one session server via a consistent hash ring plus a lease in a coordination store. The session server owns the in-memory document for that doc, validates and orders ops, appends them durably to a partitioned op log, broadcasts to connected clients and a viewer relay tier, and periodically writes compacted snapshots to object storage. An awareness channel carries cursors and presence in memory only.",
+  "diagram": "  Clients (web/mobile/desktop) - CRDT doc + local store + unacked queue\n        |  WebSocket\n  [Edge LB] --> [Router: doc_id -> owner via ring + lease in etcd]\n        |\n  [Collab session servers]  (one actor per open doc)\n   - auth check (ACL cache)        - assign server seq\n   - apply to in-memory CRDT       - awareness (cursors), not persisted\n        |  append (quorum)        |  broadcast\n        v                         v\n  [Op log: partitioned by doc_id]   [Viewer relay tier] --> read-only clients\n   (Cassandra/Bigtable or Kafka)\n        |  compaction worker\n        v\n  [Snapshot store: S3/GCS] + [Doc metadata DB: Postgres/Spanner]\n        ^\n  [Load path: snapshot + tail ops on open/failover]\n",
+  "components": [
+   {
+    "name": "Client sync SDK",
+    "responsibility": "Holds CRDT state, applies local edits instantly, persists to IndexedDB/SQLite, queues unacked ops, handles reconnect and state-vector sync."
+   },
+   {
+    "name": "Router",
+    "responsibility": "Maps doc_id to the current owner session server using a consistent hash ring and per-doc leases; redirects clients after failover."
+   },
+   {
+    "name": "Collab session server",
+    "responsibility": "One actor per open doc: permission checks, dedupe by (client_id, seq), ordering, append to log, broadcast, ack, awareness relay."
+   },
+   {
+    "name": "Op log store",
+    "responsibility": "Durable append-only log of ops per document, partitioned by doc_id, replicated with quorum writes."
+   },
+   {
+    "name": "Snapshot and compaction worker",
+    "responsibility": "Builds compacted document state every 1,000 ops or 60 s, garbage collects tombstones, writes snapshots to object storage."
+   },
+   {
+    "name": "Viewer relay tier",
+    "responsibility": "Subscribes to the ordered op stream of hot docs and fans out to read-only viewers, shielding the owner."
+   },
+   {
+    "name": "Coordination store (etcd)",
+    "responsibility": "Stores session leases with fencing tokens and the ring membership."
+   },
+   {
+    "name": "ACL cache",
+    "responsibility": "Caches document permissions with invalidation on change so every op can be checked cheaply."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Live edit",
+    "steps": [
+     "User types; SDK applies the edit to local CRDT immediately and records op {client_id, seq, deps(state vector delta), payload}.",
+     "SDK batches ops for 50 ms and sends them over the WebSocket to the doc's session server.",
+     "Session server checks ACL, drops duplicates (seq already seen for client_id), integrates ops into its CRDT, assigns server_seq.",
+     "Server appends ops to the op log with quorum write; on success acks the sender with server_seq.",
+     "Server broadcasts ops to other editors and to the viewer relay; receivers integrate them into their local CRDT and re-render."
+    ]
+   },
+   {
+    "name": "Open document",
+    "steps": [
+     "Client asks router for doc owner; if no owner, router assigns one and the owner acquires a lease with a fencing token.",
+     "Owner loads latest snapshot from object storage and replays tail ops from the log since snapshot.",
+     "Client sends its state vector (empty for fresh load, or its cached state); server replies with the missing ops or the snapshot.",
+     "Client joins awareness; server sends current cursors of others."
+    ]
+   },
+   {
+    "name": "Offline edit and reconnect",
+    "steps": [
+     "Offline, the SDK keeps applying edits locally and persists ops and CRDT state to local storage.",
+     "On reconnect, client sends its state vector; server computes ops the client lacks and the client sends ops the server lacks.",
+     "Server validates permissions (rejecting ops if access was revoked), integrates, appends and broadcasts.",
+     "Both sides converge because CRDT merge is commutative, associative and idempotent."
+    ]
+   },
+   {
+    "name": "Session server failover",
+    "steps": [
+     "Owner stops renewing its lease (crash or partition); lease expires after 10 s.",
+     "New owner acquires lease with a higher fencing token, loads snapshot plus log.",
+     "Op log rejects appends carrying an older fencing token, so a zombie old owner cannot write.",
+     "Clients reconnect via router, resend unacked ops; duplicates are dropped by (client_id, seq)."
+    ]
+   }
+  ],
+  "data_flow": "Edits flow from client local state to the session server, into the durable op log, and out to other clients and the viewer relay. Compaction reads the log and writes snapshots to object storage. On open or failover, the session server reads the latest snapshot plus the log tail. Awareness data flows between clients through the session server in memory only. Permission changes flow from the ACL service into the ACL cache and can force-disconnect clients."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "WS",
+    "path": "/v1/docs/{doc_id}/sync  {type: 'sync_step1', state_vector}",
+    "request": "Client's encoded state vector (map client_id -> max clock)",
+    "response": "{type: 'sync_step2', update: missing ops} plus server's state vector",
+    "notes": "Two-step diff sync, Yjs style; used on open and reconnect."
+   },
+   {
+    "method": "WS",
+    "path": "{type: 'update', client_id, seq_from, seq_to, ops}",
+    "request": "Batched ops (50 ms) in binary CRDT encoding",
+    "response": "{type: 'ack', client_id, seq_to, server_seq}",
+    "notes": "Idempotent by (client_id, seq); server_seq used for history and resume."
+   },
+   {
+    "method": "WS",
+    "path": "{type: 'awareness', client_id, clock, state: {cursor, selection, user, color}}",
+    "request": "At most 10-20 Hz, coalesced",
+    "response": "Broadcast to others; removal on timeout 30 s",
+    "notes": "Ephemeral; never persisted."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/docs/{doc_id}/versions",
+    "request": "pagination",
+    "response": "[{version_id, server_seq, created_at, author, name?}]",
+    "notes": "Backed by snapshots and named version markers."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/docs/{doc_id}/restore",
+    "request": "{version_id}",
+    "response": "{server_seq}",
+    "notes": "Generates new ops that transform current state to the old one; history is never rewritten."
+   },
+   {
+    "method": "INTERNAL",
+    "path": "OpLog.append(doc_id, fencing_token, ops)",
+    "request": "ops with server_seq range",
+    "response": "{ok | stale_token}",
+    "notes": "Conditional on token >= stored token for the doc."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "OpLogEntry",
+    "store": "Cassandra/Bigtable (or Kafka partitioned by doc_id)",
+    "fields": [
+     "doc_id",
+     "server_seq",
+     "client_id",
+     "client_seq",
+     "fencing_token",
+     "payload (binary update)",
+     "author_id",
+     "ts"
+    ],
+    "keys": "Partition key doc_id (bucketed by doc_id + seq/100k for huge docs); clustering key server_seq",
+    "notes": "Append only; RF=3, writes at QUORUM; old entries tiered to object storage after compaction."
+   },
+   {
+    "entity": "Snapshot",
+    "store": "S3/GCS",
+    "fields": [
+     "doc_id",
+     "server_seq covered",
+     "state vector",
+     "encoded CRDT state (tombstones GC'd)",
+     "size"
+    ],
+    "keys": "s3://snapshots/{doc_id}/{server_seq}.bin",
+    "notes": "Every 1,000 ops or 60 s of activity; keep named versions forever, others by retention policy."
+   },
+   {
+    "entity": "DocMeta",
+    "store": "Postgres / Spanner",
+    "fields": [
+     "doc_id",
+     "owner_id",
+     "latest_snapshot_seq",
+     "latest_server_seq",
+     "size_bytes",
+     "created_at",
+     "crdt_schema_version"
+    ],
+    "keys": "PK doc_id",
+    "notes": "Updated by compaction worker, not per op."
+   },
+   {
+    "entity": "SessionLease",
+    "store": "etcd",
+    "fields": [
+     "doc_id",
+     "owner_node",
+     "fencing_token (monotonic)",
+     "expires_at"
+    ],
+    "keys": "/leases/docs/{doc_id}",
+    "notes": "TTL 10 s, renewed every 3 s while open."
+   },
+   {
+    "entity": "ClientDedupState",
+    "store": "Session server memory (rebuilt from log tail)",
+    "fields": [
+     "client_id -> max client_seq applied"
+    ],
+    "keys": "per doc",
+    "notes": "Persisted implicitly in log entries, recovered on load."
+   }
+  ],
+  "classes": [
+   {
+    "name": "DocSession (actor)",
+    "responsibility": "Single-threaded owner of one open document: integrate, order, persist, broadcast.",
+    "methods": [
+     "on_update(client, batch)",
+     "on_sync_step1(client, sv)",
+     "on_awareness(client, state)",
+     "maybe_snapshot()",
+     "close_if_idle()"
+    ]
+   },
+   {
+    "name": "CrdtDoc",
+    "responsibility": "Wrapper over the sequence CRDT (YATA/RGA): integrate ops, encode state vector, diff, compact.",
+    "methods": [
+     "integrate(ops)",
+     "state_vector()",
+     "diff(sv) -> ops",
+     "encode_snapshot()",
+     "gc_tombstones(min_sv)"
+    ]
+   },
+   {
+    "name": "OpLogWriter",
+    "responsibility": "Batched, fenced, quorum appends with backpressure.",
+    "methods": [
+     "append(doc_id, token, ops) -> server_seq",
+     "read_from(doc_id, seq)"
+    ]
+   },
+   {
+    "name": "LeaseManager",
+    "responsibility": "Acquire, renew and release doc leases with fencing tokens.",
+    "methods": [
+     "acquire(doc_id) -> token",
+     "renew(doc_id)",
+     "release(doc_id)"
+    ]
+   },
+   {
+    "name": "ClientSyncEngine (SDK)",
+    "responsibility": "Local apply, persistence, outbox of unacked ops, reconnect with backoff, state-vector sync.",
+    "methods": [
+     "apply_local(edit)",
+     "flush_batch()",
+     "on_ack(seq)",
+     "on_remote(ops)",
+     "reconnect()"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Sequence CRDT insert (RGA/YATA style)",
+    "explain": "Each character gets a unique id (client_id, clock). An insert references the id of the character to its left (and in YATA also the right). Concurrent inserts at the same position are ordered deterministically by comparing ids, so every replica produces the same order. Deletes mark tombstones instead of removing, so later inserts can still reference them.",
+    "pseudocode": "def integrate_insert(doc, item):        # item: id, left_id, value\n    if item.id in doc.seen: return        # idempotent\n    pos = doc.index_after(item.left_id)\n    # skip concurrent items with same left origin that sort before us\n    while pos < len(doc) and doc[pos].left_id == item.left_id \\\n          and doc[pos].id > item.id:\n        pos += 1\n    doc.insert(pos, item); doc.seen.add(item.id)\ndef integrate_delete(doc, target_id):\n    doc.by_id(target_id).deleted = True   # tombstone; commutative"
+   },
+   {
+    "name": "OT transform for concurrent inserts (for comparison)",
+    "explain": "With OT, the server orders ops; a client op based on an older revision is transformed against ops it has not seen. For two inserts, shift the position of the later one if the earlier one is at or before it, breaking ties by site id. Correct transforms for rich text and all op pairs are the hard part.",
+    "pseudocode": "def transform_ins_ins(a, b):   # transform a against already-applied b\n    if b.pos < a.pos or (b.pos == a.pos and b.site < a.site):\n        return Insert(a.pos + len(b.text), a.text, a.site)\n    return a\ndef server_receive(op, base_rev):\n    for applied in history[base_rev:]:\n        op = transform(op, applied)\n    history.append(op); broadcast(op, rev=len(history))"
+   },
+   {
+    "name": "State-vector diff sync on reconnect",
+    "explain": "A state vector maps each client_id to the highest clock seen from it. Exchanging vectors tells each side exactly which ops the other lacks, so a client offline for hours sends only its new ops and receives only what it missed, not the whole doc.",
+    "pseudocode": "def diff(doc, remote_sv):\n    missing = []\n    for client, items in doc.items_by_client():\n        have = remote_sv.get(client, 0)\n        missing += [it for it in items if it.clock > have]\n    return encode(missing, doc.delete_set())\n# client: send sv -> recv diff(server, sv); send diff(client, server_sv)"
+   },
+   {
+    "name": "Fenced append for session failover",
+    "explain": "Each lease acquisition increments a fencing token. The op log stores the highest token per doc and rejects appends with a lower one. A paused old owner that wakes up after its lease expired cannot corrupt the log.",
+    "pseudocode": "def append(doc_id, token, ops):\n    cur = meta.get_token(doc_id)\n    if token < cur: raise StaleOwner()\n    if token > cur: meta.set_token_if(doc_id, expected=cur, new=token)  # CAS\n    seq = meta.next_seq(doc_id, len(ops))\n    log.write_quorum(doc_id, seq, ops); return seq"
+   }
+  ],
+  "sequence": "Alice SDK        Session(doc 42)        OpLog (RF3)        Bob SDK      Viewers relay\n   | type 'x'          |                    |                  |               |\n   | apply locally     |                    |                  |               |\n   |-- update(c=A,s=17)->|                  |                  |               |\n   |                   | ACL ok, dedupe ok  |                  |               |\n   |                   | integrate, sseq=901|                  |               |\n   |                   |-- append(tok=5) -->|                  |               |\n   |                   |<-- quorum ok ------|                  |               |\n   |<-- ack(s=17,901) -|                    |                  |               |\n   |                   |-- update -------------------------------->| integrate |\n   |                   |-- update ---------------------------------------------->|\n   |                   |<-- awareness(cursor) from Bob ----------|               |\n   |<-- awareness -----|  (memory only)     |                  |               |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Two users type at exactly the same position at the same time.",
+   "handling": "CRDT orders concurrent inserts deterministically by (client_id, clock); both texts survive in the same order on every replica."
+  },
+  {
+   "case": "One user deletes a paragraph while another is typing inside it.",
+   "handling": "Delete creates tombstones; the concurrent inserts reference tombstoned neighbours and survive as visible text, which preserves the typist's intent. UI can highlight orphaned text."
+  },
+  {
+   "case": "Client resends a batch after reconnect that the server already persisted.",
+   "handling": "Dedupe by (client_id, seq); CRDT integrate is idempotent anyway."
+  },
+  {
+   "case": "Old session server pauses (GC or partition), lease expires, new owner takes over, then old one wakes.",
+   "handling": "Fencing token on op log appends rejects the old owner; it detects stale token and shuts down the doc actor."
+  },
+  {
+   "case": "Mobile user edits offline for 6 hours while others rewrite the document.",
+   "handling": "State-vector sync exchanges only missing ops; CRDT merges; if the merge budget is exceeded or the doc was deleted, create a conflict copy and notify."
+  },
+  {
+   "case": "User's edit permission is revoked while they are offline with pending edits.",
+   "handling": "Server rejects their ops on reconnect; SDK keeps them locally and offers to copy into a new document."
+  },
+  {
+   "case": "A viral doc gets 5,000 viewers and 100 editors.",
+   "handling": "Viewers attach to the relay tier; editor cap with overflow joining as viewers; 50 ms batching; awareness rate reduced and limited to the 20 most recent cursors."
+  },
+  {
+   "case": "Client clock is wrong by hours.",
+   "handling": "CRDT uses logical clocks per client, not wall time; wall time is only metadata for history display."
+  },
+  {
+   "case": "Pasting 5 MB of text in one operation.",
+   "handling": "SDK splits into chunked ops; server enforces max message size and doc size limit; snapshot triggered after large ops."
+  },
+  {
+   "case": "Undo by one user after another user edited the same text.",
+   "handling": "Undo generates inverse ops only for the user's own items (delete what they inserted, restore what they deleted) applied as new ops, so others' edits are untouched."
+  },
+  {
+   "case": "Tombstones accumulate in a heavily edited doc for years.",
+   "handling": "Compaction GCs tombstones once all known replicas' state vectors cover them; long-offline clients older than the GC horizon do a full resync."
+  },
+  {
+   "case": "Two browser tabs of the same user edit the same doc.",
+   "handling": "Each tab is a separate client_id so ops stay unique; tabs can also share state via BroadcastChannel to reduce traffic."
+  },
+  {
+   "case": "Cursor positions after remote edits.",
+   "handling": "Cursors are stored as relative positions anchored to item ids, not integer offsets, so they stay at the right character as text shifts."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Yjs (or Automerge)",
+   "layer": "CRDT library",
+   "overview": "Yjs implements the YATA sequence CRDT with compact binary encoding, state vectors, awareness protocol and bindings for ProseMirror, Quill and CodeMirror; Automerge is a JSON CRDT from Kleppmann's group.",
+   "why": "Proven convergence, efficient encoding, offline support and editor bindings; avoids writing a CRDT from scratch.",
+   "alternatives": "OT with a central server (Google Docs approach, ShareDB/ot.js), Figma-style server-authoritative last-writer-wins per property for non-text structures."
+  },
+  {
+   "name": "WebSocket session servers (Node.js, Go or Elixir)",
+   "layer": "Collaboration sessions",
+   "overview": "Stateful servers holding one actor per open document and the clients' sockets.",
+   "why": "Single owner per doc gives ordering, cheap dedupe and fan-out; Elixir/Erlang processes map naturally to per-doc actors.",
+   "alternatives": "Serverless with Durable Objects (one object per doc, managed placement), pure peer-to-peer WebRTC (no server ordering or persistence)."
+  },
+  {
+   "name": "etcd",
+   "layer": "Coordination",
+   "overview": "Raft-based consistent key-value store with leases and watches.",
+   "why": "Doc ownership leases with fencing tokens, ring membership.",
+   "alternatives": "ZooKeeper, Consul, or a database row lease with conditional updates."
+  },
+  {
+   "name": "Cassandra / Bigtable",
+   "layer": "Op log",
+   "overview": "Wide-column stores with partitioned, sorted rows and high write throughput.",
+   "why": "Append-heavy per-doc logs ordered by server_seq, quorum writes, horizontal scale to millions of ops per second.",
+   "alternatives": "Kafka with per-doc keys (great for streaming, awkward for random per-doc reads), Postgres partitioned tables (fine at smaller scale), DynamoDB."
+  },
+  {
+   "name": "S3 / GCS",
+   "layer": "Snapshots and cold history",
+   "overview": "Durable, cheap object storage.",
+   "why": "Compacted snapshots and old log segments at 200 TB scale for pennies per GB.",
+   "alternatives": "Storing snapshots in the database (simpler, costlier, slower for large blobs)."
+  },
+  {
+   "name": "Postgres / Spanner",
+   "layer": "Document metadata",
+   "overview": "Relational stores; Spanner adds global strong consistency.",
+   "why": "Doc metadata, version markers and pointers need transactions and queries.",
+   "alternatives": "CockroachDB, DynamoDB."
+  },
+  {
+   "name": "IndexedDB / SQLite",
+   "layer": "Client persistence",
+   "overview": "On-device storage for browser and native apps.",
+   "why": "Holds CRDT state and unacked ops so offline edits survive app restarts.",
+   "alternatives": "In-memory only (loses offline work on crash), OPFS in browsers."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Operational Transformation (OT)",
+   "explain": "Operational Transformation lets several users edit a shared sequence concurrently by transforming operations against each other. Each edit is an operation such as insert 'a' at position 5 or delete position 9. If two users generate operations against the same version, applying them naively gives different results on each side, because the first operation shifts positions that the second refers to. OT defines a transform function that adjusts one operation to account for another that has already been applied: if someone inserted three characters before position 5, your insert at 5 becomes an insert at 8. Correctness requires transform properties (TP1 and, for peer-to-peer, the much harder TP2) to hold for every pair of operation types, and many published OT algorithms were later found incorrect. Practical systems, starting with the Jupiter system and used by Google Docs, avoid TP2 by having a central server define a single total order: clients send operations tagged with the revision they were based on, the server transforms them against everything applied since, and broadcasts the result. Each client has at most one in-flight operation batch, buffering the rest. The result is simple metadata and compact documents, at the cost of depending on the server for ordering and complex transform logic for rich structures.",
+   "in_this_design": "We considered OT as the main alternative. It fits well when clients are almost always online and a server orders every op, and it keeps no per-character metadata. We chose a CRDT because hours of offline editing make OT's transform chains long and fragile; the OT pseudocode is kept to explain the trade-off in interviews.",
+   "key_points": [
+    "OT adjusts concurrent ops by transforming positions against each other.",
+    "Central server ordering (Jupiter, Google Docs) avoids the hard TP2 property.",
+    "Clients send ops with a base revision; server transforms and broadcasts.",
+    "Low metadata overhead, but transform functions for rich text are complex.",
+    "Long offline periods make OT painful because of long transform chains."
+   ],
+   "qa": [
+    {
+     "q": "Why does Google Docs use a central server with OT?",
+     "a": "A single server-defined order means each op only needs to be transformed against ops the server applied since its base revision, needing only TP1. Decentralised OT needs TP2, which is very hard to satisfy and was the source of many incorrect algorithms."
+    },
+    {
+     "q": "What is the main weakness of OT for this product?",
+     "a": "Offline editing for hours: the client's ops must be transformed against potentially thousands of server ops, and the client has to buffer and rebase everything. It works but is complex and slow; CRDTs merge directly."
+    },
+    {
+     "q": "Why did Figma reject OT?",
+     "a": "Figma said OT was more complex and error-prone than it needed for a design tool, whose documents are trees of objects with properties. It used a server-authoritative scheme with last-writer-wins per property instead."
+    }
+   ]
+  },
+  {
+   "name": "CRDTs (conflict-free replicated data types) for sequences",
+   "explain": "A CRDT is a data structure designed so that replicas can be updated independently and concurrently without coordination, and any two replicas that have received the same set of updates are guaranteed to be in the same state. This property is called strong eventual consistency. State-based CRDTs merge whole states with a join that is commutative, associative and idempotent; operation-based CRDTs send operations that commute when delivered in causal order. Simple CRDTs include counters (G-Counter, PN-Counter), sets (OR-Set) and registers (LWW-Register). For text, sequence CRDTs such as RGA, Logoot, YATA (used by Yjs) and Fugue give every character a unique, immutable identifier, usually a pair of client id and a logical counter. An insert says put this new character after the character with id X, rather than at position 5, so it does not depend on how many other edits happened. Concurrent inserts at the same spot are ordered by a deterministic tie break on their ids. Deletes leave tombstones so that references remain valid. The costs are metadata per character and tombstones, which modern implementations reduce by run-length encoding consecutive characters typed by one client and by garbage collecting tombstones once all replicas have seen them. CRDTs need no central server for correctness, which is why they suit offline-first and local-first software.",
+   "in_this_design": "The document is a Yjs-style YATA CRDT on every client and in the session server. Offline clients edit freely and merge on reconnect by exchanging missing ops. The server still orders and persists ops for durability, history and fan-out, but convergence does not depend on it.",
+   "key_points": [
+    "Replicas that saw the same ops have identical state, in any delivery order.",
+    "Characters have unique ids; inserts reference neighbours by id, not by offset.",
+    "Concurrent inserts are ordered by a deterministic tie break.",
+    "Deletes are tombstones; GC them once every replica has seen them.",
+    "Ideal for offline and peer-to-peer; costs metadata."
+   ],
+   "qa": [
+    {
+     "q": "How much overhead does a text CRDT add?",
+     "a": "Naively tens of bytes per character, but Yjs groups consecutive characters from one client into a single item, so typical documents are within a small factor of the plain text size. Tombstones are the main growth and are compacted."
+    },
+    {
+     "q": "If the CRDT merges without a server, why keep a server?",
+     "a": "For authentication and authorisation on every op, durable storage and history, fan-out to many clients without peer-to-peer meshes, snapshots, and a single place to apply limits and audit."
+    },
+    {
+     "q": "Can a CRDT produce a result users dislike?",
+     "a": "Yes: convergence is guaranteed, intent is not. Two people fixing the same typo differently can produce both fixes interleaved. The UI shows collaborators' cursors to reduce such collisions."
+    }
+   ]
+  },
+  {
+   "name": "Logical clocks, causality and state vectors (Lamport and vector clocks)",
+   "explain": "In a distributed system there is no shared clock you can trust to order events, because physical clocks drift and network delays vary. Logical clocks order events by causality instead. A Lamport clock is a counter each process increments on every event and attaches to messages; receivers set their counter to the maximum of their own and the received value plus one. If event A caused event B, A's Lamport time is smaller, but the converse is not guaranteed, so Lamport clocks cannot detect concurrency. A vector clock keeps one counter per process; comparing two vectors element-wise tells you whether one event happened before another or whether they are concurrent. A state vector, as in Yjs, is the vector of the highest counter seen from each client, summarising everything a replica knows. Two replicas exchanging state vectors can compute exactly which operations each lacks. Causal delivery means an operation is applied only after the operations it depends on, which some CRDTs require. The cost of vectors grows with the number of participants, which is why systems prune or compress them.",
+   "in_this_design": "Every CRDT item id is (client_id, clock), a per-client logical counter. Clients and the server exchange state vectors on open and reconnect to send only missing ops. Wall-clock time is stored only as display metadata for version history, never for ordering.",
+   "key_points": [
+    "Physical clocks cannot order distributed events reliably.",
+    "Lamport clocks respect causality but cannot detect concurrency.",
+    "Vector clocks detect concurrency by element-wise comparison.",
+    "A state vector summarises what a replica has seen; diff two to sync.",
+    "Vector size grows with participants; compress or prune."
+   ],
+   "qa": [
+    {
+     "q": "Why not order edits by timestamp?",
+     "a": "Client clocks can be off by minutes or hours, so a later edit could be ordered first, and two edits can have the same timestamp. Logical ids give a deterministic, skew-proof order."
+    },
+    {
+     "q": "How does a state vector make reconnect efficient?",
+     "a": "The server compares the client's highest clock per client_id with its own and sends only items with higher clocks, and vice versa. A client offline for a day exchanges only that day's ops, not the whole document."
+    },
+    {
+     "q": "What is the difference between happened-before and concurrent?",
+     "a": "A happened before B if A's effects could have been seen by B's author, which a vector clock shows as A less than or equal to B in every element. If neither dominates, the events are concurrent and need a merge rule."
+    }
+   ]
+  },
+  {
+   "name": "Single-writer session ownership with leases and fencing tokens",
+   "explain": "Many systems simplify concurrency by ensuring one process owns a given piece of state at a time, so it can order and process updates without locks. The challenge is ownership changes: if the owner crashes, someone else must take over, and if the owner is merely slow or partitioned, two processes may believe they own the state. Leases solve the first part: ownership is granted for a limited time by a coordination service such as etcd or ZooKeeper and must be renewed; if renewals stop, the lease expires and another node can acquire it. But a process can pause, for example during a long garbage collection, past its lease expiry and then resume, still believing it is the owner. Fencing tokens solve this: every lease grant returns a monotonically increasing number, and the storage layer rejects writes carrying a token lower than the highest it has seen. Martin Kleppmann popularised this argument against relying on lock timing alone. Together, leases give liveness and fencing gives safety.",
+   "in_this_design": "Each open document is owned by one session server actor, holding a 10 s lease in etcd renewed every 3 s. Every op log append carries the fencing token; the log rejects stale tokens, so a zombie owner cannot write after failover. Clients reconnect to the new owner via the router.",
+   "key_points": [
+    "One owner per document makes ordering and dedupe trivial.",
+    "Leases give automatic failover when the owner stops renewing.",
+    "Pauses can outlive a lease; timing alone is unsafe.",
+    "Fencing tokens let storage reject stale owners.",
+    "Leases for liveness, fencing for safety."
+   ],
+   "qa": [
+    {
+     "q": "Why not let any server accept ops for any doc, since the CRDT merges anyway?",
+     "a": "It would work for convergence, but fan-out would need a pub/sub across servers, dedupe and server_seq assignment would need coordination, and snapshots would race. One owner keeps those simple; the CRDT is the safety net for offline and failover."
+    },
+    {
+     "q": "What happens to a client's in-flight ops during failover?",
+     "a": "They were not acked, so the SDK keeps them in its outbox and resends to the new owner. If the old owner had persisted them before dying, the new owner sees them in the log and dedupes by (client_id, seq)."
+    },
+    {
+     "q": "How long is the failover window?",
+     "a": "Lease TTL of 10 s plus load time for snapshot and tail, usually under 15 s. Clients keep editing locally throughout, so users mostly see a brief reconnect indicator."
+    }
+   ]
+  },
+  {
+   "name": "Event sourcing with an operation log and snapshots",
+   "explain": "Event sourcing stores the sequence of changes as the source of truth rather than only the current state. The current state is derived by replaying events from the beginning, or from a snapshot. This gives a full audit trail, the ability to reconstruct any past state, and a natural feed for other consumers. The costs are that replay becomes slow as the log grows, and storage grows without bound. Snapshots solve replay time: periodically store the computed state at a known position, then load the latest snapshot and replay only the events after it. Compaction reduces storage: once a snapshot covers a range, older events can be tiered to cheap storage or discarded according to retention. The log must be append-only and ordered within an entity, which maps well to partitioning by entity id. Writes must be durable before acknowledgement, usually by replicating to a quorum. Because events are facts, consumers need idempotency when they reprocess, often by tracking the last applied sequence number.",
+   "in_this_design": "The per-document op log, partitioned by doc_id and ordered by server_seq, is the source of truth. A snapshot is written every 1,000 ops or 60 s; open and failover load the latest snapshot plus tail. Version history and restore are built from snapshots and server_seq markers; restore appends new ops instead of rewriting history.",
+   "key_points": [
+    "The log of changes is the truth; state is derived.",
+    "Snapshots bound replay time; load snapshot plus tail.",
+    "Partition the log by entity id to keep per-entity order.",
+    "Ack only after a durable quorum append.",
+    "Restore by appending new events, never by rewriting history."
+   ],
+   "qa": [
+    {
+     "q": "How often should you snapshot?",
+     "a": "Balance load time against write cost: every 1,000 ops or 60 s keeps tail replay to at most about 1,000 ops, which loads in tens of milliseconds, while snapshotting only active docs keeps write cost low."
+    },
+    {
+     "q": "Why not just store the current document and overwrite it?",
+     "a": "You would lose per-op history, version restore, idempotent resend detection and the ability to recover from a corrupt state. You would also need read-modify-write on large blobs for every keystroke."
+    },
+    {
+     "q": "How do you handle a 10-year-old doc with millions of ops?",
+     "a": "Compaction keeps the snapshot current; old log segments move to object storage; history UI reads snapshots at coarse intervals rather than replaying every op."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency, at-least-once delivery and exactly-once effects",
+   "explain": "Networks lose messages and acknowledgements, so a sender that wants reliability must retry. Retrying means the receiver may see the same message more than once: this is at-least-once delivery. At-most-once avoids duplicates by never retrying but loses messages. True exactly-once delivery is impossible in general, but exactly-once effect is achievable by combining at-least-once delivery with idempotent processing. An operation is idempotent if applying it twice has the same effect as once. Some operations are naturally idempotent, such as setting a value or adding an element with a unique id to a set. Others need deduplication: the sender attaches a unique id or a per-sender sequence number, and the receiver records what it has applied and ignores repeats. Per-sender monotonic sequence numbers are compact, because the receiver only needs the highest number seen per sender. Acknowledgements tell the sender it can forget the message; until then it stays in a durable outbox so even an app restart does not lose it.",
+   "in_this_design": "The SDK keeps unacked ops in a persisted outbox and resends after reconnect (at-least-once). The server dedupes by (client_id, client_seq) and CRDT integration is idempotent because item ids are unique, giving exactly-once effect. Acks are sent only after the quorum append.",
+   "key_points": [
+    "Retries imply duplicates; exactly-once delivery is not achievable in general.",
+    "Exactly-once effect = at-least-once delivery + idempotent processing.",
+    "Per-sender sequence numbers make dedupe state tiny.",
+    "Keep unacked messages in a durable outbox.",
+    "Ack only after the effect is durable."
+   ],
+   "qa": [
+    {
+     "q": "The ack is lost but the op was persisted. What happens?",
+     "a": "The client resends on reconnect; the server sees client_seq already applied and simply re-acks. The CRDT would also ignore the duplicate item id, so there is double protection."
+    },
+    {
+     "q": "Why ack only after the quorum write?",
+     "a": "If the server acked before persisting and then crashed, the client would drop the op from its outbox and the edit would be lost forever. Durability before ack is what makes zero lost edits true."
+    },
+    {
+     "q": "What if the client loses its local storage before the ack?",
+     "a": "Those unacked edits are lost, which is why the SDK persists the outbox on every batch and why the UI shows a pending-sync indicator so the user knows."
+    }
+   ]
+  },
+  {
+   "name": "Ephemeral awareness state (cursors and presence) vs durable document state",
+   "explain": "Not all collaborative data deserves the same guarantees. Document content must be durable, ordered and convergent. Awareness data, such as who is in the document, where their cursor is, what they have selected and their colour, is ephemeral: it matters only right now, the latest value supersedes all earlier ones, and losing an update just means a cursor lags briefly. Treating awareness like content, by persisting and ordering every cursor move, would multiply write load many times over for no value. Instead, awareness is sent as a last-writer-wins map per client with its own logical clock, coalesced to a fixed rate, kept in memory, and expired after a timeout if the client disappears. Cursor positions must be expressed relative to stable document identifiers, not integer offsets, otherwise remote edits would shift them to the wrong place. This separation of channels is a general pattern: split hot ephemeral signals from durable state and give each the cheapest mechanism that meets its needs.",
+   "in_this_design": "Awareness messages carry {cursor, selection, user, colour} with a per-client clock, are coalesced to at most 10-20 Hz, relayed in memory by the session server and dropped after 30 s without updates. Cursor positions are CRDT relative positions anchored to item ids. Nothing is written to the op log.",
+   "key_points": [
+    "Content is durable and convergent; cursors are ephemeral and latest-wins.",
+    "Coalesce awareness to a fixed rate and keep it in memory.",
+    "Expire awareness entries on timeout.",
+    "Anchor cursors to item ids, not offsets.",
+    "Under load, degrade awareness first, never content."
+   ],
+   "qa": [
+    {
+     "q": "Why not persist cursor positions?",
+     "a": "A cursor can move 20 times per second per user; persisting would multiply log writes many-fold, and nobody needs yesterday's cursor. When a user reconnects they simply send their current one."
+    },
+    {
+     "q": "What goes wrong if cursors are integer offsets?",
+     "a": "If someone inserts text before your cursor, your offset now points to a different character. Anchoring to the id of the character next to the cursor keeps it in place regardless of edits elsewhere."
+    },
+    {
+     "q": "With 100 editors, how do you keep awareness from overwhelming clients?",
+     "a": "Coalesce per sender, reduce rate to 5 Hz for large sessions, and only send cursors near the viewer's visible region or the most recent 20 active users."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Merge algorithm",
+   "options": "Lock or LWW whole doc; OT with central server; sequence CRDT",
+   "choice": "Sequence CRDT (Yjs/YATA) with a server in the loop",
+   "why": "Hours of offline editing and order-independent merge favour CRDTs; the server still provides auth, durability, history and fan-out."
+  },
+  {
+   "decision": "Server role",
+   "options": "Pure peer-to-peer; relay only; authoritative owner per doc",
+   "choice": "Owner per doc that orders, persists and relays",
+   "why": "P2P cannot enforce permissions or durability; a single owner simplifies dedupe, server_seq and snapshots."
+  },
+  {
+   "decision": "Op log store",
+   "options": "Kafka; Cassandra/Bigtable; Postgres",
+   "choice": "Cassandra/Bigtable partitioned by doc_id",
+   "why": "High append throughput with random per-doc reads for load and history; Kafka is great for streams but poor for random per-doc reads."
+  },
+  {
+   "decision": "Batching window",
+   "options": "Send every keystroke; batch 50 ms; batch 500 ms",
+   "choice": "50 ms",
+   "why": "Cuts message count roughly 3x at typing speed while staying well inside the 200 ms remote latency budget."
+  },
+  {
+   "decision": "Cursor transport",
+   "options": "Persist in op log; ephemeral channel",
+   "choice": "Ephemeral, coalesced channel",
+   "why": "Cursors are high-frequency and worthless once stale; persisting them would multiply writes."
+  },
+  {
+   "decision": "Hot document viewers",
+   "options": "All connect to owner; relay tier",
+   "choice": "Relay tier for read-only viewers",
+   "why": "Keeps the owner's work proportional to editors; viewers tolerate an extra hop of a few ms."
+  },
+  {
+   "decision": "Tombstone handling",
+   "options": "Keep forever; GC when all replicas have seen; GC by age",
+   "choice": "GC once covered by all known state vectors, with a horizon forcing old clients to full resync",
+   "why": "Bounds growth safely; very stale clients do a full reload rather than corrupting merges."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Session server crash",
+   "behavior": "Lease expires in 10 s, new owner loads snapshot plus tail with higher fencing token; clients reconnect and resend unacked ops; local editing never stops."
+  },
+  {
+   "failure": "Network partition isolates old owner",
+   "behavior": "Old owner cannot renew and its appends are rejected by fencing; it closes the doc; clients on its side see disconnects and keep editing offline."
+  },
+  {
+   "failure": "Op log store slow or degraded",
+   "behavior": "Appends slow, acks delayed, server applies backpressure (stops reading from sockets); clients buffer in outbox; nothing acked is lost."
+  },
+  {
+   "failure": "Snapshot worker behind",
+   "behavior": "Tail replay grows, so opens get slower; alert on snapshot lag; owner can snapshot inline for very long tails."
+  },
+  {
+   "failure": "Client diverges due to a bug",
+   "behavior": "Periodic hash check between client and server detects mismatch; client discards local state (keeping unacked ops), reloads snapshot and reapplies."
+  },
+  {
+   "failure": "Region outage",
+   "behavior": "Docs re-homed to another region using replicated op log; clients reconnect with higher latency; offline editing bridges the gap."
+  }
+ ],
+ "metrics": [
+  "Remote edit latency p50/p95/p99 (sender local apply to receiver render).",
+  "Op ack latency and op log append latency p99.",
+  "Ops per second per document and top hot documents.",
+  "Reconnect rate, resync payload size, and offline merge success rate.",
+  "Divergence detections from periodic hash checks (target zero).",
+  "Snapshot lag (ops since last snapshot) and document open time p95.",
+  "CRDT state size and tombstone ratio per document.",
+  "Session failovers per hour and failover duration."
+ ],
+ "follow_ups": [
+  {
+   "q": "When would you pick OT over a CRDT?",
+   "a": "When clients are almost always online, the server must be authoritative anyway, documents are huge and metadata overhead matters, or you already have a mature OT engine. Google Docs is the canonical example."
+  },
+  {
+   "q": "How do you implement per-user undo?",
+   "a": "Track the items each user inserted and deleted per undo step. Undo deletes their inserted items and restores their deleted ones as new ops, so others' edits stay. Yjs's UndoManager does this with tracked origins."
+  },
+  {
+   "q": "How do you enforce permissions with offline edits?",
+   "a": "The server checks ACL on every op at integration time. If access was revoked, ops are rejected and the client is told; the SDK keeps them for the user to copy elsewhere. Read access can also be revoked by disconnecting and wiping local cache on next start."
+  },
+  {
+   "q": "How would you support end-to-end encryption?",
+   "a": "The server could no longer read ops, so it becomes a relay and blind store of encrypted updates; merges happen only on clients, which favours CRDTs strongly, and snapshots must be produced by clients."
+  },
+  {
+   "q": "How do you detect that clients have diverged?",
+   "a": "Periodically clients send a hash of their visible document plus their state vector; the server compares with its hash at the same state vector. Any mismatch triggers a resync and an alert, since it indicates a bug."
+  },
+  {
+   "q": "How does this compare with Figma's approach?",
+   "a": "Figma is server-authoritative with last-writer-wins per object property, which works for design trees where property conflicts are rare and meaningful merges are not needed. Text needs character-level merge, which is why we need OT or a sequence CRDT."
+  },
+  {
+   "q": "What breaks with 1,000 simultaneous editors?",
+   "a": "Fan-out is quadratic in editors, awareness overwhelms clients, and intent conflicts become constant. Cap editors, push extras to viewer mode, batch more aggressively, and shard the doc by section if the product allows."
+  }
+ ],
+ "key_points": [
+  "Scope it as the sync layer: merge algorithm, sessions, persistence, awareness and offline.",
+  "OT needs a central order and complex transforms; CRDTs merge in any order and suit offline.",
+  "Choose a sequence CRDT (Yjs/YATA) but keep a server owner per doc for auth, durability, history and fan-out.",
+  "Characters have unique ids; inserts reference neighbours by id; deletes are tombstones to GC later.",
+  "Ops carry (client_id, seq); at-least-once resend plus idempotent integrate = exactly-once effect.",
+  "Ack only after a quorum append to the per-doc op log; snapshot every 1,000 ops or 60 s.",
+  "Leases for failover, fencing tokens so a zombie owner cannot write.",
+  "State vectors make reconnect and offline sync send only what is missing.",
+  "Cursors and presence are ephemeral, coalesced and anchored to item ids.",
+  "Capacity: about 1.5M ops/s and 5M connections at peak; connections size the session tier."
+ ],
+ "quiz": [
+  {
+   "q": "Two users insert text at the same position concurrently. What does a sequence CRDT guarantee?",
+   "options": [
+    "The later timestamp wins and the other is discarded",
+    "Both inserts survive in the same deterministic order on every replica",
+    "The server rejects one insert",
+    "The inserts are interleaved character by character randomly"
+   ],
+   "answer": 1,
+   "why": "Unique ids with a deterministic tie break give the same order everywhere. Timestamp-wins would lose one user's text, which is exactly what CRDTs avoid."
+  },
+  {
+   "q": "Why do practical OT systems like Google Docs use a central server?",
+   "options": [
+    "A server-defined total order avoids needing the hard TP2 transform property",
+    "OT cannot run in browsers",
+    "OT requires a database transaction per keystroke",
+    "Clients cannot store operations"
+   ],
+   "answer": 0,
+   "why": "With a central order, ops are transformed only against what the server applied since their base revision. Browsers run OT fine; the server is about correctness, not capability."
+  },
+  {
+   "q": "Which requirement most strongly favours a CRDT over OT here?",
+   "options": [
+    "Showing collaborators' cursors",
+    "Storing version history",
+    "Low latency for online editors",
+    "Editing offline for hours and merging on reconnect"
+   ],
+   "answer": 3,
+   "why": "Long offline sessions mean long OT transform chains; CRDTs merge directly. Online latency is achievable with either approach."
+  },
+  {
+   "q": "A session server pauses for 20 s in GC, its 10 s lease expires, and a new owner takes over. What stops the old owner corrupting the log when it wakes?",
+   "options": [
+    "The lease automatically extends during GC",
+    "Clients refuse its messages",
+    "Fencing tokens: the log rejects appends with a lower token",
+    "The CRDT ignores its ops"
+   ],
+   "answer": 2,
+   "why": "Leases alone fail under pauses. The CRDT would merge its ops, so it would not ignore them, but server_seq and history would race without fencing."
+  },
+  {
+   "q": "A client's ack is lost after the server persisted its op. What happens on resend?",
+   "options": [
+    "Server sees the (client_id, seq) already applied and re-acks without duplicating",
+    "The op is applied twice, duplicating text",
+    "The server returns an error and the client discards the op",
+    "The document is reset to the last snapshot"
+   ],
+   "answer": 0,
+   "why": "Dedupe plus idempotent integration give exactly-once effect. Duplicated text is the failure this design prevents."
+  },
+  {
+   "q": "Why should the server ack an op only after a quorum append?",
+   "options": [
+    "Quorum appends are faster than single writes",
+    "Otherwise a crash after ack would lose an edit the client already discarded",
+    "Clients cannot render until acked",
+    "It reduces fan-out"
+   ],
+   "answer": 1,
+   "why": "The client drops acked ops from its outbox. Clients render optimistically before acks, so the third option is wrong."
+  },
+  {
+   "q": "Roughly how many ops per second at peak with 300k active typists at 5 ops/s?",
+   "options": [
+    "About 150k",
+    "About 15M",
+    "About 1.5M",
+    "About 60k"
+   ],
+   "answer": 2,
+   "why": "300k x 5 = 1.5M. Batching reduces messages, not ops, so 600k is message count, not one of these options."
+  },
+  {
+   "q": "Why are cursors anchored to item ids instead of integer offsets?",
+   "options": [
+    "Integers cannot be sent over WebSockets",
+    "Item ids are smaller",
+    "Offsets reveal private content",
+    "Remote inserts before the cursor would otherwise shift it to the wrong character"
+   ],
+   "answer": 3,
+   "why": "Relative positions stay attached to the right character as text changes elsewhere."
+  },
+  {
+   "q": "What is a state vector used for?",
+   "options": [
+    "Summarising the highest clock seen per client so peers can send only missing ops",
+    "Encrypting the document",
+    "Ordering ops by wall-clock time",
+    "Assigning the session owner"
+   ],
+   "answer": 0,
+   "why": "Diffing state vectors makes reconnect efficient. It is logical, not wall-clock, time."
+  },
+  {
+   "q": "Why are deletes implemented as tombstones in a sequence CRDT?",
+   "options": [
+    "Deleting memory is slow in JavaScript",
+    "To support undo only",
+    "Concurrent inserts may reference the deleted character's id, so it must remain addressable",
+    "To keep the document size constant"
+   ],
+   "answer": 2,
+   "why": "References from concurrent ops need the anchor to exist. Undo benefits, but it is not the reason tombstones are required."
+  },
+  {
+   "q": "A document has 100 editors and 5,000 viewers. Best way to protect the owner session server?",
+   "options": [
+    "Make every viewer an editor to share load",
+    "Serve viewers through a relay tier that subscribes to the ordered op stream",
+    "Disable cursors for editors",
+    "Shard the doc across 10 owners at random"
+   ],
+   "answer": 1,
+   "why": "Viewers do not send ops, so relaying them offloads fan-out. Random sharding of one doc breaks the single-owner ordering."
+  },
+  {
+   "q": "Which data should be persisted in the op log?",
+   "options": [
+    "Cursor positions at 20 Hz",
+    "Who is currently viewing",
+    "Selection highlights",
+    "Text inserts, deletes and formatting changes"
+   ],
+   "answer": 3,
+   "why": "Content is durable state; awareness is ephemeral and latest-wins."
+  },
+  {
+   "q": "Why batch ops for 50 ms on the client?",
+   "options": [
+    "Reduces message count substantially while staying well within the 200 ms remote latency budget",
+    "To guarantee causal order",
+    "Because WebSockets cannot send faster",
+    "To make ops idempotent"
+   ],
+   "answer": 0,
+   "why": "Batching is about overhead. Causal order and idempotency come from ids and sequence numbers, not batching."
+  },
+  {
+   "q": "Snapshot every 1,000 ops or 60 s mainly bounds what?",
+   "options": [
+    "The size of each op",
+    "Cursor update frequency",
+    "The number of ops to replay on open or failover",
+    "The number of editors"
+   ],
+   "answer": 2,
+   "why": "Load = snapshot + tail; snapshots keep the tail short."
+  },
+  {
+   "q": "A user's edit access is revoked while they are offline with 200 pending edits. On reconnect?",
+   "options": [
+    "Server accepts them because they were made before revocation",
+    "Server rejects their ops; SDK keeps them locally and offers to copy them elsewhere",
+    "Server silently drops them and acks",
+    "CRDT merges them and the ACL is updated later"
+   ],
+   "answer": 1,
+   "why": "Authorisation is checked at integration time. Silently acking would mislead the user into thinking edits were saved."
+  },
+  {
+   "q": "Which statement about Lamport clocks is correct?",
+   "options": [
+    "They detect concurrent events",
+    "They require synchronized physical clocks",
+    "They store one counter per process",
+    "If A happened before B then L(A) < L(B), but L(A) < L(B) does not imply A happened before B"
+   ],
+   "answer": 3,
+   "why": "Lamport clocks respect causality but cannot detect concurrency; vector clocks store a counter per process and can."
+  },
+  {
+   "q": "How does Figma's multiplayer approach differ from a text CRDT?",
+   "options": [
+    "Server-authoritative last-writer-wins per object property, not character-level merge",
+    "Fully peer-to-peer with no server",
+    "Classic OT with transform functions",
+    "Locks each object while editing"
+   ],
+   "answer": 0,
+   "why": "Figma borrowed CRDT ideas but uses the server as authority with LWW per property. It explicitly rejected OT."
+  },
+  {
+   "q": "Undo for one user after others have edited nearby should do what?",
+   "options": [
+    "Roll back the document to an earlier snapshot",
+    "Remove the last op in the log regardless of author",
+    "Generate new inverse ops for only that user's own changes",
+    "Reject undo if anyone else edited since"
+   ],
+   "answer": 2,
+   "why": "Rolling back would erase others' work. Per-user inverse ops preserve collaborators' edits."
+  },
+  {
+   "q": "A client is found to have a different document hash than the server at the same state vector. Best response?",
+   "options": [
+    "Overwrite the server with the client's state",
+    "Reload snapshot, reapply unacked local ops, and alert because it indicates a bug",
+    "Ignore it; CRDTs always converge",
+    "Lock the document for all users"
+   ],
+   "answer": 1,
+   "why": "Same state vector with different hash means a bug; the server's persisted log is the reference. Ignoring it hides corruption."
+  },
+  {
+   "q": "What sizes the session server tier at peak (5M clients, 1.5M ops/s)?",
+   "options": [
+    "Op log storage per day",
+    "Snapshot size",
+    "Number of distinct users per month",
+    "Concurrent connections per node, about 250 nodes at 20k connections each"
+   ],
+   "answer": 3,
+   "why": "Ops are well under node capacity at 10k ops/s per node; connections are the binding constraint."
+  },
+  {
+   "q": "Which is the right delivery model for content ops between client and server?",
+   "options": [
+    "At-least-once with a durable client outbox and server dedupe",
+    "At-most-once, since CRDTs tolerate loss",
+    "Fire-and-forget like cursors",
+    "Exactly-once delivery guaranteed by TCP"
+   ],
+   "answer": 0,
+   "why": "Lost content ops are lost edits, so retries are required; TCP does not survive reconnects, so it cannot provide end-to-end exactly-once."
+  }
+ ],
+ "references": [
+  {
+   "title": "Figma: How Figma's multiplayer technology works",
+   "url": "https://www.figma.com/blog/how-figmas-multiplayer-technology-works/"
+  },
+  {
+   "title": "Liveblocks: Understanding sync engines (Figma, Linear, Google Docs)",
+   "url": "https://www.liveblocks.io/blog/understanding-sync-engines-how-figma-linear-and-google-docs-work"
+  },
+  {
+   "title": "ot.js: Operational Transformation",
+   "url": "https://ot.js.org/docs/operational-transformation"
+  },
+  {
+   "title": "Kleppmann et al.: Local-first software (Onward! 2019)",
+   "url": "https://martin.kleppmann.com/2019/10/23/local-first-at-onward.html"
+  },
+  {
+   "title": "Electric: Yjs integration docs",
+   "url": "https://electric.ax/docs/streams/integrations/yjs.md"
+  }
+ ]
+}

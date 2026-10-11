@@ -1,0 +1,1053 @@
+{
+ "slug": "events-table-partitioning",
+ "title": "Design a partitioning strategy for a large events table",
+ "prompt": "Design a partitioning strategy for a large events table.",
+ "group": "storage",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 80,
+ "summary": "An append-heavy events table (clicks, order state changes, audit events) grows by billions of rows a day, and a single table eventually makes inserts, index maintenance, vacuum, retention deletes and queries all degrade together. The core tension is choosing partition keys that serve two very different access patterns at once: time-range scans and retention want time partitioning, while per-entity lookups (all events for order X) and write spreading want hash partitioning by entity. The strong answer is composite partitioning (time ranges subdivided by hash), partition pruning-friendly queries, retention by dropping partitions, and tiering old partitions to cheap columnar storage.",
+ "framework": {
+  "clarify": [
+   "What are the events and how are they queried? Assume e-commerce events (order, payment, shipment, user activity): queries are by entity (order_id, user_id) within a time window and by time range for analytics.",
+   "Volume: assume 3 billion events per day average, 100,000 per second peak about 2x average at 70,000 average, about 500 bytes per row including indexes.",
+   "Retention: assume 90 days hot in OLTP, 2 years in cheaper storage for analytics and audit, then delete.",
+   "Is the table append-only? Assume yes; corrections are new events, never updates. Late events up to 7 days old can arrive.",
+   "Latency targets: assume per-entity lookups p99 under 50 ms, time-range dashboards under 5 s, ingest p99 under 20 ms.",
+   "Which engine? Assume PostgreSQL today; open to a distributed store if needed. Ask whether the team prefers to stay on SQL.",
+   "Do we need global uniqueness on event_id? Assume yes for dedupe of producer retries.",
+   "Any multi-tenant or regional split? Assume a single region with a DR replica."
+  ],
+  "design": [
+   "Baseline: a single events table with a btree index on (entity_id, ts) and a BRIN index on ts. It works up to a few hundred million rows; beyond that vacuum, index size and DELETE-based retention break down.",
+   "Partition by time first: daily RANGE partitions on event_ts because retention, late-event handling and most analytics are time bound; dropping a day is a metadata operation.",
+   "Subpartition each day by HASH(entity_id) into 16 partitions so writes spread over many indexes and per-entity queries prune to one subpartition per day.",
+   "Automate partition lifecycle: pre-create partitions 7 days ahead (pg_partman), detach and archive partitions older than 90 days to Parquet on object storage, drop after archive verification.",
+   "Make the dedupe key partition-aware: primary key (event_ts, entity_id, event_id), plus an ingestion-time dedupe cache because PostgreSQL unique indexes must include the partition key.",
+   "Scale beyond one node by sharding on entity_id (Citus or application-level) while keeping time partitions within each shard; route analytics to the columnar archive or a warehouse via CDC.",
+   "Critical path: producer -> Kafka -> batch inserter (COPY 5,000 rows) -> router picks shard by entity_id -> parent table routes to day and hash subpartition -> commit."
+  ],
+  "defend": [
+   "Bottleneck: write amplification from many indexes on a giant table. Small per-partition indexes stay in memory; keep only 2 indexes per partition and use BRIN for time.",
+   "Scaling reads: every query includes a time predicate so the planner prunes to a few partitions; per-entity queries prune further by hash; a lookup index (entity_id -> first/last ts) bounds the time window when unknown.",
+   "Scaling writes: batch COPY via Kafka consumers, hash subpartitions spread inserts across 16 index trees, sharding by entity_id spreads across nodes.",
+   "Failure behaviour: missing future partition causes insert failures, so a default partition plus an alert and pre-creation 7 days ahead; archive job is idempotent and verified before drop.",
+   "Hot partitions: today's partition takes all writes. Hash subpartitioning spreads index contention; fillfactor and autovacuum tuned for the current partition only.",
+   "Measure: partitions scanned per query (pruning effectiveness), rows per partition and skew across hash buckets, insert p99, autovacuum duration, archive lag and default partition row count."
+  ],
+  "script": "I will start by asking how the events are queried, because the access pattern decides the partition key. My assumption is about 3 billion events a day, append-only, 90 days hot and 2 years archived, with two dominant query shapes: all events for an entity like an order in a time window, and time-range scans for dashboards. A single table works until a few hundred million rows, then vacuum, index size and delete-based retention fall over. So my design partitions by time first, daily ranges, because retention and late arrivals are time-shaped and dropping a partition is instant instead of deleting billions of rows. Each day is subpartitioned by hash of entity_id into 16 buckets, so writes spread over many small indexes and an entity lookup prunes to one bucket per day. A partition manager pre-creates partitions a week ahead and archives anything older than 90 days to Parquet. If one node is not enough, I shard by entity_id across nodes and keep time partitions within each shard. Then I will defend it: pruning only works if every query carries a time predicate, the current day is a hot partition, uniqueness across partitions needs care, and I will measure partitions scanned per query and bucket skew."
+ },
+ "brd": {
+  "problem": "The order events table has grown to 120 billion rows. Inserts slow down during sales, nightly retention DELETE jobs run for hours and cause replication lag, autovacuum never finishes, indexes no longer fit in memory, and customer support lookups of an order's history time out. Storage cost is climbing because nothing is ever tiered.",
+  "goals": [
+   "Sustain 100,000 inserts per second at peak sales with p99 under 20 ms.",
+   "Per-entity history lookups p99 under 50 ms for the last 90 days.",
+   "Retention as a cheap, instant operation instead of row deletes.",
+   "Reduce hot storage cost by moving data older than 90 days to columnar object storage.",
+   "Keep the design operable by the current PostgreSQL team with automation for partition lifecycle.",
+   "Support late events up to 7 days and idempotent ingestion."
+  ],
+  "non_goals": [
+   "Ad-hoc analytics over 2 years on the OLTP store (warehouse handles it).",
+   "Updating or deleting individual events except for legal erasure.",
+   "Real-time stream processing (consumers read Kafka directly).",
+   "Cross-region active-active writes."
+  ],
+  "stakeholders": [
+   {
+    "who": "Customer support",
+    "needs": "Fast, complete order and payment history for a customer."
+   },
+   {
+    "who": "Data and analytics teams",
+    "needs": "Daily and hourly aggregates, two-year history at low cost."
+   },
+   {
+    "who": "Order and payment services (producers)",
+    "needs": "Reliable, low-latency ingest that never blocks checkout."
+   },
+   {
+    "who": "DBA / SRE",
+    "needs": "Predictable vacuum, backups and maintenance; no manual partition work."
+   },
+   {
+    "who": "Compliance",
+    "needs": "Audit trail retention of 2 years and erasure for personal data."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Peak insert throughput",
+    "target": "100,000 rows/s, p99 insert under 20 ms"
+   },
+   {
+    "metric": "Entity lookup p99",
+    "target": "under 50 ms"
+   },
+   {
+    "metric": "Retention operation time",
+    "target": "under 1 s per day dropped, zero replication lag spikes"
+   },
+   {
+    "metric": "Hot storage footprint",
+    "target": "under 150 TB (90 days)"
+   },
+   {
+    "metric": "Partitions scanned per typical query",
+    "target": "under 10"
+   }
+  ],
+  "constraints": [
+   "PostgreSQL 16 is the standard OLTP engine; unique constraints on partitioned tables must include the partition key.",
+   "Thousands of partitions increase planning time and lock overhead, so total partition count per table should stay in the low thousands.",
+   "Checkout must not depend synchronously on the events store.",
+   "Backups and PITR must continue to work during partition maintenance."
+  ],
+  "risks": [
+   {
+    "risk": "Queries without a time predicate scan every partition.",
+    "mitigation": "API layer requires a time window; lookup table provides first and last event times per entity; statement_timeout guards."
+   },
+   {
+    "risk": "Partition pre-creation job fails and inserts error at midnight.",
+    "mitigation": "Create 7 days ahead, alert if fewer than 3 future partitions exist, and a default partition as a safety net."
+   },
+   {
+    "risk": "Hash bucket skew from a few huge entities.",
+    "mitigation": "Monitor rows per bucket; entities with extreme volumes (system accounts) get a secondary key or separate table."
+   },
+   {
+    "risk": "Archive drops a partition before the Parquet copy is verified.",
+    "mitigation": "Detach, export, verify row counts and checksums, then drop; keep detached table for 3 days."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Support agent",
+    "needs": "Open an order and see its full event timeline instantly."
+   },
+   {
+    "name": "Data analyst",
+    "needs": "Query a time range across all entities cheaply."
+   },
+   {
+    "name": "Producer service engineer",
+    "needs": "Fire-and-forget event publishing with no checkout impact."
+   },
+   {
+    "name": "DBA",
+    "needs": "Automated, observable partition lifecycle."
+   }
+  ],
+  "user_stories": [
+   "As a support agent, I want an order's events from the last 90 days in under a second so that I can resolve tickets fast.",
+   "As an analyst, I want hourly counts of payment failures for the last 30 days so that I can spot regressions.",
+   "As a producer engineer, I want event writes to be asynchronous and idempotent so that retries never duplicate events.",
+   "As a DBA, I want partitions created and archived automatically so that I never get paged at midnight.",
+   "As a compliance officer, I want events kept for 2 years and then deleted so that we meet audit and minimisation rules.",
+   "As an analyst, I want events older than 90 days queryable in the warehouse so that I can do year-over-year analysis.",
+   "As a support agent, I want late-arriving events to appear in the right place on the timeline so that history is accurate."
+  ],
+  "functional": [
+   "Ingest events from Kafka in batches with dedupe on event_id.",
+   "Store events in a composite partitioned table: daily RANGE on event_ts, HASH on entity_id within each day.",
+   "Serve per-entity timeline queries with a required time window, defaulting to the last 30 days.",
+   "Pre-create partitions 7 days ahead and maintain per-partition indexes.",
+   "Detach, archive to Parquet, verify and drop partitions older than 90 days.",
+   "Accept late events up to 7 days into the correct partition; route older ones to a late-events table for review.",
+   "Expose archived data through an external table or warehouse for queries beyond 90 days."
+  ],
+  "non_functional": [
+   {
+    "name": "Ingest throughput",
+    "target": "100,000 rows/s peak sustained for 2 h"
+   },
+   {
+    "name": "Ingest latency",
+    "target": "end-to-end Kafka to queryable under 5 s p99"
+   },
+   {
+    "name": "Query latency",
+    "target": "entity timeline p99 under 50 ms; daily aggregate under 5 s"
+   },
+   {
+    "name": "Durability",
+    "target": "synchronous standby, WAL archiving, RPO under 1 min"
+   },
+   {
+    "name": "Maintainability",
+    "target": "zero manual partition operations; partition count per table under 2,000"
+   },
+   {
+    "name": "Cost",
+    "target": "archive storage under 10% of hot cost per GB"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "3 billion events/day (about 35,000/s average, 100,000/s peak).",
+    "Row about 300 bytes heap plus about 200 bytes across 2 indexes = 500 bytes.",
+    "Hot retention 90 days, archive 2 years.",
+    "Parquet with compression achieves about 8x versus PostgreSQL heap plus indexes."
+   ],
+   "math": [
+    "Daily hot volume: 3 B x 500 B = 1.5 TB/day.",
+    "Hot storage: 1.5 TB x 90 days = 135 TB, which exceeds a comfortable single PostgreSQL node (about 5-10 TB), so shard across about 16-24 nodes at 6-8 TB each.",
+    "Partition sizing: per node per day = 1.5 TB / 16 = about 94 GB, split into 16 hash subpartitions = about 6 GB each, a healthy size for vacuum and index maintenance.",
+    "Partition count per node: 90 days x 16 hash = 1,440 leaf partitions plus 7 future days x 16 = 1,552, under the 2,000 target.",
+    "Archive: 3 B x 300 B / 8 = about 110 GB/day in Parquet; 2 years = about 80 TB on object storage, roughly an order of magnitude cheaper than hot SSD.",
+    "Per node peak inserts: 100,000 / 16 = 6,250 rows/s, easily handled by COPY batches of 5,000 rows."
+   ],
+   "summary": "1.5 TB/day hot, 135 TB for 90 days across 16 shards; each shard holds about 1,500 leaf partitions of about 6 GB, ingests about 6,000 rows/s at peak, and old data lands in about 80 TB of Parquet."
+  },
+  "out_of_scope": [
+   "Producer-side event schema governance (assumed via schema registry).",
+   "Real-time alerting on events.",
+   "The warehouse modelling layer.",
+   "Event sourcing of order state (this is an events log, not the system of record)."
+  ]
+ },
+ "hld": {
+  "overview": "Producers publish events to Kafka. A fleet of ingest workers reads in batches, dedupes by event_id using a short-lived cache, routes each event to the shard owning hash(entity_id), and bulk inserts with COPY into the events parent table. On each shard the table is RANGE partitioned by day on event_ts and HASH subpartitioned by entity_id into 16. A Partition Manager pre-creates future partitions and archives old ones to Parquet in object storage, registered in a catalog for the warehouse. A Query API enforces time windows and uses an entity_span lookup table to bound scans for entity timelines.",
+  "diagram": "\n Producers --> Kafka (events, keyed by entity_id) --> Ingest workers (batch 5k, dedupe)\n                                                          |  route by hash(entity_id)\n                       +----------------------------------+------------------+\n                       v                                  v                  v\n                 Shard 1 (PG)                       Shard 2 (PG)  ...   Shard 16\n            events (RANGE event_ts, daily)\n              +-- events_2026_10_11 (HASH entity_id, 16)\n              |      +-- p0 ... p15   (btree (entity_id, event_ts), BRIN (event_ts))\n              +-- events_2026_10_12 ... (pre-created +7 days)\n              +-- events_default (alert if non-empty)\n                       |\n Partition Manager: create +7d | detach >90d | export Parquet | verify | drop\n                       v\n        Object storage (Parquet, dt=YYYY-MM-DD/bucket=NN) --> Warehouse / Trino\n\n Query API --> entity_span lookup --> prune to shard + days + bucket\n",
+  "components": [
+   {
+    "name": "Kafka events topic",
+    "responsibility": "Durable buffer decoupling producers from the database; 64 partitions keyed by entity_id for per-entity ordering."
+   },
+   {
+    "name": "Ingest workers",
+    "responsibility": "Batch, dedupe, route by entity hash to shard, COPY into parent table, commit Kafka offsets after DB commit."
+   },
+   {
+    "name": "Partitioned events table (per shard)",
+    "responsibility": "Daily RANGE partitions with 16 HASH subpartitions each; local indexes per leaf."
+   },
+   {
+    "name": "entity_span table",
+    "responsibility": "Per entity first_ts and last_ts, updated in batches, used to bound timeline queries."
+   },
+   {
+    "name": "Partition Manager (pg_partman + jobs)",
+    "responsibility": "Create future partitions, monitor default partition, detach and archive old ones."
+   },
+   {
+    "name": "Archiver",
+    "responsibility": "Export detached partitions to Parquet sorted by entity_id, verify counts and checksums, register in catalog."
+   },
+   {
+    "name": "Query API",
+    "responsibility": "Require time windows, route by entity to shard, push down predicates, fall back to archive for older ranges."
+   },
+   {
+    "name": "Warehouse / Trino over Parquet",
+    "responsibility": "Time-range analytics across all entities and history beyond 90 days."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Ingest",
+    "steps": [
+     "Producer publishes event {event_id (UUIDv7), entity_id, event_ts, type, payload} to Kafka.",
+     "Worker polls up to 5,000 records or 200 ms, drops event_ids already seen in a Redis set with 24 h TTL (SET NX).",
+     "Groups records by shard = hash(entity_id) % 16 and runs COPY into events on each shard in one transaction.",
+     "PostgreSQL routes each row to events_YYYY_MM_DD_pN by event_ts and hash(entity_id).",
+     "Worker commits Kafka offsets only after all shard transactions commit; on failure it retries the batch, and ON CONFLICT on (event_ts, entity_id, event_id) makes replays safe."
+    ]
+   },
+   {
+    "name": "Entity timeline query",
+    "steps": [
+     "Support UI calls GET /v1/entities/ORD123/events?from=...&to=... (default last 30 days).",
+     "Query API reads entity_span for ORD123 and clamps the window to [first_ts, last_ts].",
+     "Routes to shard hash(ORD123) % 16 and runs SELECT ... WHERE entity_id = $1 AND event_ts BETWEEN $2 AND $3 ORDER BY event_ts.",
+     "Planner prunes to the matching days and one hash bucket per day, using btree (entity_id, event_ts) in each leaf; results in about 10 ms."
+    ]
+   },
+   {
+    "name": "Retention and archive",
+    "steps": [
+     "Nightly job selects day D-91.",
+     "ALTER TABLE events DETACH PARTITION events_D CONCURRENTLY (no long lock on parent).",
+     "Export each of the 16 leaves to Parquet at s3://events/dt=D/bucket=N, sorted by entity_id, event_ts.",
+     "Verify row counts and checksums against the leaf tables; register the partition in the catalog.",
+     "Keep the detached table 3 days, then DROP; instant space reclaim without vacuum or WAL storm."
+    ]
+   }
+  ],
+  "data_flow": "Events flow producers -> Kafka -> ingest workers -> shard by entity hash -> day partition -> hash leaf. After 90 days leaves are detached and exported to Parquet in object storage, where the warehouse and Trino read them by date and bucket. Queries over the last 90 days hit PostgreSQL; older ranges go to the archive; a query spanning both is split by the Query API."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/entities/{entity_id}/events?from&to&types&cursor",
+    "request": "time window required (default 30 days, max 90)",
+    "response": "{events:[...], next_cursor}",
+    "notes": "Keyset pagination on (event_ts, event_id)."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/events/aggregate?type&from&to&bucket=1h",
+    "request": "time range and grouping",
+    "response": "{series:[{ts, count}]}",
+    "notes": "Served from rollup tables or warehouse for ranges over 7 days."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/partitions/ensure",
+    "request": "{days_ahead: 7}",
+    "response": "{created:[...]}",
+    "notes": "Idempotent; run hourly."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/partitions/{day}/archive",
+    "request": "{verify: true}",
+    "response": "{status, rows, parquet_uris}",
+    "notes": "State machine detach -> export -> verify -> drop."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/erasure",
+    "request": "{entity_id or user_id}",
+    "response": "{job_id}",
+    "notes": "Deletes from hot partitions and rewrites affected Parquet files."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "events (partitioned parent)",
+    "store": "PostgreSQL 16 per shard",
+    "fields": [
+     "event_ts timestamptz",
+     "entity_id text",
+     "event_id uuid (v7)",
+     "entity_type",
+     "event_type",
+     "payload jsonb",
+     "ingested_at"
+    ],
+    "keys": "PARTITION BY RANGE (event_ts) daily; each day PARTITION BY HASH (entity_id) modulus 16; PK (event_ts, entity_id, event_id)",
+    "notes": "Local indexes per leaf: btree (entity_id, event_ts), BRIN (event_ts) pages_per_range 32."
+   },
+   {
+    "entity": "entity_span",
+    "store": "PostgreSQL per shard",
+    "fields": [
+     "entity_id",
+     "first_ts",
+     "last_ts",
+     "event_count"
+    ],
+    "keys": "PK entity_id",
+    "notes": "Updated by ingest with GREATEST/LEAST in batched upserts."
+   },
+   {
+    "entity": "partition_catalog",
+    "store": "PostgreSQL control DB",
+    "fields": [
+     "shard",
+     "day",
+     "state (future|active|detached|archived|dropped)",
+     "rows",
+     "checksum",
+     "parquet_uri"
+    ],
+    "keys": "PK (shard, day)",
+    "notes": "Drives lifecycle and query routing to archive."
+   },
+   {
+    "entity": "archived events",
+    "store": "Parquet on S3/GCS",
+    "fields": [
+     "same columns",
+     "sorted by entity_id, event_ts"
+    ],
+    "keys": "path dt=YYYY-MM-DD/bucket=NN/part-*.parquet",
+    "notes": "Row-group stats allow skipping by entity_id range."
+   },
+   {
+    "entity": "dedupe cache",
+    "store": "Redis",
+    "fields": [
+     "seen:{event_id}"
+    ],
+    "keys": "key event_id, TTL 24 h",
+    "notes": "Fast path only; ON CONFLICT is the backstop."
+   }
+  ],
+  "classes": [
+   {
+    "name": "IngestWorker",
+    "responsibility": "Poll, dedupe, route, COPY, commit offsets.",
+    "methods": [
+     "poll_batch()",
+     "dedupe(batch)",
+     "route(batch) -> {shard: rows}",
+     "write(shard, rows)",
+     "commit()"
+    ]
+   },
+   {
+    "name": "PartitionManager",
+    "responsibility": "Lifecycle of partitions per shard.",
+    "methods": [
+     "ensure_future(days)",
+     "check_default()",
+     "detach(day)",
+     "drop(day)"
+    ]
+   },
+   {
+    "name": "Archiver",
+    "responsibility": "Export and verify partitions.",
+    "methods": [
+     "export(day, bucket)",
+     "verify(day)",
+     "register(day)"
+    ]
+   },
+   {
+    "name": "QueryRouter",
+    "responsibility": "Plan queries across shards, hot partitions and archive.",
+    "methods": [
+     "timeline(entity, from, to)",
+     "split_hot_cold(from, to)",
+     "aggregate(type, from, to)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Composite partition DDL and pre-creation",
+    "explain": "Create the day partition as itself partitioned by hash, then 16 leaves, with indexes created on the parent so they cascade.",
+    "pseudocode": "CREATE TABLE events (... ) PARTITION BY RANGE (event_ts);\nCREATE INDEX ON events (entity_id, event_ts);\nCREATE INDEX ON events USING brin (event_ts);\n\ndef ensure_future(days=7):\n    for d in range(0, days+1):\n        day = today() + d\n        name = f'events_{day:%Y_%m_%d}'\n        if not exists(name):\n            exec(f\"CREATE TABLE {name} PARTITION OF events FOR VALUES FROM ('{day}') TO ('{day+1}') PARTITION BY HASH (entity_id)\")\n            for r in range(16):\n                exec(f'CREATE TABLE {name}_p{r} PARTITION OF {name} FOR VALUES WITH (MODULUS 16, REMAINDER {r})')\n    if count_future() < 3: alert('partition pre-creation lagging')"
+   },
+   {
+    "name": "Archive with verification",
+    "explain": "Never drop before the exported copy is proven complete; detach concurrently to avoid blocking inserts on the parent.",
+    "pseudocode": "def archive(day):\n    cat.set(day, 'detaching')\n    exec(f'ALTER TABLE events DETACH PARTITION events_{day} CONCURRENTLY')\n    for r in range(16):\n        rows = stream(f'SELECT * FROM events_{day}_p{r} ORDER BY entity_id, event_ts')\n        uri = parquet.write(f's3://events/dt={day}/bucket={r:02d}/', rows)\n        assert parquet.count(uri) == pg.count(f'events_{day}_p{r}')\n        assert parquet.checksum(uri) == pg.checksum(f'events_{day}_p{r}')\n    cat.set(day, 'archived')\n    schedule(drop_table, f'events_{day}', after_days=3)"
+   },
+   {
+    "name": "Late event routing",
+    "explain": "Events older than 7 days are not inserted into hot partitions that may be detaching; they go to a side table and are merged into archive files in a weekly compaction.",
+    "pseudocode": "def route(ev):\n    if ev.event_ts < now() - 7d:\n        return 'events_late'\n    if ev.event_ts > now() + 1h:\n        return 'reject_clock_skew'\n    return 'events'"
+   }
+  ],
+  "sequence": "\nProducer   Kafka     IngestWorker     Redis      Shard k (events parent)   Leaf day/pN\n   | publish  |            |               |               |                      |\n   |--------->|            |               |               |                      |\n   |          |--batch 5k->|               |               |                      |\n   |          |            | SET NX ids -->|               |                      |\n   |          |            |<- new ids ----|               |                      |\n   |          |            | COPY rows (shard k) --------->| route by ts, hash -->|\n   |          |            |               |               |       insert + index |\n   |          |            |<----------- COMMIT ok --------|                      |\n   |          |<- commit offsets            |               |                      |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "An event arrives with event_ts 10 days ago.",
+   "handling": "Routed to events_late, then merged into the archive or relevant partition by a weekly job; prevents writes into partitions being archived."
+  },
+  {
+   "case": "Producer clock skew stamps events 3 hours in the future.",
+   "handling": "Reject or clamp events more than 1 h ahead and record ingested_at; future partitions exist so inserts do not fail, but skewed data is flagged."
+  },
+  {
+   "case": "Partition pre-creation job silently failed for 8 days.",
+   "handling": "Rows land in events_default instead of failing; alert fires on any row in default; repair by creating the partition and moving rows (default must be emptied first because PostgreSQL validates it)."
+  },
+  {
+   "case": "Query without time predicate from a new dashboard.",
+   "handling": "Query API rejects it; direct SQL users hit statement_timeout 30 s; pg_stat_statements review flags queries scanning more than 20 partitions."
+  },
+  {
+   "case": "One entity (a system account) produces 20% of all events.",
+   "handling": "Its hash bucket and shard become hot; mitigate by assigning such entities a composite key (entity_id, minute bucket) or a dedicated table; monitor bucket skew."
+  },
+  {
+   "case": "Duplicate event from a producer retry 2 days later.",
+   "handling": "Redis TTL has expired, but PK includes event_ts, entity_id and event_id, so ON CONFLICT DO NOTHING catches exact duplicates with the same event_ts."
+  },
+  {
+   "case": "Duplicate with a different event_ts (producer re-stamped).",
+   "handling": "Producers must stamp event_ts once at creation and keep it on retry; UUIDv7 event_id embeds creation time so a mismatch is detectable."
+  },
+  {
+   "case": "Timezone boundary: daily partitions in UTC vs business day in IST.",
+   "handling": "Partition in UTC; dashboards for an IST day touch two partitions, which is fine; never partition by local time due to DST elsewhere."
+  },
+  {
+   "case": "GDPR erasure for a user whose events are in Parquet archives.",
+   "handling": "Delete from hot partitions; for archives, rewrite only the files whose row-group stats include that entity, or store personal fields encrypted with per-user keys for crypto-shredding."
+  },
+  {
+   "case": "Detaching a partition while a long analytical query runs on it.",
+   "handling": "DETACH CONCURRENTLY waits for existing queries without blocking new inserts; archive job has a timeout and retries later."
+  },
+  {
+   "case": "Sale day traffic is 5x normal, today's partition grows to 500 GB on one shard.",
+   "handling": "Hash subpartitions keep each leaf around 30 GB; autovacuum on insert-only tables is triggered by autovacuum_vacuum_insert_threshold so visibility maps stay current."
+  },
+  {
+   "case": "Planner time grows with thousands of partitions.",
+   "handling": "Keep leaf count under 2,000 per table, use prepared statements with runtime pruning, and consider weekly partitions for older hot data."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "PostgreSQL 16 declarative partitioning",
+   "layer": "Hot storage",
+   "overview": "Native RANGE, LIST and HASH partitioning with multi-level partitions and partition pruning at plan and execution time.",
+   "why": "Team expertise, DETACH CONCURRENTLY, per-partition indexes and instant DROP for retention.",
+   "alternatives": "MySQL partitioning (fewer features, global constraints), TimescaleDB hypertables (automatic chunking and compression on PostgreSQL)."
+  },
+  {
+   "name": "pg_partman",
+   "layer": "Partition lifecycle",
+   "overview": "Extension that automates creation and retention of time and id based partitions.",
+   "why": "Pre-creates partitions ahead, handles retention policies, reduces custom code.",
+   "alternatives": "Custom cron jobs; TimescaleDB policies."
+  },
+  {
+   "name": "Citus (or application-level sharding)",
+   "layer": "Horizontal scale",
+   "overview": "Distributes PostgreSQL tables across nodes by a distribution column.",
+   "why": "135 TB hot exceeds one node; distributing by entity_id keeps entity queries single-node while each node keeps time partitions.",
+   "alternatives": "Manual routing by entity hash; moving to Cassandra with (entity_id, day) partition keys."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Ingest buffer",
+   "overview": "Durable partitioned log.",
+   "why": "Absorbs bursts, enables batch COPY, decouples checkout from the database, replays on failure.",
+   "alternatives": "Direct inserts from producers (spiky, couples availability)."
+  },
+  {
+   "name": "Parquet on S3/GCS",
+   "layer": "Cold storage",
+   "overview": "Columnar, compressed file format with row-group statistics.",
+   "why": "About 8x smaller than heap plus indexes; queryable by Trino, Spark and warehouses; partition paths by date and bucket.",
+   "alternatives": "Keeping data in PostgreSQL on cheaper disks (still big indexes); ClickHouse (excellent for time-range analytics, another system to run)."
+  },
+  {
+   "name": "Trino / warehouse",
+   "layer": "Analytics",
+   "overview": "Distributed SQL engine over object storage.",
+   "why": "Time-range scans across all entities and history beyond 90 days without loading OLTP.",
+   "alternatives": "BigQuery or Snowflake external tables; Spark batch jobs."
+  },
+  {
+   "name": "Redis",
+   "layer": "Dedupe fast path",
+   "overview": "In-memory store.",
+   "why": "SET NX on event_id with 24 h TTL removes most duplicates before hitting PostgreSQL.",
+   "alternatives": "Only ON CONFLICT in the DB (more write load on duplicates)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Partitioning strategies: range, list, hash and composite",
+   "explain": "Partitioning splits one logical table into multiple physical pieces based on a partition key. Range partitioning assigns rows by ranges of a value, most commonly time (one partition per day or month). It aligns with time-bounded queries and with retention, because removing old data means dropping whole partitions. Its weakness is that all current writes land in the newest partition, creating a hot spot. List partitioning assigns rows by explicit values, for example region or tenant tier, useful when categories are few and stable. Hash partitioning applies a hash function to a key and takes the result modulo the number of partitions; it spreads rows evenly regardless of key distribution and supports equality lookups on the key, but it cannot prune range queries and makes retention by time impossible since every partition holds all times. Composite (multi-level) partitioning combines them: range by time at the top for lifecycle and pruning on time, then hash by entity underneath to spread writes and narrow entity lookups. The right choice follows the dominant predicates in queries and the lifecycle needs; a partition key that queries do not filter on gives you all the costs of partitioning and none of the benefits.",
+   "in_this_design": "Daily RANGE on event_ts at the top level for retention and time pruning, HASH on entity_id into 16 leaves per day to spread writes and narrow entity lookups.",
+   "key_points": [
+    "Range by time gives cheap retention and time pruning, but a hot newest partition.",
+    "Hash spreads load evenly but cannot prune ranges.",
+    "Composite range-then-hash serves both time and entity access.",
+    "Choose keys that queries actually filter on."
+   ],
+   "qa": [
+    {
+     "q": "Why not hash-only by entity_id?",
+     "a": "Retention would require deleting rows from every partition, which is slow and creates bloat, and time-range analytics would scan all partitions. Time at the top level makes retention a DROP."
+    },
+    {
+     "q": "Why not range-only by day?",
+     "a": "All writes hit one partition with one set of indexes, and entity lookups scan the entity index of each day partition with no further narrowing. Hash subpartitions cut each index to 1/16 and spread contention."
+    },
+    {
+     "q": "Daily, hourly or monthly partitions?",
+     "a": "Pick a size that keeps leaves in the 1-50 GB range and total partition count manageable. At 1.5 TB per day across 16 shards, daily x 16 hash gives about 6 GB leaves; monthly would give 180 GB leaves, hourly would give tens of thousands of partitions."
+    }
+   ]
+  },
+  {
+   "name": "Partition pruning and query design",
+   "explain": "Partition pruning is the optimiser's ability to skip partitions that cannot contain matching rows, based on the query's predicates and the partition bounds. In PostgreSQL pruning happens at plan time when predicates are constants, and at execution time when values come from parameters or joins (runtime pruning, shown as 'Subplans Removed' in EXPLAIN). Pruning only works when the query constrains the partition key in a form the planner understands: event_ts BETWEEN a AND b prunes, but wrapping the column in a function such as date(event_ts) = '2026-10-11' may not, and a query with no time predicate visits every partition. With hash partitioning, only equality on the hash key prunes. Planning cost also grows with partition count, because the planner must consider each partition's bounds and statistics; PostgreSQL has improved a lot since version 12, but thousands of partitions still add milliseconds and lock overhead, especially without prepared statements. Practical rules: always include the time range, compare the raw partition column to constants, keep total partition counts in the low thousands, and check EXPLAIN for the number of partitions scanned as a routine part of query review.",
+   "in_this_design": "The Query API always includes an event_ts window (clamped by entity_span) and an equality on entity_id, so a 30-day timeline touches 30 leaves out of about 1,500, each via a small btree index.",
+   "key_points": [
+    "No partition-key predicate means scanning every partition.",
+    "Compare the raw column, not a function of it.",
+    "Runtime pruning handles parameters and joins.",
+    "Watch planning time as partition counts grow."
+   ],
+   "qa": [
+    {
+     "q": "A support query takes 3 s. EXPLAIN shows 1,440 partitions scanned. Why?",
+     "a": "The query lacks a time predicate or applies a function to event_ts. Add a bounded event_ts range (using entity_span if needed) so it prunes to tens of partitions."
+    },
+    {
+     "q": "Does hash partitioning help range queries on entity_id?",
+     "a": "No. Hash pruning only works for equality. Range queries over entity_id visit all hash partitions."
+    },
+    {
+     "q": "How do you find the time window when the user does not know it?",
+     "a": "Use entity_span (first_ts, last_ts per entity) to bound the query, or start with the most recent 7 days and page backwards."
+    }
+   ]
+  },
+  {
+   "name": "Data lifecycle: retention by partition drop and hot/cold tiering",
+   "explain": "Large append-only tables accumulate data whose value declines with age. Deleting old rows with DELETE in an MVCC database is expensive: each row is marked dead, WAL is written for every row (causing replication lag), indexes keep dead entries until vacuum, and the space is not returned to the operating system. Dropping or truncating a partition, by contrast, is a metadata operation that removes the files at once with almost no WAL. That is the single biggest operational reason to partition by time. Tiering goes further: keep recent data in fast, expensive, index-heavy OLTP storage, and move older data to cheap, compressed, columnar storage such as Parquet on object storage, where analytical engines read it efficiently. The movement should be a verifiable pipeline: detach the partition so it no longer receives writes, export it, verify counts and checksums, register it in a catalog that query routers use, and only then drop it. Lifecycle policies should be explicit per data class (for example 90 days hot, 2 years cold, then delete), aligned with legal retention and data minimisation requirements.",
+   "in_this_design": "Partitions older than 90 days are detached concurrently, exported to Parquet sorted by entity_id, verified, cataloged and dropped after 3 days. After 2 years an object storage lifecycle rule deletes the files.",
+   "key_points": [
+    "DELETE-based retention causes bloat, WAL storms and lag.",
+    "DROP or DETACH of a partition is near-instant.",
+    "Tier old data to compressed columnar storage.",
+    "Verify the archive before dropping; catalog it for queries."
+   ],
+   "qa": [
+    {
+     "q": "Why did nightly DELETEs cause replication lag?",
+     "a": "Deleting billions of rows writes WAL for each row, which replicas must replay; vacuum then rewrites pages. Dropping a partition writes a tiny amount of WAL."
+    },
+    {
+     "q": "How do queries spanning hot and cold work?",
+     "a": "The Query API splits the range at the 90 day boundary, runs the hot part on PostgreSQL and the cold part via Trino on Parquet, and merges results ordered by event_ts."
+    },
+    {
+     "q": "Why sort Parquet by entity_id?",
+     "a": "Row-group min/max statistics then let readers skip most row groups when filtering by entity, making cold entity lookups feasible."
+    }
+   ]
+  },
+  {
+   "name": "Sharding versus partitioning",
+   "explain": "Partitioning splits a table into pieces within one database node; sharding distributes pieces across multiple nodes. Partitioning improves manageability (smaller indexes, cheap retention, targeted vacuum) and query pruning, but the node's CPU, memory, disk and WAL throughput remain the ceiling. Sharding raises that ceiling by spreading data and load horizontally, at the cost of routing logic, cross-shard queries and operational complexity. The shard key should match the dominant access path so most queries hit one shard: for an events table queried by entity, entity_id is the natural shard key, and time partitions continue to exist within each shard. Sharding by time is usually a mistake because all current writes go to one shard. Cross-shard queries (time-range analytics across all entities) fan out to every shard; for heavy scans, it is often better to serve them from a separate analytical store than from the OLTP shards. Rebalancing is easier when the number of logical shards is larger than the number of physical nodes (for example 256 logical buckets on 16 nodes), so buckets can move without rehashing every row.",
+   "in_this_design": "135 TB hot exceeds one node, so data is sharded by hash(entity_id) into logical buckets across 16 nodes; each node partitions by day and hash. Time-range analytics go to the warehouse instead of fanning out across shards.",
+   "key_points": [
+    "Partitioning is within a node; sharding is across nodes.",
+    "Shard by the entity you query; partition by time within.",
+    "Never shard append-only data by time.",
+    "More logical shards than nodes makes rebalancing cheap."
+   ],
+   "qa": [
+    {
+     "q": "Why not shard by day, one shard per week?",
+     "a": "All writes go to the current week's shard, which becomes a hot spot while others idle; entity lookups across weeks would hit many shards."
+    },
+    {
+     "q": "How do you add nodes later?",
+     "a": "With 256 logical buckets on 16 nodes, move whole buckets to new nodes using logical replication or Citus shard moves, then update routing."
+    },
+    {
+     "q": "When would you stop partitioning PostgreSQL and move to a different store?",
+     "a": "If write rates exceed what a few dozen shards handle comfortably or the team cannot operate the fleet, a wide-column store with (entity_id, day) partition keys or a time-series database becomes attractive."
+    }
+   ]
+  },
+  {
+   "name": "Write amplification, indexes and MVCC vacuum on append-heavy tables",
+   "explain": "Each inserted row in a relational database costs more than the row itself: the heap write, one write per index (often several pages per btree when splits occur), and WAL for all of them. That multiplier is write amplification. As an index grows larger than memory, inserts in random key order (such as UUIDv4 or entity_id) touch random leaf pages that must be read from disk, so insert throughput collapses. Partitioning helps because each leaf's indexes are small and the current day's indexes stay in memory. Index choice also matters: BRIN (block range index) stores only min and max values per range of pages, so on naturally time-ordered data it is tiny (kilobytes per GB) and nearly free to maintain, while still allowing time range scans. UUIDv7 or time-ordered IDs keep btree inserts near the right edge. In PostgreSQL's MVCC, even insert-only tables need vacuum to set visibility map bits (for index-only scans) and to freeze transaction IDs before wraparound; since version 13, autovacuum triggers on inserts via autovacuum_vacuum_insert_threshold. Old, read-only partitions can be frozen once and then left alone, which is another benefit of time partitioning.",
+   "in_this_design": "Each leaf has only a btree (entity_id, event_ts) and a BRIN (event_ts). event_id uses UUIDv7. Autovacuum is tuned aggressively for the current day's leaves; older partitions are frozen after the late-arrival window closes.",
+   "key_points": [
+    "Every index multiplies write cost.",
+    "Keep active indexes small enough to fit in memory.",
+    "BRIN is tiny and cheap for time-ordered columns.",
+    "Insert-only tables still need vacuum for freezing and visibility maps."
+   ],
+   "qa": [
+    {
+     "q": "Why BRIN on event_ts instead of btree?",
+     "a": "Events arrive roughly in time order, so BRIN's per-page-range min/max is highly selective while being thousands of times smaller than a btree and almost free to update."
+    },
+    {
+     "q": "Why is UUIDv4 a bad primary key here?",
+     "a": "Random values insert into random btree pages, causing page splits and cache misses as the index grows. UUIDv7 is time-ordered and appends near the right edge."
+    },
+    {
+     "q": "What is transaction ID wraparound and why care?",
+     "a": "PostgreSQL uses 32-bit transaction IDs; old rows must be frozen before about 2 billion transactions pass or the database forces a shutdown. Partitioning lets you freeze each closed day once."
+    }
+   ]
+  },
+  {
+   "name": "Idempotent ingestion and uniqueness on partitioned tables",
+   "explain": "Event pipelines deliver at least once: producers retry on timeouts and consumers replay after crashes, so duplicates are normal. Ingestion must therefore be idempotent, meaning that writing the same event twice leaves one row. The usual approach is a globally unique event_id assigned once by the producer at creation and preserved through retries, combined with a uniqueness check at the sink. On partitioned tables there is a catch: PostgreSQL can only enforce a unique constraint if it includes all partition key columns, because each partition enforces uniqueness locally. A unique index on event_id alone across all days is not possible. Options are to include the partition keys in the primary key (event_ts, entity_id, event_id), which deduplicates exact retries since they carry the same timestamp and entity; add a fast, bounded dedupe cache (Redis SET NX with a TTL that covers the typical retry window); or maintain a separate dedupe table keyed by event_id partitioned by hash of event_id. Ordering and offsets complete the picture: commit Kafka offsets only after the database transaction commits, so a crash replays the batch, and ON CONFLICT DO NOTHING makes the replay harmless.",
+   "in_this_design": "event_id is UUIDv7 set by producers; PK (event_ts, entity_id, event_id) with ON CONFLICT DO NOTHING; Redis SET NX for 24 h as a fast path; offsets committed after DB commit.",
+   "key_points": [
+    "At-least-once delivery requires idempotent sinks.",
+    "Unique constraints on partitioned tables must include the partition key.",
+    "Producers must assign event_id and event_ts once.",
+    "Commit offsets after the database commit."
+   ],
+   "qa": [
+    {
+     "q": "Why can't you make event_id alone unique?",
+     "a": "PostgreSQL enforces uniqueness per partition, so a global unique index would need to span partitions, which it does not support. Include partition keys or use a separate dedupe structure."
+    },
+    {
+     "q": "What if the consumer commits offsets before the DB write?",
+     "a": "A crash after commit but before the write loses those events. Committing after the write may duplicate on replay, which idempotency absorbs, so that is the safe order."
+    },
+    {
+     "q": "Is the Redis dedupe cache required?",
+     "a": "No, it is an optimisation that removes most duplicates cheaply; the composite primary key with ON CONFLICT is the correctness backstop."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Top-level partition key",
+   "options": "Time / entity hash",
+   "choice": "Time (daily)",
+   "why": "Retention and time pruning are the biggest wins; entity spread is achieved by subpartitions and sharding."
+  },
+  {
+   "decision": "Partition granularity",
+   "options": "Hourly / daily / monthly",
+   "choice": "Daily with 16 hash leaves",
+   "why": "Keeps leaves about 6 GB and total partitions under 2,000 per shard."
+  },
+  {
+   "decision": "Scaling beyond one node",
+   "options": "Bigger node / shard by entity / shard by time",
+   "choice": "Shard by entity",
+   "why": "Entity queries stay single-shard; writes spread evenly; time sharding creates a hot shard."
+  },
+  {
+   "decision": "Cold data",
+   "options": "Keep in PostgreSQL / Parquet on object storage / delete",
+   "choice": "Parquet for 2 years",
+   "why": "About 8x smaller and far cheaper per GB, queryable by analytics engines, meets audit retention."
+  },
+  {
+   "decision": "Dedupe",
+   "options": "Global unique index / composite PK / external dedupe store",
+   "choice": "Composite PK plus Redis fast path",
+   "why": "Works within PostgreSQL's partition constraints with low overhead."
+  },
+  {
+   "decision": "Engine",
+   "options": "PostgreSQL partitioning / TimescaleDB / Cassandra / ClickHouse",
+   "choice": "PostgreSQL with Citus-style sharding",
+   "why": "Team skills and SQL needs; TimescaleDB is a close alternative; ClickHouse is better for analytics but is the warehouse role here."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Future partitions missing at midnight.",
+   "behavior": "Rows go to the default partition; alert fires; operator creates partitions and moves rows; no insert errors for producers."
+  },
+  {
+   "failure": "A shard primary fails.",
+   "behavior": "Synchronous standby promoted in about 30 s; ingest workers for that shard pause and retry with exponential backoff and jitter; Kafka buffers; other shards unaffected."
+  },
+  {
+   "failure": "Archive export fails halfway.",
+   "behavior": "Catalog state stays 'detaching'; partition not dropped; job retries idempotently, overwriting partial files; alert after 2 failures."
+  },
+  {
+   "failure": "Kafka consumer lag grows during a sale.",
+   "behavior": "Writes to DB lag but producers are unaffected; autoscale workers up to the partition count; if the DB is the bottleneck, increase COPY batch size and defer non-critical index builds."
+  },
+  {
+   "failure": "Planner latency spikes after partition count grows.",
+   "behavior": "Detected via query latency and planning time metrics; merge older daily partitions into weekly ones or archive sooner."
+  },
+  {
+   "failure": "Hash bucket skew from a dominant entity.",
+   "behavior": "One leaf grows far larger and its index falls out of memory; mitigate by isolating that entity's events into its own table or composite key."
+  }
+ ],
+ "metrics": [
+  "Insert throughput and p99 per shard; COPY batch duration.",
+  "Kafka consumer lag for the ingest group.",
+  "Partitions scanned per query (from EXPLAIN sampling) and planning time.",
+  "Rows and bytes per leaf; max/avg skew across hash buckets and shards.",
+  "Count of future partitions available per shard (alert below 3) and rows in default partition (alert above 0).",
+  "Autovacuum duration and oldest transaction ID age per partition.",
+  "Archive pipeline lag (oldest hot partition age beyond 90 days) and verification failures.",
+  "Hot and cold storage bytes and cost per day."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not use Cassandra with partition key (entity_id, day)?",
+   "a": "It would scale writes very well and keep entity lookups to one partition per day, but time-range analytics and ad-hoc SQL become hard, TTL-based deletion creates tombstones, and the team's PostgreSQL skills and transactional needs favour the SQL design. It is a valid choice for 10x higher write rates."
+  },
+  {
+   "q": "What if analysts want sub-second dashboards over 30 days?",
+   "a": "Maintain rollup tables (hourly counts by type) updated by a stream job, or load into ClickHouse; do not run heavy GROUP BYs over 45 TB of OLTP partitions."
+  },
+  {
+   "q": "How do you change the number of hash subpartitions from 16 to 32?",
+   "a": "Only for future days: new day partitions are created with modulus 32; old days keep 16. Queries are unaffected since pruning is per day. That is a nice property of time-first composite partitioning."
+  },
+  {
+   "q": "How do you handle a GDPR erasure across 2 years of archives?",
+   "a": "Prefer crypto-shredding of personal fields with per-user keys; otherwise find affected Parquet files using row-group stats on entity_id and rewrite only those, recording the operation in an audit log."
+  },
+  {
+   "q": "What about global secondary lookups like 'all events for payment_id'?",
+   "a": "Either make payment events carry the order_id (the shard key) or maintain a small index table payment_id -> (order_id, ts) so the query can be routed and pruned."
+  },
+  {
+   "q": "Would TimescaleDB simplify this?",
+   "a": "Yes, hypertables automate chunk creation, retention policies and native columnar compression of old chunks, and space partitioning gives the hash dimension. The concepts stay the same; operations get simpler."
+  },
+  {
+   "q": "How do you test the strategy before migrating 120 billion rows?",
+   "a": "Replay a day of production traffic into a staging cluster, verify pruning with EXPLAIN on top queries, then migrate by dual-writing new events into the partitioned table and backfilling history day by day, newest first."
+  }
+ ],
+ "key_points": [
+  "Partition key follows the queries and the lifecycle: time first, entity hash second.",
+  "Retention by DROP or DETACH, never by DELETE.",
+  "Every query must constrain event_ts so pruning works; enforce it in the API.",
+  "Hash subpartitions spread today's hot writes and shrink entity lookups.",
+  "Shard by entity across nodes, partition by time within each node.",
+  "Keep leaves 1-50 GB and partition counts in the low thousands.",
+  "Tier to Parquet after 90 days with verify-before-drop.",
+  "Idempotent ingest: producer event_id, composite PK with partition keys, offsets after commit."
+ ],
+ "quiz": [
+  {
+   "q": "Retention for a 3 B rows/day events table should be implemented by...",
+   "options": [
+    "Nightly DELETE WHERE event_ts < now() - 90 days",
+    "Dropping or detaching daily partitions",
+    "Setting a TTL column and vacuuming",
+    "Truncating the whole table monthly"
+   ],
+   "answer": 1,
+   "why": "Dropping a partition is near-instant and writes almost no WAL. DELETE is tempting because it is simple, but it causes bloat, WAL storms and replication lag."
+  },
+  {
+   "q": "A support query scans all 1,440 partitions. Most likely cause?",
+   "options": [
+    "Too few hash subpartitions",
+    "Missing BRIN index",
+    "The query has no event_ts predicate or wraps it in a function",
+    "Autovacuum is behind"
+   ],
+   "answer": 2,
+   "why": "Pruning needs a usable predicate on the partition key. A missing BRIN index would slow scans inside partitions, not cause all partitions to be visited."
+  },
+  {
+   "q": "Why subpartition each day by HASH(entity_id)?",
+   "options": [
+    "To spread today's writes over several smaller indexes and narrow entity lookups",
+    "To enable range queries on entity_id",
+    "To make retention faster",
+    "To allow a global unique index on event_id"
+   ],
+   "answer": 0,
+   "why": "Hash leaves cut index size and contention and let equality on entity_id prune to one leaf. Hash does not help range queries on entity_id."
+  },
+  {
+   "q": "Daily volume is 1.5 TB across 16 shards with 16 hash leaves per day. Leaf size is about...",
+   "options": [
+    "94 GB",
+    "600 MB",
+    "60 GB",
+    "6 GB"
+   ],
+   "answer": 3,
+   "why": "1.5 TB / 16 shards = about 94 GB per shard per day; / 16 leaves = about 6 GB. 94 GB is the per-shard day size, not the leaf."
+  },
+  {
+   "q": "Which sharding key is best for an events table queried mostly by order_id?",
+   "options": [
+    "Hash of order_id",
+    "Event date",
+    "Event type",
+    "Random"
+   ],
+   "answer": 0,
+   "why": "Sharding by entity keeps lookups single-shard and spreads writes. Sharding by date sends all current writes to one shard."
+  },
+  {
+   "q": "PostgreSQL rejects a UNIQUE (event_id) constraint on the partitioned table because...",
+   "options": [
+    "UUIDs cannot be unique",
+    "Unique constraints must include all partition key columns",
+    "Partitioned tables cannot have primary keys",
+    "BRIN indexes conflict with it"
+   ],
+   "answer": 1,
+   "why": "Uniqueness is enforced per partition, so constraints must include the partition keys. Partitioned tables can have primary keys that include them."
+  },
+  {
+   "q": "Why use BRIN on event_ts?",
+   "options": [
+    "It supports equality lookups on entity_id",
+    "It enforces uniqueness",
+    "It is tiny and cheap for naturally time-ordered data",
+    "It replaces partitioning"
+   ],
+   "answer": 2,
+   "why": "BRIN stores min/max per page range, ideal for append-ordered timestamps. It does not help entity equality lookups, which need the btree."
+  },
+  {
+   "q": "The partition pre-creation job failed and no partition exists for tomorrow. With a default partition present, what happens at midnight?",
+   "options": [
+    "Rows go to the default partition and an alert should fire",
+    "Inserts fail with an error",
+    "Rows are silently dropped",
+    "PostgreSQL creates the partition automatically"
+   ],
+   "answer": 0,
+   "why": "The default partition catches unmatched rows. Without it inserts would error; PostgreSQL does not auto-create partitions."
+  },
+  {
+   "q": "Kafka consumer commits offsets before writing to PostgreSQL and then crashes. Result?",
+   "options": [
+    "Duplicate rows",
+    "No effect",
+    "A deadlock",
+    "Lost events"
+   ],
+   "answer": 3,
+   "why": "Offsets say the events were processed, but they were never written. Committing after the DB write risks only duplicates, which idempotency absorbs."
+  },
+  {
+   "q": "Why not partition by hour instead of day at this scale?",
+   "options": [
+    "Hourly partitions cannot be dropped",
+    "Partition count would explode (2,160 per 90 days x 16 hash) raising planning cost",
+    "Hourly ranges break pruning",
+    "Hourly partitions require MySQL"
+   ],
+   "answer": 1,
+   "why": "Too many partitions slow planning and add lock overhead. Hourly partitions prune fine; the issue is count, not pruning."
+  },
+  {
+   "q": "Archived Parquet files are sorted by entity_id because...",
+   "options": [
+    "Parquet requires sorting",
+    "It speeds up writes",
+    "Row-group min/max statistics allow skipping when filtering by entity",
+    "It enables time pruning"
+   ],
+   "answer": 2,
+   "why": "Sorting makes statistics selective for entity filters. Time pruning comes from the dt= directory layout, not the sort."
+  },
+  {
+   "q": "An event arrives 10 days late. Best handling?",
+   "options": [
+    "Insert into a late-events side table and merge into archives later",
+    "Insert into the archived partition directly",
+    "Drop it",
+    "Insert with today's timestamp"
+   ],
+   "answer": 0,
+   "why": "Writing into a partition being archived risks loss; a side table preserves the event. Restamping corrupts history."
+  },
+  {
+   "q": "Hot storage for 90 days at 1.5 TB/day is about...",
+   "options": [
+    "13.5 TB",
+    "1.35 PB",
+    "45 TB",
+    "135 TB"
+   ],
+   "answer": 3,
+   "why": "1.5 x 90 = 135 TB. 45 TB would be 30 days."
+  },
+  {
+   "q": "Why is sharding by event day a poor choice?",
+   "options": [
+    "It prevents retention",
+    "All current writes concentrate on one shard",
+    "It breaks BRIN",
+    "It requires cross-shard transactions for inserts"
+   ],
+   "answer": 1,
+   "why": "Time-based sharding creates a hot shard for the current period. Retention would actually be easy, which makes it a tempting option."
+  },
+  {
+   "q": "Changing hash subpartitions from 16 to 32 with time-first composite partitioning requires...",
+   "options": [
+    "Rewriting all 90 days",
+    "Changing the shard key",
+    "Only creating future days with modulus 32",
+    "Dropping the BRIN index"
+   ],
+   "answer": 2,
+   "why": "Each day is independent, so new days can use a new modulus. Rewriting history is unnecessary."
+  },
+  {
+   "q": "Why does an insert-only events table still need vacuum?",
+   "options": [
+    "To freeze transaction IDs and set visibility map bits",
+    "To remove dead rows from updates",
+    "To rebuild BRIN indexes",
+    "It does not"
+   ],
+   "answer": 0,
+   "why": "Freezing prevents wraparound and visibility maps enable index-only scans. There are no updates, so dead-row cleanup is not the reason."
+  },
+  {
+   "q": "Which primary key choice keeps btree inserts cheapest?",
+   "options": [
+    "Random UUIDv4",
+    "Hash of payload",
+    "Natural key of entity_type",
+    "Time-ordered UUIDv7 within (event_ts, entity_id, event_id)"
+   ],
+   "answer": 3,
+   "why": "Time-ordered keys append near the right edge of the index. UUIDv4 scatters inserts across pages, causing splits and cache misses."
+  },
+  {
+   "q": "A dashboard needs hourly payment-failure counts for 30 days in under a second. Best approach?",
+   "options": [
+    "GROUP BY over 30 days of OLTP partitions",
+    "Pre-aggregated rollup table or columnar analytics store",
+    "Add more hash subpartitions",
+    "Increase work_mem"
+   ],
+   "answer": 1,
+   "why": "Rollups or a columnar engine make this cheap. Querying 45 TB of OLTP partitions is the tempting but wrong approach."
+  },
+  {
+   "q": "Detaching an old partition while inserts continue is safest with...",
+   "options": [
+    "DROP TABLE directly",
+    "LOCK TABLE events IN ACCESS EXCLUSIVE MODE",
+    "DETACH PARTITION ... CONCURRENTLY",
+    "TRUNCATE events"
+   ],
+   "answer": 2,
+   "why": "CONCURRENTLY avoids blocking the parent for writers. An exclusive lock would stall ingest."
+  },
+  {
+   "q": "What makes duplicate events from producer retries harmless?",
+   "options": [
+    "Bigger Kafka batches",
+    "Producer-assigned event_id kept on retry plus ON CONFLICT DO NOTHING",
+    "Random event_ts per attempt",
+    "Read committed isolation"
+   ],
+   "answer": 1,
+   "why": "Stable identity plus an idempotent sink dedupes retries. Restamping event_ts per attempt would defeat dedupe because the PK includes event_ts."
+  }
+ ],
+ "references": [
+  {
+   "title": "Heroku: Handling very large tables in Postgres using partitioning",
+   "url": "https://www.heroku.com/blog/handling-very-large-tables-in-postgres-using-partitioning"
+  },
+  {
+   "title": "AWS RDS User Guide: PostgreSQL partitions with pg_partman",
+   "url": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL_Partitions.md"
+  },
+  {
+   "title": "Automating PostgreSQL partitioning for large-scale time-series data with pg_partman (Leapcell)",
+   "url": "https://leapcell.io/blog/automating-postgresql-partitioning-for-large-scale-time-series-data-with-pg-partman"
+  },
+  {
+   "title": "Discord: How Discord stores billions of messages",
+   "url": "https://discord.com/blog/how-discord-stores-billions-of-messages"
+  },
+  {
+   "title": "ScyllaDB: How Discord stores trillions of messages",
+   "url": "https://resources.scylladb.com/blog/how-discord-stores-trillions-of-messages"
+  }
+ ]
+}

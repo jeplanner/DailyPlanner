@@ -1,0 +1,1169 @@
+{
+ "slug": "canary-deployments",
+ "title": "Design a canary deployment and rollback strategy",
+ "prompt": "Design a canary deployment and rollback strategy.",
+ "group": "reliability",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "Most outages are caused by changes, so the safest system is one that exposes every change to a small, measured slice of real traffic, judges it statistically against a fair baseline, and backs out automatically before users at large notice. The tension is release velocity versus blast radius, and statistical confidence versus time: small canaries are safe but need longer to detect anything, while rollback is only easy if data and schema changes are backward compatible.",
+ "framework": {
+  "clarify": [
+   "What is being deployed? Assume ~400 stateless microservices on Kubernetes, ~150 deploys/day, plus config and feature-flag changes; stateful systems and DB schema changes need special handling.",
+   "Traffic profile: assume a tier-0 service like checkout at 5k RPS average and 20k at peak; low-traffic services at under 10 RPS also exist.",
+   "Success criteria for a canary: SLO-based signals (error rate, p99 latency) plus business metrics (orders per minute, payment success)? Assume yes.",
+   "Risk appetite: what fraction of users may be exposed to a bad build before rollback? Assume at most 5% for up to 10 minutes on tier-0.",
+   "How fast must a release complete? Assume tier-0 rollout within 60-90 minutes, others within 30 minutes.",
+   "Are there client apps (mobile) that cannot be rolled back? Assume yes; server must stay compatible with old clients and app releases use staged store rollouts plus flags.",
+   "Multi-region? Assume 2-3 regions; roll out region by region, starting with the lowest-traffic region outside peak hours.",
+   "Is there a change freeze during big sale events? Assume yes, enforced by policy except approved emergency fixes."
+  ],
+  "design": [
+   "Baseline: immutable, versioned artifacts and a rollout controller that shifts traffic in steps (1% -> 5% -> 25% -> 50% -> 100%), each step gated by automated analysis, with automatic abort that sets canary weight to 0.",
+   "Fair comparison: run a fresh baseline deployment of the old version with the same pod count as the canary, so both are compared under identical conditions (cold caches, same node mix), Kayenta-style.",
+   "Traffic routing via service mesh or L7 load balancer weights, with optional sticky assignment by user hash so a user does not flip between versions.",
+   "Automated canary analysis: query metrics for canary and baseline every interval, run a nonparametric statistical test per metric (Mann-Whitney U), weight metrics into a 0-100 score; pass >= 85, fail < 60, marginal holds and extends.",
+   "Policy engine gates: change freezes, error budget remaining, business hours, required approvals for tier-0, and concurrency limit of one rollout per service.",
+   "Rollback design: keep previous ReplicaSet warm until promotion completes; rollback is a weight flip (seconds), plus a redeploy path for later; schema changes use expand-contract so old code still works.",
+   "Decouple deploy from release with feature flags so risky features can be killed without a redeploy, and roll out region by region with bake time between regions."
+  ],
+  "defend": [
+   "Bottleneck is statistical: at 1% of 5k RPS the canary sees 50 RPS, enough to detect a jump from 0.1% to 1% errors within ~10 minutes; for low-traffic services use longer bake, larger percentage, or synthetic traffic.",
+   "Blast radius: steps and regions bound exposure: a bad build at 5% for 10 minutes affects about 0.35% of a day's requests in one region, far below a full rollout failure.",
+   "Rollback speed: weight flip to 0 completes in under 30 s because the stable pods never stopped serving; redeploy-based rollback takes minutes and is the fallback.",
+   "Failure behaviour: if analysis cannot fetch metrics, the controller pauses (fail-safe), never promotes; controller crash is safe because desired state is persisted and reconciled; mesh failure falls back to last applied weights.",
+   "Irreversible changes (data migrations, message format changes, external side effects) are the real risk: expand-contract migrations, readers that tolerate both formats, and dark writes before cut-over.",
+   "Measure: change failure rate, percentage of bad builds caught at canary, time to detect at canary, false-abort rate, lead time for changes, rollback time, deploys per day."
+  ],
+  "script": "Since most incidents are triggered by changes, I will design the deployment system as a safety net. Assume about 400 Kubernetes services, 150 deploys a day, and tier-0 services like checkout at 5k RPS. Every release is an immutable image; a rollout controller shifts traffic in steps of 1, 5, 25, 50 and 100 percent in the first region, then the others after a bake period. At each step, an analysis service compares the canary against a freshly started baseline of the old version, not against the long-running fleet, using a nonparametric test on error rate, latency and business metrics, and scores it. Pass promotes, fail flips the canary weight to zero in seconds because the stable pods never stopped. A policy engine blocks rollouts during freezes or when the error budget is spent. Rollback only works if changes are backward compatible, so schema changes follow expand-and-contract and risky features hide behind flags. I would defend the statistics, the blast-radius math and irreversible changes, and measure change failure rate and bad builds caught at canary."
+ },
+ "brd": {
+  "problem": "Industry data and our own postmortems show that a large share of production incidents (often around half or more) are triggered by changes: deploys, config and flags. Today deploys go out all-at-once per cluster with manual monitoring, so a bad build reaches 100% of users within minutes and rollback requires a redeploy that takes 10-15 minutes. During sale events we freeze everything, slowing delivery. We need a deployment strategy that catches bad changes on a small slice of traffic and rolls back automatically, so teams can ship more often with less risk.",
+  "goals": [
+   "Catch at least 80% of bad builds at the canary stage before they reach more than 5% of traffic.",
+   "Automatic rollback within 1 minute of a failed analysis, without human intervention.",
+   "Reduce change failure rate (deploys causing incidents) from about 15% to under 5%.",
+   "Keep tier-0 rollout lead time under 90 minutes and non-tier-0 under 30 minutes.",
+   "Provide one standard pipeline used by every service, with per-service metric configs.",
+   "Make rollbacks safe by enforcing backward-compatible schema and API changes."
+  ],
+  "non_goals": [
+   "Mobile app store release management (handled by staged store rollouts and flags).",
+   "A/B experimentation for product decisions (separate experimentation platform, though it can share traffic routing).",
+   "Database engine upgrades and infrastructure (Kubernetes) upgrades.",
+   "Replacing CI build and test pipelines."
+  ],
+  "stakeholders": [
+   {
+    "who": "Service engineers",
+    "needs": "Fast, self-serve, low-friction deploys with clear reasons when a canary fails."
+   },
+   {
+    "who": "SRE / platform team",
+    "needs": "Fewer change-induced incidents, standard guardrails, audit trail."
+   },
+   {
+    "who": "Product and business",
+    "needs": "Higher release velocity and safe releases during peak seasons."
+   },
+   {
+    "who": "Engineering leadership",
+    "needs": "DORA metrics: deployment frequency, lead time, change failure rate, time to restore."
+   },
+   {
+    "who": "Compliance",
+    "needs": "Audited approvals for tier-0 production changes."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Change failure rate",
+    "target": "under 5% of deploys cause an incident or rollback after full rollout"
+   },
+   {
+    "metric": "Bad builds caught at canary",
+    "target": "over 80% of eventually-reverted builds were stopped before 25% traffic"
+   },
+   {
+    "metric": "Time from failed analysis to traffic at 0%",
+    "target": "under 60 seconds"
+   },
+   {
+    "metric": "False abort rate",
+    "target": "under 3% of canaries aborted that were later judged healthy"
+   },
+   {
+    "metric": "Deployment frequency",
+    "target": "from 150/day to 300/day without increasing incidents"
+   },
+   {
+    "metric": "Tier-0 rollout lead time",
+    "target": "under 90 minutes merge-to-100%"
+   }
+  ],
+  "constraints": [
+   "Kubernetes on 2-3 regions with a service mesh (Envoy based) already in place for most services.",
+   "Capacity headroom of only ~10% extra pods for canary and baseline at peak.",
+   "Must respect change freezes during sale events and error-budget policy.",
+   "Old and new versions must run side by side, so APIs and data must be compatible across N and N-1."
+  ],
+  "risks": [
+   {
+    "risk": "Analysis gives false confidence because canary traffic is too small or unrepresentative",
+    "mitigation": "Minimum sample sizes per step, sticky user hashing across segments, include business metrics, longer bake for low traffic."
+   },
+   {
+    "risk": "False aborts annoy teams and they bypass the system",
+    "mitigation": "Statistical test against fresh baseline, tune thresholds per service, marginal results extend rather than fail, explainable reports."
+   },
+   {
+    "risk": "Irreversible change (data migration) makes rollback impossible",
+    "mitigation": "Expand-contract migrations, migration as separate change, compatibility tests N/N-1 in CI."
+   },
+   {
+    "risk": "Controller bug rolls out a bad build everywhere",
+    "mitigation": "Controller itself released via canary, global pause switch, per-region sequencing with bake times."
+   },
+   {
+    "risk": "Canary shares downstream resources and can harm them (e.g. a query storm on the DB)",
+    "mitigation": "Include dependency metrics in analysis, connection limits per pod, small first steps."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Deepa, backend engineer on checkout",
+    "needs": "Merge, watch the rollout progress, and get a clear report if it fails."
+   },
+   {
+    "name": "Vikram, SRE",
+    "needs": "Global view of in-flight rollouts, ability to pause all during an incident, audit of approvals."
+   },
+   {
+    "name": "Rohan, release manager during sale events",
+    "needs": "Enforce freeze, approve emergency fixes with a fast but safe path."
+   },
+   {
+    "name": "Platform engineer",
+    "needs": "Add new metric templates and routing backends without changing every service."
+   }
+  ],
+  "user_stories": [
+   "As an engineer, I want my merge to roll out automatically through canary steps so that I do not babysit dashboards.",
+   "As an engineer, I want a failed canary to roll back automatically and tell me which metric failed so that I can fix it quickly.",
+   "As an engineer, I want to configure which metrics and thresholds matter for my service so that analysis reflects real risk.",
+   "As an SRE, I want to pause all rollouts with one command during an incident so that changes do not pile on.",
+   "As an SRE, I want rollouts blocked when a service's error budget is exhausted so that reliability work comes first.",
+   "As a release manager, I want an emergency path with approval and a faster schedule so that critical fixes ship during a freeze.",
+   "As a product manager, I want features hidden behind flags so that I can release them independently of deploys.",
+   "As an engineer, I want an instant manual rollback button so that I can back out even after promotion."
+  ],
+  "functional": [
+   "Define rollout strategy per service: steps (weights), bake time per step, analysis template, regions order, approvals.",
+   "Deploy canary and fresh baseline with equal pod counts; route traffic by weight with optional header or user-hash stickiness.",
+   "Run automated canary analysis at each step using metrics from the metrics store; produce score and report.",
+   "Promote, hold, extend or abort based on score and policy; abort sets canary weight to 0 and scales canary down.",
+   "Enforce policies: change freeze, error budget, concurrency limit, required approvals, deploy windows.",
+   "Provide manual controls: pause, resume, promote, abort, rollback to any previous release.",
+   "Record every action and decision in an audit log and annotate dashboards and incident tools.",
+   "Support config and feature-flag changes with the same progressive approach (percentage rollout with analysis)."
+  ],
+  "non_functional": [
+   {
+    "name": "Rollback latency",
+    "target": "traffic shifted off canary within 30 s of abort decision, p99 under 60 s"
+   },
+   {
+    "name": "Detection time",
+    "target": "severe regressions (10x errors) detected within 5 minutes at the 1-5% step on tier-0"
+   },
+   {
+    "name": "Controller availability",
+    "target": "99.9%; controller outage pauses rollouts but never affects serving traffic"
+   },
+   {
+    "name": "Blast radius",
+    "target": "no more than 5% of a region's traffic exposed before the first full analysis passes"
+   },
+   {
+    "name": "Capacity overhead",
+    "target": "under 10% extra pods during rollout"
+   },
+   {
+    "name": "Auditability",
+    "target": "100% of production changes logged with actor, artifact sha and approvals"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "400 services, 150 deploys/day now, target 300; average rollout 45 minutes; peak concurrency in working hours.",
+    "Tier-0 service at 5k RPS per region average, 100 pods per region.",
+    "Each analysis queries ~10 metrics x 2 (canary, baseline) every 1 minute.",
+    "Baseline error rate 0.1%; a bad build typical failure raises it to 1% or more."
+   ],
+   "math": [
+    "Concurrent rollouts: 300/day concentrated in ~10 working hours = 30/hour x 0.75 h = ~23 concurrent rollouts at peak.",
+    "Analysis query load: 23 x 20 queries/min = ~460 queries/min (~8/s) against the metrics store: trivial if queries hit recording rules.",
+    "Canary sample at 1%: 5k x 0.01 = 50 RPS = 3,000 requests/minute; expected errors at 0.1% = 3/min; at 1% = 30/min; over 10 minutes 30 vs 300 errors: easily significant.",
+    "Detecting a smaller regression 0.1% -> 0.2% needs roughly n per arm about 16 x p(1-p)/delta^2 = 16 x 0.0015 / 1e-6 = ~24k requests per arm, i.e. ~8 minutes at 50 RPS; plan the 1% step as 10 minutes.",
+    "Pod overhead: canary k=2 pods plus baseline k=2 for a 100-pod service = 4% extra; at 25% step canary scales to 25 pods while stable scales down, keeping total ~+5%.",
+    "Exposure: bad build at 5% for 10 minutes = 0.05 x 10/1440 = ~0.035% of the day's requests in that region, versus 100% exposure for 15 minutes in an all-at-once deploy (~1%) = ~30x less impact."
+   ],
+   "summary": "Load on infrastructure is small; the binding constraint is statistical power at low traffic and the time each step must bake. Step sizes and bake times are chosen from the sample-size math so that a 10x error regression is caught within minutes at 1-5% exposure."
+  },
+  "out_of_scope": [
+   "Mobile client binary rollouts.",
+   "Batch job and data pipeline releases (similar ideas, different tooling).",
+   "Building a service mesh (assumed to exist).",
+   "Experimentation statistics for product metrics (A/B platform)."
+  ]
+ },
+ "hld": {
+  "overview": "A release starts as an immutable signed image. The rollout controller, driven by a declarative per-service strategy, deploys a canary and a fresh baseline of the current version with equal pod counts and instructs the traffic layer (service mesh or L7 load balancer) to send small weighted slices to each. A canary analysis service periodically compares canary against baseline metrics with statistical tests and returns a score; the controller promotes, holds or aborts. A policy engine gates every step on freezes, error budgets and approvals. Rollback is a weight flip because stable pods stay warm. Feature flags decouple code deployment from feature release, and expand-contract migrations keep N and N-1 compatible.",
+  "diagram": "\n Dev merge -> CI build -> signed image (sha) -> artifact registry\n                                   |\n                                   v\n +-------------------+   plan   +-------------------------+   policy   +---------------+\n | Release API / UI  |--------->| Rollout controller      |<-----------| Policy engine |\n | (start, pause,    |          | (per service state      |            | freeze, SLO   |\n |  promote, abort)  |<---------|  machine, leader lease) |            | budget, hours |\n +-------------------+  status  +----+---------+----------+            +---------------+\n                                     |         |\n                     set weights     |         | schedule analysis every 1-5 min\n                                     v         v\n +----------------------------+   +-----------------------------+   +-----------------+\n | Traffic layer (mesh / LB)  |   | Canary analysis service     |-->| Metrics store   |\n | baseline v1 : canary v2 :  |   | (Kayenta-style: compare     |   | (Prometheus)    |\n | stable v1 = 1:1:98 -> ...  |   |  canary vs baseline, stats  |   +-----------------+\n +------+---------------+-----+   |  test, score 0-100)         |\n        |               |         +-----------------------------+\n        v               v\n +-------------+  +-------------+   +-------------+       +-----------------------------+\n | stable v1   |  | baseline v1 |   | canary v2   |       | Feature flag service        |\n | (N pods)    |  | (k pods)    |   | (k pods)    |       | (decouple deploy & release) |\n +-------------+  +-------------+   +-------------+       +-----------------------------+\n Schema migrations: expand (backward compatible) -> deploy -> contract later\n Events -> deploy log / annotations -> incident tooling\n",
+  "components": [
+   {
+    "name": "Artifact registry and signing",
+    "responsibility": "Store immutable images by digest; verify provenance and signature at deploy time."
+   },
+   {
+    "name": "Release API / UI / CLI",
+    "responsibility": "Start, pause, resume, promote, abort and roll back releases; show progress and analysis reports."
+   },
+   {
+    "name": "Rollout controller",
+    "responsibility": "Per-service state machine that reconciles desired rollout state with the cluster: create canary/baseline ReplicaSets, set weights, schedule analysis, act on results; leader-elected, state persisted."
+   },
+   {
+    "name": "Traffic layer (Envoy mesh / ingress)",
+    "responsibility": "Weighted routing among stable, baseline and canary subsets; header/user-hash routing for stickiness; fast weight updates via xDS."
+   },
+   {
+    "name": "Canary analysis service",
+    "responsibility": "Fetch metric time series for canary and baseline, clean outliers, run per-metric statistical tests, aggregate into a weighted score with critical metrics able to fail alone."
+   },
+   {
+    "name": "Policy engine",
+    "responsibility": "Evaluate freeze windows, error budget, deploy hours, approvals, concurrency and dependency ordering before each step."
+   },
+   {
+    "name": "Metrics store",
+    "responsibility": "Prometheus-style time series with version and subset labels on every metric so canary and baseline can be separated."
+   },
+   {
+    "name": "Feature flag service",
+    "responsibility": "Percentage and segment-based flag rollout with kill switches; evaluated in-process from a locally cached ruleset."
+   },
+   {
+    "name": "Migration orchestrator",
+    "responsibility": "Run schema changes as separate, backward-compatible expand and contract steps with checks."
+   },
+   {
+    "name": "Deploy event log",
+    "responsibility": "Audit trail and annotations to dashboards and incident tooling (what changed, when, by whom)."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Happy-path tier-0 rollout",
+    "steps": [
+     "Merge produces image sha256:ab12; CI tests pass; release created for checkout with strategy tier0-default.",
+     "Policy check: no freeze, error budget 70% remaining, within deploy hours, approval present.",
+     "Region 1 (lowest traffic): create canary (2 pods v2) and baseline (2 pods v1); weights stable 98, baseline 1, canary 1.",
+     "Bake 10 minutes; analysis every minute; final score 94 (pass >= 85) -> step to 5% (canary 5, baseline 5).",
+     "Steps 25% and 50%: canary scaled up, stable down; baseline is removed after 25% since comparisons switch to canary vs stable with enough sample.",
+     "100%: canary becomes the new stable; old ReplicaSet kept scaled at 0 for fast redeploy rollback for 24 hours.",
+     "Bake 30 minutes then repeat in region 2 and 3 with shorter early steps."
+    ]
+   },
+   {
+    "name": "Automatic abort and rollback",
+    "steps": [
+     "At 5% the canary p99 latency is 650 ms versus 280 ms baseline and error rate 1.4% versus 0.1%.",
+     "Mann-Whitney test marks both metrics as high; error rate is critical so score is 0 and verdict is FAIL.",
+     "Controller sets canary weight 0 via xDS (propagates in about 5-10 s), scales canary to 0, marks release FAILED.",
+     "Notifies the author with the analysis report; annotates dashboards; if impact crossed a threshold, opens a SEV3 incident automatically."
+    ]
+   },
+   {
+    "name": "Schema change with expand-contract",
+    "steps": [
+     "Release A (expand): add nullable column delivery_slot_v2; code writes both old and new columns, reads old.",
+     "Backfill job populates new column in batches with throttling.",
+     "Release B: read new column with fallback to old; canaried as usual; rollback to A is safe because A still writes both.",
+     "Release C (contract), weeks later: stop writing old column; then drop it in a separate migration after confirming no readers."
+    ]
+   }
+  ],
+  "data_flow": "Release requests go to the controller, which persists desired state, consults the policy engine, then writes Kubernetes objects and mesh routing config. Requests flow through the mesh to stable, baseline or canary pods according to weights; pods emit metrics labelled with version and subset. The analysis service reads those metrics from the metrics store and returns a score; the controller updates weights or aborts. All transitions go to the deploy event log, which feeds dashboards and incident tooling. Feature flag rules flow from the flag service to in-process SDK caches independently of deploys."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/releases",
+    "request": "{service, image_digest, strategy_id, change_ticket?, emergency: bool, requested_by}",
+    "response": "201 {release_id, state: PENDING_POLICY}",
+    "notes": "Idempotent on (service, image_digest); emergency requires approver and uses the shortened strategy."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/releases/{id}",
+    "request": "-",
+    "response": "{state, region, step, weights{stable,baseline,canary}, analyses[{step, score, verdict, report_url}]}",
+    "notes": "Polled by UI and CLI; also streamed via websocket."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/releases/{id}/actions",
+    "request": "{action: pause|resume|promote|abort, actor, reason}",
+    "response": "200 {state}",
+    "notes": "Manual promote of a failing canary requires two approvers; abort always allowed for owners and SRE."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/services/{svc}/rollback",
+    "request": "{to_release_id?, actor, reason}",
+    "response": "202 {release_id}",
+    "notes": "Default target is last known good; uses fast path (weight flip) if old ReplicaSet exists, otherwise a fast-step rollout."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/analysis",
+    "request": "{release_id, step, canary_selector, baseline_selector, start, end, template_id}",
+    "response": "{score, verdict: PASS|MARGINAL|FAIL, metrics[{name, canary, baseline, p_value, direction, result}]}",
+    "notes": "Pure function of metrics and template so it can be re-run for debugging."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/freeze",
+    "request": "{scope: global|org|service, start, end, reason, exceptions[]}",
+    "response": "200",
+    "notes": "Sale event freezes; checked by policy engine at every step, not just at start."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "release",
+    "store": "Postgres (controller state, replicated)",
+    "fields": [
+     "release_id",
+     "service",
+     "image_digest",
+     "prev_release_id",
+     "strategy_id",
+     "state",
+     "current_region",
+     "current_step",
+     "weights",
+     "lease_owner",
+     "version",
+     "created_by",
+     "approvals[]"
+    ],
+    "keys": "PK release_id; unique active release per service (partial index where state in active states)",
+    "notes": "Concurrency limit enforced by the unique index; optimistic locking by version."
+   },
+   {
+    "entity": "strategy",
+    "store": "Git (YAML) synced to Postgres",
+    "fields": [
+     "id",
+     "regions_order[]",
+     "steps[{weight, bake_minutes, analysis_template}]",
+     "region_bake_minutes",
+     "baseline: true",
+     "sticky_by: user_hash|none",
+     "approvals_required"
+    ],
+    "keys": "id",
+    "notes": "Tier defaults; services can override within guardrails (e.g. first step at most 5%)."
+   },
+   {
+    "entity": "analysis_template",
+    "store": "Git (YAML)",
+    "fields": [
+     "metrics[{name, query, direction: increase|decrease|either, critical, weight, effect_size_threshold}]",
+     "pass_score 85",
+     "marginal_score 60",
+     "min_samples"
+    ],
+    "keys": "id",
+    "notes": "Queries are parameterised by {subset}; critical metrics fail the whole analysis alone."
+   },
+   {
+    "entity": "analysis_run",
+    "store": "Postgres + report JSON in object storage",
+    "fields": [
+     "run_id",
+     "release_id",
+     "region",
+     "step",
+     "window",
+     "score",
+     "verdict",
+     "per_metric results"
+    ],
+    "keys": "PK run_id; index (release_id, step)",
+    "notes": "Kept 1 year for tuning false-abort rates."
+   },
+   {
+    "entity": "deploy_event",
+    "store": "Kafka topic -> event store",
+    "fields": [
+     "ts",
+     "service",
+     "release_id",
+     "region",
+     "from_state",
+     "to_state",
+     "actor",
+     "reason"
+    ],
+    "keys": "partition by service",
+    "notes": "Feeds annotations and incident correlation."
+   }
+  ],
+  "classes": [
+   {
+    "name": "RolloutController",
+    "responsibility": "Reconcile loop per active release: compute next desired state, apply, and handle analysis results.",
+    "methods": [
+     "reconcile(release)",
+     "start_step(release, step)",
+     "on_analysis(release, result)",
+     "abort(release, reason)",
+     "promote(release)"
+    ]
+   },
+   {
+    "name": "TrafficManager",
+    "responsibility": "Abstract weighted routing over mesh or LB backends.",
+    "methods": [
+     "set_weights(service, stable, baseline, canary)",
+     "set_sticky(service, key)",
+     "current_weights(service)"
+    ]
+   },
+   {
+    "name": "CanaryJudge",
+    "responsibility": "Statistical comparison of canary vs baseline per metric and scoring.",
+    "methods": [
+     "fetch(metric, subset, window)",
+     "clean(series)",
+     "compare(canary, baseline, direction)",
+     "score(results, template)"
+    ]
+   },
+   {
+    "name": "PolicyEngine",
+    "responsibility": "Decide whether a step may start.",
+    "methods": [
+     "check(release, step)",
+     "freeze_active(scope)",
+     "budget_ok(service)",
+     "approvals_ok(release)"
+    ]
+   },
+   {
+    "name": "RollbackService",
+    "responsibility": "Restore last known good quickly.",
+    "methods": [
+     "last_known_good(service)",
+     "fast_flip(service)",
+     "redeploy(service, release)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Progressive rollout state machine",
+    "explain": "Each step sets weights, waits for bake time with interim analyses (fail-fast on critical metrics), then decides. Marginal extends the bake once; missing data pauses. Policy is rechecked at every step so a freeze or incident pauses rollouts mid-flight.",
+    "pseudocode": "for region in strategy.regions:\n  ensure_pods(canary=k, baseline=k)\n  for step in strategy.steps:\n    if not policy.check(rel, step): pause(rel, reason); wait_until_ok()\n    traffic.set_weights(stable=100-2*step.w, baseline=step.w, canary=step.w)\n    for t in every(1 min, until=step.bake):\n      r = judge.run(rel, window=last(step.bake_so_far))\n      if r.critical_fail: return abort(rel)\n    r = judge.run(rel, window=step.bake)\n    if r.verdict == FAIL: return abort(rel)\n    if r.verdict == MARGINAL and not extended: extend(step); continue\n    if r.verdict == NODATA: pause(rel)\n  promote_region(region); sleep(strategy.region_bake)\n\nabort(rel): traffic.set_weights(stable=100, 0, 0); scale(canary, 0); notify()"
+   },
+   {
+    "name": "Canary judge (Kayenta-style)",
+    "explain": "For each metric, collect samples (e.g. per-minute error ratio or per-request latencies) for canary and baseline over the window, remove outliers, and run Mann-Whitney U, which compares distributions without assuming normality. A metric is flagged only if the difference is statistically significant AND the effect size exceeds a practical threshold in the bad direction. Score = weighted fraction of metrics that pass; any critical metric failure gives FAIL.",
+    "pseudocode": "def judge(template, canary, baseline):\n  passed, total = 0, 0\n  for m in template.metrics:\n    c, b = clean(canary[m]), clean(baseline[m])\n    if len(c) < m.min_samples: return NODATA\n    p = mann_whitney_u(c, b).p_value\n    effect = median(c) / max(median(b), eps)\n    bad = p < 0.01 and worse(effect, m.direction, m.effect_threshold)\n    if bad and m.critical: return FAIL, 0\n    total += m.weight; passed += 0 if bad else m.weight\n  s = 100 * passed / total\n  return PASS if s >= 85 else MARGINAL if s >= 60 else FAIL, s"
+   },
+   {
+    "name": "Sticky user-hash routing",
+    "explain": "Weighted random routing per request makes a user bounce between versions, confusing for UI changes and session-dependent flows. Hashing a stable key (user id, or device id for anonymous users) into 10,000 buckets and assigning bucket ranges to subsets keeps each user on one version and makes rollout monotonic: increasing weight only adds buckets.",
+    "pseudocode": "bucket = murmur3(user_id + service_salt) % 10000\nif bucket < canary_w * 100: route(canary)\nelif bucket < (canary_w + baseline_w) * 100: route(baseline)\nelse: route(stable)\n# changing salt per release avoids always exposing the same users to canaries"
+   }
+  ],
+  "sequence": "\nEngineer   ReleaseAPI   Controller     Traffic      Canary v2   Analysis     Metrics\n   |--start-->|            |              |             |           |            |\n   |          |--plan----->| policy ok?   |             |           |            |\n   |          |            |--deploy k pods (v2) + k baseline (v1)-->|           |\n   |          |            |--weight 1%-->|             |           |            |\n   |          |            |              |--1% req---->|           |            |\n   |          |            |--analyse(10m)---------------------------->|-query--->|\n   |          |            |<-------score 92 (pass >= 85)--------------|<---------|\n   |          |            |--weight 5%,25%,50% with analysis each step           |\n   |          |            |<-------score 41 (fail < 60)---------------|          |\n   |          |            |--weight 0%-->|  (abort)    |           |            |\n   |          |            |--scale canary to 0, mark release FAILED  |           |\n   |<-notify--|<-----------|  annotate dashboards, link analysis report           |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Low-traffic service (5 RPS): 1% canary gets 3 requests per minute, so analysis has no power.",
+   "handling": "Use a larger first step (25-50%) with longer bake, pool metrics over longer windows, add synthetic traffic, or rely on pre-production soak plus fast rollback."
+  },
+  {
+   "case": "Comparing canary to the long-running stable fleet makes the canary look worse because its caches and JIT are cold.",
+   "handling": "Compare to a fresh baseline started at the same time with the same pod count; warm-up period excluded from analysis."
+  },
+  {
+   "case": "Canary is fine but harms a shared dependency (e.g. 10x more DB queries per request).",
+   "handling": "Include dependency-side metrics attributable by caller version (queries per request, downstream error rate) and pod connection limits; small first steps limit damage."
+  },
+  {
+   "case": "Database schema change that old code cannot read.",
+   "handling": "Expand-contract: never deploy code and an incompatible schema together; CI tests run N-1 code against N schema."
+  },
+  {
+   "case": "New version writes data in a new format to a queue; rollback leaves messages old consumers cannot parse.",
+   "handling": "Readers deployed first to accept both formats (tolerant reader), writers switch format behind a flag later; versioned schemas in a registry with compatibility checks."
+  },
+  {
+   "case": "Metrics pipeline is delayed or down during analysis.",
+   "handling": "NODATA verdict pauses the rollout; never promote on missing data; alert the platform team."
+  },
+  {
+   "case": "Incident unrelated to the canary happens mid-rollout (e.g. regional network issue).",
+   "handling": "Comparing canary vs baseline cancels shared noise; policy engine pauses all rollouts when an incident is declared in that region."
+  },
+  {
+   "case": "Two services with a dependency both roll out at once and the bug only appears in combination.",
+   "handling": "Contract tests between services, API backward compatibility rules, and a global concurrency limit per dependency chain for tier-0 paths."
+  },
+  {
+   "case": "Bug only affects a segment (Android app version x, one payment method) that is 0.5% of traffic.",
+   "handling": "Segment-sliced metrics for critical segments in the template, sticky hashing so segment users consistently hit the canary, business metrics like payment success per method."
+  },
+  {
+   "case": "Controller crashes after setting weights to 25% but before recording state.",
+   "handling": "Reconciliation reads actual weights from the mesh and desired state from Postgres; idempotent apply converges; lease prevents two controllers acting."
+  },
+  {
+   "case": "Slow memory leak only shows after 6 hours.",
+   "handling": "Region bake times plus post-promotion monitoring with automatic rollback trigger tied to SLO burn for 24 hours; keep old ReplicaSet for fast flip."
+  },
+  {
+   "case": "Emergency fix during a sale freeze.",
+   "handling": "Emergency strategy with approval, shorter bake but same analysis, mandatory on-call watch; still never skip the first canary step."
+  },
+  {
+   "case": "Client long-lived connections (websockets, gRPC streams) do not rebalance after weight change.",
+   "handling": "Connection draining with max connection age (e.g. 5 minutes) and GOAWAY so clients reconnect and pick up new weights; analysis accounts for slower shift."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Kubernetes",
+   "layer": "Orchestration",
+   "overview": "Container orchestrator with Deployments and ReplicaSets.",
+   "why": "Running multiple versions side by side and scaling them independently is native.",
+   "alternatives": "VMs with autoscaling groups (slower, coarser canaries); serverless with traffic splitting (simpler, less control)."
+  },
+  {
+   "name": "Argo Rollouts / Flagger",
+   "layer": "Progressive delivery controller",
+   "overview": "Kubernetes controllers that implement canary and blue-green strategies with analysis hooks and mesh integrations.",
+   "why": "Proven reconcile loop, CRD-based strategy, integrations with Istio, Linkerd, NGINX and Prometheus.",
+   "alternatives": "Spinnaker (multi-cloud pipelines with Kayenta, heavier); custom controller (full control, more to build)."
+  },
+  {
+   "name": "Istio / Envoy service mesh",
+   "layer": "Traffic routing",
+   "overview": "Sidecar or ambient proxies with dynamic routing configuration via xDS.",
+   "why": "Precise percentage and header-based routing, fast weight updates, per-subset metrics.",
+   "alternatives": "L7 load balancer weights (coarser, fine for edge services); DNS weighting (slow and cache-bound, unsuitable)."
+  },
+  {
+   "name": "Kayenta (or Argo AnalysisTemplates)",
+   "layer": "Automated canary analysis",
+   "overview": "Netflix and Google's open source canary judge that compares canary and baseline metrics statistically.",
+   "why": "Mann-Whitney based judgement with scoring and reports, designed for canary vs baseline.",
+   "alternatives": "Simple threshold checks (easy, many false results); commercial verification tools (OpsMx, Harness)."
+  },
+  {
+   "name": "Prometheus",
+   "layer": "Metrics",
+   "overview": "Time series database with labels.",
+   "why": "Version and subset labels make per-version queries easy; recording rules keep analysis queries cheap.",
+   "alternatives": "Datadog, New Relic (managed); Graphite (no labels, harder)."
+  },
+  {
+   "name": "LaunchDarkly / Unleash / in-house flags",
+   "layer": "Feature flags",
+   "overview": "Runtime toggles with percentage and segment targeting.",
+   "why": "Decouple deploy from release; kill switch in seconds without redeploy.",
+   "alternatives": "Config files redeployed (slow); environment variables (requires restart)."
+  },
+  {
+   "name": "Sigstore / cosign",
+   "layer": "Artifact integrity",
+   "overview": "Signing and verification of container images.",
+   "why": "Ensures the exact tested artifact is what is deployed and rolled back to.",
+   "alternatives": "Registry-native signing (Notary); none (risky)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Canary releases and progressive delivery",
+   "explain": "A canary release exposes a new version to a small fraction of real production traffic, watches it, and expands only if it behaves. The name comes from canaries in coal mines that warned miners of gas before people were harmed. Progressive delivery generalises the idea: changes go out in steps of growing exposure (1%, 5%, 25%, 50%, 100%), across growing scopes (one pod, one zone, one region, all regions), with automated checks between steps. The key benefit is bounded blast radius: a bad change hurts few users for a short time. Unlike staging tests, canaries see real traffic patterns, real data and real dependencies, which is where many bugs only appear. Compared with blue-green deployment, where a full parallel environment is switched over at once, canaries need less spare capacity and reveal problems gradually, but take longer and require both versions to coexist safely. Compared with rolling updates, which replace pods gradually but without deliberate analysis or routing control, canaries add explicit traffic weights and a decision step. Progressive delivery also covers configuration and feature flags, since config changes cause a large share of outages. The design questions are the step schedule, how long each step bakes, what signals decide, and how fast you can go back.",
+   "in_this_design": "Every service gets a strategy with weighted steps per region, starting in the lowest-traffic region, bake times sized from traffic, and automated analysis between steps. Config and flag changes use the same staged approach.",
+   "key_points": [
+    "Canary = small real-traffic exposure plus a decision before expanding.",
+    "Progressive delivery expands both percentage and scope (zone, region).",
+    "Blue-green switches all at once and needs 2x capacity; canary is gradual.",
+    "Rolling update without analysis is not a canary.",
+    "Config and flags deserve the same treatment as code."
+   ],
+   "qa": [
+    {
+     "q": "When would you prefer blue-green over canary?",
+     "a": "When both versions cannot coexist (e.g. a protocol change that requires all servers to switch together), or for a small service where instant cutover and instant switch-back with a full warm environment is cheaper than building analysis."
+    },
+    {
+     "q": "Why start in the lowest-traffic region?",
+     "a": "It limits absolute user impact while still giving real traffic; once confident, later regions can move faster. Also choose off-peak hours for the first region."
+    },
+    {
+     "q": "How would you canary a config change?",
+     "a": "Push it to one zone or a percentage of hosts first via the config system, run the same analysis comparing hosts with and without the change, then expand; never push global config atomically."
+    }
+   ]
+  },
+  {
+   "name": "Automated canary analysis and statistical comparison",
+   "explain": "Humans eyeballing dashboards are slow and inconsistent, so automated canary analysis (ACA) decides with statistics. The naive approach compares the canary's metric with a fixed threshold or with the whole production fleet. Both mislead: thresholds ignore normal variation, and the long-running fleet differs from a fresh canary in warm caches, JIT compilation, connection pools and node placement. Netflix and Google's Kayenta compares the canary with a baseline: a new deployment of the current version, started at the same time with the same size and receiving the same traffic share, so the only systematic difference is the code. For each metric, it collects samples from both groups over the window and applies the Mann-Whitney U test, a nonparametric rank test that asks whether values from one group tend to be larger than the other without assuming normal distributions, which matters because latency is heavy-tailed. A metric fails if the difference is significant and large enough to matter in the harmful direction (latency up is bad, throughput down may be bad). Metrics are weighted into a score from 0 to 100, with critical metrics able to fail the run alone. Statistical power depends on sample size: tiny canaries on low-traffic services cannot detect small regressions, so steps and bake times must be sized accordingly, and multiple-comparison effects mean you should keep the metric list focused.",
+   "in_this_design": "The CanaryJudge queries per-subset metrics (labels version and subset), uses Mann-Whitney with p < 0.01 plus an effect-size threshold per metric, marks error rate and payment success as critical, and scores pass >= 85, marginal 60-85 (extend bake once), fail < 60.",
+   "key_points": [
+    "Compare against a fresh baseline, not the fleet.",
+    "Mann-Whitney U: nonparametric, fits heavy-tailed latency.",
+    "Require both significance and practical effect size.",
+    "Critical metrics can fail alone; others are weighted.",
+    "Statistical power limits what small canaries can detect."
+   ],
+   "qa": [
+    {
+     "q": "Why not compare canary to the existing stable pods?",
+     "a": "They differ in age, warm-up and possibly node types; the new pods look worse due to cold start even with identical code, causing false aborts. A baseline started together removes these confounders."
+    },
+    {
+     "q": "Why not a t-test?",
+     "a": "A t-test assumes roughly normal distributions; latency and error counts are skewed with long tails, so a rank-based test is more robust."
+    },
+    {
+     "q": "How many metrics should a template include?",
+     "a": "A focused set, maybe 5-12: errors, latency percentiles, saturation, key business metrics, dependency calls. Too many metrics raise false positives through multiple comparisons."
+    }
+   ]
+  },
+  {
+   "name": "Blast radius and cell / region-based rollout",
+   "explain": "Blast radius is the portion of users, requests or systems affected when something goes wrong. Reliability engineering tries to make it small by design rather than relying on never failing. Deployment controls blast radius along two axes. The percentage axis is the traffic weight a canary receives. The scope axis is the boundary of the infrastructure that receives the change: a single pod, an availability zone, a cell (an isolated, complete copy of the stack serving a subset of customers), a region, and finally everywhere. Amazon and others deploy in waves: one box, then one AZ, then one region, with bake times between, and never to multiple regions at the same time, so a bad change can never take out redundancy that would help recover. The math is simple and persuasive: if a bad build reaches 5% of one region's traffic for 10 minutes before rollback, it affects a few hundredths of a percent of the day's requests, whereas an all-at-once deploy hitting 100% for 15 minutes affects about 1%, and if it breaks something stateful the difference can be hours of outage. Bake time between waves matters because some failures (memory leaks, daily batch interactions, time-zone boundaries) only show up after hours.",
+   "in_this_design": "Rollouts go region by region starting with the smallest, with 30-minute bakes between regions for tier-0 and post-promotion monitoring for 24 hours. A region with an active incident is skipped and all rollouts pause.",
+   "key_points": [
+    "Blast radius = who is hurt when it goes wrong; design to keep it small.",
+    "Expand by percentage and by scope: pod, zone, cell, region.",
+    "Never change all regions at once; keep a healthy region to recover with.",
+    "Bake time catches slow failures like leaks.",
+    "Quantify exposure to justify step sizes."
+   ],
+   "qa": [
+    {
+     "q": "Why not deploy to all regions simultaneously at 1% each?",
+     "a": "A bug triggered by a regional factor or by data could hit all regions together, and a shared failure removes the healthy region you need for failover. Sequential regions keep independence."
+    },
+    {
+     "q": "How do cells help?",
+     "a": "Cells isolate subsets of customers on separate stacks, so a bad deploy to one cell affects only its customers; you can canary by cell, which also bounds data-level damage."
+    },
+    {
+     "q": "How do you balance bake time with velocity?",
+     "a": "Shorter bakes for low-risk services and changes, longer for tier-0; parallelise across independent services; invest in faster detection to shorten bakes safely."
+    }
+   ]
+  },
+  {
+   "name": "Backward compatibility and expand-contract migrations",
+   "explain": "During any canary, old and new versions run at the same time, and after a rollback the old version must work with whatever the new version did. So every change must be compatible across adjacent versions (N and N-1) in both directions. For APIs this means additive changes: new optional fields, never removing or renaming fields or changing their meaning in one release; readers ignore unknown fields (tolerant reader). For databases the pattern is expand and contract (also called parallel change). Expand: add the new column or table in a backward-compatible way; deploy code that writes to both old and new structures and still reads the old one; backfill existing rows. Migrate: deploy code that reads the new structure, with fallback. Contract: once no running version needs the old structure and rollback past that point is no longer needed, stop writing the old structure and finally drop it. Each step is a separate, independently reversible release. Message formats in queues follow the same discipline with a schema registry enforcing compatibility, and consumers must be upgraded before producers start emitting the new format. Changes that are inherently irreversible, like deleting data or sending emails to customers, should be isolated behind flags and executed only after the code is fully rolled out and stable.",
+   "in_this_design": "CI runs N-1 code against the N schema and contract tests across services; the migration orchestrator runs expand steps as separate releases; schema registry rejects incompatible event schemas; contract steps require a 2-week window.",
+   "key_points": [
+    "N and N-1 must coexist in both directions.",
+    "Expand, migrate, contract: each step separately reversible.",
+    "Additive API changes; tolerant readers.",
+    "Upgrade consumers before producers change formats.",
+    "Isolate irreversible actions behind flags after full rollout."
+   ],
+   "qa": [
+    {
+     "q": "How do you rename a column safely?",
+     "a": "Add the new column, dual-write, backfill, switch reads to the new column with fallback, stop writing the old one, drop it later. Each is a separate deploy so rollback is always possible."
+    },
+    {
+     "q": "What makes a rollback impossible?",
+     "a": "Data written in a format old code cannot read, destructive migrations, external side effects already performed. The answer is designing every release so old code tolerates new data."
+    },
+    {
+     "q": "How do you test compatibility?",
+     "a": "Run the previous release's integration tests against the new schema and API, consumer-driven contract tests, and replay recorded traffic against both versions."
+    }
+   ]
+  },
+  {
+   "name": "Feature flags: decoupling deploy from release",
+   "explain": "A deploy puts code onto servers; a release exposes behaviour to users. Feature flags separate these: new code ships dark, turned off, and a runtime toggle enables it for a percentage of users, internal staff, a city, or a segment, independent of any deployment. This shrinks the risk of each deploy (most deploys change nothing visible), allows instant kill switches that take seconds instead of a redeploy, supports trunk-based development, and enables experiments. Flag evaluation should be local and fast: the SDK caches rules in memory, receives updates by streaming, and keeps working with the last known rules if the flag service is down, with safe defaults coded in. Flags carry costs. Every flag doubles some code paths, so combinations multiply test burden; stale flags become technical debt and occasionally cause incidents when an old flag is toggled unexpectedly (the Knight Capital loss in 2012 is often cited, where reused flag semantics and an incomplete deployment triggered old code). Good practice: owners and expiry dates for release flags, removal within weeks after full rollout, separate long-lived operational flags (kill switches, load shedding) with tests, and audit logs for every change. Flag changes are themselves production changes and should be rolled out progressively with monitoring.",
+   "in_this_design": "Risky features ship behind flags; the canary tests the code path with the flag off, then the feature is enabled progressively by the flag service with the same analysis templates. Kill switches for checkout dependencies are long-lived, tested operational flags.",
+   "key_points": [
+    "Deploy is putting code out; release is turning behaviour on.",
+    "Local evaluation with cached rules and safe defaults.",
+    "Kill switches give second-level rollback without redeploys.",
+    "Release flags must expire; flag debt causes incidents.",
+    "Flag changes are production changes: progressive and audited."
+   ],
+   "qa": [
+    {
+     "q": "If you have flags, why still canary?",
+     "a": "Flags only protect the code inside the flag; every deploy also changes libraries, configs and shared paths outside flags. Canary covers the deploy; flags cover the feature release."
+    },
+    {
+     "q": "What happens if the flag service goes down?",
+     "a": "SDKs keep evaluating the last cached rules; new processes start with bundled defaults; flag changes are blocked until it recovers, but serving continues."
+    },
+    {
+     "q": "How do you prevent flag sprawl?",
+     "a": "Expiry dates, owners, lint that fails builds on expired flags, dashboards of stale flags, and a rule that release flags are removed within a sprint or two after 100%."
+    }
+   ]
+  },
+  {
+   "name": "Reconciliation loops and desired-state controllers",
+   "explain": "Kubernetes popularised the controller pattern: rather than executing a script of imperative steps, a controller continuously compares the desired state (stored durably) with the observed state of the world and takes actions to converge them. If a controller crashes mid-way, a new instance reads the same desired state, observes reality, and continues; actions are designed to be idempotent so reapplying is harmless. This is ideal for rollouts, which take an hour and can be interrupted by deploys of the controller itself, node failures or network blips. The rollout's desired state includes target weights, step, and region; observed state includes actual pod counts, ready replicas and mesh weights. Leader election via a lease ensures only one controller instance acts on a given rollout at a time, and optimistic concurrency on the release record (a version field) prevents lost updates when humans pause or abort concurrently. Edge-triggered events (a watch notification) speed up reaction, while periodic level-triggered resyncs guarantee convergence even if an event was missed. Importantly, the controller is on the control plane: if it dies, traffic keeps flowing with the last applied weights, which is a safe failure mode.",
+   "in_this_design": "The RolloutController stores desired state in Postgres, watches Kubernetes and mesh objects, resyncs every 30 s, holds a per-shard lease, and uses version checks so a manual abort always wins over a concurrent promote.",
+   "key_points": [
+    "Desired state durable; observed state read fresh; converge.",
+    "Idempotent actions make crash and retry safe.",
+    "Edge-triggered for speed, level-triggered resync for correctness.",
+    "Lease-based leader election plus optimistic concurrency.",
+    "Control plane failure must not affect the data plane."
+   ],
+   "qa": [
+    {
+     "q": "The controller crashes after changing weights but before saving the step. What happens?",
+     "a": "On restart it reads desired state (previous step) and observed weights (new step); it either re-applies or advances based on recorded intent; because setting weights is idempotent there is no harm."
+    },
+    {
+     "q": "How do you avoid an abort being overwritten by a promote?",
+     "a": "Both update the release with expected_version; abort is terminal in the state machine and wins; the controller re-reads before acting."
+    },
+    {
+     "q": "What if the controller is down for an hour?",
+     "a": "Rollouts pause at their current step with the current weights; no promotion happens; serving is unaffected; on recovery, analysis resumes."
+    }
+   ]
+  },
+  {
+   "name": "Traffic shifting and session affinity",
+   "explain": "Splitting traffic between versions can happen at several layers. DNS weighting is coarse and slow because resolvers cache records for the TTL, so it is unsuitable for fast rollback. L4 load balancers split connections, which skews with long-lived connections. L7 proxies, such as Envoy in a service mesh or an ingress controller, can split per request by weight, route by header (for internal testers) or by a hash of a user identifier. Weight updates in Envoy propagate through the xDS control-plane API in seconds, which is what makes rollback by weight flip fast. Per-request random routing gives the cleanest statistics but makes a user bounce between versions, which is confusing for UI changes and can break flows that store version-specific state. Hash-based stickiness keeps a user on one version: hash the user id into buckets and assign bucket ranges; increasing the canary weight only adds buckets, so assignment is monotonic. Changing the hash salt per release avoids always making the same users canaries. Long-lived connections (gRPC, websockets, HTTP/2) pin clients to backends, so new weights apply only to new connections; servers set a max connection age to force periodic reconnection. Internal callers in a mesh must also respect weights, otherwise service-to-service traffic bypasses the canary.",
+   "in_this_design": "Envoy mesh with weighted subsets for stable, baseline and canary; sticky user-hash routing for user-facing services with a per-release salt; max connection age 5 minutes so streams rebalance; header override x-canary for testers.",
+   "key_points": [
+    "L7 proxies split per request; DNS is too slow for rollback.",
+    "xDS weight changes propagate in seconds.",
+    "Sticky hashing keeps users on one version and is monotonic.",
+    "Rotate the hash salt per release to spread canary exposure.",
+    "Force reconnection for long-lived connections."
+   ],
+   "qa": [
+    {
+     "q": "Why is DNS-based canarying a bad idea for rollback?",
+     "a": "Clients and resolvers cache answers beyond the TTL, so removing the canary record leaves traffic flowing for minutes or hours."
+    },
+    {
+     "q": "Does stickiness bias the analysis?",
+     "a": "It can concentrate heavy users in a few buckets; with thousands of buckets and comparison against a baseline with its own buckets, bias is small; per-segment metrics catch skew."
+    },
+    {
+     "q": "How do you canary a service that only receives Kafka messages?",
+     "a": "Split by partition: assign a few partitions to canary consumers, compare processing errors and lag with baseline consumers on other partitions, and keep message formats compatible."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Canary vs blue-green vs rolling update",
+   "options": "Canary with analysis; blue-green full switch; rolling replace",
+   "choice": "Canary with analysis by default; blue-green for services where versions cannot coexist",
+   "why": "Canary minimises blast radius and capacity overhead; blue-green offers instant full switch-back when coexistence is impossible."
+  },
+  {
+   "decision": "Comparison target",
+   "options": "Fixed thresholds vs stable fleet vs fresh baseline",
+   "choice": "Fresh baseline plus a few absolute SLO guardrails",
+   "why": "Baseline removes warm-up and placement confounders; absolute guardrails catch failures that affect both groups."
+  },
+  {
+   "decision": "Step schedule",
+   "options": "Fast (10% -> 100%) vs gradual (1, 5, 25, 50, 100) vs time-based only",
+   "choice": "Gradual for tier-0, compressed for low-risk services",
+   "why": "Balances blast radius against lead time; sizes come from sample-size math."
+  },
+  {
+   "decision": "Rollback mechanism",
+   "options": "Weight flip with warm old pods vs redeploy old image",
+   "choice": "Weight flip during rollout, redeploy (fast-step) after promotion",
+   "why": "Flip takes seconds; keeping old pods forever costs capacity, so after promotion a fast redeploy is acceptable."
+  },
+  {
+   "decision": "Routing granularity",
+   "options": "Per-request random vs sticky by user",
+   "choice": "Sticky by user for user-facing, per-request for internal APIs",
+   "why": "Consistent user experience versus best statistical independence."
+  },
+  {
+   "decision": "Automation level",
+   "options": "Human approval each step vs fully automated with abort",
+   "choice": "Fully automated progression with automatic abort; manual approval only to override a failed canary",
+   "why": "Humans are slow and inconsistent at judging graphs; automation enables high deploy frequency."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Metrics store unavailable or lagging",
+   "behavior": "Analysis returns NODATA; rollout pauses at current weights; never promotes blindly; platform alert raised."
+  },
+  {
+   "failure": "Rollout controller crash",
+   "behavior": "Traffic keeps last weights; new leader acquires lease within ~15 s and reconciles from persisted state."
+  },
+  {
+   "failure": "Mesh control plane down",
+   "behavior": "Proxies keep last config; weight changes cannot apply, so controller pauses; abort falls back to scaling canary pods to 0 via Kubernetes, which removes them from endpoints."
+  },
+  {
+   "failure": "Bad build passes canary (bug not visible in metrics)",
+   "behavior": "Post-promotion SLO burn alerts and deploy annotations; one-click rollback to last known good; postmortem adds a metric or test to the template."
+  },
+  {
+   "failure": "Canary damages shared state (writes corrupt data)",
+   "behavior": "Abort limits further writes; data repair from audit log or backups; prevention via validation, dark writes and flags for new write paths."
+  },
+  {
+   "failure": "Analysis false abort",
+   "behavior": "Release marked FAILED with report; engineer can re-run analysis or retry; false-abort rate tracked and thresholds tuned."
+  }
+ ],
+ "metrics": [
+  "Change failure rate and percentage of bad builds caught at each step",
+  "Time from bad deploy start to abort; time from abort to weight 0",
+  "False abort rate and marginal-extension rate per template",
+  "Deploy frequency, lead time merge-to-100%, rollout duration by tier",
+  "Canary vs baseline error rate, p50/p99 latency, saturation, business metrics per subset",
+  "Rollouts paused by policy (freeze, budget, incident) and duration",
+  "Controller health: reconcile latency, lease changes, NODATA verdicts",
+  "Rollback count and mean time to restore after post-promotion issues"
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you handle a low-traffic internal service?",
+   "a": "Statistical analysis has little power, so use larger steps with longer bakes, synthetic traffic or traffic replay, strong pre-production tests, and rely on fast weight-flip rollback triggered by SLO alerts."
+  },
+  {
+   "q": "How do you canary a stateful service like a database or cache cluster?",
+   "a": "Canary by node or shard: upgrade one replica, let it serve reads, compare latency and errors against peers, then one shard primary, with replication compatibility guaranteed across versions; never upgrade a majority quorum at once."
+  },
+  {
+   "q": "What if the canary passes but the issue appears at 100%?",
+   "a": "Some issues are load-dependent (lock contention, connection limits) and only show at scale; include saturation metrics, use a 50% step with bake, and keep post-promotion automatic rollback on SLO burn for 24 hours."
+  },
+  {
+   "q": "How does this interact with incident response?",
+   "a": "Deploy events annotate dashboards and attach to incidents; declaring an incident pauses rollouts in that region; the first runbook step is checking recent changes and rolling back."
+  },
+  {
+   "q": "How do you roll back a mobile client?",
+   "a": "You cannot pull installed apps, so server-side flags and kill switches gate new features, store staged rollouts limit exposure (1%, 5%, 20%), and the server remains compatible with old app versions; force-upgrade is a last resort."
+  },
+  {
+   "q": "How would you justify the investment to leadership?",
+   "a": "Use DORA metrics: change-induced incidents are a large share of SEV1s; show expected reduction in change failure rate and incident minutes, and higher deploy frequency, translated into revenue protected during sales."
+  },
+  {
+   "q": "How do you prevent teams from turning analysis off?",
+   "a": "Make it fast and accurate (fresh baseline, tuned templates), show clear reports, track false aborts, and make bypass require two approvals with audit."
+  }
+ ],
+ "key_points": [
+  "Most outages are change-induced, so the deploy pipeline is a reliability system.",
+  "Canary small, compare to a fresh baseline, decide statistically, expand in steps and regions.",
+  "Kayenta-style Mann-Whitney comparison with effect-size thresholds and critical metrics.",
+  "Rollback is a weight flip in seconds because stable pods stay warm.",
+  "Size steps and bake times from sample-size math; low traffic needs bigger or longer steps.",
+  "Never deploy to all regions at once; bake between regions.",
+  "Rollback is only possible if N and N-1 are compatible: expand-contract and tolerant readers.",
+  "Feature flags decouple deploy from release and give second-level kill switches.",
+  "Fail safe: missing data pauses, controller outage freezes weights, incidents pause rollouts.",
+  "Measure change failure rate, bad builds caught at canary, false aborts, lead time."
+ ],
+ "quiz": [
+  {
+   "q": "Why compare the canary to a freshly deployed baseline instead of the existing stable fleet?",
+   "options": [
+    "The stable fleet has too many pods to query",
+    "A fresh baseline shares the canary's warm-up and placement conditions, isolating the code difference",
+    "Baselines receive more traffic",
+    "Kayenta cannot read stable metrics"
+   ],
+   "answer": 1,
+   "why": "Confounders such as cold caches and JIT make new pods look worse regardless of code. Query size is not the issue."
+  },
+  {
+   "q": "Which statistical test does Kayenta-style analysis typically use and why?",
+   "options": [
+    "Mann-Whitney U, because it does not assume normal distributions",
+    "t-test, because it is most powerful",
+    "Chi-square, because metrics are categorical",
+    "ANOVA, because there are three groups"
+   ],
+   "answer": 0,
+   "why": "Latency is heavy-tailed; rank-based Mann-Whitney is robust. t-test is tempting but assumes normality."
+  },
+  {
+   "q": "At 5k RPS a 1% canary gets about how many requests per minute?",
+   "options": [
+    "50",
+    "300",
+    "30,000",
+    "3,000"
+   ],
+   "answer": 3,
+   "why": "5,000 x 0.01 = 50 RPS = 3,000 per minute. 50 is the per-second number."
+  },
+  {
+   "q": "A canary fails analysis. What is the fastest safe rollback?",
+   "options": [
+    "Rebuild and redeploy the previous image",
+    "Change DNS records",
+    "Set canary weight to 0 while stable pods keep serving",
+    "Restart all pods"
+   ],
+   "answer": 2,
+   "why": "Weight flip takes seconds because stable is warm. DNS is slowed by caching; redeploy takes minutes."
+  },
+  {
+   "q": "You need to rename a database column used by a service under canary. Best approach?",
+   "options": [
+    "Rename in the same release as the code change",
+    "Expand-contract: add new column, dual-write, backfill, switch reads, later drop old",
+    "Take downtime",
+    "Use a feature flag only"
+   ],
+   "answer": 1,
+   "why": "Each step stays compatible with N-1 so rollback works. A flag alone does not solve schema incompatibility."
+  },
+  {
+   "q": "A service handles 5 RPS. What is the most sensible canary approach?",
+   "options": [
+    "Larger steps with longer bake, synthetic traffic and fast rollback on SLO alerts",
+    "1% for 5 minutes",
+    "Skip deployment safety",
+    "Only test in staging"
+   ],
+   "answer": 0,
+   "why": "1% of 5 RPS yields no statistical power. Staging-only misses production-only bugs."
+  },
+  {
+   "q": "Why roll out region by region instead of 1% in every region simultaneously?",
+   "options": [
+    "Regions have different code",
+    "Mesh cannot split traffic across regions",
+    "It is faster",
+    "A shared failure could hit all regions and remove the healthy region needed for recovery"
+   ],
+   "answer": 3,
+   "why": "Sequential regions preserve independence. Speed is actually worse, not better."
+  },
+  {
+   "q": "The metrics store lags during a rollout step. What should the controller do?",
+   "options": [
+    "Promote since no errors were seen",
+    "Abort and page",
+    "Pause with a NODATA verdict",
+    "Skip to 100%"
+   ],
+   "answer": 2,
+   "why": "Absence of data is not evidence of health; fail safe by pausing. Aborting is defensible but produces false aborts for platform issues."
+  },
+  {
+   "q": "Why use sticky user-hash routing for a user-facing canary?",
+   "options": [
+    "It increases statistical power",
+    "It keeps each user on one version and makes weight increases monotonic",
+    "It reduces latency",
+    "It is required by Envoy"
+   ],
+   "answer": 1,
+   "why": "Consistency for users is the main reason. It does not increase power; per-request routing is slightly better statistically."
+  },
+  {
+   "q": "What does 'decouple deploy from release' mean?",
+   "options": [
+    "Ship code dark and enable behaviour separately via flags",
+    "Deploy on weekends only",
+    "Use separate repos",
+    "Deploy without tests"
+   ],
+   "answer": 0,
+   "why": "Flags separate code presence from feature exposure. Weekend deploys are unrelated."
+  },
+  {
+   "q": "A canary passes all steps but the service degrades at 100%. Most likely reason?",
+   "options": [
+    "Mann-Whitney is wrong",
+    "Baseline was too large",
+    "Flags were off",
+    "Load-dependent issues (contention, connection limits) only appear at scale"
+   ],
+   "answer": 3,
+   "why": "Some failures depend on aggregate load. Include saturation metrics and keep post-promotion rollback triggers."
+  },
+  {
+   "q": "Why should analysis require both statistical significance and an effect-size threshold?",
+   "options": [
+    "To speed up analysis",
+    "Effect size is required by law",
+    "With large samples, tiny harmless differences become significant and would cause false aborts",
+    "Significance alone is too lenient"
+   ],
+   "answer": 2,
+   "why": "High traffic makes trivial differences significant. Significance alone is too strict at scale, not too lenient."
+  },
+  {
+   "q": "Long-lived gRPC streams do not move to the canary after weight changes. Fix?",
+   "options": [
+    "Lower DNS TTL",
+    "Set max connection age so clients reconnect and pick up new weights",
+    "Increase canary pods",
+    "Disable HTTP/2"
+   ],
+   "answer": 1,
+   "why": "Connections pin backends; forced reconnection rebalances. DNS TTL is irrelevant for in-mesh routing."
+  },
+  {
+   "q": "A new version emits a new message format to Kafka. What ordering keeps rollback safe?",
+   "options": [
+    "Upgrade consumers to read both formats first, then switch producers behind a flag",
+    "Upgrade producers first",
+    "Upgrade both together",
+    "Change the topic name"
+   ],
+   "answer": 0,
+   "why": "Tolerant readers first; producers later. Producers first leaves old consumers unable to parse."
+  },
+  {
+   "q": "Bad build exposure: 5% of one region's traffic for 10 minutes. Roughly what fraction of that region's daily requests is affected?",
+   "options": [
+    "0.35%",
+    "3.5%",
+    "5%",
+    "0.035%"
+   ],
+   "answer": 3,
+   "why": "0.05 x 10/1440 = ~0.035%. 5% is the instantaneous share, not the daily fraction."
+  },
+  {
+   "q": "The rollout controller crashes mid-step. What happens to user traffic?",
+   "options": [
+    "Traffic drops",
+    "All traffic goes to the canary",
+    "Traffic continues with the last applied weights",
+    "Pods are deleted"
+   ],
+   "answer": 2,
+   "why": "Control plane failure does not affect the data plane; a new leader reconciles. Dropping traffic would be a design bug."
+  },
+  {
+   "q": "Which metric best shows whether canary analysis is catching problems?",
+   "options": [
+    "Number of deploys",
+    "Percentage of eventually-reverted builds stopped before 25% traffic",
+    "Average image size",
+    "Pod count"
+   ],
+   "answer": 1,
+   "why": "It measures the safety net's effectiveness directly. Deploy count measures velocity only."
+  },
+  {
+   "q": "Why keep the old ReplicaSet scaled at 0 for a day after promotion?",
+   "options": [
+    "To enable a quick redeploy of a known-good, already-pulled version",
+    "For billing",
+    "Kubernetes requires it",
+    "To run baselines"
+   ],
+   "answer": 0,
+   "why": "Fast rollback path with cached images and known config. It is not a Kubernetes requirement."
+  },
+  {
+   "q": "Your canary template has 40 metrics and false aborts are frequent. Most likely cause?",
+   "options": [
+    "Too few samples",
+    "The baseline is too warm",
+    "The mesh is slow",
+    "Multiple comparisons: with many metrics some fail by chance"
+   ],
+   "answer": 3,
+   "why": "Many tests at p<0.01 make chance failures likely; focus metrics and weight critical ones. Too few samples would cause NODATA or low power, not frequent fails."
+  },
+  {
+   "q": "Which is a good reason to choose blue-green over canary?",
+   "options": [
+    "You want minimal extra capacity",
+    "You want gradual exposure",
+    "The two versions cannot safely coexist and need an atomic switch",
+    "Low traffic"
+   ],
+   "answer": 2,
+   "why": "Blue-green suits atomic cutovers. It needs more capacity, not less."
+  },
+  {
+   "q": "A sale-event freeze is active and a critical bug needs fixing. Best path?",
+   "options": [
+    "Bypass the pipeline with kubectl",
+    "Emergency strategy: approval, shorter bakes, same analysis, first canary step kept",
+    "Wait until the sale ends",
+    "Deploy to all regions at once to be quick"
+   ],
+   "answer": 1,
+   "why": "Keep safety while moving fast. Bypassing the pipeline during the riskiest period is how small bugs become big outages."
+  },
+  {
+   "q": "Why should feature flag SDKs evaluate rules locally from a cache?",
+   "options": [
+    "Low latency and continued operation if the flag service is down",
+    "To save licence costs",
+    "To avoid audits",
+    "Because flags rarely change"
+   ],
+   "answer": 0,
+   "why": "Local evaluation keeps the hot path fast and resilient. Flags can change often; caches are streamed updates."
+  }
+ ],
+ "references": [
+  {
+   "title": "Spinnaker: Canary overview",
+   "url": "https://spinnaker.io/docs/guides/user/canary/canary-overview/"
+  },
+  {
+   "title": "Google Cloud blog: Introducing Kayenta, open automated canary analysis from Google and Netflix",
+   "url": "https://cloud.google.com/blog/products/gcp/introducing-kayenta-an-open-automated-canary-analysis-tool-from-google-and-netflix"
+  },
+  {
+   "title": "Twilio: How to run a canary analysis with Kayenta",
+   "url": "https://www.twilio.com/en-us/blog/developers/community/automatic-canary-deployment-analysis-kayenta"
+  },
+  {
+   "title": "InfoQ: Kayenta automated canary analysis",
+   "url": "https://www.infoq.com/news/2018/04/kayenta"
+  },
+  {
+   "title": "arc42 quality: Canary deployment",
+   "url": "https://quality.arc42.org/approaches/canary-deployment"
+  }
+ ]
+}

@@ -1,0 +1,1097 @@
+{
+ "slug": "profile-privacy-storage",
+ "title": "Design user profile storage with privacy controls",
+ "prompt": "Design user profile storage with privacy controls.",
+ "group": "storage",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 100,
+ "summary": "Profile reads are the hottest path in a consumer product (every feed item, comment and search result renders a name and avatar), yet every field can carry a different audience setting (public, friends, only me, custom lists) and regulations demand consent tracking, export and verifiable erasure. The core tension is serving millions of profile reads per second from caches while guaranteeing that a visibility change or a block takes effect within seconds and that deleted data is truly gone, including from backups and downstream copies.",
+ "framework": {
+  "clarify": [
+   "Scale: assume 300 million users, 100 million daily active, and profile views at about 2 million reads per second at peak (mostly name and avatar fan-out from feeds).",
+   "Which fields and audiences? Assume per-field visibility: public, followers/friends, custom list, only me; plus blocks that override everything.",
+   "How fast must a privacy change take effect? Assume under 5 seconds globally for tightening (hiding a field, blocking), and eventual for loosening.",
+   "Which regulations apply? Assume GDPR and India DPDP: consent records, data export within 30 days, erasure within 30 days including backups, purpose limitation.",
+   "Who else reads profiles? Assume search indexing, ads, recommendations and analytics, each allowed only certain fields for certain purposes.",
+   "Is there sensitive data (phone, date of birth, government ID, precise location)? Assume phone and DOB yes, stored encrypted and shown only to the owner by default.",
+   "Write rate? Assume profile edits about 5,000 per second peak; privacy setting changes about 500 per second.",
+   "Data residency? Assume EU users' PII stays in EU region; public display fields may be cached globally."
+  ],
+  "design": [
+   "Baseline: one profile table keyed by user_id with a JSON blob of fields and a per-field visibility map, read through a profile service that filters fields based on the viewer.",
+   "Split storage by sensitivity: a public card (name, handle, avatar) that is widely cached; an extended profile with per-field ACLs; a PII vault for phone, email, DOB encrypted with per-user keys.",
+   "Put a policy decision point in the read path: render(viewer, owner) = fields where audience(field) admits viewer, with relationship and block checks from a graph service.",
+   "Cache the filtered view per audience class (public, friend, self), not per viewer, so cache cardinality stays bounded while correctness holds.",
+   "Make every downstream copy (search, ads, recs, warehouse) subscribe to a privacy-aware change stream that carries visibility and deletion events, with purpose tags.",
+   "Implement erasure as a workflow: tombstone, propagate deletes through the stream, verify acks from each consumer, and crypto-shred the per-user key so backups become unreadable.",
+   "Critical path: viewer request -> profile service -> cache (audience-class view) -> on miss read profile store and visibility -> relationship check -> filter -> return."
+  ],
+  "defend": [
+   "Bottleneck: the read fan-out on popular profiles. Defend with audience-class caching, request coalescing, and a hot-key local cache with 5 s TTL plus explicit invalidation.",
+   "Correctness under caching: tightening changes publish invalidations synchronously before acknowledging the user, and caches carry a privacy version so stale entries are rejected.",
+   "Scaling writes: profile store sharded by user_id (consistent hashing over a wide-column store), edits are single-partition, versions with compare-and-set.",
+   "Failure: if the relationship graph is unavailable, fail closed to the public view, never to the friend view. If the PII vault is down, render without PII.",
+   "Erasure guarantees: a deletion ledger with per-consumer acknowledgement and a deadline alarm at day 25 of 30; crypto-shredding covers backups.",
+   "Measure: privacy-change propagation p99, stale-view rate from audits, erasure completion SLA, cache hit rate per audience class, and policy evaluation latency."
+  ],
+  "script": "Before drawing boxes I want to confirm three things: scale, the privacy model, and the regulatory promises. I will assume 300 million users with around 2 million profile reads per second, mostly name and avatar, per-field audiences like public, friends and only me, blocks that override everything, and GDPR-style export and erasure within 30 days. My baseline is a profile service in front of a store keyed by user_id, but I immediately split data by sensitivity: a public card that we cache everywhere, an extended profile with per-field visibility, and a PII vault encrypted with a per-user key. Reads go through a policy check that combines field audiences with the viewer's relationship to the owner, and I cache by audience class rather than per viewer, so the cache stays small but correct. Every downstream copy, search, ads, analytics, gets data through a purpose-tagged change stream so a privacy change or deletion propagates everywhere. In the defend phase I will talk about making tightening changes visible within 5 seconds despite caches, failing closed when the graph is down, and proving erasure with a deletion ledger and crypto-shredding."
+ },
+ "brd": {
+  "problem": "The product shows user profiles across feeds, search, messaging and ads. Users and regulators expect fine-grained control over who sees each field, and fast, verifiable deletion. Today profile data is copied into many systems with no single view of who holds what, privacy changes take hours to reach caches and search, and erasure requests are handled manually, creating legal and trust risk.",
+  "goals": [
+   "Per-field audience controls honoured consistently in every surface that renders a profile.",
+   "Privacy tightening (hide field, block user, make account private) enforced everywhere within 5 seconds p99.",
+   "Erasure and export requests completed within 30 days with an auditable record per system.",
+   "Profile reads at 2 million per second with p99 under 30 ms from the service.",
+   "Sensitive PII encrypted at rest with per-user keys and access logged.",
+   "Purpose limitation: each downstream consumer receives only fields allowed for its purpose and the user's consents."
+  ],
+  "non_goals": [
+   "Building the social graph itself (consumed as a dependency).",
+   "Content privacy for posts and photos (separate system, same patterns).",
+   "Identity verification and KYC flows.",
+   "Anonymisation for research data sets."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users",
+    "needs": "Simple controls that work everywhere, quick effect, confidence that deletion is real."
+   },
+   {
+    "who": "Legal, privacy and DPO office",
+    "needs": "Consent records, data maps, erasure evidence, residency guarantees."
+   },
+   {
+    "who": "Product surfaces (feed, search, messaging)",
+    "needs": "Fast, cheap profile rendering with privacy already applied."
+   },
+   {
+    "who": "Ads and recommendations teams",
+    "needs": "Purpose-approved attributes with clear consent signals."
+   },
+   {
+    "who": "Security team",
+    "needs": "Minimal PII exposure, key management, access audit and anomaly detection."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Privacy tightening propagation p99",
+    "target": "under 5 s across caches and search"
+   },
+   {
+    "metric": "Privacy violations found by automated auditors",
+    "target": "0 per million sampled renders"
+   },
+   {
+    "metric": "Erasure SLA met",
+    "target": "100% within 30 days, 95% within 7 days"
+   },
+   {
+    "metric": "Profile read p99 (service)",
+    "target": "under 30 ms"
+   },
+   {
+    "metric": "Cache hit rate for profile cards",
+    "target": "over 98%"
+   },
+   {
+    "metric": "Unlogged PII vault reads",
+    "target": "0"
+   }
+  ],
+  "constraints": [
+   "GDPR and DPDP: lawful basis per purpose, right of access, rectification, erasure, and residency for EU PII.",
+   "Backups are immutable for 35 days, so erasure cannot rely on editing backups.",
+   "Existing consumers (search, ads) already hold copies and must be migrated onto the change stream.",
+   "Latency budget for a feed render leaves about 30 ms for profile hydration of up to 50 authors."
+  ],
+  "risks": [
+   {
+    "risk": "Stale cache shows a hidden field or a blocked user's profile.",
+    "mitigation": "Synchronous invalidation for tightening, privacy version check on cache read, short TTLs on non-public views."
+   },
+   {
+    "risk": "A downstream consumer ignores deletion events.",
+    "mitigation": "Deletion ledger with mandatory ack per registered consumer, escalation alarms, and access revocation for non-compliant consumers."
+   },
+   {
+    "risk": "Insider access to PII.",
+    "mitigation": "PII vault with per-user envelope encryption, purpose-bound access tokens, logging and anomaly detection."
+   },
+   {
+    "risk": "Policy logic duplicated and drifting across services.",
+    "mitigation": "One policy library and service as the only place visibility is decided; surfaces receive already filtered views."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Privacy-conscious user",
+    "needs": "Hide phone and birthday, limit profile to friends, block harassers, download and delete data."
+   },
+   {
+    "name": "Viewer",
+    "needs": "See accurate profile info that the owner chose to share, quickly."
+   },
+   {
+    "name": "Internal consumer team",
+    "needs": "Get profile attributes allowed for their purpose without building privacy logic."
+   },
+   {
+    "name": "Privacy operations analyst",
+    "needs": "Track erasure and export requests and prove completion to regulators."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want to set my birthday visible to friends only so that strangers cannot see it.",
+   "As a user, I want blocking someone to hide my profile from them immediately so that I feel safe.",
+   "As a user, I want to switch my account to private so that only approved followers see my details.",
+   "As a user, I want to download all my profile data so that I know what the company holds.",
+   "As a user, I want to delete my account and know my data is gone within 30 days so that I can leave safely.",
+   "As a viewer, I want profile cards to load instantly in my feed so that browsing feels fast.",
+   "As an ads engineer, I want only consented attributes in my feature store so that we stay compliant.",
+   "As a DPO, I want an audit trail of every PII access so that I can answer regulator queries."
+  ],
+  "functional": [
+   "Create, read, update profile fields with per-field audience settings (public, followers, friends, custom list, only me).",
+   "Enforce blocks and account-level privacy (private account) before field-level rules.",
+   "Render a filtered profile view for a given viewer and surface, plus a batch API for up to 100 owners.",
+   "Store PII fields in an encrypted vault with per-user keys and purpose-bound access.",
+   "Record consents per purpose with timestamps and versions of the policy text.",
+   "Publish profile and privacy changes to a purpose-filtered change stream for downstream consumers.",
+   "Export a user's data as a machine-readable archive within 30 days.",
+   "Erase a user's data across all registered systems within 30 days with verifiable acknowledgements."
+  ],
+  "non_functional": [
+   {
+    "name": "Read latency",
+    "target": "p99 under 30 ms single, under 40 ms batch of 50"
+   },
+   {
+    "name": "Privacy propagation",
+    "target": "tightening effective in under 5 s p99 everywhere"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% for public card reads; degraded mode serves public card only"
+   },
+   {
+    "name": "Durability",
+    "target": "RF=3 within region, cross-region async replica"
+   },
+   {
+    "name": "Security",
+    "target": "PII encrypted with per-user DEKs; all vault reads logged"
+   },
+   {
+    "name": "Compliance",
+    "target": "Erasure 100% within 30 days; export within 30 days"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "300 M users; average profile 4 KB (card 300 B, extended 3 KB, PII 700 B).",
+    "Peak reads 2 M/s, 90% are card-only for feed hydration.",
+    "Peak profile writes 5,000/s; privacy setting changes 500/s; blocks 300/s.",
+    "Erasure requests about 50,000 per day."
+   ],
+   "math": [
+    "Primary storage: 300 M x 4 KB = 1.2 TB; with RF=3 about 3.6 TB, plus history and consents about 10 TB total. Storage is small; the challenge is read rate and correctness.",
+    "Card cache: 100 M active x 300 B = 30 GB per cache region, fits easily in a Memcached tier with replication.",
+    "Read QPS: 2 M/s with 98% cache hits leaves 40,000/s to the store, comfortable for a 30-node Cassandra or similar cluster.",
+    "Invalidations: 5,800 changes/s x 3 audience views = about 17,400 cache deletes/s, fanned out to 5 regions = about 87,000/s, manageable over a pub/sub bus.",
+    "Erasure fan-out: 50,000/day x 15 consumers = 750,000 acks/day, about 9 per second."
+   ],
+   "summary": "Data is only about 10 TB, so this is a read-amplification and correctness problem: a 30 GB per-region card cache absorbs 2 M reads/s, the store sees about 40,000 reads/s, and the change stream carries under 100,000 invalidations/s globally."
+  },
+  "out_of_scope": [
+   "The social graph store and friend recommendations.",
+   "Media storage for avatars (only URLs here).",
+   "Content moderation of profile text.",
+   "Authentication and session management."
+  ]
+ },
+ "hld": {
+  "overview": "A Profile Service is the only read and write path for profile data. Data is split into three stores by sensitivity: a Card store (name, handle, avatar URL, account privacy flag), an Extended profile store (bio, work, education, birthday month, links) with per-field audience metadata, and a PII Vault (email, phone, full DOB, address) with envelope encryption under per-user keys from KMS. A Policy Engine combines owner settings, blocks and the viewer relationship from the Graph Service to decide visible fields. Views are cached per (owner, audience class) with a privacy version. All writes emit events through an outbox to a Privacy Change Stream; consumers receive purpose-filtered projections. An Erasure Orchestrator drives deletes and tracks acknowledgements in a Deletion Ledger.",
+  "diagram": "\n  Viewer --> Edge/API --> Profile Service (read/write API, batch hydrate)\n                            |        |            |\n                    Policy Engine  View Cache   Write path (CAS + outbox)\n                    (rules lib)    (owner,class,|\n                       |            privacy_ver)|\n                 Graph Service         |        v\n                 (follows, blocks)     |   +-----------+-----------+-------------+\n                                       +-->| Card store| Extended  | PII Vault   |\n                                           | (KV, RF3) | (KV, RF3) | (enc, DEK)  |\n                                           +-----------+-----------+------+------+\n                                                 |                        |\n                                    outbox -> Privacy Change Stream     KMS (per-user KEK)\n                                           (Kafka, keyed by user_id)\n                                      /         |          \\            \\\n                               Search idx   Ads features  Warehouse   Cache invalidator\n                                 (purpose-filtered projections, delete acks)\n                                                |\n                                  Erasure Orchestrator + Deletion Ledger\n",
+  "components": [
+   {
+    "name": "Profile Service",
+    "responsibility": "Single API for reads (single and batch), writes, settings; applies policy; owns caches."
+   },
+   {
+    "name": "Policy Engine",
+    "responsibility": "Deterministic function visible_fields(owner_settings, relationship, surface, purpose); shared library plus sidecar."
+   },
+   {
+    "name": "Graph Service",
+    "responsibility": "Answers relationship(viewer, owner) = self | friend | follower | blocked | none, with its own caches."
+   },
+   {
+    "name": "Card and Extended stores",
+    "responsibility": "Wide-column KV keyed by user_id, RF=3, versioned rows with privacy_version."
+   },
+   {
+    "name": "PII Vault",
+    "responsibility": "Encrypted PII with per-user data keys, purpose-bound access, full audit log; region-pinned."
+   },
+   {
+    "name": "View cache",
+    "responsibility": "Memcached/Redis tier caching filtered views per (owner, audience class), plus a hot-key local cache."
+   },
+   {
+    "name": "Privacy Change Stream",
+    "responsibility": "Kafka topics fed by a transactional outbox; carries field changes, visibility changes, blocks and deletions."
+   },
+   {
+    "name": "Consent store",
+    "responsibility": "Per-user per-purpose consent records with policy version and timestamp; read by projections."
+   },
+   {
+    "name": "Erasure Orchestrator and Deletion Ledger",
+    "responsibility": "Run erasure workflows, collect per-consumer acks, escalate, crypto-shred keys."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Feed hydration read (batch of 50 authors)",
+    "steps": [
+     "Feed service calls BatchGetProfiles(viewer=V, owners=[50], surface=feed).",
+     "Profile Service asks Graph Service for relationships of V with all 50 owners in one batch call (cached, p99 5 ms).",
+     "For each owner it computes audience class: blocked -> drop; self; friend; follower; public.",
+     "It multigets cache keys view:{owner}:{class}; hits are checked against the owner's current privacy_version (kept in a tiny hot map).",
+     "Misses read card and extended rows, run Policy Engine, write back to cache with TTL 10 min for public and 60 s for friend views.",
+     "Returns filtered cards in under 30 ms p99."
+    ]
+   },
+   {
+    "name": "Privacy tightening (hide birthday from public)",
+    "steps": [
+     "User calls PATCH /v1/me/privacy {birthday: friends}.",
+     "Profile Service does compare-and-set on the extended row, increments privacy_version, writes an outbox record in the same transaction or batch.",
+     "Before returning 200, it deletes view:{user}:public and view:{user}:follower in the local region and publishes an invalidation to all regions.",
+     "Outbox relay publishes VisibilityChanged to Kafka; search and other consumers drop the field from their projections.",
+     "Any cache entry with an older privacy_version is treated as a miss everywhere, closing the race with in-flight fills."
+    ]
+   },
+   {
+    "name": "Account erasure",
+    "steps": [
+     "User confirms deletion; account enters pending_deletion (hidden immediately, 14 day grace for undo).",
+     "After grace, Orchestrator writes tombstones, deletes rows from card, extended and vault stores.",
+     "It publishes UserErased to the stream and creates ledger entries for each registered consumer.",
+     "Consumers delete and ack; Orchestrator retries and escalates missing acks at day 20 and day 25.",
+     "KMS key for the user is scheduled for destruction, rendering backup copies of PII unreadable; ledger marked complete."
+    ]
+   }
+  ],
+  "data_flow": "Writes land in the stores keyed by user_id with a transactional outbox entry; the relay publishes to Kafka partitioned by user_id so events per user are ordered. Consumers build purpose-filtered projections (search sees only public fields, ads sees consented attributes). Reads pull filtered views from cache, falling back to stores plus policy evaluation. PII never enters the change stream; consumers needing PII call the vault with purpose-bound tokens."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/v1/profiles/{owner_id}?surface=profile_page",
+    "request": "viewer from auth token",
+    "response": "{owner_id, fields:{name, handle, avatar, bio?, birthday?...}, privacy_version}",
+    "notes": "Fields absent if not visible; never return null-with-hidden markers that leak existence."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/profiles:batchGet",
+    "request": "{owner_ids:[...<=100], surface}",
+    "response": "{profiles:[...]}",
+    "notes": "Blocked owners omitted silently."
+   },
+   {
+    "method": "PATCH",
+    "path": "/v1/me/profile",
+    "request": "{fields:{...}, expected_version}",
+    "response": "{version}",
+    "notes": "CAS on version; 409 on conflict."
+   },
+   {
+    "method": "PATCH",
+    "path": "/v1/me/privacy",
+    "request": "{field_audiences:{birthday:'friends'}, account_private?:bool}",
+    "response": "{privacy_version}",
+    "notes": "Synchronous invalidation before 200 for tightening."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/me/blocks",
+    "request": "{blocked_user_id}",
+    "response": "{ok}",
+    "notes": "Writes graph edge, invalidates relationship caches both directions."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/me/data-requests",
+    "request": "{type: export|erase}",
+    "response": "{request_id, due_by}",
+    "notes": "Creates a ledger-tracked workflow."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/vault/read",
+    "request": "{user_id, fields, purpose, caller_token}",
+    "response": "{decrypted fields}",
+    "notes": "Purpose must be allowed for the caller; every call logged."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "profile_card",
+    "store": "Cassandra/ScyllaDB (or sharded MySQL)",
+    "fields": [
+     "user_id",
+     "display_name",
+     "handle",
+     "avatar_url",
+     "account_private bool",
+     "privacy_version bigint",
+     "version bigint",
+     "updated_at"
+    ],
+    "keys": "Partition key user_id; consistent hashing over the ring; RF=3, LOCAL_QUORUM",
+    "notes": "Smallest, hottest record; cached in every region."
+   },
+   {
+    "entity": "profile_extended",
+    "store": "Cassandra/ScyllaDB",
+    "fields": [
+     "user_id",
+     "field_key",
+     "value",
+     "audience (public|followers|friends|list:<id>|self)",
+     "updated_at"
+    ],
+    "keys": "Partition user_id, clustering field_key",
+    "notes": "One partition per user so a full profile is a single partition read."
+   },
+   {
+    "entity": "pii_record",
+    "store": "PII Vault (region-pinned PostgreSQL with column encryption)",
+    "fields": [
+     "user_id",
+     "field_key",
+     "ciphertext",
+     "dek_id",
+     "region",
+     "updated_at"
+    ],
+    "keys": "PK (user_id, field_key)",
+    "notes": "DEK per user wrapped by KMS KEK; destroy DEK to crypto-shred."
+   },
+   {
+    "entity": "consent",
+    "store": "PostgreSQL",
+    "fields": [
+     "user_id",
+     "purpose",
+     "granted bool",
+     "policy_version",
+     "source",
+     "ts"
+    ],
+    "keys": "PK (user_id, purpose, ts)",
+    "notes": "Append-only history; latest row wins."
+   },
+   {
+    "entity": "deletion_ledger",
+    "store": "PostgreSQL",
+    "fields": [
+     "request_id",
+     "user_id_hash",
+     "consumer",
+     "status",
+     "due_by",
+     "acked_at"
+    ],
+    "keys": "PK (request_id, consumer)",
+    "notes": "Stores a salted hash, not the raw user_id, after completion."
+   },
+   {
+    "entity": "view cache",
+    "store": "Memcached",
+    "fields": [
+     "view:{owner}:{class} -> {fields, privacy_version}"
+    ],
+    "keys": "Hash-distributed by key",
+    "notes": "TTL 10 min public, 60 s non-public."
+   }
+  ],
+  "classes": [
+   {
+    "name": "PolicyEngine",
+    "responsibility": "Pure function deciding visible fields for a viewer.",
+    "methods": [
+     "audience_class(viewer, owner, rel)",
+     "visible_fields(settings, class, surface, purpose)",
+     "explain(viewer, owner)"
+    ]
+   },
+   {
+    "name": "ProfileReader",
+    "responsibility": "Batch hydrate with cache, version checks and policy.",
+    "methods": [
+     "get(viewer, owner, surface)",
+     "batch_get(viewer, owners, surface)",
+     "fill_cache(owner, class)"
+    ]
+   },
+   {
+    "name": "ProfileWriter",
+    "responsibility": "CAS writes, privacy_version bump, outbox, invalidation.",
+    "methods": [
+     "update_fields(user, patch, expected_version)",
+     "update_privacy(user, audiences)",
+     "invalidate(user, classes)"
+    ]
+   },
+   {
+    "name": "VaultClient",
+    "responsibility": "Purpose-bound PII access with envelope decryption.",
+    "methods": [
+     "read(user, fields, purpose)",
+     "write(user, field, value)",
+     "shred(user)"
+    ]
+   },
+   {
+    "name": "ErasureOrchestrator",
+    "responsibility": "Drive erasure state machine and ledger.",
+    "methods": [
+     "start(user)",
+     "on_ack(consumer, request)",
+     "escalate_overdue()",
+     "complete(request)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Audience-class policy evaluation",
+    "explain": "Blocks and account privacy are evaluated before fields; the result is a class so views can be cached per class rather than per viewer.",
+    "pseudocode": "def audience_class(viewer, owner, rel, card):\n    if viewer == owner: return 'self'\n    if rel.blocked_either_way: return 'blocked'\n    if rel.friend: return 'friend'\n    if rel.follower: return 'follower'\n    return 'private_stranger' if card.account_private else 'public'\n\nRANK = {'public':0,'followers':1,'friends':2,'self':3}\ndef visible_fields(settings, cls):\n    if cls == 'blocked': return {}\n    level = {'public':0,'private_stranger':-1,'follower':1,'friend':2,'self':3}[cls]\n    return {k:v for k,(v,aud) in settings.items()\n            if aud.startswith('list:') and cls=='self' or RANK.get(aud,99) <= level}\n# custom lists evaluated separately by membership check, not cached per class"
+   },
+   {
+    "name": "Versioned cache read to avoid stale privacy",
+    "explain": "A cache fill racing with a privacy change could write an old view after invalidation. Storing privacy_version in the entry and comparing with the current version (from a small, strongly updated map) rejects stale fills.",
+    "pseudocode": "def get_view(owner, cls):\n    cur = privacy_version_map.get(owner)        # tiny, replicated, pushed on change\n    e = cache.get(f'view:{owner}:{cls}')\n    if e and e.privacy_version == cur:\n        return e.fields\n    row = store.read(owner)                      # LOCAL_QUORUM\n    fields = policy.visible_fields(row.settings, cls)\n    if row.privacy_version >= cur:\n        cache.add(f'view:{owner}:{cls}', {'fields':fields,'privacy_version':row.privacy_version},\n                  ttl=600 if cls=='public' else 60)\n    return fields"
+   },
+   {
+    "name": "Erasure with ledger and crypto-shred",
+    "explain": "Delete primaries, fan out events, require acks from all registered consumers, then destroy the key.",
+    "pseudocode": "def erase(user):\n    ledger.create(user, consumers=registry.all())\n    stores.delete(user); vault.delete(user)\n    stream.publish('UserErased', user)\n    while not ledger.all_acked(user):\n        for c in ledger.overdue(user): page_owner(c)\n        sleep(1h)\n    kms.schedule_key_deletion(dek_of(user), days=7)\n    ledger.complete(user)"
+   }
+  ],
+  "sequence": "\nUser      ProfileSvc      Store(CAS)     Outbox/Kafka    CacheInvalidator   Search\n |PATCH privacy |              |               |                |              |\n |------------->| read v=41    |               |                |              |\n |              |------------->|               |                |              |\n |              | CAS v41->42, privacy_ver++   |                |              |\n |              |------------->| + outbox row  |                |              |\n |              | delete view:{u}:public,follower (local)        |              |\n |              |----------------------------------------------->|              |\n |              | publish invalidate (all regions)               |              |\n |<-- 200 ------|              |               |                |              |\n |              |              |  relay ------>| VisibilityChanged             |\n |              |              |               |------------------------------>|\n |              |              |               |        drop field from index  |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Cache fill races with a privacy change and writes the old public view after invalidation.",
+   "handling": "Entries carry privacy_version; readers compare with the current version and treat older entries as misses; fills use add-if-absent semantics."
+  },
+  {
+   "case": "Viewer blocks owner while a feed page is already rendered on their phone.",
+   "handling": "Next fetch omits the owner; client also receives a block event to remove items locally. Server-side guarantee is from the next request."
+  },
+  {
+   "case": "Blocked user searches for the blocker by name.",
+   "handling": "Search applies block filtering at query time from the graph service (blocks are never cached for more than a few seconds) in addition to index projections."
+  },
+  {
+   "case": "Field audience is a custom list and list membership changes.",
+   "handling": "Custom-list fields are not cached per class; they are evaluated per request with a membership check that is itself cached with list version."
+  },
+  {
+   "case": "A user deletes their account then signs up again with the same email within the grace period.",
+   "handling": "Pending deletion can be cancelled by logging in; after erasure, the email hash is released and a new user_id is minted with no link to the old one."
+  },
+  {
+   "case": "Erasure request while an export is in progress.",
+   "handling": "Cancel the export and delete partial archives; the ledger tracks the export bucket as a consumer."
+  },
+  {
+   "case": "Downstream consumer is down for a week and misses deletion events.",
+   "handling": "Kafka retention of 14 days plus ledger acks; if retention is exceeded, the ledger triggers a reconciliation job that compares the consumer's IDs against tombstones."
+  },
+  {
+   "case": "Backups contain the erased user's PII.",
+   "handling": "PII is encrypted with a per-user DEK; destroying the key crypto-shreds all backup copies. Non-PII card data in backups is purged on restore via a tombstone replay."
+  },
+  {
+   "case": "Existence leakage: API returns 403 for hidden profiles, revealing the account exists.",
+   "handling": "Return the same response as a non-existent account for blocked viewers; hidden fields are absent, not marked hidden."
+  },
+  {
+   "case": "Clock skew between regions orders two privacy updates wrongly.",
+   "handling": "Use per-user monotonic version (CAS) rather than timestamps for ordering; last-writer-wins only by version."
+  },
+  {
+   "case": "Region failover sends an EU user's PII request to a US region.",
+   "handling": "Vault is region-pinned; cross-region calls are refused, the service degrades to non-PII views rather than move data."
+  },
+  {
+   "case": "Celebrity profile read 500,000 times per second.",
+   "handling": "Hot-key detection promotes the public view to an in-process cache on every Profile Service node with 5 s TTL plus push invalidation."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Cassandra / ScyllaDB",
+   "layer": "Profile stores",
+   "overview": "Wide-column, leaderless, partitioned by consistent hashing with tunable consistency.",
+   "why": "Single-partition reads by user_id, linear scale, multi-region replication; LOCAL_QUORUM gives read-your-writes within a region.",
+   "alternatives": "Sharded MySQL (TAO-like, strong ops familiarity); DynamoDB (managed, cost at 40,000 reads/s fine)."
+  },
+  {
+   "name": "Memcached",
+   "layer": "View cache",
+   "overview": "Distributed in-memory cache.",
+   "why": "Simple, very high throughput for small values; lease and add semantics help avoid stale fills.",
+   "alternatives": "Redis (richer structures, slightly lower raw throughput), local caches only (cannot be invalidated globally)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Privacy change stream",
+   "overview": "Partitioned, replicated commit log.",
+   "why": "Ordered per user_id, replayable for consumers that fall behind, retention for reconciliation.",
+   "alternatives": "Pulsar; cloud pub/sub (less ordering control)."
+  },
+  {
+   "name": "Debezium or transactional outbox",
+   "layer": "Event capture",
+   "overview": "Guarantees that a DB write and its event publish happen together.",
+   "why": "Prevents a privacy change being stored but never propagated.",
+   "alternatives": "Dual writes (unsafe), CDC directly from Cassandra (harder)."
+  },
+  {
+   "name": "Cloud KMS / HSM",
+   "layer": "Key management",
+   "overview": "Hardware-protected key storage with envelope encryption APIs.",
+   "why": "Per-user DEKs wrapped by KEKs; key destruction implements crypto-shredding.",
+   "alternatives": "HashiCorp Vault Transit; app-managed keys (riskier)."
+  },
+  {
+   "name": "Open Policy Agent or in-house policy library",
+   "layer": "Policy evaluation",
+   "overview": "Declarative policy engine evaluated in-process.",
+   "why": "Keeps visibility rules in one place, testable and explainable.",
+   "alternatives": "Zanzibar-style relationship service (great for complex sharing, heavier); hard-coded checks per service (drifts)."
+  },
+  {
+   "name": "PostgreSQL",
+   "layer": "Consents, ledger, PII vault",
+   "overview": "Relational store with transactions.",
+   "why": "Ledgers and consent history need transactions, constraints and audits.",
+   "alternatives": "Cassandra (weaker constraints), a managed privacy platform."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Access control models: ACL, RBAC, ReBAC (Zanzibar-style)",
+   "explain": "Access control answers whether subject S may do action A on object O. An access control list attaches the allowed subjects directly to each object, which is simple but hard to manage at scale. Role-based access control assigns permissions to roles and roles to users, which suits enterprises but not social products where the rule is about who you are to the owner. Relationship-based access control (ReBAC) expresses permissions as relationships in a graph: viewer may see field F if viewer is a friend of owner and F's audience is friends. Google's Zanzibar paper describes a global ReBAC system storing relation tuples like (doc:readme, viewer, user:alice) and evaluating checks by walking the graph, with consistency tokens called zookies so a check is evaluated at a snapshot at least as new as the content it protects. That solves the new enemy problem: if Alice removes Bob and then posts something, Bob must not see it because a stale ACL was used. Facebook's TAO similarly serves the social graph that privacy checks rely on. In profile privacy, the field audience is a small policy, but the relationship lookup is the expensive part, and caching relationships must respect ordering between revocation and new content.",
+   "in_this_design": "Field audiences are simple per-field settings, while relationship(viewer, owner) comes from the Graph Service. The Policy Engine is ReBAC-lite: it maps relationships to audience classes. privacy_version plays the role of a zookie for the owner's settings.",
+   "key_points": [
+    "ACL lists who; RBAC uses roles; ReBAC derives access from relationships.",
+    "Social privacy is naturally ReBAC.",
+    "The new enemy problem requires ordering revocations before new content.",
+    "Zanzibar uses snapshot tokens (zookies) to avoid stale checks."
+   ],
+   "qa": [
+    {
+     "q": "Why not store an ACL of allowed viewers on each profile?",
+     "a": "Friends-only fields would need ACLs of hundreds of users per field per profile, updated on every friendship change. Deriving access from the relationship at read time is far cheaper and always current."
+    },
+    {
+     "q": "What is the new enemy problem here?",
+     "a": "User blocks Bob, then updates bio. If Bob's check uses a cached relationship from before the block but sees the new bio, privacy is violated. Blocks must be evaluated with a relationship state at least as new as the change, so we invalidate relationship caches synchronously on block."
+    },
+    {
+     "q": "When would you adopt full Zanzibar?",
+     "a": "When sharing becomes arbitrary: shared albums, group-based audiences, delegated admins. For fixed audience tiers, a simple policy over relationships is enough and much cheaper."
+    }
+   ]
+  },
+  {
+   "name": "Caching with correctness: invalidation, versioning and leases",
+   "explain": "Caching trades freshness for speed, and for privacy data staleness is a correctness bug, not just an inconvenience. The common cache-aside pattern reads from the cache, falls back to the database on miss and populates the cache. Two races break it. First, a read misses, fetches old data, gets delayed; meanwhile a write updates the database and deletes the cache key; then the slow reader writes the old data back into the cache, where it stays until TTL. Second, invalidations can be lost or delayed across regions. Defences include leases (Facebook's memcache paper: a miss returns a lease token, and a fill is only accepted if no invalidation happened since the lease was issued), versioned entries (store a version with the value and reject entries older than the current version), short TTLs as a safety net, and write paths that invalidate before acknowledging the user. Cache key design also matters: caching per viewer explodes cardinality (100 M viewers x owners), while caching per audience class keeps the number of entries to a handful per owner. Finally, asymmetric policy is reasonable: tightening must be immediate, loosening can be eventually consistent because showing less is safe.",
+   "in_this_design": "Views are cached per (owner, audience class) with privacy_version; tightening deletes keys locally before returning 200 and broadcasts to other regions; fills compare versions and use add semantics; non-public views get 60 s TTLs.",
+   "key_points": [
+    "Stale privacy data is a violation, so treat invalidation as part of the write.",
+    "Version every cached view and reject older versions.",
+    "Cache per audience class, not per viewer.",
+    "Fail toward showing less: tightening is synchronous, loosening can lag."
+   ],
+   "qa": [
+    {
+     "q": "How does the stale-fill race happen and how do you stop it?",
+     "a": "A reader fetches old data, a writer updates and deletes the key, then the reader sets the old value. Leases or version checks stop it: the fill is ignored if the version in the database moved since the read began."
+    },
+    {
+     "q": "Why not just set TTL to 1 second?",
+     "a": "It would destroy hit rate on a 2 M reads/s path and push 40x more load to the store, and still allow up to 1 s of violation. Explicit invalidation plus versions gives both freshness and hit rate."
+    },
+    {
+     "q": "Why per audience class?",
+     "a": "Visible fields depend only on the class (public, follower, friend, self), not the specific viewer, so a handful of entries per owner serve all viewers. Custom lists are the exception and are evaluated per request."
+    }
+   ]
+  },
+  {
+   "name": "Transactional outbox and change data capture",
+   "explain": "When a service must update its database and also publish an event, doing both separately (dual write) is unsafe: the process can crash between the two, or the publish can succeed while the database transaction rolls back, leaving systems disagreeing forever. The transactional outbox pattern writes the event into an outbox table in the same database transaction as the business change. A separate relay process reads the outbox (by polling or by tailing the database log with change data capture, for example Debezium on the PostgreSQL WAL or MySQL binlog) and publishes to a broker such as Kafka, marking entries as sent. Because the event and the change commit atomically, an event exists if and only if the change happened. Delivery to the broker is at-least-once, so events carry an idempotency key or version and consumers apply them idempotently, for example by ignoring events with a version lower than what they already have. Partitioning the topic by entity id keeps per-entity order, which matters when a field is made public then private in quick succession. For stores without multi-row transactions, the event can be written in the same partition or batch as the row, or native CDC can be used.",
+   "in_this_design": "Every profile or privacy write includes an outbox record (in Cassandra, a logged batch in the same partition; in PostgreSQL stores, the same transaction). The relay publishes to Kafka partitioned by user_id; consumers apply events by version, so out-of-order or duplicated events are harmless.",
+   "key_points": [
+    "Dual writes lose events; outbox makes the event part of the transaction.",
+    "Delivery is at-least-once; consumers must be idempotent by version.",
+    "Partition by user_id to keep per-user ordering.",
+    "The stream is the backbone for privacy propagation and erasure."
+   ],
+   "qa": [
+    {
+     "q": "What if the relay publishes twice?",
+     "a": "Consumers dedupe by (user_id, version): applying version 42 twice is a no-op, and version 41 after 42 is ignored."
+    },
+    {
+     "q": "Why not have the Profile Service call search directly on each write?",
+     "a": "It couples availability (search down blocks profile writes) and loses events on crashes. The outbox decouples and guarantees eventual delivery."
+    },
+    {
+     "q": "How do you know consumers kept up?",
+     "a": "Consumer lag per partition, plus end-to-end propagation probes: write a synthetic privacy change and measure when it disappears from search results."
+    }
+   ]
+  },
+  {
+   "name": "Envelope encryption and crypto-shredding",
+   "explain": "Envelope encryption uses two layers of keys. Data is encrypted with a data encryption key (DEK), usually AES-256-GCM, generated per object or per user. The DEK itself is encrypted (wrapped) by a key encryption key (KEK) that lives in a key management service or hardware security module and never leaves it. The wrapped DEK is stored next to the data. To read, the service asks KMS to unwrap the DEK (cached briefly in memory) and decrypts locally. Benefits: bulk encryption is fast and local, the master key is protected and auditable, and rotating the KEK only requires rewrapping small DEKs. Crypto-shredding uses this structure for deletion: if each user's data is encrypted under their own DEK, destroying that key makes every copy of the ciphertext, including copies in immutable backups, replicas and logs, permanently unreadable. This is widely used to satisfy erasure requirements where rewriting backups is impractical. Caveats: the data must never have been stored in plaintext elsewhere (logs, caches, analytics), key destruction must itself be durable and audited, and regulators may still expect primary copies to be deleted, so crypto-shredding complements rather than replaces deletion.",
+   "in_this_design": "Each user has a DEK wrapped by a regional KEK; PII vault rows store ciphertext plus dek_id. Erasure deletes rows and schedules DEK destruction after a 7-day safety window, so 35-day immutable backups become unreadable for that user.",
+   "key_points": [
+    "DEK encrypts data; KEK in KMS wraps the DEK.",
+    "Per-user DEKs enable per-user crypto-shredding.",
+    "Shredding covers backups and replicas you cannot edit.",
+    "Only works if plaintext never leaked into logs or other stores."
+   ],
+   "qa": [
+    {
+     "q": "Why per-user keys instead of one key per table?",
+     "a": "A table key cannot be destroyed without destroying everyone's data. Per-user keys let you shred exactly one user."
+    },
+    {
+     "q": "Does KMS latency hurt reads?",
+     "a": "Unwrapped DEKs are cached in memory for minutes with strict limits, and PII is rarely read on hot paths, so KMS calls are a small fraction of traffic."
+    },
+    {
+     "q": "What can defeat crypto-shredding?",
+     "a": "Plaintext copies: debug logs, analytics exports, cached decrypted values, or downstream systems that stored PII unencrypted. That is why PII is excluded from the change stream and vault reads are purpose-bound."
+    }
+   ]
+  },
+  {
+   "name": "Data minimisation and purpose limitation",
+   "explain": "Privacy law (GDPR Article 5, India's DPDP Act) requires that personal data be collected for specified purposes and used only for those purposes, and that only data necessary for the purpose be processed. In system terms this means: classify every field by sensitivity and allowed purposes, give each consuming system an identity and a declared purpose, and project data so each consumer sees only the fields allowed for its purpose and only for users whose consent covers that purpose. It also means tracking lineage, since a field copied into ten systems is ten places to delete it from. Consent is not a boolean: it has a purpose, a policy text version, a timestamp and a source, and it can be withdrawn, after which processing for that purpose must stop. Engineering patterns include a central data catalogue with field tags (pii, sensitive, public), purpose-filtered projections on the change stream, consent checks inside the projector, and periodic scans that find untagged PII in warehouses. Minimisation also reduces breach blast radius and makes erasure tractable.",
+   "in_this_design": "Each consumer is registered with purposes; the projector on the Privacy Change Stream emits only allowed fields and skips users without the needed consent. PII never enters the stream; consumers that genuinely need PII call the vault with purpose-bound tokens.",
+   "key_points": [
+    "Collect and share only what a purpose needs.",
+    "Consent is per purpose, versioned and revocable.",
+    "Project data per consumer; never give raw copies.",
+    "Fewer copies means easier erasure and smaller breaches."
+   ],
+   "qa": [
+    {
+     "q": "User withdraws ads consent. What happens?",
+     "a": "Consent store records withdrawal; a ConsentChanged event makes the ads projector emit a delete for that user's features; ads feature store drops them and acks; future events are filtered."
+    },
+    {
+     "q": "How do you find PII in places it should not be?",
+     "a": "Data catalogue tags, schema registry rules on Kafka, and periodic classifiers scanning warehouse tables for email or phone patterns, with alerts to owners."
+    },
+    {
+     "q": "Why not let search index the full profile and filter at query time?",
+     "a": "Then the index holds data it should not, which complicates erasure and risks leaks via bugs. Index only public fields and filter blocks at query time."
+    }
+   ]
+  },
+  {
+   "name": "Consistent hashing and partitioning by user_id",
+   "explain": "To spread data across many nodes you need a function from key to node. Plain modulo hashing (hash(key) mod N) remaps almost every key when N changes, causing massive data movement. Consistent hashing places nodes and keys on a ring of hash values; each key belongs to the next node clockwise. Adding or removing a node only moves the keys in its arc, about 1/N of the data. Virtual nodes (many tokens per physical node) smooth out the distribution and let bigger machines take more tokens. Systems like Dynamo and Cassandra replicate each key to the next RF distinct nodes on the ring and use quorum reads and writes (for RF=3, W=2 and R=2) so that a read overlaps the latest write. Partitioning by user_id is natural for profiles because nearly all access is by owner, so a full profile is a single-partition read and a write touches one partition. The risk is hot keys: a celebrity's partition is read far more than others, which partitioning does not fix; that is solved by caching and replication of the hot view rather than by repartitioning.",
+   "in_this_design": "Card and extended stores partition by user_id on a Cassandra ring with RF=3 and LOCAL_QUORUM. Hot celebrity profiles are absorbed by the cache tiers and in-process hot-key cache.",
+   "key_points": [
+    "Consistent hashing moves about 1/N of keys when nodes change.",
+    "Virtual nodes balance load and heterogeneity.",
+    "RF=3 with W=2, R=2 gives overlapping quorums.",
+    "Partitioning spreads keys, not load on a single hot key."
+   ],
+   "qa": [
+    {
+     "q": "Why LOCAL_QUORUM instead of QUORUM?",
+     "a": "QUORUM across regions adds cross-region latency to every request; LOCAL_QUORUM gives read-your-writes within the region, and cross-region lag is acceptable for profile data, with privacy tightening handled by explicit invalidations."
+    },
+    {
+     "q": "Does consistent hashing fix celebrity hot keys?",
+     "a": "No; the key still maps to the same replicas. Caching the public view widely and in-process is the fix."
+    },
+    {
+     "q": "How many nodes for 40,000 reads/s?",
+     "a": "A Cassandra node comfortably serves several thousand single-partition reads per second; 30 nodes give ample headroom for 40,000 reads/s plus compaction and repair."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Cache granularity",
+   "options": "Per viewer / per audience class / no cache",
+   "choice": "Per audience class",
+   "why": "Bounded cardinality with correct results; per-viewer explodes memory, no cache cannot meet 2 M reads/s."
+  },
+  {
+   "decision": "Propagation semantics",
+   "options": "Symmetric eventual / asymmetric (tighten sync, loosen async)",
+   "choice": "Asymmetric",
+   "why": "Showing less is always safe; it limits the expensive synchronous path to the cases that matter."
+  },
+  {
+   "decision": "PII storage",
+   "options": "In profile rows / separate encrypted vault",
+   "choice": "Separate vault with per-user DEKs",
+   "why": "Smaller blast radius, crypto-shredding, residency pinning, access audit."
+  },
+  {
+   "decision": "Policy location",
+   "options": "Each surface implements checks / central service returns filtered views",
+   "choice": "Central",
+   "why": "One implementation prevents drift; surfaces cannot accidentally show hidden fields."
+  },
+  {
+   "decision": "Failure mode when graph is down",
+   "options": "Fail open to last known / fail closed to public view",
+   "choice": "Fail closed",
+   "why": "Showing friends-only data to strangers is worse than temporarily hiding it from friends."
+  },
+  {
+   "decision": "Erasure approach",
+   "options": "Delete everywhere including backups / delete primaries plus crypto-shred",
+   "choice": "Delete plus crypto-shred",
+   "why": "Backups are immutable; shredding makes them unreadable without rewriting."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Graph Service unavailable or slow (>20 ms).",
+   "behavior": "Circuit breaker opens; viewers are treated as public class (fail closed); blocks are checked against a local bloom filter of recent blocks to avoid exposing to blocked users."
+  },
+  {
+   "failure": "Cache cluster loses a shard.",
+   "behavior": "Consistent hashing remaps keys; misses go to the store guarded by request coalescing and per-owner single-flight to avoid a stampede."
+  },
+  {
+   "failure": "Kafka relay stalls.",
+   "behavior": "Outbox rows accumulate; alarms on outbox age over 30 s; synchronous invalidations still protect caches; search may lag and the propagation SLO alert fires."
+  },
+  {
+   "failure": "KMS regional outage.",
+   "behavior": "Cached DEKs serve for their TTL; new PII reads fail and surfaces render without PII; writes of PII queue for retry."
+  },
+  {
+   "failure": "Region loss.",
+   "behavior": "Non-PII profile data is served from other regions' replicas; EU PII stays unavailable rather than being moved, by policy."
+  },
+  {
+   "failure": "Consumer fails to ack erasure.",
+   "behavior": "Ledger escalates at day 20 and day 25; at day 28 the consumer's access credentials to profile data are revoked pending fix."
+  }
+ ],
+ "metrics": [
+  "Privacy tightening propagation latency p50/p99 (synthetic probes per surface).",
+  "Audit sampler: rate of renders that violate policy (re-evaluated offline).",
+  "Cache hit rate per audience class and stale-version rejections per second.",
+  "Profile read p99 and batch hydrate p99.",
+  "Graph check latency and circuit breaker state.",
+  "Outbox age and Kafka consumer lag per consumer.",
+  "Erasure requests open, by age bucket, and acks outstanding per consumer.",
+  "PII vault reads per caller per purpose; anomalous spikes."
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you guarantee a blocked user cannot see the profile even through search snippets or mentions?",
+   "a": "Every surface hydrates profiles through the Profile Service, which checks blocks; search does a block filter at query time. Surfaces are forbidden from storing profile copies beyond the projection, enforced by data catalogue rules."
+  },
+  {
+   "q": "What if a user makes a field public and then private within one second?",
+   "a": "Versions order the changes; consumers ignore older versions; the private change is tightening so it invalidates synchronously. The worst case is a one-second window where the public value was legitimately visible."
+  },
+  {
+   "q": "How do you export a user's data across 15 systems?",
+   "a": "The same consumer registry: each system implements an export endpoint for a user_id; the orchestrator gathers parts into an archive in object storage, encrypted, with a time-limited download link."
+  },
+  {
+   "q": "How would you test privacy correctness continuously?",
+   "a": "Property-based tests on the Policy Engine, synthetic accounts with known settings probed from viewer accounts in each relationship class in production, and an offline auditor that re-evaluates a sample of served responses against current policy."
+  },
+  {
+   "q": "Can you avoid synchronous cross-region invalidation latency?",
+   "a": "Acknowledge after local invalidation and publishing to the bus, and rely on version checks in remote regions: remote caches compare against a privacy_version map pushed in under a second, so even if a delete is delayed the stale entry is rejected."
+  },
+  {
+   "q": "What about analytics that need historical profile data after deletion?",
+   "a": "Analytics uses pseudonymous IDs and aggregated or non-identifying attributes; on erasure the pseudonym mapping is destroyed. Anything that can re-identify must be deleted."
+  },
+  {
+   "q": "How do you handle minors?",
+   "a": "Age-gated defaults (most restrictive), no ads personalisation purposes, and parental consent records in the consent store; the Policy Engine uses an is_minor flag to override audiences."
+  }
+ ],
+ "key_points": [
+  "Split by sensitivity: public card, extended profile with per-field audiences, encrypted PII vault.",
+  "One Policy Engine decides visibility; blocks first, then account privacy, then field audience.",
+  "Cache per audience class with privacy_version; never per viewer.",
+  "Tightening is synchronous and fail-closed; loosening can be eventual.",
+  "Outbox plus Kafka keyed by user_id propagates changes to every consumer with ordering.",
+  "Purpose-filtered projections and consent checks implement minimisation.",
+  "Erasure is a ledger-tracked workflow plus crypto-shredding for backups.",
+  "Measure propagation latency and run a continuous privacy auditor."
+ ],
+ "quiz": [
+  {
+   "q": "Profile views must be cached for 2 M reads/s. Which cache key keeps correctness and bounded memory?",
+   "options": [
+    "view:{owner}:{viewer}",
+    "view:{owner}:{audience_class}",
+    "view:{owner} with all fields, filtered by the client",
+    "view:{viewer}:{feed_page}"
+   ],
+   "answer": 1,
+   "why": "Visible fields depend on the audience class, so a few entries per owner serve all viewers. Per-viewer keys are correct but explode cardinality; caching all fields and filtering on the client leaks data."
+  },
+  {
+   "q": "Graph Service is down. What should profile reads do?",
+   "options": [
+    "Fail closed: treat viewer as public class",
+    "Use the last cached friend relationship indefinitely",
+    "Return all fields since we cannot check",
+    "Return HTTP 500 for every profile"
+   ],
+   "answer": 0,
+   "why": "Failing closed hides friend-only data briefly but never leaks. Indefinite stale relationships are tempting but could show data to someone the owner just blocked."
+  },
+  {
+   "q": "A reader misses cache, reads old data, a writer updates and deletes the key, then the reader fills the cache. What prevents the stale entry?",
+   "options": [
+    "Longer TTL",
+    "Write-through caching from the reader",
+    "Version or lease check on fill",
+    "Reading from a replica"
+   ],
+   "answer": 2,
+   "why": "Versions or leases reject fills that started before the change. Longer TTL makes the stale entry live longer, the opposite of the goal."
+  },
+  {
+   "q": "Why is crypto-shredding useful for erasure?",
+   "options": [
+    "It deletes rows faster than DELETE",
+    "It removes the need to delete primary data",
+    "It compresses backups",
+    "It makes immutable backup copies unreadable without rewriting them"
+   ],
+   "answer": 3,
+   "why": "Destroying the per-user key renders all ciphertext copies unreadable, including backups. It does not replace deleting primary data; that misconception is the tempting wrong answer."
+  },
+  {
+   "q": "Which pattern guarantees a privacy change is never stored without its event being published?",
+   "options": [
+    "Transactional outbox",
+    "Dual write to DB then Kafka",
+    "Cron job that diffs tables nightly",
+    "Client publishes the event after the API returns"
+   ],
+   "answer": 0,
+   "why": "The outbox commits the event with the change. Dual writes look equivalent but a crash between the two loses the event."
+  },
+  {
+   "q": "User hides birthday from public. Which ordering is right before returning 200?",
+   "options": [
+    "Return 200, then invalidate asynchronously",
+    "Commit, invalidate local cache and publish invalidation, then return",
+    "Invalidate caches, then commit",
+    "Only wait for search to drop the field"
+   ],
+   "answer": 1,
+   "why": "Commit first so refills see the new version, invalidate synchronously, then acknowledge. Invalidating before commit lets a concurrent reader refill with old data."
+  },
+  {
+   "q": "Storage for 300 M profiles at 4 KB each with RF=3 is roughly?",
+   "options": [
+    "360 GB",
+    "36 TB",
+    "3.6 TB",
+    "360 TB"
+   ],
+   "answer": 2,
+   "why": "300 M x 4 KB = 1.2 TB; x3 = 3.6 TB. 36 TB is a factor-of-ten slip."
+  },
+  {
+   "q": "Why is per-user DEK better than a per-table key for this design?",
+   "options": [
+    "Per-table keys cannot use AES",
+    "KMS forbids per-table keys",
+    "Per-user DEKs are faster to decrypt",
+    "Only per-user keys allow shredding one user's data"
+   ],
+   "answer": 3,
+   "why": "Destroying a table key would erase everyone. Speed is the tempting answer but encryption cost is the same."
+  },
+  {
+   "q": "A blocked user's search query returns the blocker's name. Most robust fix?",
+   "options": [
+    "Filter blocks at query time in search plus index only public fields",
+    "Remove blocked users from the index nightly",
+    "Rely on the client to hide results",
+    "Increase search cache TTL"
+   ],
+   "answer": 0,
+   "why": "Query-time block filtering is immediate; nightly batch leaves a window of up to 24 hours. Clients cannot be trusted for privacy."
+  },
+  {
+   "q": "Which access-control model best fits 'friends can see my birthday'?",
+   "options": [
+    "Static ACL per field",
+    "RBAC with global roles",
+    "Relationship-based access control",
+    "Mandatory access control labels"
+   ],
+   "answer": 2,
+   "why": "Access depends on the relationship between viewer and owner. ACLs would need constant updates on every friendship change."
+  },
+  {
+   "q": "Which consistency level is the best default for profile reads in a multi-region Cassandra setup?",
+   "options": [
+    "ALL",
+    "LOCAL_QUORUM",
+    "ONE across any region",
+    "EACH_QUORUM"
+   ],
+   "answer": 1,
+   "why": "LOCAL_QUORUM gives read-your-writes within a region without cross-region latency. ONE is tempting for speed but can read a stale replica right after a privacy change."
+  },
+  {
+   "q": "A consumer misses deletion events for 3 weeks while Kafka retention is 14 days. What catches it?",
+   "options": [
+    "Nothing; data is lost",
+    "Kafka exactly-once semantics",
+    "Increasing partitions",
+    "Deletion ledger with acks and reconciliation"
+   ],
+   "answer": 3,
+   "why": "The ledger notices missing acks and triggers reconciliation against tombstones. Exactly-once is about duplicates, not missed consumption."
+  },
+  {
+   "q": "Why should hidden profiles return the same response as non-existent ones to blocked viewers?",
+   "options": [
+    "To reduce bandwidth",
+    "To avoid leaking that the account exists",
+    "Because HTTP requires it",
+    "To improve cache hit rate"
+   ],
+   "answer": 1,
+   "why": "A distinct 403 confirms existence, which is itself a leak. Bandwidth and caching are side issues."
+  },
+  {
+   "q": "Two privacy updates arrive out of order at a consumer. How do they converge?",
+   "options": [
+    "Apply by wall-clock timestamp",
+    "Apply in arrival order",
+    "Apply by per-user monotonic version, ignoring lower versions",
+    "Reject both and ask for a resync"
+   ],
+   "answer": 2,
+   "why": "Versions from CAS give a total order per user independent of clocks. Timestamps are tempting but clock skew can invert order."
+  },
+  {
+   "q": "Celebrity profile is read 500,000 times per second. Best mitigation?",
+   "options": [
+    "In-process hot-key cache of the public view with short TTL and push invalidation",
+    "Add more Cassandra nodes",
+    "Reshard by user_id plus random suffix",
+    "Disable privacy checks for celebrities"
+   ],
+   "answer": 0,
+   "why": "Hot-key load is absorbed by replicating the cached view into every service node. Adding nodes does not help because one key still maps to the same replicas."
+  },
+  {
+   "q": "With 98% cache hit rate on 2 M reads/s, how many reads reach the store?",
+   "options": [
+    "4,000/s",
+    "400,000/s",
+    "40,000/s",
+    "20,000/s"
+   ],
+   "answer": 2,
+   "why": "2% of 2,000,000 = 40,000. 400,000 would be a 20% miss rate."
+  },
+  {
+   "q": "Which data should never flow on the privacy change stream?",
+   "options": [
+    "Visibility changes",
+    "Encrypted-at-rest PII such as phone numbers",
+    "Account deletion events",
+    "Display name updates"
+   ],
+   "answer": 1,
+   "why": "PII stays in the vault and is fetched with purpose-bound access; putting it on a widely consumed stream multiplies copies and defeats shredding."
+  },
+  {
+   "q": "User withdraws consent for personalised ads. Correct system behaviour?",
+   "options": [
+    "Stop sending new events but keep existing ad features",
+    "Delete the user account",
+    "Ask ads to filter at serving time only",
+    "Projector emits delete for that user's ad features and filters future events"
+   ],
+   "answer": 3,
+   "why": "Withdrawal must stop processing, which includes stored features. Keeping existing features is the tempting but non-compliant shortcut."
+  },
+  {
+   "q": "Why are custom-list audiences not cached per audience class?",
+   "options": [
+    "Visibility depends on membership in a specific list, so class is not enough",
+    "Lists are rarely used",
+    "Memcached cannot store lists",
+    "Lists are stored in the PII vault"
+   ],
+   "answer": 0,
+   "why": "Two friends can differ in list membership, so the class does not determine the view. Rarity is not the reason; correctness is."
+  },
+  {
+   "q": "Why accept eventual consistency for loosening (making a field public)?",
+   "options": [
+    "It is cheaper to implement both ways",
+    "Showing less than allowed briefly is safe; showing more is a violation",
+    "Regulations require delays",
+    "Search cannot index quickly"
+   ],
+   "answer": 1,
+   "why": "The asymmetry is about harm: a brief under-share is harmless. The other options misread the reason."
+  }
+ ],
+ "references": [
+  {
+   "title": "Zanzibar: Google's Consistent, Global Authorization System (USENIX ATC 2019)",
+   "url": "https://www.usenix.org/conference/atc19/presentation/pang"
+  },
+  {
+   "title": "Zanzibar paper at Google Research",
+   "url": "https://research.google/pubs/zanzibar-googles-consistent-global-authorization-system/"
+  },
+  {
+   "title": "Crypto-shredding as a GDPR Article 17 implementation pattern (sota.io)",
+   "url": "https://sota.io/blog/chatto-crypto-shredding-gdpr-article-17-right-to-erasure-self-hosted-implementation-2026"
+  }
+ ]
+}

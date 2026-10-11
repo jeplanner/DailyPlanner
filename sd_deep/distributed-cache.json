@@ -1,0 +1,1246 @@
+{
+ "slug": "distributed-cache",
+ "title": "Design a Distributed Cache (Redis / Memcached cluster)",
+ "prompt": "Design a distributed cache (Redis / Memcached cluster).",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Hard",
+ "minutes": 130,
+ "summary": "A distributed cache is an in-memory key-value tier that absorbs most reads so databases survive, which makes it both a performance system and a reliability dependency. The design questions are how keys are spread and moved (consistent hashing or hash slots), how replicas and failover work without split brain, how memory is managed (slab allocation, LRU/LFU eviction, TTLs), and the hard part most candidates skip: keeping the cache correct and the database alive under invalidation races, thundering herds, hot keys and node loss.",
+ "framework": {
+  "clarify": [
+   "Use case: look-aside cache in front of databases and services for read-heavy workloads (product pages, sessions, feature flags), not a primary database. Is data loss on node failure acceptable? Assume yes for cache data, but session data wants replication.",
+   "Scale: assume 5M ops/s peak (90% reads), 20 TB of hot data, values from 100 bytes to 100 KB with median 1 KB, 1 billion keys.",
+   "Latency: p99 under 1 ms server-side and under 2-3 ms from the app in the same AZ.",
+   "Data model: plain get/set/delete with TTL, or rich structures (hashes, sorted sets, counters, lists) like Redis? Assume Redis-like with plain KV as the dominant path.",
+   "Consistency expectation: eventual with bounded staleness (seconds) is acceptable for most keys; a few keys (inventory, prices at checkout) bypass the cache or use short TTLs.",
+   "Availability: cache tier 99.99%, and the system must survive a cache node or AZ loss without overwhelming the databases.",
+   "Multi-tenancy: shared clusters for many teams with namespaces and quotas, or a cluster per service? Assume per-domain clusters with a shared control plane.",
+   "Cross-region: each region has its own cache; invalidations must reach all regions when the source of truth changes."
+  ],
+  "design": [
+   "Baseline first: a single Redis or Memcached node with an LRU and TTLs. It handles about 100k-1M simple ops/s and tens of GB, so it fails on capacity, single point of failure and network bandwidth.",
+   "Partitioning: split the key space into 16,384 hash slots (CRC16(key) mod 16384) like Redis Cluster, or use a consistent-hash ring with 100-200 virtual nodes per server like Memcached clients (ketama). Slots map to shards; each shard holds about 50-100 GB.",
+   "Routing: smart clients cache the slot map and send directly to the owner; on a MOVED/ASK redirect they refresh. Alternatively a proxy tier (mcrouter, Envoy, Twemproxy) does routing, pooling and replication for thin clients.",
+   "Replication and failover: each shard has a primary and 1-2 replicas in other AZs with asynchronous replication; failure detection by gossip and majority of primaries (Redis Cluster) or an external Sentinel/controller quorum promotes a replica.",
+   "Memory management: slab allocator (Memcached) or jemalloc (Redis) with maxmemory and an eviction policy (allkeys-lfu or allkeys-lru approximated by sampling), TTL with lazy and active expiry.",
+   "Cache access pattern: cache-aside with delete-on-write invalidation driven by the database change stream (CDC), leases or request coalescing to prevent thundering herds, and TTL jitter to avoid synchronised expiry.",
+   "Hot key handling: client-side near cache with a 1-5 s TTL, key replication across several shards (key#1..key#N), and hot-key detection.",
+   "Control plane: cluster manager for provisioning, resharding (slot migration), scaling, config, metrics and quotas."
+  ],
+  "defend": [
+   "Bottleneck: per-shard CPU (Redis main thread is single-threaded for commands) and network bandwidth for large values; scale out by more shards and keep values small (compress over 1 KB).",
+   "Scaling reads: replicas can serve reads where staleness is acceptable, near caches absorb hot keys, and proxies batch multi-gets; aim for a 95-99% hit rate to shield the database.",
+   "Scaling writes and capacity: add shards and migrate slots online (only 1/N of keys move with slots or consistent hashing), pipeline and batch writes.",
+   "Failure behaviour: client timeouts of 50-100 ms, retries with jitter only for idempotent ops, circuit breaker to the cache, and protecting the database when the cache is down (request coalescing, rate limits, serving stale, gutter pool of spare servers like Facebook's).",
+   "Consistency: delete rather than update on writes, use leases or versioned sets to stop stale writes after a race, short TTLs as a backstop, and invalidation fan-out from CDC across regions.",
+   "Measure: hit ratio per keyspace, p99 latency per shard, evictions/s, memory fragmentation, replication lag, hot keys, connection counts, and the database QPS you are protecting."
+  ],
+  "script": "I will clarify first: this is a look-aside, in-memory cache in front of databases for read-heavy traffic, about 5 million ops a second, 20 TB of hot data, sub-millisecond p99, eventual consistency with bounded staleness, and it must survive node or AZ loss without hurting the database. The baseline is one Redis node with LRU and TTLs, which runs out of memory, CPU and bandwidth and is a single point of failure. So I partition the key space into 16,384 hash slots spread over a few hundred shards, with smart clients or a proxy routing by slot, and each shard has a primary plus replicas in other AZs with automatic failover. Memory is bounded with maxmemory and an LFU or LRU eviction policy, TTLs with jitter. Applications use cache-aside: read, on miss load from the database and set; on writes, update the database and delete the key, with invalidations driven by the database change stream. To defend it, I will talk about hot keys with near caches and key replication, thundering herds with leases and request coalescing, the stale-set race and how leases or versions fix it, resharding moving only a fraction of keys, and failure modes where the real risk is the database melting when the cache hit rate drops."
+ },
+ "brd": {
+  "problem": "Product, pricing, catalog and session services serve millions of reads per second, mostly of the same popular data. Hitting MySQL and downstream services for every read is slow (10-50 ms) and expensive, and sale-day spikes overload the databases. Teams run ad hoc Redis instances with no failover, inconsistent client settings and no visibility, causing incidents when a node dies. The business needs a shared, reliable caching platform that cuts read latency to about a millisecond, absorbs most of the read load, and degrades safely.",
+  "goals": [
+   "Serve reads in under 1 ms p99 server-side for cached data.",
+   "Absorb at least 95% of read traffic for cached keyspaces so primary databases are sized for writes and misses.",
+   "Survive a node or AZ failure with automatic failover in under 15 seconds and no database meltdown.",
+   "Scale capacity and throughput online without downtime or mass cache misses.",
+   "Provide standard client libraries and patterns (cache-aside, invalidation, herd protection) so teams do not reinvent them.",
+   "Give every team visibility: hit ratio, latency, memory and hot keys per keyspace."
+  ],
+  "non_goals": [
+   "Being the system of record for critical data (orders, payments).",
+   "Strong consistency or multi-key transactions across shards.",
+   "Persistent storage of large datasets that do not fit in memory economically.",
+   "Cross-region synchronous replication."
+  ],
+  "stakeholders": [
+   {
+    "who": "Service teams (catalog, pricing, sessions, recommendations)",
+    "needs": "Simple, fast API, sensible defaults, clear consistency guarantees, quotas they can rely on."
+   },
+   {
+    "who": "Database owners / DBAs",
+    "needs": "Predictable load: no stampedes when keys expire or nodes fail."
+   },
+   {
+    "who": "SRE / platform team",
+    "needs": "Automated provisioning, failover, resharding, upgrades, alerting."
+   },
+   {
+    "who": "Finance",
+    "needs": "Memory is expensive; cost per GB and per op, chargeback by team."
+   },
+   {
+    "who": "Security",
+    "needs": "Authentication, TLS, network isolation, no sensitive data cached without encryption and TTL."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Read latency",
+    "target": "p99 < 1 ms server-side, < 3 ms client-observed in-AZ"
+   },
+   {
+    "metric": "Hit ratio",
+    "target": ">= 95% for read-heavy keyspaces"
+   },
+   {
+    "metric": "Availability",
+    "target": "99.99% of cache requests succeed"
+   },
+   {
+    "metric": "Failover time",
+    "target": "< 15 s to promote a replica"
+   },
+   {
+    "metric": "Database protection",
+    "target": "No database overload incident caused by cache failure or expiry storms"
+   },
+   {
+    "metric": "Cost",
+    "target": "Memory utilisation 60-80% across the fleet"
+   }
+  ],
+  "constraints": [
+   "Memory is about 10-30x more expensive per GB than SSD; dataset must be curated and TTL-bound.",
+   "Redis executes commands on a single main thread per process; Memcached is multi-threaded but has fewer data types.",
+   "Same-AZ network round trip about 0.1-0.3 ms; cross-AZ 0.5-1 ms and billed.",
+   "Clients in Java, Go, Python and Node with different connection models."
+  ],
+  "risks": [
+   {
+    "risk": "Cache node failure causes a miss storm that takes down the database",
+    "mitigation": "Replicas with fast failover, gutter pool, request coalescing, database admission control, warm-up before cutover."
+   },
+   {
+    "risk": "Stale data served after updates (race between read-fill and invalidate)",
+    "mitigation": "Delete-on-write, leases or versioned compare-and-set on fill, short TTLs as backstop, CDC-driven invalidation."
+   },
+   {
+    "risk": "Hot key (flash sale product) saturates one shard",
+    "mitigation": "Near cache, key replication, hot-key detection and alerts, split large values."
+   },
+   {
+    "risk": "Unbounded memory growth or big keys evicting everything else",
+    "mitigation": "Max value size, TTL required by default, per-keyspace memory quotas, big-key scanner."
+   },
+   {
+    "risk": "Split brain during network partition creates two primaries",
+    "mitigation": "Majority-based failover, min-replicas-to-write, epochs; clients follow the latest config epoch."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Service developer",
+    "needs": "A client library with get/set/delete, multi-get, TTL, herd protection and metrics out of the box."
+   },
+   {
+    "name": "Platform SRE",
+    "needs": "Self-service cluster creation, online scaling, failover automation, dashboards."
+   },
+   {
+    "name": "Data owner (DBA)",
+    "needs": "Guarantees that cache failures will not translate into uncontrolled database load."
+   },
+   {
+    "name": "Security engineer",
+    "needs": "AuthN/AuthZ per keyspace, TLS, audit of admin operations."
+   }
+  ],
+  "user_stories": [
+   "As a developer, I want to GET a product by id in under a millisecond so that the product page renders fast.",
+   "As a developer, I want a get-or-load helper that ensures only one request rebuilds a missing key so that the database is not stampeded.",
+   "As a developer, I want writes to the database to invalidate the cached entry automatically so that users do not see stale prices for long.",
+   "As a developer, I want multi-get of 100 keys in one call so that I can render a listing page with one round trip per shard.",
+   "As an SRE, I want to add shards during a sale without downtime so that capacity matches traffic.",
+   "As an SRE, I want a failed primary to be replaced automatically so that I am not paged for every node loss.",
+   "As a DBA, I want cache misses during a node failure to be rate-limited so that my database stays healthy.",
+   "As a team lead, I want hit ratio and memory per keyspace so that I can tune TTLs and cost.",
+   "As a security engineer, I want session tokens cached only with TLS and ACLs so that they cannot be read by other services."
+  ],
+  "functional": [
+   "Key-value operations: GET, SET with TTL and NX/XX conditions, DEL, MGET/MSET (per shard), INCR/DECR, EXPIRE.",
+   "Optional rich structures: hashes, sorted sets, lists, sets (Redis mode).",
+   "Partitioning by hash slots with online slot migration and rebalancing.",
+   "Replication: primary with 1-2 replicas across AZs; read-from-replica option.",
+   "Automatic failure detection and failover with epochs.",
+   "Eviction policies: allkeys-lfu, allkeys-lru, volatile-ttl; maxmemory per node; TTL expiry (lazy plus active).",
+   "Client library: smart routing, connection pooling, pipelining, timeouts, retries, circuit breaker, near cache, lease/single-flight fills.",
+   "Invalidation pipeline from database CDC to cache deletes, including cross-region fan-out.",
+   "Observability: per-keyspace metrics, hot key and big key detection, slow log."
+  ],
+  "non_functional": [
+   {
+    "name": "Latency",
+    "target": "p50 < 0.3 ms, p99 < 1 ms server-side; client p99 < 3 ms in-AZ"
+   },
+   {
+    "name": "Throughput",
+    "target": "5M ops/s cluster-wide; plan about 50-100k ops/s per shard at < 60% CPU"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99%; failover < 15 s; no single AZ loss causing outage"
+   },
+   {
+    "name": "Consistency",
+    "target": "Eventual; invalidation lag p99 < 1 s in-region, < 5 s cross-region; TTL backstop"
+   },
+   {
+    "name": "Durability",
+    "target": "Not required for pure cache keyspaces; sessions use replicas plus optional AOF everysec"
+   },
+   {
+    "name": "Scalability",
+    "target": "Online scale-out to 1,000 shards; resharding moves only affected slots"
+   },
+   {
+    "name": "Security",
+    "target": "TLS, ACLs per keyspace, private networking"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "5M ops/s peak: 4.5M reads, 0.5M writes/deletes.",
+    "1 billion keys, average value 1 KB plus about 100 bytes key and overhead, so about 20 TB including hot sets for larger values.",
+    "Each shard (Redis process) handles about 80k ops/s comfortably at 1 KB values, with 50-64 GB of data on a 128 GB host (headroom for fork, fragmentation, buffers).",
+    "Replication factor: 1 primary + 1 replica per shard (sessions: +2).",
+    "Hit ratio target 95%."
+   ],
+   "math": [
+    "Throughput sharding: 5M ops/s / 80k ops/s per shard = about 63 shards; memory sharding: 20 TB / 64 GB = about 320 shards. Memory dominates: plan about 320 primaries plus 320 replicas = 640 processes.",
+    "Read bandwidth: 4.5M reads/s x 1 KB = 4.5 GB/s = 36 Gbps cluster-wide; per primary about 14k reads/s x 1 KB = 14 MB/s, trivial; but a single 100 KB hot key at 50k/s = 5 GB/s, which no single node can serve, hence near caching.",
+    "Database protection: at 95% hits, DB sees 4.5M x 5% = 225k reads/s; if hit ratio drops to 80% (node loss plus cold restart) DB load quadruples to 900k/s, which is why failover and herd control matter.",
+    "Node loss impact: losing one of 320 shards without replica = 1/320 of keys missing = about 14k extra DB reads/s; manageable. Losing an AZ without replicas = about one third of keys = 1.5M extra DB reads/s: catastrophic, so replicas in other AZs are mandatory.",
+    "Invalidation volume: 0.5M writes/s at the DB tier produce about 0.5M deletes/s, fanned out to 3 regions = 1.5M deletes/s across regions.",
+    "Connections: 20k app pods x 1 connection per shard (via multiplexing) x 320 shards = 6.4M connections, too many; use a proxy tier or per-host connection sharing to cut it to about 50k."
+   ],
+   "summary": "Memory, not CPU, sets the size: about 320 shards of 64 GB each with one replica, roughly 640 Redis processes on 128 GB hosts. CPU headroom is large except for hot keys. The scary number is the database: a drop from 95% to 80% hit ratio quadruples DB reads, so replicas, failover speed and herd protection matter more than raw cache throughput."
+  },
+  "out_of_scope": [
+   "Persistent primary datastore features (durability guarantees, complex queries).",
+   "Cross-shard transactions and Lua scripts touching keys on multiple shards.",
+   "Full-page CDN caching (separate tier).",
+   "Building a new storage engine; we use Redis/Memcached engines."
+  ]
+ },
+ "hld": {
+  "overview": "Application services embed a smart cache client (or talk to a local proxy sidecar) that hashes each key to one of 16,384 slots, looks up the owning shard in a cached slot map, and sends the request over pooled, pipelined connections. Each shard is a Redis (or Memcached) primary with one or two replicas in other AZs. A cluster manager owns the slot map, health checking, failover with config epochs, and slot migration for resharding. Writes go to the database; a CDC pipeline reads the database binlog and issues deletes to the cache in every region. Client libraries implement cache-aside with leases/single-flight, TTL jitter, near caches for hot keys, circuit breakers, and a gutter pool used when a shard is down.",
+  "diagram": "\n  App pods (catalog, pricing, sessions)\n  +-------------------------------------------+\n  | Cache client: slot map, pools, pipelining |\n  | near cache (1-5s), single-flight/leases   |\n  +-----+----------------------+--------------+\n        | GET/SET by slot      | miss -> load\n        v                      v\n +---------------------+   +--------------------+     +------------------+\n | Optional proxy tier |   | Primary DB (MySQL) |---->| CDC (binlog)     |\n | (mcrouter/Envoy)    |   +--------------------+     | -> Kafka         |\n +----------+----------+                              +--------+---------+\n            v                                                  | deletes\n +-------------------------------------------------------------v------------+\n |  Cache cluster: 16,384 slots over N shards                               |\n |  Shard 1: P(AZ-a) -> R(AZ-b)   Shard 2: P(AZ-b) -> R(AZ-c)   ...         |\n |  Shard N: P(AZ-c) -> R(AZ-a)   gossip / health                           |\n +-----------------------------+--------------------------------------------+\n                               ^ slot map, failover, migration\n                  +------------+-------------+      +-----------------------+\n                  | Cluster manager (quorum) |      | Gutter pool (spares)  |\n                  | config epochs, rebalance |      | short-TTL fallback    |\n                  +--------------------------+      +-----------------------+\n        Invalidation relay -> other regions' cache clusters (async)\n",
+  "components": [
+   {
+    "name": "Smart client library",
+    "responsibility": "Key hashing to slots, slot map cache with MOVED/ASK handling, connection pooling, pipelining, timeouts, retries, circuit breaker, near cache, single-flight fills, metrics."
+   },
+   {
+    "name": "Proxy tier (optional)",
+    "responsibility": "For thin clients or huge pod counts: connection multiplexing, routing, replicated writes to pools, failover to gutter pool (mcrouter-style)."
+   },
+   {
+    "name": "Cache shard (primary)",
+    "responsibility": "In-memory key-value engine executing commands, enforcing maxmemory and eviction, TTL expiry, replicating to replicas."
+   },
+   {
+    "name": "Replicas",
+    "responsibility": "Asynchronous copies in other AZs; serve reads when allowed; candidates for promotion."
+   },
+   {
+    "name": "Cluster manager / failure detector",
+    "responsibility": "Tracks node health (gossip or heartbeats), elects new primaries with majority agreement and config epochs, publishes the slot map."
+   },
+   {
+    "name": "Resharding / rebalancer",
+    "responsibility": "Moves slots between shards online using MIGRATING/IMPORTING states; balances memory and ops across shards."
+   },
+   {
+    "name": "Invalidation pipeline",
+    "responsibility": "Consumes database binlog (Debezium/Maxwell) via Kafka, maps rows to cache keys, issues DEL to the right shards, relays to other regions."
+   },
+   {
+    "name": "Gutter pool",
+    "responsibility": "Small set of spare cache servers that take over a failed shard's traffic with short TTLs, so misses do not all hit the database."
+   },
+   {
+    "name": "Hot-key detector",
+    "responsibility": "Samples client and server access counts, flags keys above a threshold, enables near caching or key replication automatically."
+   },
+   {
+    "name": "Observability stack",
+    "responsibility": "Per-keyspace hit ratio, latency, evictions, memory, replication lag, slow log; alerts."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Cache-aside read with herd protection",
+    "steps": [
+     "App calls cache.getOrLoad('product:123', loader, ttl=300s).",
+     "Client checks near cache (only for flagged hot keys); on miss computes slot = CRC16('product:123') mod 16384 and sends GET to the owning primary (or replica if stale reads allowed).",
+     "Hit: return value (p99 < 1 ms).",
+     "Miss: client requests a lease (or single-flight lock SET lock:key NX PX 3000). Only the lease holder calls the loader; others wait 10-50 ms and retry GET, or get the stale value if available.",
+     "Lease holder reads the DB, then SETs the value with TTL 300 s plus random jitter (0-30 s) only if its lease is still valid; returns.",
+     "If the cache is unreachable, circuit breaker opens and the client calls the loader directly under a DB-side concurrency limit."
+    ]
+   },
+   {
+    "name": "Write and invalidation",
+    "steps": [
+     "Service updates the product price in MySQL (commit).",
+     "Optionally the service deletes the cache key right after commit for fast in-region freshness.",
+     "CDC reads the binlog row change and publishes to Kafka; the invalidation consumer maps the table/primary key to cache keys and issues DEL in each region.",
+     "Any lease outstanding for that key is invalidated by the delete, so an in-flight filler with old data cannot write it back.",
+     "Next read misses and loads the new price."
+    ]
+   },
+   {
+    "name": "Primary failure and failover",
+    "steps": [
+     "Primary of shard 17 stops responding; peers or the manager mark it PFAIL after node-timeout (for example 5 s).",
+     "A majority of primaries (or the manager quorum) agree it is FAIL.",
+     "The most up-to-date replica (highest replication offset) is elected, bumps the config epoch and becomes primary for its slots.",
+     "Clients get MOVED or connection errors, refresh the slot map, and resume; writes acknowledged by the old primary but not replicated are lost (acceptable for cache).",
+     "Cluster manager provisions a new replica and starts full sync."
+    ]
+   },
+   {
+    "name": "Online resharding (adding shards)",
+    "steps": [
+     "Manager picks slots to move to new shard N+1 to balance memory.",
+     "For each slot: target set IMPORTING, source set MIGRATING; keys are moved in batches with MIGRATE.",
+     "During migration, requests for missing keys on the source get ASK redirects to the target.",
+     "When the slot is empty on the source, ownership is finalised with a new epoch and clients receive MOVED, updating their maps."
+    ]
+   }
+  ],
+  "data_flow": "Reads flow app -> client -> shard (hit) or app -> DB -> client -> shard (fill). Writes flow app -> DB, then DB binlog -> CDC -> Kafka -> invalidator -> DEL on every region's cache. Replication flows primary -> replicas asynchronously via a replication stream with offsets. Control flows from the cluster manager to clients (slot map) and nodes (roles, migrations)."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "GET key (RESP protocol)",
+    "request": "key",
+    "response": "value or nil",
+    "notes": "O(1); routed by slot; can be served by replica with READONLY mode."
+   },
+   {
+    "method": "SET",
+    "path": "SET key value EX 300 [NX|XX]",
+    "request": "key, value, ttl, condition",
+    "response": "OK or nil",
+    "notes": "NX for lock/lease acquisition; TTL required by policy."
+   },
+   {
+    "method": "DEL",
+    "path": "DEL key / UNLINK key",
+    "request": "key(s) in the same slot",
+    "response": "count",
+    "notes": "UNLINK frees big values asynchronously."
+   },
+   {
+    "method": "MGET",
+    "path": "MGET k1 k2 ... (per slot) or client fan-out",
+    "request": "keys",
+    "response": "values",
+    "notes": "Client groups keys by shard and pipelines; hash tags {user:42} co-locate related keys."
+   },
+   {
+    "method": "LEASE",
+    "path": "client.getOrLoad(key, loader, ttl)",
+    "request": "key, loader, ttl, staleOK",
+    "response": "value",
+    "notes": "Library API built on GET + SET NX lease token + compare-and-set fill (or Memcached lease tokens)."
+   },
+   {
+    "method": "ADMIN",
+    "path": "CLUSTER SETSLOT / MIGRATE / FAILOVER",
+    "request": "slot, node, keys",
+    "response": "OK",
+    "notes": "Used by the cluster manager only."
+   },
+   {
+    "method": "ADMIN",
+    "path": "POST /v1/keyspaces",
+    "request": "{name, memory_gb, ttl_default, eviction: allkeys-lfu, replicas: 1, team}",
+    "response": "{keyspace_id, endpoints}",
+    "notes": "Control-plane API for self-service provisioning and quotas."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Cache entry",
+    "store": "Shard memory (dict + robj / slab item)",
+    "fields": [
+     "key (prefixed: keyspace:entity:id)",
+     "value (serialized, compressed if > 1 KB)",
+     "expire_at",
+     "LFU counter / LRU clock",
+     "version (optional, for CAS)"
+    ],
+    "keys": "slot = CRC16(key or {hashtag}) mod 16384",
+    "notes": "Memcached: item in slab class sized by value; Redis: dictEntry with object encoding."
+   },
+   {
+    "entity": "Slot map",
+    "store": "Cluster manager + client cache",
+    "fields": [
+     "slot range",
+     "primary node",
+     "replica nodes",
+     "config_epoch"
+    ],
+    "keys": "slot",
+    "notes": "Clients refresh on MOVED; epochs resolve conflicts."
+   },
+   {
+    "entity": "Lease / lock",
+    "store": "Same shard as key",
+    "fields": [
+     "lock:{key}",
+     "token",
+     "PX 3000"
+    ],
+    "keys": "Same hash tag as the key so it lives on the same shard",
+    "notes": "Prevents thundering herd and stale fills."
+   },
+   {
+    "entity": "Invalidation event",
+    "store": "Kafka topic cache-invalidations",
+    "fields": [
+     "table",
+     "primary_key",
+     "cache_keys[]",
+     "db_commit_ts",
+     "region"
+    ],
+    "keys": "Key = cache key (ordering per key)",
+    "notes": "At-least-once; deletes are idempotent."
+   },
+   {
+    "entity": "Keyspace config",
+    "store": "Control plane DB",
+    "fields": [
+     "keyspace_id",
+     "team",
+     "memory_quota",
+     "eviction_policy",
+     "default_ttl",
+     "replicas",
+     "acl"
+    ],
+    "keys": "keyspace_id",
+    "notes": "Drives provisioning and alerts."
+   }
+  ],
+  "classes": [
+   {
+    "name": "ClusterClient",
+    "responsibility": "Routes commands by slot and handles redirects.",
+    "methods": [
+     "slotOf(key)",
+     "execute(cmd)",
+     "onMoved(slot, node)",
+     "onAsk(slot, node)",
+     "refreshTopology()"
+    ]
+   },
+   {
+    "name": "CacheAside",
+    "responsibility": "Get-or-load with herd protection.",
+    "methods": [
+     "getOrLoad(key, loader, ttl, staleOk)",
+     "invalidate(key)",
+     "ttlWithJitter(ttl)"
+    ]
+   },
+   {
+    "name": "NearCache",
+    "responsibility": "Small in-process cache for hot keys.",
+    "methods": [
+     "get(key)",
+     "put(key, value, ttl=2s)",
+     "onInvalidate(key)"
+    ]
+   },
+   {
+    "name": "CircuitBreaker",
+    "responsibility": "Stops hammering a failing shard.",
+    "methods": [
+     "allow()",
+     "recordSuccess()",
+     "recordFailure()",
+     "state(): CLOSED|OPEN|HALF_OPEN"
+    ]
+   },
+   {
+    "name": "FailureDetector",
+    "responsibility": "Gossip/heartbeat-based health.",
+    "methods": [
+     "ping(node)",
+     "markPfail(node)",
+     "voteFail(node)",
+     "promote(replica)"
+    ]
+   },
+   {
+    "name": "SlotMigrator",
+    "responsibility": "Online resharding.",
+    "methods": [
+     "planMoves(loadStats)",
+     "migrateSlot(slot, src, dst)",
+     "finalize(slot, epoch)"
+    ]
+   },
+   {
+    "name": "InvalidationConsumer",
+    "responsibility": "Turns CDC events into deletes.",
+    "methods": [
+     "onRowChange(event)",
+     "keysFor(table, pk)",
+     "deleteEverywhere(keys)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Lease-based fill (prevents thundering herd and stale sets)",
+    "explain": "On a miss, the first requester gets a lease token; others wait or get stale data. A delete invalidates outstanding leases, so a filler holding old data cannot write it after an invalidation. This is the Memcache-at-Facebook lease idea.",
+    "pseudocode": "getOrLoad(k):\n  v = GET k\n  if v: return v\n  token = rand()\n  if SET lease:{k} token NX PX 3000:\n     val = loader(k)                     # read DB\n     # write only if our lease still exists (no DEL happened)\n     EVAL 'if GET lease:{k}==token then SET k val EX ttl+jitter; DEL lease:{k}'\n     return val\n  else:\n     sleep(20ms); v = GET k  (retry up to 5x)\n     return v or stale(k) or loader_with_db_limit(k)\non invalidate(k): DEL k; DEL lease:{k}"
+   },
+   {
+    "name": "Hash slot routing",
+    "explain": "16,384 slots give fine-grained, movable units; hash tags force related keys into one slot for multi-key ops.",
+    "pseudocode": "slotOf(key):\n  s = key\n  if '{' in key and '}' after it and non-empty between: s = substring inside braces\n  return CRC16(s) mod 16384\nexecute(cmd):\n  node = slotMap[slotOf(cmd.key)]\n  r = node.send(cmd)\n  if r == MOVED(slot, n): slotMap[slot] = n; return execute(cmd)\n  if r == ASK(slot, n): n.send(ASKING); return n.send(cmd)\n  return r"
+   },
+   {
+    "name": "Approximate LFU/LRU eviction by sampling",
+    "explain": "Exact LRU needs a linked list per access, costly in memory and CPU. Redis samples a few keys (maxmemory-samples=5-10) and evicts the best candidate from a pool; LFU uses an 8-bit logarithmic counter with decay.",
+    "pseudocode": "onWrite when used > maxmemory:\n  while used > maxmemory:\n    sample = randomKeys(10)\n    pool.addAll(sample) by score (idle time or low LFU)\n    victim = pool.popWorst()\n    delete(victim)\nLFU counter increment: p = 1/((counter-5)*lfu_log_factor+1); if rand()<p: counter++\ndecay: counter -= minutes_since_last_access / lfu_decay_time"
+   },
+   {
+    "name": "Consistent hashing with virtual nodes (Memcached clients)",
+    "explain": "Each server owns many points on a ring; a key goes to the first point clockwise. Adding a server moves only about 1/N of keys, and virtual nodes even out the load.",
+    "pseudocode": "build(servers):\n  for s in servers: for i in 0..159: ring.add(hash(s.id + '#' + i), s)\n  sort ring\nlookup(key):\n  h = hash(key)\n  idx = ring.ceiling(h) or ring.first()\n  return ring[idx].server"
+   }
+  ],
+  "sequence": "\nApp A          App B        Cache client     Shard (primary)     MySQL      CDC/Kafka\n  |-- get p:1 -->|              |                 |                 |             |\n  |              |              |-- GET p:1 ----->|                 |             |\n  |              |              |<-- nil (miss) --|                 |             |\n  |              |              |-- SET lease NX ->| ok (token t1)   |             |\n  |              |-- get p:1 -->|-- GET p:1 ----->| nil             |             |\n  |              |              |-- SET lease NX ->| fail -> wait 20ms              |\n  |              |              |-- SELECT ---------------------------->|           |\n  |              |              |<-- row (price 999) -------------------|           |\n  |              |              |-- CAS fill if lease==t1 ->| SET p:1 EX 312     |\n  |<-- 999 ------|              |                 |                 |             |\n  |              |              |-- GET p:1 (retry)->| hit 999      |             |\n  |              |<-- 999 ------|                 |                 |             |\n  ... price update: UPDATE products SET price=899 -> binlog ------------------>|\n  |              |              |                 |<-- DEL p:1, DEL lease ------|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Read-fill race: reader loads old row, writer updates DB and deletes key, reader then sets old value",
+   "handling": "Leases or compare-and-set on fill: the delete clears the lease so the stale set is rejected; TTL bounds any remaining staleness."
+  },
+  {
+   "case": "Thundering herd when a popular key expires",
+   "handling": "Single-flight lease so one request rebuilds; others wait briefly or get the stale value; TTL jitter avoids many keys expiring together; probabilistic early refresh for very hot keys."
+  },
+  {
+   "case": "Hot key: 500k reads/s on one product during a flash sale",
+   "handling": "Near cache in each app pod with 1-2 s TTL; replicate the key as key#0..key#7 across shards and read a random copy; detect via sampling."
+  },
+  {
+   "case": "Big key: a 50 MB list blocks the Redis main thread on DEL or read",
+   "handling": "Max value size (for example 1 MB), UNLINK for async free, split into chunks or hashes, big-key scanner alerts."
+  },
+  {
+   "case": "Node failure without replica",
+   "handling": "Its slots are unavailable; clients route those keys to the gutter pool with short TTL (for example 10 s) rather than straight to the DB; manager rebuilds the shard."
+  },
+  {
+   "case": "Network partition: old primary isolated with a minority of clients",
+   "handling": "Majority side promotes a replica; old primary stops accepting writes after node-timeout if it cannot reach a majority (Redis cluster-node-timeout plus min-replicas-to-write); clients follow the higher config epoch."
+  },
+  {
+   "case": "Cold cache after cluster restart or new region",
+   "handling": "Warm up by replaying recent access logs or copying hot keys from a replica, ramp traffic gradually, and use DB-side concurrency limits."
+  },
+  {
+   "case": "Invalidation message lost or delayed (CDC lag)",
+   "handling": "At-least-once delivery with retries, idempotent deletes, lag alerting; TTL as backstop; for critical fields bypass the cache at checkout."
+  },
+  {
+   "case": "Cross-region invalidation: write in region A, stale value in region B",
+   "handling": "Invalidation relay deletes keys in every region from the CDC stream; reads that must be fresh go to the home region's DB."
+  },
+  {
+   "case": "Negative caching: lookups for non-existent ids hammer the DB (or an attack)",
+   "handling": "Cache 'not found' markers with short TTL (30-60 s) and use a Bloom filter for known ids."
+  },
+  {
+   "case": "Slot migration in progress and a multi-key command spans migrating keys",
+   "handling": "Server returns TRYAGAIN for multi-key ops in a migrating slot; client retries after backoff; hash tags keep related keys in one slot."
+  },
+  {
+   "case": "Clock skew affects TTLs across nodes",
+   "handling": "TTLs are relative and evaluated by the node owning the key using its monotonic clock; replicas expire keys based on primary-propagated deletes."
+  },
+  {
+   "case": "Memory fragmentation makes RSS much larger than used memory",
+   "handling": "Monitor mem_fragmentation_ratio; enable active defragmentation; restart replicas then fail over during low traffic."
+  },
+  {
+   "case": "Redis fork for persistence doubles memory (copy-on-write) under heavy writes",
+   "handling": "Leave 30-50% memory headroom on persistent nodes, disable persistence for pure cache keyspaces, persist only on replicas."
+  },
+  {
+   "case": "Client retry storm when a shard is slow",
+   "handling": "Short timeouts, at most one retry with jitter for reads, circuit breaker opens after error threshold, no retries on non-idempotent ops like INCR."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Redis (Cluster mode) / Valkey",
+   "layer": "Cache engine",
+   "overview": "In-memory data-structure server with hash-slot sharding, async replication, gossip-based failover, rich types and Lua.",
+   "why": "Rich structures (sorted sets for leaderboards, hashes for sessions), mature cluster mode, huge ecosystem.",
+   "alternatives": "Memcached (multi-threaded, simpler, slab allocator, great for plain KV), KeyDB/Dragonfly (multi-threaded Redis-compatible), Aerospike (SSD-backed for larger datasets)."
+  },
+  {
+   "name": "Memcached + mcrouter",
+   "layer": "Cache engine + proxy",
+   "overview": "Multi-threaded KV cache; mcrouter is Facebook's routing proxy with pools, replication, failover and gutter support.",
+   "why": "Very efficient for plain get/set at high concurrency; proven at billions of requests per second.",
+   "alternatives": "Twemproxy (simpler, less maintained), Envoy Redis/Memcached filters."
+  },
+  {
+   "name": "Smart client libraries (Lettuce, go-redis, redis-py cluster)",
+   "layer": "Client",
+   "overview": "Cluster-aware clients with slot maps, pipelining and redirects.",
+   "why": "Avoid an extra network hop; lowest latency.",
+   "alternatives": "Proxy tier (adds 0.1-0.3 ms but simplifies clients and connection counts)."
+  },
+  {
+   "name": "Debezium / Maxwell + Kafka",
+   "layer": "Invalidation pipeline",
+   "overview": "Reads MySQL binlog/Postgres WAL and publishes row changes as events.",
+   "why": "Invalidations follow committed DB writes, independent of application code paths, and can fan out to regions.",
+   "alternatives": "Application-level delete after write (simpler, misses writes from other paths), triggers (DB load)."
+  },
+  {
+   "name": "Caffeine / in-process LRU",
+   "layer": "Near cache",
+   "overview": "High-performance in-memory cache in the app process with W-TinyLFU admission.",
+   "why": "Absorbs hot keys with zero network cost.",
+   "alternatives": "No near cache (hot keys hit shards), sidecar cache (shared per host)."
+  },
+  {
+   "name": "Kubernetes operator / custom controller",
+   "layer": "Control plane",
+   "overview": "Automates provisioning, scaling, failover integration and upgrades.",
+   "why": "Hundreds of shards cannot be managed by hand.",
+   "alternatives": "Managed services (ElastiCache, Memorystore) trading control for less ops."
+  },
+  {
+   "name": "Prometheus + Grafana",
+   "layer": "Observability",
+   "overview": "Metrics scraping and dashboards for INFO stats and client metrics.",
+   "why": "Hit ratio, latency and evictions per keyspace are the daily tools of the platform team.",
+   "alternatives": "Vendor APM tools."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Consistent hashing and hash slots",
+   "explain": "To spread keys over N servers, the naive approach is server = hash(key) mod N. It balances well but when N changes almost every key maps to a different server, so adding one cache node causes a near-total miss storm. Consistent hashing fixes this by placing both servers and keys on a ring of hash values; each key belongs to the next server clockwise. Adding a server only takes keys from its neighbour, about 1/N of all keys, and removing one hands its keys to the next. With few servers the ring is uneven, so each physical server is placed at many points (virtual nodes, often 100-200), which smooths the load and lets more powerful servers get more points. Redis Cluster uses a related but more explicit scheme: the key space is divided into a fixed number of hash slots, 16,384, computed by CRC16(key) mod 16384, and each slot is assigned to a shard. Moving capacity means reassigning slots, which is an explicit, controllable operation, and clients keep a slot-to-node map. Hash tags (the part of a key inside braces) let applications force related keys into the same slot so that multi-key commands and transactions work on one shard.",
+   "in_this_design": "The cluster uses 16,384 slots spread across about 320 shards (about 51 slots each). Clients cache the slot map and follow MOVED/ASK redirects. Memcached keyspaces use ketama consistent hashing with 160 virtual nodes per server in mcrouter. Session keys use hash tags such as session:{user42}:cart so per-user keys live together.",
+   "key_points": [
+    "mod N remaps almost every key when N changes; consistent hashing remaps about 1/N.",
+    "Virtual nodes even out load and support heterogeneous servers.",
+    "Hash slots make ownership explicit and movable, with a fixed small map.",
+    "Hash tags co-locate related keys for multi-key ops.",
+    "Clients must handle redirects during slot moves."
+   ],
+   "qa": [
+    {
+     "q": "Why does Redis use 16,384 slots instead of a ring?",
+     "a": "A fixed slot count gives a small, explicit ownership map (fits in gossip messages), makes migration a per-slot operation and is enough granularity for up to about 1,000 nodes."
+    },
+    {
+     "q": "What happens to hit ratio when you add a node with mod-N hashing versus consistent hashing?",
+     "a": "With mod N, nearly all keys move, so the hit ratio collapses temporarily; with consistent hashing or slots, only about 1/N of keys move."
+    },
+    {
+     "q": "How do virtual nodes help?",
+     "a": "They spread each server over many small arcs so load variance drops and failed servers' keys are spread across many survivors rather than one neighbour."
+    },
+    {
+     "q": "When would you use hash tags and what is the risk?",
+     "a": "When you need MGET or transactions across related keys; the risk is skew if a tag groups too many keys or a hot user, making one slot hot."
+    }
+   ]
+  },
+  {
+   "name": "Cache-aside, write-through, write-behind and invalidation",
+   "explain": "There are a few standard ways to combine a cache with a database. In cache-aside (lazy loading), the application reads the cache first; on a miss it reads the database and writes the result into the cache. On writes it updates the database and invalidates (deletes) the cache entry. It is simple and only caches what is read, but the first read after a change is slow and there are race windows. Write-through writes to the cache and the database together on every write, so the cache is always populated, at the cost of caching data that may never be read. Write-behind (write-back) writes to the cache and asynchronously flushes to the database, which is fast but risks losing writes if the cache fails. Read-through puts the loading logic inside the cache layer. For invalidation, deleting is safer than updating the cache on writes: two concurrent writers that each update the cache can leave the older value last, while a delete simply forces the next reader to load the current value. Even delete-on-write has a classic race: a reader loads an old value, a writer commits and deletes, and then the reader writes its old value into the cache. Leases, versioned compare-and-set, or a delayed second delete close this window, and TTLs bound any leftover staleness.",
+   "in_this_design": "Default pattern is cache-aside with delete-on-write. Deletes come from both the service (immediate) and the CDC pipeline (guaranteed even for writes from other paths). Fills use leases so a delete during a fill cancels it. Every key has a TTL (default 5 minutes with jitter) as the backstop.",
+   "key_points": [
+    "Cache-aside: read cache, on miss load DB and fill; on write update DB and delete.",
+    "Delete, don't update, the cache on writes.",
+    "The read-fill race needs leases or versioned sets.",
+    "Write-behind is fast but can lose writes; avoid for business data.",
+    "TTL is the safety net, not the primary consistency mechanism."
+   ],
+   "qa": [
+    {
+     "q": "Why delete instead of updating the cached value after a DB write?",
+     "a": "Concurrent updates can be applied to the cache in a different order than to the DB, leaving a stale value indefinitely; deletion makes the next read fetch the committed state."
+    },
+    {
+     "q": "Describe the stale-set race and a fix.",
+     "a": "Reader R misses and reads v1 from DB; writer W commits v2 and deletes the key; R then sets v1. Fix: R must hold a lease that W's delete invalidates, so R's set is rejected."
+    },
+    {
+     "q": "When would you choose write-through?",
+     "a": "When reads right after writes are common and you want them to hit, for example user profile edits, and the extra write cost is acceptable."
+    },
+    {
+     "q": "Why use CDC for invalidation if the service already deletes the key?",
+     "a": "Other writers (batch jobs, admin tools, other services) also change the table; the binlog captures every committed change, and it is the natural way to fan out to other regions."
+    }
+   ]
+  },
+  {
+   "name": "Thundering herd, request coalescing and leases",
+   "explain": "A thundering herd (cache stampede, dog-piling) happens when many requests miss the same key at once and all go to the database to rebuild it. It occurs when a popular key expires, when it is deleted after an update, when a cache node fails, or when a cache starts cold. For a key read 50,000 times a second with a 20 ms rebuild, a single expiry can send 1,000 identical queries to the database in that window. Several techniques prevent it. Request coalescing (single-flight) lets only one caller per key do the load while others wait for its result, within a process or across processes using a short distributed lock. Leases, as described in Facebook's memcache paper, give the first misser a token and tell others to wait briefly and retry; the paper reports that leases cut peak database query rates for such keys from about 17,000/s to about 1,300/s. Serving stale data while one request refreshes in the background (stale-while-revalidate) keeps latency low. Probabilistic early expiration refreshes a key slightly before its TTL with a probability that grows as expiry approaches, so refreshes spread out. TTL jitter prevents large groups of keys from expiring at the same instant, for example after a bulk warm-up.",
+   "in_this_design": "getOrLoad uses a per-key lease (SET lease:{k} NX PX 3000); waiters retry after 20 ms up to 5 times, then accept stale values if available; TTLs carry 0-10% jitter; very hot keys use early probabilistic refresh. The database also has a concurrency limit per query type as a final guard.",
+   "key_points": [
+    "Herds come from expiry, invalidation, node loss and cold starts.",
+    "Coalesce: one loader per key, others wait or get stale.",
+    "Leases both stop herds and prevent stale sets.",
+    "Jitter TTLs; refresh hot keys early.",
+    "Guard the DB with concurrency limits as the last line."
+   ],
+   "qa": [
+    {
+     "q": "How does a lease differ from a simple distributed lock?",
+     "a": "It is tied to the key's version: a delete invalidates it, so it also prevents stale sets, and it is short-lived so a crashed holder does not block others for long."
+    },
+    {
+     "q": "What should waiting requests do if the lease holder is slow?",
+     "a": "Retry a few times with short sleeps, then serve the stale value if allowed, else load from the DB under a concurrency limit; never wait unboundedly."
+    },
+    {
+     "q": "Why add jitter to TTLs?",
+     "a": "Keys loaded together (warm-up, batch job) would otherwise expire together, creating a periodic herd."
+    },
+    {
+     "q": "A cache node with 3% of keys fails. How do you stop the DB from taking 3% of 4.5M reads/s at once?",
+     "a": "Route its keys to a gutter pool or promote a replica quickly, coalesce misses per key, and enforce DB-side admission control while it warms."
+    }
+   ]
+  },
+  {
+   "name": "Replication, failover and split brain",
+   "explain": "Replicas keep copies of a shard's data so that a failed primary can be replaced quickly and reads can be spread. Redis replication is asynchronous: the primary acknowledges a write immediately and streams it to replicas, tracking each replica's offset. If the primary fails, recent writes not yet replicated are lost, which is acceptable for a cache. Failover requires deciding that a primary is really dead and picking exactly one replacement. In Redis Cluster, nodes gossip; when a node cannot reach a primary for cluster-node-timeout it marks it PFAIL; when a majority of primaries agree, it becomes FAIL and its replicas run an election, the one with the most data winning with votes from a majority of primaries, and it claims the slots with a higher config epoch. Epochs act as logical clocks so that the latest claim wins everywhere. Split brain is the danger that the old primary, cut off with some clients, keeps accepting writes. Redis limits this by having a primary stop accepting writes when it cannot reach the majority for longer than the node timeout, and min-replicas-to-write can refuse writes when no replica is connected. Sentinel provides a similar quorum-based failover for non-cluster deployments. Failover typically takes the node timeout plus a few seconds.",
+   "in_this_design": "Each shard has a primary and a replica in different AZs (sessions: two replicas). cluster-node-timeout is 5 s, giving failover in about 10-15 s. Clients refresh topology on errors. Persistent session keyspaces set min-replicas-to-write 1 to reduce split-brain write loss.",
+   "key_points": [
+    "Async replication: fast writes, small loss window on failover.",
+    "Majority agreement and epochs prevent two primaries from both winning.",
+    "Isolated old primary stops accepting writes after the node timeout.",
+    "Place replicas in different AZs from their primary.",
+    "Failover time is about node-timeout plus election; tune it against false positives."
+   ],
+   "qa": [
+    {
+     "q": "Why is asynchronous replication acceptable for a cache?",
+     "a": "Losing the last few hundred milliseconds of sets only causes extra misses that are reloaded from the DB; synchronous replication would double write latency for little benefit."
+    },
+    {
+     "q": "How does Redis Cluster avoid two primaries for the same slots?",
+     "a": "Promotion needs votes from a majority of primaries and comes with a higher config epoch; nodes accept the slot claim with the highest epoch, and an isolated minority primary stops accepting writes."
+    },
+    {
+     "q": "What is the trade-off in choosing cluster-node-timeout?",
+     "a": "Lower values give faster failover but more false failovers during GC pauses or network blips; 5-15 s is common."
+    },
+    {
+     "q": "Should apps read from replicas?",
+     "a": "Only for keyspaces that tolerate replication lag; it doubles read capacity but can return values older than a just-completed write."
+    }
+   ]
+  },
+  {
+   "name": "Eviction policies and memory management (LRU, LFU, TTL, slabs)",
+   "explain": "A cache has less memory than data, so it must decide what to keep. TTL expiry removes keys after a set lifetime, bounding staleness. Eviction removes keys when memory is full. LRU (least recently used) evicts the key not accessed for the longest time; it adapts well to recency but a one-time scan can flush hot keys. LFU (least frequently used) evicts keys with the fewest accesses, protecting popular items from scans; it needs decay so formerly popular keys eventually leave. Exact LRU needs a linked list updated on every access, which costs memory and CPU, so Redis approximates it by sampling a few keys and evicting the best candidate from a small pool, and its LFU uses an 8-bit logarithmic counter with time decay. Memcached uses a slab allocator: memory is divided into slab classes of fixed item sizes, each with its own LRU; this avoids fragmentation but can strand memory in the wrong class when value sizes shift, which is why it has slab rebalancing. Expired keys in Redis are removed lazily on access and actively by a background cycle that samples keys with TTLs. Memory accounting must also consider fragmentation, replication buffers, client output buffers and, for persistence, copy-on-write during fork.",
+   "in_this_design": "Pure cache keyspaces use allkeys-lfu with maxmemory at about 75% of host RAM; session keyspaces use volatile-lru so only keys with TTL are evicted. Memcached pools enable slab automove. Alerts fire on eviction rate jumps and fragmentation ratio above 1.5.",
+   "key_points": [
+    "TTL bounds staleness; eviction bounds memory.",
+    "LRU favours recency; LFU resists scans.",
+    "Redis approximates LRU/LFU by sampling.",
+    "Memcached slabs avoid fragmentation but can strand memory.",
+    "Leave headroom for fragmentation, buffers and fork."
+   ],
+   "qa": [
+    {
+     "q": "A nightly batch job scans millions of cold keys and the hit ratio drops the next morning. Why and what do you change?",
+     "a": "LRU treated the scanned keys as recent and evicted hot ones; switch to LFU (or make the job bypass the cache)."
+    },
+    {
+     "q": "Why does Redis not implement exact LRU?",
+     "a": "Tracking exact order needs extra pointers per key and work on every access; sampling gives near-LRU quality at a fraction of the cost."
+    },
+    {
+     "q": "Evictions are high but used memory is well below maxmemory in INFO. What is going on?",
+     "a": "Possibly fragmentation (RSS much larger than used), large client output buffers or replication backlog consuming memory; inspect mem_fragmentation_ratio and buffers."
+    },
+    {
+     "q": "What is slab calcification in Memcached?",
+     "a": "Memory assigned to slab classes for old value sizes cannot be reused for new sizes, so some classes evict heavily while others have free space; slab automove fixes it."
+    }
+   ]
+  },
+  {
+   "name": "Hot keys and skew",
+   "explain": "Hashing spreads keys evenly, but it cannot spread a single key. Real traffic is highly skewed: a viral product, a celebrity's profile, a global config flag. If one key receives 300,000 reads per second, the shard holding it is limited by one Redis thread and one NIC, and its latency rises for every other key on that shard too. Large values make this worse because bandwidth runs out first: 100 KB at 50,000 reads per second is 5 GB per second. Mitigations work at different layers. A near cache inside each application instance with a short TTL (1-5 s) turns millions of network reads into local memory reads, at the cost of bounded staleness. Key replication stores N copies under different keys (key#0..key#N-1) that hash to different shards; readers pick one at random and writers update or delete all copies. Read replicas spread load if stale reads are acceptable. Splitting a large value into smaller pieces spreads bandwidth. The hard part is knowing which keys are hot, so the system needs detection: sampling access counts in clients, server-side tools (Redis hotkeys with LFU, or monitoring), and automatic enablement of near caching for flagged keys.",
+   "in_this_design": "Clients sample 1% of reads into a count-min sketch per keyspace and report the top-K keys every 10 s; keys over 10k reads/s get near caching (2 s TTL) automatically; known hot keys (sale banners, flags) are replicated 8 ways.",
+   "key_points": [
+    "Hashing can't split a single key.",
+    "Near cache: biggest win, bounded staleness.",
+    "Key replication: N copies on N shards, random reads.",
+    "Big hot values hit bandwidth limits first.",
+    "Detect hot keys continuously; don't wait for an incident."
+   ],
+   "qa": [
+    {
+     "q": "A flash-sale product key is read 500k times per second. What do you do in the next 5 minutes?",
+     "a": "Turn on near caching for that key in clients with a 1-2 s TTL and replicate it across shards; consider pushing it to a CDN-cached API response."
+    },
+    {
+     "q": "What is the consistency cost of a near cache?",
+     "a": "Each app instance can serve a value up to the near-cache TTL old, even after invalidation, unless you broadcast invalidations to clients (pub/sub or client-side caching tracking)."
+    },
+    {
+     "q": "How do you invalidate a key that is replicated 8 ways?",
+     "a": "Delete all 8 copies (they are known by naming); the CDC consumer expands the key into its replicas."
+    },
+    {
+     "q": "How do you detect hot keys cheaply?",
+     "a": "Sample a small percentage of accesses into a count-min sketch or heavy-hitters structure per client and aggregate top-K; or use Redis LFU-based hotkey scanning on replicas."
+    }
+   ]
+  },
+  {
+   "name": "Backpressure and failure isolation around the cache (timeouts, circuit breakers, gutter pools)",
+   "explain": "A cache is a performance optimisation, but once the database is sized for the cache's hit rate, the cache becomes a hard dependency: if it disappears, the database receives 10-20x its normal load and falls over. Designing failure behaviour is therefore as important as designing the happy path. Timeouts must be short, because a cache call that takes 500 ms instead of 1 ms holds threads and amplifies load; typical client timeouts are 20-100 ms. Retries should be limited (one retry with jitter for reads) since retrying a struggling shard makes it worse. A circuit breaker tracks failures per shard and, when they exceed a threshold, stops sending requests for a cool-down period, then lets a few through to test recovery. What to do when the cache is unavailable is a policy choice: go to the database under a strict concurrency limit, serve stale data from a near cache, or fail fast for non-critical features. Facebook's memcache paper describes a gutter pool: a small set of idle servers that take over the keys of failed servers with short TTLs, so the database is not hit by all those misses. Bulkheads separate connection pools per keyspace so one slow keyspace does not exhaust all threads.",
+   "in_this_design": "Client timeouts of 50 ms (reads) and 100 ms (writes), one jittered retry for reads, per-shard circuit breakers, gutter pool with 10 s TTL for failed shards, DB-side concurrency limits per query type, and feature flags to disable non-critical cache-backed features under stress.",
+   "key_points": [
+    "Once the DB is sized for the hit rate, the cache is a critical dependency.",
+    "Short timeouts, few retries, jitter.",
+    "Circuit breakers per shard prevent pile-ups.",
+    "Gutter pools absorb a failed shard's traffic.",
+    "Bulkhead connection pools per keyspace."
+   ],
+   "qa": [
+    {
+     "q": "What is the worst default setting in cache clients?",
+     "a": "Long or no timeouts with unlimited retries: a slow shard then ties up threads in every app, causing a cascading outage."
+    },
+    {
+     "q": "Why not just send misses to the DB when a cache node fails?",
+     "a": "If the DB is sized for a 95% hit rate, losing even a few percent of hits can push it past capacity; route to a gutter pool or replica and coalesce misses."
+    },
+    {
+     "q": "How does a circuit breaker decide to close again?",
+     "a": "After a cool-down it goes half-open and allows a small number of probe requests; if they succeed it closes, otherwise it opens again."
+    },
+    {
+     "q": "How would you test that the system survives losing a cache AZ?",
+     "a": "Game days: fail an AZ's cache nodes in staging and then production with guardrails, measuring DB load, latency and error rates, and verify failover and gutter behaviour."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Engine",
+   "options": "Redis vs Memcached",
+   "choice": "Redis cluster for rich types and most keyspaces; Memcached for very high-throughput plain KV pools",
+   "why": "Redis gives data structures and built-in clustering; Memcached's multi-threading and slab allocator are efficient for simple large-scale KV."
+  },
+  {
+   "decision": "Partitioning",
+   "options": "mod N vs consistent hashing vs hash slots",
+   "choice": "Hash slots (16,384) with online migration",
+   "why": "Explicit, movable ownership; only moved slots lose locality; hash tags enable multi-key ops."
+  },
+  {
+   "decision": "Routing",
+   "options": "Smart clients vs proxy tier",
+   "choice": "Smart clients by default, proxy for huge pod counts or thin clients",
+   "why": "Clients avoid an extra hop; proxies cut connection counts and centralise failover logic."
+  },
+  {
+   "decision": "Write pattern",
+   "options": "Update cache on write vs delete on write",
+   "choice": "Delete on write plus CDC invalidation and leases",
+   "why": "Avoids out-of-order updates leaving stale values; leases prevent stale fills."
+  },
+  {
+   "decision": "Replication",
+   "options": "Synchronous vs asynchronous",
+   "choice": "Asynchronous with replicas in other AZs",
+   "why": "Sub-ms writes; losing the last moments of cache writes only causes misses."
+  },
+  {
+   "decision": "Eviction",
+   "options": "LRU vs LFU",
+   "choice": "LFU for shared caches, LRU for session-like recency workloads",
+   "why": "LFU resists scan pollution; LRU suits data whose value is recency."
+  },
+  {
+   "decision": "Hot keys",
+   "options": "Do nothing vs near cache vs key replication",
+   "choice": "Near cache with short TTL, plus replication for known hot keys",
+   "why": "Biggest relief for single-key load at the cost of bounded staleness."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Single primary failure",
+   "behavior": "Replica promoted in about 10-15 s; requests to its slots fail or time out meanwhile; clients' circuit breakers open, misses go to gutter or DB with coalescing; small loss of recent sets."
+  },
+  {
+   "failure": "AZ loss",
+   "behavior": "Primaries in that AZ fail over to replicas in other AZs; capacity drops, so fleet must be sized to run on two AZs; hit ratio dips briefly; DB protected by admission control."
+  },
+  {
+   "failure": "Network partition isolating a primary",
+   "behavior": "Majority side promotes a replica; isolated primary stops accepting writes after node timeout; clients converge on the higher epoch."
+  },
+  {
+   "failure": "CDC invalidation pipeline lag",
+   "behavior": "Cache serves stale values longer; TTL backstop limits damage; alert on lag; critical reads bypass cache."
+  },
+  {
+   "failure": "Hot-key overload on one shard",
+   "behavior": "Shard CPU at 100%, latency for all its keys rises; near cache and key replication relieve it; circuit breakers prevent client pile-ups."
+  },
+  {
+   "failure": "Mass expiry or cold start",
+   "behavior": "Herd risk; leases, jitter, warm-up and DB concurrency limits keep the DB alive while the hit ratio recovers."
+  },
+  {
+   "failure": "Memory exhaustion / runaway keyspace",
+   "behavior": "Evictions surge and hit ratio drops for co-located keyspaces; per-keyspace quotas and separate clusters for big tenants contain it."
+  }
+ ],
+ "metrics": [
+  "Hit ratio per keyspace (and the miss rate in absolute QPS reaching the DB)",
+  "Command latency p50/p99 per shard; client-observed latency and timeouts",
+  "Ops/s and CPU per shard (single-thread saturation)",
+  "Memory used, maxmemory, fragmentation ratio, evictions/s, expired keys/s",
+  "Replication lag (offset difference) and link status per replica",
+  "Failover events, cluster state, slots not covered",
+  "Hot keys and big keys detected per keyspace",
+  "Connected clients, rejected connections, client output buffer sizes",
+  "Invalidation pipeline lag (DB commit to cache delete) per region",
+  "Database QPS and latency for cache-backed queries"
+ ],
+ "follow_ups": [
+  {
+   "q": "How do you keep the cache consistent across regions?",
+   "a": "Each region has its own cache. Writes go to the primary region's DB; CDC events are replicated and an invalidation consumer in each region deletes affected keys. Reads that need read-your-writes go to the primary region or use a version check. TTLs bound any staleness."
+  },
+  {
+   "q": "How would you implement a distributed rate limiter or counter on this cache?",
+   "a": "Use atomic INCR with EXPIRE or a Lua script implementing a sliding window or token bucket per key, with hash tags to keep a user's counters on one shard; accept small inaccuracy on failover."
+  },
+  {
+   "q": "When would you not use a cache?",
+   "a": "When data changes as often as it is read, when strong consistency is required (inventory decrement at checkout), when the working set is not much smaller than the data set, or when the DB already serves the load well."
+  },
+  {
+   "q": "How do you resize the cluster during a sale without hurting latency?",
+   "a": "Pre-scale before the event; if needed, migrate slots in small batches with throttling during lower traffic, watching per-shard latency; hash slot migration moves only those slots' keys."
+  },
+  {
+   "q": "How would you cache a product listing page that depends on 100 keys?",
+   "a": "Use MGET grouped by shard with pipelining, cache the composed page fragment with a short TTL, and invalidate fragments via dependency tracking or short TTL."
+  },
+  {
+   "q": "What persistence would you enable?",
+   "a": "None for pure cache keyspaces (faster, no fork pauses). For sessions: AOF everysec on replicas only, accepting up to 1 s of loss, with RDB snapshots for faster restarts."
+  },
+  {
+   "q": "How do you prevent one team's keys from evicting another team's?",
+   "a": "Separate clusters or per-keyspace memory quotas enforced by the control plane, plus key prefixes and ACLs; noisy keyspaces get their own clusters."
+  },
+  {
+   "q": "How does the client know a node is slow versus down?",
+   "a": "Latency and error tracking per node: slow responses trip the circuit breaker via a latency threshold, while connection failures trigger topology refresh and failover detection."
+  }
+ ],
+ "key_points": [
+  "It's a look-aside in-memory tier whose main job is shielding the database; plan for the hit-ratio drop, not just the happy path.",
+  "Partition with hash slots (16,384, CRC16) or consistent hashing with virtual nodes so scaling moves only about 1/N of keys.",
+  "Primary plus async replica in another AZ per shard; majority-based failover with epochs in about 10-15 s.",
+  "Cache-aside with delete-on-write, CDC-driven invalidation, and leases to stop the stale-set race.",
+  "Thundering herds: single-flight/leases, stale-while-revalidate, TTL jitter, DB concurrency limits.",
+  "Hot keys: near cache with a 1-2 s TTL, key replication, and continuous hot-key detection.",
+  "Memory: maxmemory with LFU/LRU via sampling, TTL on everything, leave headroom for fragmentation and fork.",
+  "Failure isolation: 50 ms timeouts, one jittered retry, circuit breakers, gutter pool, bulkheads.",
+  "Sizing is usually memory-bound: 20 TB / 64 GB is about 320 shards, while CPU is fine except for hot keys.",
+  "Measure hit ratio and the miss QPS hitting the DB, p99 per shard, evictions, replication lag and invalidation lag."
+ ],
+ "quiz": [
+  {
+   "q": "You add one node to a 10-node cache that uses hash(key) mod N. Roughly what fraction of keys now map to a different node?",
+   "options": [
+    "About 90%",
+    "About 50%",
+    "About 10%",
+    "None"
+   ],
+   "answer": 0,
+   "why": "With mod N, most keys change owner (about N/(N+1)). 10% is what consistent hashing would give, the tempting confusion."
+  },
+  {
+   "q": "Why does the design delete the cache key on writes instead of setting the new value?",
+   "options": [
+    "Deletes are faster than sets",
+    "Sets are not supported in cluster mode",
+    "Concurrent writers could update the cache in a different order than the DB, leaving a stale value",
+    "To save memory"
+   ],
+   "answer": 2,
+   "why": "Delete forces the next read to fetch the committed state. Speed and memory are not the reason."
+  },
+  {
+   "q": "Reader loads v1 from DB, writer commits v2 and deletes the key, reader then writes v1 to the cache. What prevents this?",
+   "options": [
+    "Longer TTL",
+    "Read replicas",
+    "LFU eviction",
+    "A lease or version-checked fill that the delete invalidates"
+   ],
+   "answer": 3,
+   "why": "Leases make the stale fill fail. A longer TTL makes the stale value live longer, which is worse."
+  },
+  {
+   "q": "A key read 50k times/s expires and the DB gets 1,000 identical queries in 20 ms. Best fix?",
+   "options": [
+    "Raise the DB connection pool",
+    "Single-flight lease so one request reloads while others wait or get stale data",
+    "Disable TTLs",
+    "Add more cache shards"
+   ],
+   "answer": 1,
+   "why": "Coalescing removes duplicate loads. More shards do nothing for a single key."
+  },
+  {
+   "q": "Roughly how many 64 GB shards are needed for 20 TB of hot data?",
+   "options": [
+    "About 320",
+    "About 30",
+    "About 3,200",
+    "About 64"
+   ],
+   "answer": 0,
+   "why": "20,000 GB / 64 GB is about 312. 30 would be the throughput-based count, which ignores memory."
+  },
+  {
+   "q": "The DB is sized for a 95% hit ratio. Hit ratio drops to 80%. What happens to DB read load?",
+   "options": [
+    "It rises by 15%",
+    "It doubles",
+    "It roughly quadruples",
+    "It stays the same"
+   ],
+   "answer": 2,
+   "why": "Misses go from 5% to 20% of reads, 4x. 15% is the tempting arithmetic on hit ratio rather than miss ratio."
+  },
+  {
+   "q": "A flash-sale product key gets 500k reads/s. Which measure gives the biggest immediate relief?",
+   "options": [
+    "Add replicas to all shards",
+    "Increase maxmemory",
+    "Switch to LRU",
+    "Near cache in app instances with a 1-2 s TTL"
+   ],
+   "answer": 3,
+   "why": "Local caching removes network reads for that key. Replicas help reads but only if clients read from them and one key still lands on one replica set."
+  },
+  {
+   "q": "A nightly analytics job scans millions of cold keys and the next morning hit ratio is poor. Which eviction policy helps?",
+   "options": [
+    "allkeys-lru",
+    "allkeys-lfu",
+    "noeviction",
+    "volatile-ttl"
+   ],
+   "answer": 1,
+   "why": "LFU resists one-time scans. LRU is exactly what got polluted by the scan."
+  },
+  {
+   "q": "Why is Redis replication asynchronous acceptable for a cache?",
+   "options": [
+    "Losing the last moments of sets only causes extra misses reloaded from the DB",
+    "Async replication never loses data",
+    "Replicas are never used for failover",
+    "Clients write to replicas"
+   ],
+   "answer": 0,
+   "why": "Cache data is reconstructible. Async replication can lose data, which is the misconception in the first option."
+  },
+  {
+   "q": "A primary is isolated with a minority of clients during a network partition. What limits split-brain writes?",
+   "options": [
+    "Clients detect it automatically",
+    "TTL expiry",
+    "The isolated primary stops accepting writes after the node timeout when it cannot reach a majority, and the majority side promotes a replica with a higher epoch",
+    "LFU counters"
+   ],
+   "answer": 2,
+   "why": "Majority-based promotion plus epochs resolve ownership. Clients alone cannot know they are on the minority side."
+  },
+  {
+   "q": "What is the main purpose of hash tags like {user42}?",
+   "options": [
+    "Encryption",
+    "Compression",
+    "Faster hashing",
+    "Forcing related keys into the same slot so multi-key commands work"
+   ],
+   "answer": 3,
+   "why": "Only the tag is hashed. It is not about speed or security."
+  },
+  {
+   "q": "A cache shard is slow and clients have 2-second timeouts with 3 retries. What happens?",
+   "options": [
+    "Nothing serious",
+    "Threads pile up in every app waiting, causing cascading latency and outages",
+    "The shard recovers faster",
+    "Data becomes inconsistent"
+   ],
+   "answer": 1,
+   "why": "Long timeouts and retries amplify load. Short timeouts, one jittered retry and circuit breakers prevent this."
+  },
+  {
+   "q": "Why use a gutter pool when a cache server fails?",
+   "options": [
+    "To absorb the failed server's keys with short TTLs so misses don't all hit the DB",
+    "To store backups",
+    "To run analytics",
+    "To replicate data across regions"
+   ],
+   "answer": 0,
+   "why": "Gutter servers act as a temporary cache. Backups are a persistence concern, not the gutter's role."
+  },
+  {
+   "q": "Why does Redis approximate LRU by sampling?",
+   "options": [
+    "Exact LRU is incorrect",
+    "Sampling is required by the RESP protocol",
+    "Exact LRU needs per-access list updates and extra memory per key; sampling gets close at low cost",
+    "To support TTLs"
+   ],
+   "answer": 2,
+   "why": "It's a cost trade-off. Exact LRU is correct but expensive."
+  },
+  {
+   "q": "CDC invalidation lag rises to 2 minutes. What bounds user-visible staleness?",
+   "options": [
+    "Replica lag",
+    "Hash slots",
+    "LFU",
+    "TTL on cached keys"
+   ],
+   "answer": 3,
+   "why": "TTL is the backstop when invalidation is late. Replica lag is unrelated to invalidation."
+  },
+  {
+   "q": "What happens during slot migration when a client asks the source shard for a key that already moved?",
+   "options": [
+    "The key is lost",
+    "The source replies ASK, and the client retries on the target with ASKING",
+    "The cluster stops",
+    "The client gets MOVED and permanently remaps the whole cluster"
+   ],
+   "answer": 1,
+   "why": "ASK is a one-time redirect during migration; MOVED comes after ownership is final."
+  },
+  {
+   "q": "Lookups for non-existent product ids are hammering the DB. What helps most?",
+   "options": [
+    "Negative caching of 'not found' with a short TTL, plus a Bloom filter of valid ids",
+    "Longer TTL for existing keys",
+    "More replicas",
+    "Switch to Memcached"
+   ],
+   "answer": 0,
+   "why": "Misses on absent keys never fill the cache unless you cache the absence. More replicas don't stop DB queries."
+  },
+  {
+   "q": "Which metric best tells you the cache is failing at its main job?",
+   "options": [
+    "Number of keys",
+    "Uptime of cache hosts",
+    "Absolute miss QPS reaching the database (and hit ratio per keyspace)",
+    "Memory used"
+   ],
+   "answer": 2,
+   "why": "The cache exists to shield the DB. Memory used can be high while the hit ratio is fine or poor."
+  },
+  {
+   "q": "Persistent Redis nodes show memory spikes and latency pauses during snapshots. Why?",
+   "options": [
+    "TTL expiry",
+    "Hash slot calculation",
+    "Gossip traffic",
+    "fork() copy-on-write duplicates pages under heavy writes"
+   ],
+   "answer": 3,
+   "why": "BGSAVE forks; writes during the snapshot copy pages. Disable persistence for pure caches or persist on replicas with headroom."
+  },
+  {
+   "q": "When should a service bypass the cache?",
+   "options": [
+    "For all reads after 5 pm",
+    "For data that must be strongly consistent at decision time, like inventory at checkout",
+    "For product images",
+    "For feature flags"
+   ],
+   "answer": 1,
+   "why": "Strong consistency needs the source of truth. Feature flags and images tolerate staleness."
+  },
+  {
+   "q": "Why put each shard's replica in a different AZ from its primary?",
+   "options": [
+    "So an AZ loss doesn't take out both copies, avoiding a massive miss storm",
+    "To reduce latency",
+    "To save cost",
+    "Because replicas must be remote by protocol"
+   ],
+   "answer": 0,
+   "why": "Fault isolation is the reason. It actually adds cross-AZ cost and some latency."
+  }
+ ],
+ "references": [
+  {
+   "title": "How Facebook served billions of requests per second using Memcached (Engineer's Codex)",
+   "url": "https://read.engineerscodex.com/p/how-facebook-scaled-memcached"
+  },
+  {
+   "title": "Scaling Memcache at Facebook - FAQ (MIT 6.824)",
+   "url": "https://pdos.csail.mit.edu/6.824/papers/memcache-faq.txt"
+  },
+  {
+   "title": "Scaling Memcache at Facebook (UW-Madison CS739 notes)",
+   "url": "https://pages.cs.wisc.edu/~swift/classes/cs739-fa14/blog/2014/09/scaling_memcache_at_facebook.html"
+  },
+  {
+   "title": "Redis Cluster runbook (GitLab)",
+   "url": "https://runbooks.gitlab.com/redis/redis-cluster/"
+  },
+  {
+   "title": "Redis Cluster internals: how clients locate the right shard (DEV)",
+   "url": "https://dev.to/leapcell/redis-cluster-internals-how-clients-locate-the-right-shard-48je"
+  },
+  {
+   "title": "antirez on Redis Cluster design",
+   "url": "https://antirez.com/news/62"
+  }
+ ]
+}

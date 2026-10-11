@@ -1,0 +1,1096 @@
+{
+ "slug": "leaderboard",
+ "title": "Design a real-time gaming leaderboard",
+ "prompt": "Design a real-time gaming leaderboard.",
+ "group": "web",
+ "source": "web",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "A leaderboard is a ranking problem disguised as a storage problem: computing 'what is my rank among 100 million players' with SQL is a full scan, while a sorted structure such as a Redis sorted set (hash plus skip list) answers it in O(log n). The interesting tensions are exact versus approximate rank at scale, sharding a structure whose whole point is global order, keeping the in-memory ranking durable and rebuildable, and stopping cheaters from writing to it.",
+ "framework": {
+  "clarify": [
+   "Which leaderboards: global all-time, seasonal/monthly, daily, per-region, friends-only? Assume global monthly plus daily and friends.",
+   "Queries: top N (N = 10-100), my rank and score, players around me (+/- 5), friends' ranks.",
+   "Scale: 50M DAU, 100M players on the monthly board; each plays about 10 matches/day.",
+   "Real-time meaning: a player's new score reflected in their rank within about 1 second; top 10 refresh every few seconds for viewers.",
+   "Score semantics: cumulative (sum of points) or best single score (max)? Assume cumulative points, with best-score boards as a variant.",
+   "Tie-break rule: equal scores ranked by who reached the score first.",
+   "Where do scores come from: trusted game servers (authoritative) or clients? Assume game servers; clients never write directly.",
+   "Is exact rank required for everyone? Exact for top 10,000; approximate (percentile) acceptable for the long tail at very large scale."
+  ],
+  "design": [
+   "Baseline: game servers emit match-result events; a score service validates and applies them; a leaderboard service answers queries.",
+   "Durable record: append match results to Kafka and a score table (DynamoDB/Cassandra or MySQL) as the source of truth.",
+   "Ranking index: Redis sorted set per leaderboard (lb:monthly:2026-10), ZINCRBY on each score event; ZREVRANK and ZREVRANGE for queries.",
+   "Tie-break by encoding the score as score * 2^k + (MAX_TS - ts) in the double, or a composite key, so earlier achievers rank higher.",
+   "Read path: top-N cached for 1-2 s and pushed to viewers via WebSocket; 'my rank' is a direct O(log n) query.",
+   "Periodic boards: one key per period with TTL; snapshot the final board to cold storage at period end.",
+   "Friends leaderboard: fetch friend IDs, ZMSCORE them from the global set, sort in the service (friends lists are small, <= 500)."
+  ],
+  "defend": [
+   "Bottleneck: a single Redis sorted set is single-threaded; about 100k ZINCRBY/s per instance. Our peak write is about 30k/s, fine for one primary, with replicas for reads.",
+   "Scale reads: replicas for ZREVRANK, cache top-N for a second, fan out top-N updates via pub/sub rather than letting millions poll.",
+   "Scale writes beyond one node: shard by score range (top-N easy, rank = sum of higher shards' sizes) or by user hash (writes spread, top-N by scatter-gather of each shard's top N).",
+   "Failure: Redis is a projection; rebuild from the durable score table or by replaying Kafka. AOF everysec plus replica limits loss to about 1 s, which replay repairs.",
+   "Cheating: server-authoritative scores, plausibility checks (max points per minute), anomaly detection, shadow-ban by excluding from the board.",
+   "Measure: score-event to rank-visible lag, Redis ops/s and CPU, memory per board, rank query p99, rebuild time, rejected-score rate."
+  ],
+  "script": "I will assume a mobile game with 50 million daily players and boards for all-time, this month, today and friends. Players need top 10, their own rank, and the players around them, updated within about a second. Scores come only from game servers, never the client. The heart of the design is that ranking needs an ordered index: a Redis sorted set gives me ZINCRBY in log n and my rank in log n, where SQL would count rows. Match results go to Kafka and a durable score store first, then a consumer updates one sorted set per board, with tie-breaking encoded into the score. Reads hit replicas, top 10 is cached and pushed. To defend it I will size memory, about 100 bytes per entry so 100 million players is roughly 10 gigabytes, explain how I would shard if one node is not enough, show that Redis is rebuildable from the durable store, and cover anti-cheat and the metrics I would watch."
+ },
+ "brd": {
+  "problem": "Competitive ranking drives engagement and retention in games, but players lose trust when ranks are slow to update, wrong, or dominated by cheaters. At tens of millions of players, naive database ranking queries become too slow and expensive.",
+  "goals": [
+   "Show a player's updated rank within about 1 second of a match ending.",
+   "Serve top-N, my-rank and around-me queries with p99 under 50 ms.",
+   "Support global, regional, periodic (daily/weekly/monthly) and friends leaderboards.",
+   "Keep leaderboards correct and fair: deterministic tie-breaks, cheat filtering.",
+   "Preserve final standings of each season for rewards and history."
+  ],
+  "non_goals": [
+   "Matchmaking and Elo/MMR skill rating computation.",
+   "Reward fulfilment and in-game economy.",
+   "Anti-cheat client instrumentation (we consume its signals only)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Players",
+    "needs": "Fast, accurate ranks; see friends and nearby rivals; trust that the board is fair."
+   },
+   {
+    "who": "Game designers / live ops",
+    "needs": "Create seasonal and event boards, configure scoring and rewards."
+   },
+   {
+    "who": "Trust and safety",
+    "needs": "Remove cheaters, audit suspicious score jumps."
+   },
+   {
+    "who": "Platform / SRE",
+    "needs": "Predictable cost, rebuildable state, clear limits."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Score-to-rank visibility lag",
+    "target": "p99 < 1 s"
+   },
+   {
+    "metric": "Rank query latency",
+    "target": "p99 < 50 ms"
+   },
+   {
+    "metric": "Leaderboard availability",
+    "target": ">= 99.9 percent"
+   },
+   {
+    "metric": "Cheaters in top 100 at season end",
+    "target": "0 after review"
+   },
+   {
+    "metric": "Season-end snapshot accuracy",
+    "target": "100 percent match with durable scores"
+   }
+  ],
+  "constraints": [
+   "Memory cost: in-memory ranking for 100M+ entries per board, multiple boards.",
+   "Global player base: players in India, SEA, EU, US want low latency.",
+   "Scores must be server-authoritative."
+  ],
+  "risks": [
+   {
+    "risk": "Single Redis node becomes a write bottleneck during events.",
+    "mitigation": "Sharding plan ready (score-range or hash), event-sized capacity tests, batching of increments."
+   },
+   {
+    "risk": "Redis data loss on failover.",
+    "mitigation": "Durable score store and Kafka replay; Redis treated as a rebuildable projection."
+   },
+   {
+    "risk": "Cheaters top the board and erode trust.",
+    "mitigation": "Server-side validation, anomaly detection, delayed reward eligibility pending review."
+   },
+   {
+    "risk": "Hot read traffic on top-10 at event start.",
+    "mitigation": "Cache top-N for 1 s, push updates, collapse concurrent requests."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Competitive player",
+    "needs": "Exact rank, top 100, and the players just above to chase."
+   },
+   {
+    "name": "Casual player",
+    "needs": "Friends board and a rough sense of standing (top 12 percent)."
+   },
+   {
+    "name": "Live-ops manager",
+    "needs": "Spin up a weekend event board with custom scoring and rewards."
+   }
+  ],
+  "user_stories": [
+   "As a player, I want my rank to update right after a match so that I feel progress.",
+   "As a player, I want to see the top 10 globally so that I know the target.",
+   "As a player, I want to see 5 players above and below me so that I have reachable rivals.",
+   "As a player, I want a friends leaderboard so that I can compete with people I know.",
+   "As a player, I want daily and monthly boards so that newcomers can compete too.",
+   "As a live-ops manager, I want to create a time-boxed event board so that I can run tournaments.",
+   "As a trust and safety analyst, I want to remove a cheater's entries so that the board is fair.",
+   "As a player, I want my final season rank preserved so that I can claim rewards."
+  ],
+  "functional": [
+   "Ingest score events from game servers (match_id, user_id, points, ts) idempotently.",
+   "Maintain boards: all-time, monthly, weekly, daily, regional, event-specific.",
+   "Query top N (N <= 100) with names and avatars.",
+   "Query a user's score and rank (1-based), and K neighbours above and below.",
+   "Friends leaderboard for up to 500 friends.",
+   "Admin: create/close boards, remove or shadow-ban users, recompute from source.",
+   "Snapshot final standings at period close and archive.",
+   "Push top-N and personal rank changes to online clients."
+  ],
+  "non_functional": [
+   {
+    "name": "Freshness",
+    "target": "Rank reflects a new score within 1 s p99"
+   },
+   {
+    "name": "Read latency",
+    "target": "p99 < 50 ms for top-N, my-rank, around-me"
+   },
+   {
+    "name": "Write throughput",
+    "target": "30k score events/s peak, 3x headroom"
+   },
+   {
+    "name": "Availability",
+    "target": "99.9 percent; degraded mode serves cached top-N"
+   },
+   {
+    "name": "Durability",
+    "target": "No score event lost (Kafka + durable store); ranking index rebuildable in < 30 min"
+   },
+   {
+    "name": "Correctness",
+    "target": "Deterministic tie-break; exact rank for top 10k"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "50M DAU, 10 matches per player per day; 100M players on the monthly board.",
+    "Peak hour is 3x the average rate.",
+    "Each sorted-set entry costs about 100 bytes in Redis (member string about 16-20 B, 8 B double, skip list node and hash entry overhead).",
+    "Read:write ratio about 5:1 (players check ranks after matches and browse boards).",
+    "Boards per player: all-time, monthly, weekly, daily, regional = 5 sorted-set updates per match."
+   ],
+   "math": [
+    "Matches: 50M x 10 = 500M/day = about 5.8k/s average; peak 3x = about 17k/s; plan 30k/s with event spikes.",
+    "Redis writes: 5 boards x 17k = about 87k ZINCRBY/s peak; spread across boards on different shards, each board well under 100k ops/s.",
+    "Reads: 5 x 17k = about 87k QPS peak; top-N served from a 1 s cache, rank queries from replicas.",
+    "Memory per board: 100M x 100 B = about 10 GB; 5 boards with smaller daily/weekly sets (daily about 50M) total about 30-35 GB plus replicas.",
+    "Durable score events: 500M x 100 B = 50 GB/day raw in Kafka (7 day retention = 350 GB x 3 replicas).",
+    "Rebuild: reading 100M (user, score) rows and pipelining ZADD at about 1M/s per shard takes about 2 minutes per board."
+   ],
+   "summary": "Writes peak around 87k sorted-set updates/s and each board is about 10 GB, so a handful of Redis primaries with replicas handles it; the design work is in tie-breaking, sharding strategy, rebuildability and anti-cheat rather than raw scale."
+  },
+  "out_of_scope": [
+   "Skill rating (Elo/Glicko/TrueSkill) and matchmaking.",
+   "Reward distribution and payments.",
+   "Client-side anti-cheat.",
+   "Social graph management (we read friend lists from the social service)."
+  ]
+ },
+ "hld": {
+  "overview": "Game servers are the only writers. At match end they publish a signed match-result event to Kafka. A score validator checks plausibility and dedups by match_id, then writes to a durable score store and emits accepted score deltas. Leaderboard updaters consume the deltas and apply ZINCRBY to the relevant Redis sorted sets (one per board and period). A stateless leaderboard API answers top-N, my-rank, around-me and friends queries from Redis replicas, joining player profiles from a cache. A push service broadcasts top-N changes and personal rank updates over WebSockets. At period end, a snapshot job writes the final ordering to object storage and a warehouse.",
+  "diagram": " Game servers (authoritative)\n        | match result (signed)\n        v\n  +-----------+     +-----------------+     +-------------------------+\n  |  Kafka    |---->| Score validator |---->| Durable score store     |\n  | (matches) |     | dedup, anticheat|     | (DynamoDB / Cassandra)  |\n  +-----------+     +--------+--------+     +-------------------------+\n                             | accepted deltas (Kafka)\n                             v\n                    +------------------+   ZINCRBY  +--------------------------+\n                    | LB updaters      |----------->| Redis sorted sets        |\n                    | (per board shard)|            | lb:all, lb:m:2026-10,    |\n                    +------------------+            | lb:d:2026-10-11, lb:reg  |\n                                                    | primary + replicas       |\n                                                    +-----+--------------------+\n  Clients <-- WebSocket push <-- Push svc <-- top-N diff  |\n     |                                                    | ZREVRANGE / ZREVRANK\n     +--> API GW --> Leaderboard API --> profile cache ---+\n                           |\n                           +--> Social svc (friend ids)\n  Period close --> Snapshot job --> S3 / warehouse (final standings, rewards)\n",
+  "components": [
+   {
+    "name": "Game servers",
+    "responsibility": "Authoritative match simulation; emit signed match results with match_id, user scores, timestamps."
+   },
+   {
+    "name": "Kafka (match-results, score-deltas)",
+    "responsibility": "Durable buffer and replay log, partitioned by user_id for per-user ordering."
+   },
+   {
+    "name": "Score validator",
+    "responsibility": "Verify signature, dedup by match_id, plausibility (points/minute caps), anti-cheat signals, write to durable store."
+   },
+   {
+    "name": "Durable score store",
+    "responsibility": "Source of truth: per-user per-period totals and match ledger; supports rebuild."
+   },
+   {
+    "name": "Leaderboard updaters",
+    "responsibility": "Consume deltas, apply ZINCRBY with tie-break encoding to each relevant board key; idempotent via applied-offset tracking."
+   },
+   {
+    "name": "Redis sorted sets",
+    "responsibility": "Ranking index per board/period; O(log n) update and rank, O(log n + m) range."
+   },
+   {
+    "name": "Leaderboard API",
+    "responsibility": "Top-N, my-rank, around-me, friends; merges profile data; caching and request collapsing."
+   },
+   {
+    "name": "Profile cache",
+    "responsibility": "user_id -> display name, avatar, country; Redis hash or Memcached."
+   },
+   {
+    "name": "Push service",
+    "responsibility": "WebSocket fan-out of top-N changes and rank notifications ('you were overtaken')."
+   },
+   {
+    "name": "Snapshot and archive job",
+    "responsibility": "At period close, freeze the board, dump ordered results to S3/warehouse, set TTL on the Redis key."
+   },
+   {
+    "name": "Admin / moderation",
+    "responsibility": "Ban or shadow-ban users (ZREM from public boards), trigger rebuilds, create event boards."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Score update to visible rank",
+    "steps": [
+     "Match ends; game server publishes {match_id, user_id, points, ended_at, sig} to Kafka.",
+     "Validator checks signature and that match_id was not already processed (conditional put on match ledger).",
+     "Plausibility: points within the mode's max, match duration sane; suspicious events flagged and held.",
+     "Validator increments durable totals (user, period) and publishes a score delta.",
+     "Updater applies ZINCRBY lb:all, lb:m:2026-10, lb:d:2026-10-11, lb:reg:IN with the tie-break-encoded delta in a pipeline.",
+     "Client calls GET /rank; API does ZREVRANK and ZSCORE on a replica, returns rank + 1 and score; end-to-end under 1 s."
+    ]
+   },
+   {
+    "name": "Around-me query",
+    "steps": [
+     "API: r = ZREVRANK lb:m:2026-10 user.",
+     "API: ZREVRANGE lb:m:2026-10 max(0, r-5) r+5 WITHSCORES.",
+     "Batch-fetch profiles for the 11 users from the profile cache.",
+     "Decode scores (strip tie-break bits) and return ranks r-5 .. r+5 (1-based)."
+    ]
+   },
+   {
+    "name": "Season close",
+    "steps": [
+     "At 00:00 UTC on the 1st, writes switch to the new key lb:m:2026-11 (key derived from event time, not wall clock of the updater).",
+     "Grace window (e.g. 10 min) for late events with ended_at in the old period.",
+     "Snapshot job reads the old board with ZREVRANGE in pages of 10k, writes to S3/warehouse, verifies count and checksum against the durable store.",
+     "Rewards service consumes the snapshot; old key gets a 7 day TTL."
+    ]
+   }
+  ],
+  "data_flow": "Writes: game server -> Kafka -> validator -> durable store + delta topic -> updaters -> Redis. Reads: client -> API -> Redis replicas + profile cache. Push: updaters/API diff top-N -> push service -> WebSockets. Archive: Redis/durable store -> snapshot -> S3/warehouse. Redis is always a projection that can be rebuilt from the durable store or by replaying Kafka."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST (internal)",
+    "path": "/v1/scores",
+    "request": "{matchId, userId, boardSet, points, endedAt, signature}",
+    "response": "202 accepted",
+    "notes": "Only from game servers via mTLS; idempotent by matchId."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/leaderboards/{boardId}/top?n=10",
+    "request": "n <= 100",
+    "response": "[{rank, userId, name, avatar, score}]",
+    "notes": "Cached 1 s; request collapsing."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/leaderboards/{boardId}/users/{userId}",
+    "request": "-",
+    "response": "{rank, score, percentile}",
+    "notes": "Exact rank via ZREVRANK; percentile = rank / ZCARD."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/leaderboards/{boardId}/users/{userId}/around?k=5",
+    "request": "k <= 25",
+    "response": "[{rank, userId, name, score}] x (2k+1)",
+    "notes": "ZREVRANK then ZREVRANGE."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/leaderboards/{boardId}/friends",
+    "request": "auth user",
+    "response": "sorted friends with global ranks",
+    "notes": "ZMSCORE for up to 500 friend ids, sort in memory."
+   },
+   {
+    "method": "WS",
+    "path": "/v1/stream?boards=lb:m:2026-10",
+    "request": "subscribe",
+    "response": "top-N diffs, personal rank changes",
+    "notes": "Throttled to 1 update/s per board."
+   },
+   {
+    "method": "POST (admin)",
+    "path": "/v1/leaderboards/{boardId}/users/{userId}/ban",
+    "request": "reason",
+    "response": "200",
+    "notes": "ZREM from public boards; keep in durable store with banned flag."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Leaderboard sorted set",
+    "store": "Redis Cluster",
+    "fields": [
+     "key lb:{scope}:{period}",
+     "member = userId",
+     "score = encoded (points, tie-break)"
+    ],
+    "keys": "One key per board+period; hash tags keep a board on one slot",
+    "notes": "About 100 B/entry; TTL on periodic boards after archive."
+   },
+   {
+    "entity": "Score ledger",
+    "store": "DynamoDB / Cassandra",
+    "fields": [
+     "match_id",
+     "user_id",
+     "points",
+     "ended_at",
+     "status (accepted|held|rejected)"
+    ],
+    "keys": "PK match_id (conditional put for dedup); GSI user_id + ended_at",
+    "notes": "Source of truth for audits and rebuilds."
+   },
+   {
+    "entity": "Period totals",
+    "store": "DynamoDB / Cassandra",
+    "fields": [
+     "board_id",
+     "user_id",
+     "total_points",
+     "first_reached_at",
+     "updated_at",
+     "banned"
+    ],
+    "keys": "PK (board_id, user_id)",
+    "notes": "Rebuild reads all rows for a board and ZADDs them."
+   },
+   {
+    "entity": "Profile cache",
+    "store": "Redis hash / Memcached",
+    "fields": [
+     "user_id",
+     "display_name",
+     "avatar_url",
+     "country"
+    ],
+    "keys": "profile:{user_id}",
+    "notes": "TTL 1 h, refreshed on profile change events."
+   },
+   {
+    "entity": "Archived standings",
+    "store": "S3 Parquet + warehouse",
+    "fields": [
+     "board_id",
+     "rank",
+     "user_id",
+     "score",
+     "snapshot_at"
+    ],
+    "keys": "partition by board_id",
+    "notes": "Immutable; used for rewards and history pages."
+   }
+  ],
+  "classes": [
+   {
+    "name": "ScoreValidator",
+    "responsibility": "Validate, dedup and persist match results.",
+    "methods": [
+     "validate(event) -> Accept|Hold|Reject",
+     "persist(event)",
+     "publishDelta(event)"
+    ]
+   },
+   {
+    "name": "LeaderboardUpdater",
+    "responsibility": "Apply deltas to Redis boards idempotently.",
+    "methods": [
+     "boardsFor(event) -> [key]",
+     "apply(delta)",
+     "commitOffset()"
+    ]
+   },
+   {
+    "name": "ScoreCodec",
+    "responsibility": "Encode and decode points plus tie-break into a sortable double.",
+    "methods": [
+     "encode(points, firstReachedAt) -> double",
+     "decode(double) -> points"
+    ]
+   },
+   {
+    "name": "LeaderboardQuery",
+    "responsibility": "Serve top-N, rank, around-me and friends.",
+    "methods": [
+     "top(board, n)",
+     "rank(board, user)",
+     "around(board, user, k)",
+     "friends(board, user)"
+    ]
+   },
+   {
+    "name": "BoardRebuilder",
+    "responsibility": "Rebuild a Redis board from durable totals.",
+    "methods": [
+     "rebuild(board)",
+     "verify(board) -> diffCount"
+    ]
+   },
+   {
+    "name": "ShardRouter",
+    "responsibility": "Map board (and score range if range-sharded) to Redis shard.",
+    "methods": [
+     "shardFor(board, score)",
+     "allShards(board)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Tie-break encoding inside a double",
+    "explain": "Redis orders by a 64-bit double and then lexicographically by member. To make earlier achievers win ties, pack the points in the high part and an inverted timestamp in the low part. A double has 53 bits of exact integer precision, so with points < 2^21 (about 2 million) and a 32-bit inverted seconds timestamp the composite is exact. Because ZINCRBY adds, the updater instead keeps totals in the durable store and uses ZADD with the newly encoded value (or a Lua script that decodes, adds and re-encodes atomically).",
+    "pseudocode": "TS_BITS = 32; MAX_TS = 2^32 - 1\ndef encode(points, reached_at_epoch_s):\n    return points * 2^TS_BITS + (MAX_TS - reached_at_epoch_s)   // < 2^53 stays exact\ndef decode(v):\n    return int(v) >> TS_BITS\n\n// Lua, atomic on the Redis shard:\nlocal cur = redis.call('ZSCORE', KEYS[1], ARGV[1])\nlocal pts = cur and math.floor(cur / 2^32) or 0\npts = pts + tonumber(ARGV[2])\nredis.call('ZADD', KEYS[1], pts * 2^32 + (MAX_TS - tonumber(ARGV[3])), ARGV[1])\n"
+   },
+   {
+    "name": "Global rank with score-range sharding",
+    "explain": "If one board outgrows a node, split it by score range: shard 0 holds the highest scores. A user's global rank is the count of members in all higher shards plus their local rank. Shard sizes are cached and updated incrementally, so rank stays O(log n) plus a small sum. Users move between shards when crossing a boundary (ZREM from one, ZADD to the next), and boundaries are rebalanced offline as the distribution shifts.",
+    "pseudocode": "def global_rank(board, user):\n    s = score_index.get(board, user)                  // user -> score hash\n    i = shard_for_score(board, s)                     // ranges sorted high -> low\n    higher = sum(card_cache[board][j] for j in range(i))\n    return higher + redis[i].zrevrank(key(board, i), user) + 1\n\ndef top_n(board, n):\n    return redis[0].zrevrange(key(board, 0), 0, n - 1)  // top shard only\n"
+   },
+   {
+    "name": "Top-N across hash-sharded boards (scatter-gather)",
+    "explain": "With user-hash sharding, each shard holds a random subset. The global top N is contained in the union of each shard's top N, so query every shard for its top N and merge with a heap. Cost is S x N items, cheap for N = 100. Exact global rank for an arbitrary user requires ZCOUNT of scores above theirs on every shard, so it is a scatter of O(log n) calls.",
+    "pseudocode": "def top_n(board, n):\n    parts = parallel([r.zrevrange(key(board, i), 0, n-1, withscores=True)\n                      for i, r in enumerate(shards)])\n    return heapq.nlargest(n, chain(*parts), key=lambda x: x.score)\n\ndef rank(board, user, score):\n    return 1 + sum(parallel([r.zcount(key(board, i), f'({score}', '+inf')\n                             for i, r in enumerate(shards)]))\n"
+   }
+  ],
+  "sequence": "GameSrv   Kafka    Validator   ScoreStore   Updater    Redis      LB API    Client\n  | result  |          |           |           |          |          |         |\n  |-------->|          |           |           |          |          |         |\n  |         |--------->| sig,dedup |           |          |          |         |\n  |         |          |---------->| put match |          |          |         |\n  |         |          |           | add total |          |          |         |\n  |         |<---------| delta     |           |          |          |         |\n  |         |---------------------------------->| Lua ZADD |          |         |\n  |         |          |           |           |--------->| skiplist |         |\n  |         |          |           |           |          |          |<--------| GET rank\n  |         |          |           |           |          |<---------| ZREVRANK|\n  |         |          |           |           |          |--------->|-------->| rank, score\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Duplicate match result (game server retry).",
+   "handling": "Conditional put on match_id in the ledger; duplicates are dropped before any score change; updaters also track applied Kafka offsets."
+  },
+  {
+   "case": "Ties on score.",
+   "handling": "Tie-break encoded in the score (earlier first_reached_at wins); without it Redis falls back to lexicographic member order, which is arbitrary for players."
+  },
+  {
+   "case": "Event arriving after period close (late match result).",
+   "handling": "Route by ended_at to the correct period key; accept within a 10 minute grace; after snapshot, apply to durable store and issue a correction if it changes reward tiers."
+  },
+  {
+   "case": "Player at rank 0 asks for 'around me' near the top.",
+   "handling": "Clamp range start at 0; return extra below to keep 2k+1 entries."
+  },
+  {
+   "case": "Player not on the board (never played this period).",
+   "handling": "ZREVRANK returns nil; respond 'unranked' with score 0 rather than an error."
+  },
+  {
+   "case": "Celebrity streamer's rank page gets 1M views/min.",
+   "handling": "Cache per-user rank responses for 1 s and collapse concurrent identical requests at the API."
+  },
+  {
+   "case": "Cheater posts impossible score (1e9 points).",
+   "handling": "Plausibility caps at validation; held events reviewed; banned users ZREM'd from public boards but kept in durable store for audit."
+  },
+  {
+   "case": "Redis primary fails and replica lags 500 ms.",
+   "handling": "Promote replica; replay the last few seconds of deltas from Kafka (idempotent via Lua using durable totals as absolute values) to repair."
+  },
+  {
+   "case": "Floating point precision with very large scores.",
+   "handling": "Keep encoded values below 2^53; if points can exceed 2^21, use fewer tie-break bits (e.g. relative seconds since season start) or store points only and break ties in the app for the top page."
+  },
+  {
+   "case": "Midnight in which timezone for daily boards?",
+   "handling": "Define the period in UTC or per region explicitly; key names include the region's date; product communicates reset time."
+  },
+  {
+   "case": "Negative score deltas (penalties, rollbacks).",
+   "handling": "Supported by ZINCRBY with negative values or recompute from totals; rollbacks after cheat detection recompute affected users from the ledger."
+  },
+  {
+   "case": "Friends list of 5,000 (influencer).",
+   "handling": "Cap friends board at 500 most recent or most active friends; or page through with ZMSCORE in batches of 500."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Redis sorted sets (Redis Cluster / ElastiCache / MemoryDB)",
+   "layer": "Ranking index",
+   "overview": "In-memory ordered set implemented as a hash map plus skip list; ZADD/ZINCRBY/ZREVRANK O(log n), ZSCORE O(1).",
+   "why": "Purpose-built for leaderboards; one node handles about 100k writes/s and 10 GB boards.",
+   "alternatives": "SQL with ORDER BY and window functions (fine below a few million rows); custom order-statistic tree service; Amazon MemoryDB for durable Redis."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Event log",
+   "overview": "Partitioned durable log.",
+   "why": "Decouples game servers from scoring, absorbs spikes, enables replay and rebuild.",
+   "alternatives": "Kinesis (managed), Pub/Sub; SQS lacks replay."
+  },
+  {
+   "name": "DynamoDB or Cassandra",
+   "layer": "Durable score store",
+   "overview": "Horizontally scalable key-value / wide-column stores.",
+   "why": "High write throughput for ledger and totals; conditional puts for dedup.",
+   "alternatives": "MySQL/PostgreSQL sharded by user (strong tooling, more ops at this write rate)."
+  },
+  {
+   "name": "WebSocket gateway",
+   "layer": "Push",
+   "overview": "Persistent connections for real-time updates.",
+   "why": "Pushing top-N diffs once per second beats millions of polls.",
+   "alternatives": "Server-sent events (one-way, simpler); long polling."
+  },
+  {
+   "name": "S3 + Parquet + warehouse (BigQuery / Snowflake)",
+   "layer": "Archive and analytics",
+   "overview": "Cheap immutable storage and SQL analytics.",
+   "why": "Season history, reward computation and analysis without loading Redis.",
+   "alternatives": "Keeping old boards in Redis (expensive memory)."
+  },
+  {
+   "name": "Flink (optional)",
+   "layer": "Stream processing",
+   "overview": "Stateful stream processor.",
+   "why": "Windowed anti-cheat features (points per minute per user) and approximate percentiles at huge scale.",
+   "alternatives": "Plain consumers with Redis counters."
+  },
+  {
+   "name": "t-digest / HyperLogLog-style sketches",
+   "layer": "Approximation",
+   "overview": "Compact data structures for quantiles and cardinalities.",
+   "why": "Percentile rank ('top 12 percent') for billions of entries without exact ordering.",
+   "alternatives": "Exact ranks via sharded sorted sets (more memory and fan-out)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Skip lists and order-statistic structures",
+   "explain": "To answer 'what is my rank' fast you need a data structure that keeps elements sorted and can count how many are ahead of a given element without walking them all. A balanced binary search tree augmented with subtree sizes (an order-statistic tree) does this in O(log n). A skip list is a probabilistic alternative: a sorted linked list with extra express lanes. Each node is promoted to the next level with probability p (Redis uses 0.25), so higher levels skip over many nodes, and search, insert and delete take O(log n) expected time. Redis augments each forward pointer with a span, the number of nodes it skips, so summing spans along the search path gives the rank. Redis sorted sets pair the skip list with a hash table from member to score, making ZSCORE O(1). Skip lists are simpler to implement than balanced trees and easier to make range-scan friendly. SQL databases, in contrast, store a B-tree index without subtree counts, so 'count rows with a higher score' scans the index range, which grows linearly with rank.",
+   "in_this_design": "Each leaderboard is a Redis sorted set. ZINCRBY or ZADD repositions a player in O(log n), ZREVRANK returns their rank by summing spans, and ZREVRANGE returns the top N or a window around a rank in O(log n + m). That is why a 100M-player board answers rank queries in well under a millisecond on the server.",
+   "key_points": [
+    "Rank needs counts, not just order: spans or subtree sizes.",
+    "Skip list = sorted list + probabilistic express lanes, O(log n) expected.",
+    "Redis sorted set = hash (member -> score) + skip list (score order).",
+    "SQL rank = COUNT of higher scores, linear in rank without special indexes."
+   ],
+   "qa": [
+    {
+     "q": "Why is SELECT COUNT(*) WHERE score > ? slow for rank?",
+     "a": "A B-tree index finds the starting point in log n but then must count every entry above it, so rank 50 million costs about 50 million index entries. It does not store subtree counts."
+    },
+    {
+     "q": "What is the complexity of getting the top 10?",
+     "a": "O(log n + 10) with ZREVRANGE: locate the start and walk 10 nodes."
+    },
+    {
+     "q": "Why did Redis choose skip lists over balanced trees?",
+     "a": "Simpler code, easy range traversal, comparable performance, and the span augmentation for rank is straightforward."
+    }
+   ]
+  },
+  {
+   "name": "Sharding a ranked dataset",
+   "explain": "Sharding normally assumes operations touch one key, but ranking is a global property: your rank depends on everyone else. There are two main ways to split a ranking. Range partitioning by score puts the highest scores on shard 0, the next band on shard 1, and so on. Top-N reads only the first shard, and a user's global rank is the sizes of all higher shards plus their local rank, but updates that cross band boundaries must move the user between shards, and score distributions shift over a season, so boundaries need rebalancing; the top shard can also be hot. Hash partitioning by user id spreads writes evenly and makes each user's data live in one place, but every global query becomes scatter-gather: top-N merges each shard's top N, and exact rank sums a count of higher scores from every shard, so latency is set by the slowest shard. A third option is to avoid sharding the ranking at all by keeping one board per node and splitting by board (region, period), which is often enough.",
+   "in_this_design": "At our scale each board (about 10 GB, under 100k writes/s) fits one Redis primary, so we shard by board, not within it. If a board outgrows a node, we choose score-range sharding for top-N-heavy workloads and keep a user -> score hash to locate the user's shard, with cached shard cardinalities to compute global rank.",
+   "key_points": [
+    "First shard by board (region, period) before sharding within a board.",
+    "Score-range sharding: cheap top-N and rank, but users migrate and the top shard can be hot.",
+    "User-hash sharding: even writes, but top-N and rank become scatter-gather.",
+    "The global top N is always within the union of each shard's top N."
+   ],
+   "qa": [
+    {
+     "q": "Which sharding scheme would you choose for a 1B-player board?",
+     "a": "Score-range sharding with a user -> score index and cached shard sizes, because the dominant queries are top-N and my-rank; rebalance boundaries daily based on the score histogram."
+    },
+    {
+     "q": "How do you get exact rank with hash sharding?",
+     "a": "ZCOUNT of scores strictly greater than the user's on every shard, summed, plus one. It is S parallel O(log n) calls."
+    },
+    {
+     "q": "Why not shard by country?",
+     "a": "That is sharding by board; it works for regional boards but a global board still needs one of the other schemes."
+    }
+   ]
+  },
+  {
+   "name": "Cache as a rebuildable projection (write-behind vs source of truth)",
+   "explain": "An in-memory store such as Redis is fast because it avoids disk on the request path, but that also means it can lose recent writes on a crash or failover: AOF with fsync every second can lose about a second, and asynchronous replication can lose whatever the replica had not received. There are two ways to live with this. One is to make the in-memory store durable enough (MemoryDB with a multi-AZ transaction log, or AOF always with a performance cost). The other is to treat it as a projection: the source of truth is a durable log or database, and the in-memory structure is derived from it and can be repaired or rebuilt. In the projection approach, updates must be idempotent or absolute, so replaying them is safe, and you need a tested rebuild procedure with a known duration. Write-behind (update the cache, persist later) is risky for anything you cannot lose; write-through or log-first is safer.",
+   "in_this_design": "Score events are written to Kafka and the durable score store before Redis is updated, so Redis is a projection. Updaters use a Lua script that sets the absolute encoded value derived from durable totals, making replays idempotent. A full board rebuild pipelines ZADD from the totals table at about a million per second, so roughly two minutes for 100M entries.",
+   "key_points": [
+    "Decide explicitly whether the cache is truth or projection.",
+    "Log first, then project into memory.",
+    "Make projection updates idempotent (absolute values, applied offsets).",
+    "Know and test your rebuild time."
+   ],
+   "qa": [
+    {
+     "q": "Why not ZINCRBY straight from game servers into Redis?",
+     "a": "A Redis failover could lose increments and a retry could double them; with a durable log and absolute updates we can repair exactly."
+    },
+    {
+     "q": "How do you detect drift between Redis and the store?",
+     "a": "Periodic sampled reconciliation: compare ZSCORE with durable totals for random users and the whole top 1,000; alert and repair on mismatch."
+    },
+    {
+     "q": "Is ZINCRBY idempotent?",
+     "a": "No; replaying it adds again. That is why we either track applied offsets or use absolute ZADD values."
+    }
+   ]
+  },
+  {
+   "name": "Idempotent event processing (at-least-once delivery)",
+   "explain": "Messaging systems like Kafka typically guarantee at-least-once delivery: a consumer may see the same message more than once after a crash, a rebalance or a producer retry. To get effectively-once results, the processing must be idempotent: applying a message twice has the same effect as once. Techniques include natural idempotency (set x = 5 rather than x += 5), dedup tables keyed by a unique event id with a conditional insert, storing the last applied offset per partition atomically with the state change, and versioned upserts that ignore older versions. Kafka's transactional exactly-once works only within Kafka (read-process-write to Kafka topics); once you write to an external system such as Redis or DynamoDB, idempotency is your responsibility. Ordering matters too: partitioning by entity id keeps one user's events in order, so absolute updates do not regress.",
+   "in_this_design": "match_id is the dedup key: the validator does a conditional put into the ledger and drops duplicates. Kafka topics are partitioned by user_id so a user's deltas are ordered. Updaters write absolute values derived from durable totals, so replays after a crash are harmless.",
+   "key_points": [
+    "Assume at-least-once; design for duplicates.",
+    "Dedup on a natural unique id (match_id) with conditional writes.",
+    "Prefer absolute writes over increments in projections.",
+    "Partition by entity to preserve per-entity order."
+   ],
+   "qa": [
+    {
+     "q": "Where exactly do duplicates come from here?",
+     "a": "Game server retries after a timeout, producer retries, and consumer restarts that reprocess uncommitted offsets."
+    },
+    {
+     "q": "Can Kafka exactly-once solve it end to end?",
+     "a": "Only for Kafka-to-Kafka. The Redis and DynamoDB writes are outside its transaction, so we still need idempotent writes."
+    },
+    {
+     "q": "Why partition by user_id?",
+     "a": "So two matches for the same user are applied in order; otherwise an older absolute value could overwrite a newer one."
+    }
+   ]
+  },
+  {
+   "name": "Approximate ranking (percentiles and sketches)",
+   "explain": "Exact rank for every player becomes expensive at billions of entries or across many boards, and most players do not care whether they are 48,213,551st or 48,213,560th. They care that they are in the top 40 percent. Approximate ranking replaces exact order statistics with a distribution summary. A histogram of scores with fixed buckets (for example 1,000 buckets) lets you compute rank as the count in higher buckets plus an interpolation inside the bucket. Quantile sketches such as t-digest or KLL keep a compact summary with bounded error, especially accurate at the tails, and can be merged across shards. The common hybrid is exact ranks for the top K (where precision matters and rewards are given) and approximate percentiles for everyone else. The key engineering question is error bound versus memory and the user-facing presentation, such as 'Top 12%' rather than a misleadingly precise number.",
+   "in_this_design": "For the monthly board we keep exact ranks via the sorted set. For very large or many regional boards and for the long tail, the API can return percentile from a histogram of scores maintained by the updater (bucket counters in Redis), which costs a few KB per board and is mergeable across shards.",
+   "key_points": [
+    "Exact rank for the top K, percentile for the long tail.",
+    "Histograms and quantile sketches are tiny and mergeable.",
+    "Present approximations honestly (Top 12%).",
+    "Choose error bounds based on what the product rewards."
+   ],
+   "qa": [
+    {
+     "q": "How would you compute percentile from a histogram?",
+     "a": "Sum counts in buckets above the user's bucket, add an interpolated share of their bucket, divide by total; error is bounded by bucket width."
+    },
+    {
+     "q": "Why are sketches mergeable useful?",
+     "a": "Each shard maintains its own sketch; the global summary is the merge, avoiding scatter-gather of raw data."
+    },
+    {
+     "q": "When is approximate unacceptable?",
+     "a": "Wherever money or rewards depend on precise position, such as the top 100 prize tier."
+    }
+   ]
+  },
+  {
+   "name": "Fan-out of real-time updates (push vs pull)",
+   "explain": "When many clients want to see changing data, they can pull (poll every few seconds) or the server can push changes. Polling is simple and stateless but wastes work: millions of clients asking 'has the top 10 changed?' every second generates huge read load, most of it returning the same answer. Push keeps persistent connections (WebSocket or server-sent events) and sends only when something changes, but it requires a connection tier that tracks subscriptions and can fan a message out to many connections, plus handling reconnects and backpressure for slow clients. A middle path is to compute the change once and coalesce: a single producer diffs the top N each second and publishes one message per board to a pub/sub channel; gateway nodes subscribed to that channel forward it to their local connections. Throttling to at most one update per second per board bounds the fan-out cost regardless of how frequently scores change.",
+   "in_this_design": "A single job per board diffs top-N every second and publishes to Redis pub/sub or Kafka; WebSocket gateways forward to subscribed clients. Personal rank changes ('you were overtaken by X') are sent only to the affected user's connection and are rate-limited.",
+   "key_points": [
+    "Compute once, fan out many: one diff per board per second.",
+    "Push for hot shared views, pull for rare personal ones.",
+    "Throttle and coalesce to bound fan-out cost.",
+    "Handle reconnects by sending a fresh snapshot."
+   ],
+   "qa": [
+    {
+     "q": "Why not let every client poll top 10 every second?",
+     "a": "Ten million clients would generate ten million reads per second for data that changes once a second; a single diff pushed once is far cheaper."
+    },
+    {
+     "q": "How do you handle a slow WebSocket client?",
+     "a": "Bounded per-connection buffers; drop intermediate updates and send the latest snapshot (state, not deltas), or disconnect."
+    },
+    {
+     "q": "What happens on reconnect?",
+     "a": "Client gets the current snapshot then subsequent diffs; diffs carry a version to detect gaps."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Ranking store",
+   "options": "SQL with ORDER BY vs Redis sorted sets vs custom order-statistic tree service",
+   "choice": "Redis sorted sets",
+   "why": "O(log n) rank and updates out of the box, proven at this scale; SQL rank is linear in rank."
+  },
+  {
+   "decision": "Source of truth",
+   "options": "Redis with AOF vs durable store + Redis projection",
+   "choice": "Durable store and Kafka; Redis as projection",
+   "why": "Failover cannot lose scores; Redis can be rebuilt in minutes."
+  },
+  {
+   "decision": "Tie-break",
+   "options": "Lexicographic member order vs encode timestamp into score vs secondary sort in app",
+   "choice": "Encode timestamp in the double",
+   "why": "Keeps ranking entirely inside Redis; exact while under 2^53."
+  },
+  {
+   "decision": "Sharding within a board",
+   "options": "Score-range vs user-hash vs none",
+   "choice": "None today (shard by board); score-range if needed",
+   "why": "Boards fit a node; score-range keeps top-N and rank cheap when we outgrow it."
+  },
+  {
+   "decision": "Exact vs approximate rank",
+   "options": "Exact for all vs percentiles for all vs hybrid",
+   "choice": "Hybrid: exact for ranked boards, percentile for long tail on huge boards",
+   "why": "Precision where it matters, cost control elsewhere."
+  },
+  {
+   "decision": "Update delivery to clients",
+   "options": "Polling vs WebSocket push",
+   "choice": "Push top-N diffs, pull personal rank on demand",
+   "why": "Shared views benefit from compute-once fan-out; personal views are rare and cheap to pull."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Redis primary for a board fails",
+   "behavior": "Replica promoted in seconds; reads continue from replicas; updater replays recent deltas from Kafka idempotently to close the async replication gap."
+  },
+  {
+   "failure": "Whole Redis cluster lost",
+   "behavior": "API serves last cached top-N and 'rank temporarily unavailable'; rebuild boards from durable totals (about 2 minutes per 100M entries), top boards first."
+  },
+  {
+   "failure": "Updater lag (Kafka backlog)",
+   "behavior": "Ranks become stale; API shows 'updating'; autoscale consumers up to partition count; alert when lag > 5 s."
+  },
+  {
+   "failure": "Durable store throttling",
+   "behavior": "Validator backs off with jitter; Kafka buffers; freshness degrades but no loss."
+  },
+  {
+   "failure": "Cheat wave during an event",
+   "behavior": "Tighten plausibility thresholds, hold suspicious events, shadow-ban, recompute affected boards from the ledger."
+  },
+  {
+   "failure": "Push gateway overload",
+   "behavior": "Reduce update frequency to every 5 s, drop intermediate diffs, clients fall back to polling at low rate."
+  }
+ ],
+ "metrics": [
+  "End-to-end lag: match end -> rank visible (p50/p99).",
+  "Kafka consumer lag for validator and updaters.",
+  "Redis ops/s, CPU, memory, replication offset lag per board shard.",
+  "API p99 for top, rank, around, friends; cache hit ratio for top-N.",
+  "Duplicate and rejected score event rates; held-for-review counts.",
+  "Reconciliation mismatches between Redis and durable totals.",
+  "Board rebuild duration (tested regularly).",
+  "WebSocket connections, fan-out messages/s, dropped updates."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just use PostgreSQL with an index on score?",
+   "a": "Top-N is fine, but 'my rank' is a count of all higher scores, which scans proportional to rank; at 100M rows and thousands of rank queries per second that is too slow. A sorted set gives log n."
+  },
+  {
+   "q": "How would you support 'best single score' instead of cumulative?",
+   "a": "Use ZADD with GT flag (only update if the new score is greater), with the tie-break encoded so equal bests rank by earliest achievement."
+  },
+  {
+   "q": "How do you build weekly boards without double writes?",
+   "a": "Either write to each period key on every event (cheap, a pipeline of 4-5 ZADDs), or compute weekly as ZUNIONSTORE of daily sets at query time for small sets; we choose per-event writes for freshness."
+  },
+  {
+   "q": "How do you handle a billion players?",
+   "a": "Shard each board by score range with cached shard sizes for global rank, keep exact ranks for the top shards, and serve percentiles from histograms for the long tail."
+  },
+  {
+   "q": "How do you serve players worldwide with low latency?",
+   "a": "Single writer region per board; read replicas in each region; top-N pushed via regional gateways; ranks slightly stale (< 1 s) outside the home region."
+  },
+  {
+   "q": "How do you remove a cheater retroactively?",
+   "a": "Mark banned in the durable store, ZREM from all boards, recompute any season snapshots that already rewarded them, and log for audit."
+  },
+  {
+   "q": "How do you test correctness?",
+   "a": "Replay a day of production events into a staging cluster, compare the resulting boards to totals computed in the warehouse, and run property checks (rank uniqueness, monotonic order)."
+  }
+ ],
+ "key_points": [
+  "Rank is an order-statistic query; SQL COUNT is linear in rank, a sorted set is O(log n).",
+  "Redis sorted set = hash + skip list with spans; ZINCRBY/ZREVRANK O(log n), ZREVRANGE O(log n + m).",
+  "Memory math: about 100 B per entry, 100M players is about 10 GB per board.",
+  "Server-authoritative scores; validator dedups by match_id and filters cheats.",
+  "Kafka + durable store are truth; Redis is a rebuildable projection with idempotent absolute updates.",
+  "Encode tie-break (earliest achiever) into the double, staying under 2^53.",
+  "One key per board per period; snapshot to S3 at close, TTL old keys.",
+  "Shard by board first; within a board, score-range sharding keeps top-N and rank cheap.",
+  "Exact for top K, percentile for the long tail at extreme scale.",
+  "Push top-N diffs once per second instead of millions of polls."
+ ],
+ "quiz": [
+  {
+   "q": "Why is 'SELECT COUNT(*) FROM scores WHERE score > :mine' a poor way to compute rank at 100M players?",
+   "options": [
+    "COUNT is not supported on indexed columns",
+    "It returns approximate results",
+    "It locks the whole table",
+    "The index must still count every entry above the user, so cost grows with rank"
+   ],
+   "answer": 3,
+   "why": "B-tree indexes do not store subtree counts, so counting is linear in the number of higher entries. It is exact and need not lock the table, so those distractors are wrong."
+  },
+  {
+   "q": "What is the complexity of ZREVRANK on a Redis sorted set?",
+   "options": [
+    "O(log n)",
+    "O(1)",
+    "O(n)",
+    "O(n log n)"
+   ],
+   "answer": 0,
+   "why": "The skip list's span counters give rank along the O(log n) search path. O(1) is ZSCORE, which uses the hash."
+  },
+  {
+   "q": "Roughly how much memory does a 100M-member sorted set need at about 100 bytes per entry?",
+   "options": [
+    "About 1 GB",
+    "About 100 GB",
+    "About 10 GB",
+    "About 1 TB"
+   ],
+   "answer": 2,
+   "why": "100M x 100 B = 10 GB. Counting only 8-byte scores gives 1 GB, ignoring member strings and skip list overhead."
+  },
+  {
+   "q": "Two players reach 5,000 points; the rule is that whoever got there first ranks higher. Without special handling, Redis orders them by...",
+   "options": [
+    "Insertion time",
+    "Member name lexicographically",
+    "Random order",
+    "Last update time"
+   ],
+   "answer": 1,
+   "why": "Equal scores fall back to lexicographic member order, which is arbitrary for players; hence the tie-break encoding. Insertion time is the tempting but incorrect guess."
+  },
+  {
+   "q": "Why must encoded score values stay below 2^53?",
+   "options": [
+    "Doubles represent integers exactly only up to 2^53, so larger composites lose tie-break precision",
+    "Redis rejects larger numbers",
+    "Kafka cannot serialise them",
+    "Skip lists overflow"
+   ],
+   "answer": 0,
+   "why": "IEEE 754 doubles have 53 bits of mantissa. Redis accepts larger doubles but they will be rounded."
+  },
+  {
+   "q": "Which is true of hash-sharding a single leaderboard by user_id across 8 Redis nodes?",
+   "options": [
+    "Top-N reads only one shard",
+    "Users must migrate between shards as scores change",
+    "Ties cannot be broken",
+    "Writes spread evenly but top-N and exact rank require scatter-gather across all shards"
+   ],
+   "answer": 3,
+   "why": "Hash sharding distributes users randomly, so global queries touch all shards. Migration on score change is a property of score-range sharding."
+  },
+  {
+   "q": "In score-range sharding, a user's global rank equals...",
+   "options": [
+    "Their local rank only",
+    "The sum of the sizes of all higher-score shards plus their local rank",
+    "The average of local ranks",
+    "ZCARD of their shard"
+   ],
+   "answer": 1,
+   "why": "Higher shards contain everyone ahead of them. Local rank alone ignores those players."
+  },
+  {
+   "q": "A Redis primary fails and the replica was 400 ms behind. How do we recover lost updates?",
+   "options": [
+    "They are lost forever",
+    "Ask players to replay matches",
+    "Replay recent deltas from Kafka using idempotent absolute updates",
+    "Restore last night's backup"
+   ],
+   "answer": 2,
+   "why": "Redis is a projection of the durable log; replay repairs the gap. Restoring a nightly backup loses a day of updates."
+  },
+  {
+   "q": "Why is ZINCRBY not safe to replay blindly after a consumer crash?",
+   "options": [
+    "It is O(n)",
+    "It only works on integers",
+    "It is not idempotent: replaying adds the delta again",
+    "It deletes the member"
+   ],
+   "answer": 2,
+   "why": "Increments double count on replay; use dedup or absolute values. ZINCRBY is O(log n), not O(n)."
+  },
+  {
+   "q": "Game clients ask to submit their own scores directly to save server cost. Best response?",
+   "options": [
+    "Accept with HTTPS",
+    "Reject: scores must come from authoritative game servers, with validation and anti-cheat",
+    "Accept but rate-limit",
+    "Accept if the client app is signed"
+   ],
+   "answer": 1,
+   "why": "Clients can be modified; HTTPS and app signing do not stop a tampered client from lying. Rate limiting only slows cheats."
+  },
+  {
+   "q": "How should a top-10 view for 5M concurrent viewers be delivered?",
+   "options": [
+    "Each client polls every 100 ms",
+    "Each client queries Redis primary directly",
+    "Email updates",
+    "Compute a diff once per second per board and push via WebSockets"
+   ],
+   "answer": 3,
+   "why": "Compute-once fan-out bounds cost. Polling the primary would multiply load by millions for unchanged data."
+  },
+  {
+   "q": "What is the best way to implement daily, weekly and monthly boards?",
+   "options": [
+    "One key per board per period, written per event, with TTL after archival",
+    "One sorted set with timestamps filtered at query time",
+    "Recompute from SQL every minute",
+    "Store only all-time and derive others"
+   ],
+   "answer": 0,
+   "why": "Per-period keys keep queries O(log n). A single set cannot filter by time inside the sorted order."
+  },
+  {
+   "q": "Where is exact rank most important to preserve if you must approximate?",
+   "options": [
+    "Players around the median",
+    "The top tiers where rewards depend on exact position",
+    "New players with zero score",
+    "Banned players"
+   ],
+   "answer": 1,
+   "why": "Rewards make the top precise; the median player is happy with a percentile."
+  },
+  {
+   "q": "What does a quantile sketch like t-digest give you?",
+   "options": [
+    "A compact, mergeable summary to estimate percentiles with bounded error",
+    "Exact rank for every user",
+    "A way to dedup events",
+    "Encrypted scores"
+   ],
+   "answer": 0,
+   "why": "Sketches trade a small error for tiny memory and mergeability. They are not exact."
+  },
+  {
+   "q": "Peak 17k matches/s, each updating 5 boards. Roughly how many sorted-set updates per second?",
+   "options": [
+    "About 3.4k/s",
+    "About 17k/s",
+    "About 85k/s",
+    "About 850k/s"
+   ],
+   "answer": 2,
+   "why": "17k x 5 = 85k/s. 17k is the match rate before multiplying by boards."
+  },
+  {
+   "q": "A late match result arrives two minutes after the monthly board closed. Best handling?",
+   "options": [
+    "Drop it",
+    "Add it to next month",
+    "Reset the board",
+    "Route by match end time to the old period within a grace window, before the snapshot is finalised"
+   ],
+   "answer": 3,
+   "why": "Event-time routing with a grace window is correct. Adding to next month credits the wrong period."
+  },
+  {
+   "q": "For a friends leaderboard with 300 friends, the efficient approach is...",
+   "options": [
+    "ZMSCORE the friends from the global board and sort in the service",
+    "Maintain a separate sorted set per user's friend graph",
+    "Scan the global board",
+    "Store friends' scores in SQL and sort"
+   ],
+   "answer": 0,
+   "why": "A small batch lookup and in-memory sort is cheap. Per-user friend sets multiply writes by friend count."
+  },
+  {
+   "q": "Why partition the score-delta Kafka topic by user_id?",
+   "options": [
+    "To maximise compression",
+    "To reduce partitions",
+    "To keep each user's updates ordered so absolute writes do not regress",
+    "Because Redis requires it"
+   ],
+   "answer": 2,
+   "why": "Ordering per entity prevents an older value overwriting a newer one. Compression is unrelated."
+  },
+  {
+   "q": "Rank queries p99 rises from 3 ms to 80 ms while CPU on the Redis primary is 95 percent. Likely fix?",
+   "options": [
+    "Increase key TTLs",
+    "Serve reads from replicas and cache top-N, keeping the primary for writes",
+    "Switch to SQL",
+    "Disable tie-breaking"
+   ],
+   "answer": 1,
+   "why": "Offload reads to replicas; Redis executes commands on one thread so the primary is saturated. Switching to SQL would be slower."
+  },
+  {
+   "q": "How long, roughly, to rebuild a 100M-entry board at 1M ZADDs/s with pipelining?",
+   "options": [
+    "About 10 seconds",
+    "About 1,000 seconds",
+    "About 3 hours",
+    "About 100 seconds"
+   ],
+   "answer": 3,
+   "why": "100M / 1M per second = 100 s. Knowing the rebuild time is part of treating Redis as a projection."
+  },
+  {
+   "q": "Which Redis option updates a member only if the new score is higher, useful for best-score boards?",
+   "options": [
+    "ZADD NX",
+    "ZINCRBY",
+    "ZADD XX",
+    "ZADD GT"
+   ],
+   "answer": 3,
+   "why": "GT only updates when the new score is greater. NX only adds new members, a common confusion."
+  }
+ ],
+ "references": [
+  {
+   "title": "Leaderboard System Design (systemdesign.one)",
+   "url": "https://systemdesign.one/leaderboard-system-design"
+  },
+  {
+   "title": "Leaderboard Patterns (Redis community docs)",
+   "url": "https://redis.antirez.com/community/leaderboards.html"
+  },
+  {
+   "title": "System Design Interview: Design a Real-Time Gaming Leaderboard (techinterview.org)",
+   "url": "https://www.techinterview.org/post/3233462852/system-design-gaming-leaderboard/"
+  },
+  {
+   "title": "Designing a real-time leaderboard with Redis sorted sets (DEV)",
+   "url": "https://dev.to/roni_das_b1b76c5ee6583027/designing-a-real-time-leaderboard-with-redis-sorted-sets-3o0l"
+  }
+ ]
+}

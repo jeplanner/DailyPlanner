@@ -1,0 +1,1218 @@
+{
+ "slug": "media-cdn",
+ "title": "Design a CDN strategy for media delivery (video, images, live events)",
+ "prompt": "Design a CDN strategy for media delivery.",
+ "group": "caching",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 120,
+ "summary": "Media delivery is a bandwidth problem before it is a latency problem: a single live cricket match can need tens of terabits per second, far more than any origin or single CDN can serve. The strategy is to push bytes as close to viewers as possible (ISP-embedded caches and edge PoPs), protect the origin with tiered caching and request collapsing, make every object immutable and cacheable (segmented ABR, versioned URLs), and steer each viewer to the best healthy cache - across multiple CDNs - using real user measurements. The tensions are cost versus quality of experience, cache hit ratio versus storage at the edge, and the very different behaviour of VOD (long tail, pre-positionable) and live (everyone wants the same few seconds at once).",
+ "framework": {
+  "clarify": [
+   "What media? Assume three classes: VOD video (movies/series), live video (sports, peak events), and images/thumbnails for the app.",
+   "What scale? Assume 50M DAU, normal peak 3M concurrent streams, event peak 15M concurrent (a big cricket final).",
+   "What bitrates? Assume an ABR ladder from 300 kbps (240p) to 6 Mbps (1080p) and 15 Mbps for 4K; Indian mobile average about 2 Mbps.",
+   "Where are users? Assume 85% in India, mostly mobile, across many ISPs and telecoms, with Tier-2/3 cities on weaker last miles.",
+   "Latency targets? Assume video start under 2s p90, rebuffer ratio under 0.5%, live glass-to-glass latency 15-30s acceptable (HLS/DASH), images p95 under 200ms.",
+   "Do we need DRM and access control? Assume yes: Widevine/FairPlay for premium video and signed, expiring URLs for all segments.",
+   "Build or buy? Assume we start multi-CDN (two or three commercial CDNs) and add our own ISP-embedded caches for the top ISPs because of cost at this volume.",
+   "Catalogue size? Assume 100k VOD titles, about 2 PB of encoded renditions; new releases drive most traffic."
+  ],
+  "design": [
+   "Baseline: object storage origin behind one commercial CDN with URL-based caching - show it fails on cost, live peak and single-vendor risk.",
+   "Package media for caching: CMAF segments of 2-6s, per-rendition manifests, content-addressed immutable segment URLs with long TTLs; only live manifests are short-TTL.",
+   "Tiered caching: edge PoPs / ISP-embedded caches -> regional mid-tier (origin shield) -> packager/origin; request collapsing at every tier so one miss per object per tier reaches upstream.",
+   "Request routing: a steering service picks CDN and cache per session using RUM throughput, health and cost, returning signed URLs; DNS/anycast inside each CDN picks the PoP; consistent hashing inside a PoP picks the server.",
+   "Pre-positioning for VOD: push predicted-popular titles to ISP caches during off-peak fill windows (02:00-08:00); long-tail fetched on demand through the shield.",
+   "Live path: encoder -> packager producing segments every 2-4s -> origin shield with collapsed requests -> CDNs; manifests cached 1s; pre-warm capacity and reserve CDN commits before events.",
+   "Images: on-the-fly resize/format (WebP/AVIF) at the edge with normalised cache keys (width buckets, format from Accept) and immutable URLs."
+  ],
+  "defend": [
+   "Bottleneck: egress bandwidth at peak (15M x 2.5 Mbps = 37.5 Tbps). Spread across ISP caches (target 60%), 2-3 commercial CDNs and capacity reservations; degrade the ABR ladder ceiling if capacity runs short.",
+   "Origin protection: shield tier plus request collapsing means origin sees at most a few requests per segment per region, not millions; live origin load is independent of viewer count.",
+   "Hot content / thundering herd: live edge segment requested by millions within a second - collapse at edge and shield, publish segments slightly before manifests reference them, short negative-cache for 404s.",
+   "Failure: CDN or PoP outage -> client-side failover to an alternate URL from the manifest (multi-CDN in the playlist), steering shifts sessions within 30-60s; origin failure -> stale-if-error and secondary origin in another region.",
+   "Cost: per-GB commercial CDN pricing versus ISP cache capex; route by cost when QoE is equal, commit-based contracts, maximise ISP-embedded share.",
+   "Measure: video start time, rebuffer ratio, average bitrate, edge/shield hit ratios, origin egress, per-CDN throughput from RUM, error rates by ISP and PoP."
+  ],
+  "script": "Media delivery is a bandwidth problem first. Before designing, I'd confirm the mix of VOD, live and images, the concurrency - I'll assume 3 million normal and 15 million streams during a big cricket final - and the bitrate ladder; at about 2.5 megabits average that final is close to 40 terabits per second, which no origin and arguably no single CDN can carry. So the design has four parts. First, make everything cacheable: CMAF segments of a few seconds with immutable, versioned URLs so the edge can keep them for days, and only live manifests have short TTLs. Second, a cache hierarchy - ISP-embedded caches and CDN edges, a regional shield, then origin - with request collapsing so origin load does not grow with viewers. Third, steering: a control plane picks the CDN and cache for each session from real user throughput, health and cost, with multi-CDN failover built into the manifest. Fourth, pre-positioning popular VOD into ISP caches overnight. Then I'll defend it on the live peak, CDN outages, the cost model, and the QoE metrics I'd watch: start time, rebuffer ratio and bitrate."
+ },
+ "brd": {
+  "problem": "Video and image traffic is the largest cost line and the main driver of user experience. A single-CDN setup is expensive at per-GB pricing, struggles with live-event peaks, exposes us to one vendor's outages, and gives poor quality in Tier-2/3 cities where traffic crosses congested interconnects. We need a delivery strategy that holds quality during record live events and cuts cost per GB.",
+  "goals": [
+   "Sustain 15M concurrent streams (about 40 Tbps) during peak live events without degradation of the ABR ceiling below 720p.",
+   "Video start time under 2s p90 and rebuffer ratio under 0.5% across top 20 ISPs.",
+   "Serve at least 95% of bytes from cache (edge or ISP), keeping origin egress under 2% of delivered bytes.",
+   "Reduce blended delivery cost per GB by 40% through ISP-embedded caches and multi-CDN cost routing.",
+   "Survive the loss of any single CDN, PoP or origin region with automatic failover in under 60s.",
+   "Protect premium content with DRM and short-lived signed URLs."
+  ],
+  "non_goals": [
+   "Building a full global CDN outside India in phase 1 (use commercial CDNs abroad).",
+   "Sub-3s ultra-low-latency live (WebRTC) for mass audiences.",
+   "Video encoding pipeline design (assumed to exist, produces renditions).",
+   "User-generated upload ingestion."
+  ],
+  "stakeholders": [
+   {
+    "who": "Viewers",
+    "needs": "Fast start, no buffering, best quality their network can carry."
+   },
+   {
+    "who": "Content/rights owners",
+    "needs": "DRM, geo-restriction and anti-piracy controls."
+   },
+   {
+    "who": "ISPs / telecom partners",
+    "needs": "Less transit and peering load; caches that are easy to host."
+   },
+   {
+    "who": "Finance",
+    "needs": "Predictable, lower cost per GB and commit utilisation."
+   },
+   {
+    "who": "Live events / SRE",
+    "needs": "Capacity plans, runbooks and real-time control during matches."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Video start time p90",
+    "target": "< 2s"
+   },
+   {
+    "metric": "Rebuffer ratio (stall time / watch time)",
+    "target": "< 0.5%"
+   },
+   {
+    "metric": "Cache offload (bytes from cache / total bytes)",
+    "target": ">= 98% VOD, >= 99.9% live"
+   },
+   {
+    "metric": "Share of bytes from ISP-embedded caches",
+    "target": ">= 60% by end of year"
+   },
+   {
+    "metric": "Blended cost per GB",
+    "target": "-40% vs baseline"
+   },
+   {
+    "metric": "Failover time after CDN outage",
+    "target": "< 60s for 95% of sessions"
+   }
+  ],
+  "constraints": [
+   "Commercial CDN contracts are commit-based; capacity during events must be reserved weeks ahead.",
+   "ISP caches need power/space at partner sites and remote management; hardware lead times of months.",
+   "Mobile networks with variable throughput, NAT, and frequent handovers.",
+   "Content licences require geo-blocking and DRM for premium titles."
+  ],
+  "risks": [
+   {
+    "risk": "Live peak exceeds total delivery capacity.",
+    "mitigation": "Capacity reservations, ABR ceiling caps per region, lower-bitrate ladders for mobile, waiting-room admission as last resort."
+   },
+   {
+    "risk": "A CDN has a regional outage mid-match.",
+    "mitigation": "Multi-CDN URLs in manifests, client failover, steering shifts traffic within a minute."
+   },
+   {
+    "risk": "Origin overload from cache misses (cold new release or purge).",
+    "mitigation": "Shield tier, request collapsing, pre-positioning, origin rate limits."
+   },
+   {
+    "risk": "Piracy via leaked URLs.",
+    "mitigation": "Short-lived tokens bound to session/IP range, DRM, forensic watermarking for premium."
+   },
+   {
+    "risk": "Cost overrun from commercial CDN overage.",
+    "mitigation": "Cost-aware steering, commit tracking, ISP cache expansion."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Mobile viewer in a Tier-2 city",
+    "needs": "Stream on a 3-5 Mbps 4G connection with no stalls."
+   },
+   {
+    "name": "Living-room viewer on a smart TV",
+    "needs": "Stable 1080p/4K over home broadband."
+   },
+   {
+    "name": "Live-event ops engineer",
+    "needs": "Real-time view of capacity by CDN/ISP and levers to shift traffic or cap bitrate."
+   },
+   {
+    "name": "App user browsing",
+    "needs": "Thumbnails and posters load instantly while scrolling."
+   }
+  ],
+  "user_stories": [
+   "As a viewer, I want playback to start within 2 seconds so that I do not abandon.",
+   "As a viewer, I want the stream to adapt to my network so that it never stalls.",
+   "As a live viewer, I want to be no more than about 20s behind real time so that notifications do not spoil the match.",
+   "As a viewer, I want playback to continue if a server fails so that I do not notice outages.",
+   "As an ops engineer, I want to move 20% of traffic from CDN A to CDN B in one action so that I can react to degradation.",
+   "As an ops engineer, I want to cap the max bitrate in a region so that we stay within capacity during the final.",
+   "As a content owner, I want URLs that expire and cannot be shared so that piracy is limited.",
+   "As a browsing user, I want images sized for my screen and in modern formats so that scrolling is smooth on mobile data."
+  ],
+  "functional": [
+   "Playback API returns a manifest URL set (primary and fallback CDN), DRM licence URL and session token.",
+   "Steering service selects CDN and cache cluster per session using RUM, health, capacity and cost.",
+   "Edge caches serve CMAF segments and manifests with token validation at the edge.",
+   "Shield tier collapses concurrent misses and fetches from origin/packager.",
+   "Fill service pre-positions predicted-popular VOD into ISP caches during off-peak windows.",
+   "Live packager produces 2-4s segments and rolling manifests; manifests short-TTL, segments immutable.",
+   "Image service resizes and transcodes at the edge with normalised cache keys.",
+   "Operational controls: traffic shift by percentage, bitrate caps per region/ISP, emergency CDN drain."
+  ],
+  "non_functional": [
+   {
+    "name": "Throughput",
+    "target": "40 Tbps peak egress across all CDNs and ISP caches with 20% headroom"
+   },
+   {
+    "name": "Start latency",
+    "target": "Video start < 2s p90; manifest + first segment TTFB < 300ms p90"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% playback availability; no single CDN or region is a SPOF"
+   },
+   {
+    "name": "Cache offload",
+    "target": ">= 98% bytes from cache for VOD; live origin egress independent of viewers"
+   },
+   {
+    "name": "Live latency",
+    "target": "15-30s glass-to-glass with 2s segments"
+   },
+   {
+    "name": "Security",
+    "target": "Tokens expire in <= 6h, bound to session; DRM for premium"
+   },
+   {
+    "name": "Image latency",
+    "target": "p95 < 200ms on cache hit, < 600ms on transform miss"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "Peak event: 15M concurrent streams, average delivered bitrate 2.5 Mbps (mostly mobile).",
+    "Normal peak: 3M concurrent streams at 3 Mbps.",
+    "Segment duration 4s for VOD, 2s for live; 6 renditions in the ladder.",
+    "Catalogue: 100k titles, about 2 PB of renditions; top 1% of titles drive 50%+ of hours watched.",
+    "ISP cache appliance: about 100 Gbps egress, 300 TB storage (flash + HDD)."
+   ],
+   "math": [
+    "Peak egress = 15M x 2.5 Mbps = 37.5 Tbps; with 20% headroom about 45 Tbps of capacity needed.",
+    "ISP caches at 60% share: 27 Tbps / 100 Gbps = 270 appliances minimum (deploy about 350 for N+1 and uneven ISP distribution).",
+    "Live segment request rate: 15M viewers / 2s segments = 7.5M segment requests/s plus about 7.5M manifest refreshes/s.",
+    "Live origin load with collapsing: 6 renditions x 1 request per 2s per shield node; with 10 shield nodes = 30 requests/s - independent of 15M viewers.",
+    "Daily VOD bytes (normal): 3M x 3 Mbps x average 6 peak-equivalent hours = about 24 PB/day delivered.",
+    "Storage per ISP cache: top 5% of catalogue = 100 TB, fits on a 300 TB appliance with room for the long tail.",
+    "Cost illustration: at a blended Rs 0.25 per GB, 24 PB/day is about Rs 60 lakh/day; shifting 60% to owned ISP caches at a lower marginal cost dominates the business case."
+   ],
+   "summary": "The defining number is about 40 Tbps at a live peak - tens of millions of segment and manifest requests per second. Caching hierarchy and request collapsing make origin load nearly constant (tens of requests per second for live), so the real constraints are edge egress capacity, its distribution across ISPs, and cost per GB."
+  },
+  "out_of_scope": [
+   "Encoding ladder selection and per-title encoding.",
+   "DRM licence server internals.",
+   "Recommendation model that predicts popularity (consumed as an input).",
+   "Peer-to-peer delivery."
+  ]
+ },
+ "hld": {
+  "overview": "A control plane (playback API, steering, fill and ops controls) decides where each session's bytes come from; a data plane of caches delivers them. Media is packaged into immutable CMAF segments in object storage (VOD) or produced by live packagers. A regional shield tier sits in front of origin and collapses requests. Below it are ISP-embedded caches and two or three commercial CDNs. Clients receive manifests with primary and fallback CDN bases, fetch segments using ABR, report QoE telemetry that feeds steering, and fail over on errors. Images go through an edge transform service with normalised cache keys.",
+  "diagram": "                     CONTROL PLANE (cloud region)\n +--------------+  +----------------+  +------------+  +----------------+\n | Playback API |->| Steering svc   |  | Fill svc   |  | Ops controls   |\n | (token, DRM) |  | (RUM, health,  |  | (predict & |  | (shift %, cap  |\n +------+-------+  |  cost, capacity)| |  push VOD) |  |  bitrate)      |\n        |          +-------+--------+  +-----+------+  +----------------+\n        | manifest URLs    | QoE telemetry   | off-peak fill\n        v                  ^                 v\n +-------------+   segs  +----------------------+   +------------------------+\n |  Players    |-------->| ISP-embedded caches  |   | Commercial CDN A / B   |\n | (ABR, fail- |-------->| (60% of bytes)       |   | (edge PoPs, anycast)   |\n |  over)      |         +----------+-----------+   +-----------+------------+\n +-------------+                    | miss                      | miss\n                                    v                           v\n                         +-------------------------------------------------+\n                         | Regional shield / mid-tier (request collapsing) |\n                         +------------------------+------------------------+\n                                                  | miss\n                 +--------------------------------+---------------------+\n                 v                                                      v\n   +----------------------------+                       +-----------------------+\n   | Object storage origin (VOD)|                       | Live encoder+packager |\n   | 2 regions, versioned keys  |                       | (2s CMAF, 2 regions)  |\n   +----------------------------+                       +-----------------------+\n",
+  "components": [
+   {
+    "name": "Playback API",
+    "responsibility": "Authorises the session, issues signed tokens, chooses DRM licence, and returns manifest URLs from the steering decision."
+   },
+   {
+    "name": "Steering service",
+    "responsibility": "Ranks CDNs/clusters per (ISP, region, device) using real-user throughput and error rates, health, capacity headroom and cost; returns primary and fallback."
+   },
+   {
+    "name": "ISP-embedded caches",
+    "responsibility": "Appliances inside partner ISP networks serving the majority of bytes; filled overnight with popular content and on-demand through the shield."
+   },
+   {
+    "name": "Commercial CDNs",
+    "responsibility": "Global edge PoPs with anycast/DNS routing; burst capacity for live events and coverage for ISPs without our caches."
+   },
+   {
+    "name": "Regional shield (mid-tier)",
+    "responsibility": "Second cache layer that collapses requests from many edges into one origin fetch per object; consistent-hash cluster."
+   },
+   {
+    "name": "Origin (object storage + packager)",
+    "responsibility": "Stores VOD renditions with immutable versioned keys; live packager writes segments and manifests; replicated across two regions."
+   },
+   {
+    "name": "Fill service",
+    "responsibility": "Predicts per-ISP popularity and schedules pushes into ISP caches during off-peak windows; manages eviction targets."
+   },
+   {
+    "name": "Player SDK",
+    "responsibility": "ABR algorithm, manifest-level multi-CDN failover, QoE telemetry (start time, stalls, throughput)."
+   },
+   {
+    "name": "Image edge service",
+    "responsibility": "Resizes and converts images at the edge, normalising width to buckets and format from Accept header for cache efficiency."
+   },
+   {
+    "name": "Ops control plane",
+    "responsibility": "Live-event dashboards and levers: traffic shift percentages, regional bitrate caps, CDN drain."
+   }
+  ],
+  "flows": [
+   {
+    "name": "VOD playback start",
+    "steps": [
+     "Player calls POST /playback with title, device, network hints.",
+     "Playback API authorises entitlement and asks steering for a ranked list for the user's ISP/region.",
+     "Response: manifest URL on ISP cache cluster (primary) and CDN A (fallback), signed token valid 6h, DRM licence URL.",
+     "Player fetches manifest, picks a starting rendition from measured throughput, requests the first segments.",
+     "ISP cache hits (pre-positioned title) and serves from flash; playback starts in about 1s.",
+     "Player reports start time and throughput to telemetry; steering learns."
+    ]
+   },
+   {
+    "name": "Live segment under peak load",
+    "steps": [
+     "Packager writes segment 1042 for each rendition to origin and then updates the rolling manifest.",
+     "Millions of players refresh the manifest (TTL 1s at edge) and request segment 1042.",
+     "Each edge server collapses concurrent misses into one fetch to its shield node (chosen by consistent hash).",
+     "Each shield node collapses edge requests into one origin fetch per rendition.",
+     "Segment is cached at shield and edges with long TTL (immutable); subsequent requests are hits."
+    ]
+   },
+   {
+    "name": "CDN degradation mid-match",
+    "steps": [
+     "RUM shows CDN A throughput in a region dropping and error rate rising.",
+     "Steering lowers CDN A's weight; new sessions go to CDN B and ISP caches.",
+     "Existing players hitting errors or slow segments switch to the fallback base URL in the manifest.",
+     "Ops caps the 1080p rung in that region if total capacity is short; recovers when metrics normalise."
+    ]
+   }
+  ],
+  "data_flow": "Bytes flow from origin (object storage or packager) to the shield, then to edge and ISP caches, then to players. VOD bytes for popular titles flow to ISP caches ahead of demand during fill windows. Control decisions flow from the steering service into manifest URLs. QoE telemetry flows from players to the analytics pipeline and back into steering weights. Cache logs flow to billing and capacity planning."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/playback",
+    "request": "{title_id | event_id, device, drm_systems, network:{type, isp_hint}}",
+    "response": "{manifests:[{cdn:'isp-jio-chennai', url, weight}, {cdn:'cdnB', url}], token, token_exp, license_url, max_bitrate}",
+    "notes": "Steering decision embedded; tokens bound to session id and expire in 6h."
+   },
+   {
+    "method": "GET",
+    "path": "/{cdn_base}/v/{content_hash}/{rendition}/seg_{n}.m4s?tok=...",
+    "request": "Range optional",
+    "response": "200/206 media segment, Cache-Control: public, max-age=31536000, immutable",
+    "notes": "Content-hash path makes the object immutable; token validated at edge, excluded from cache key."
+   },
+   {
+    "method": "GET",
+    "path": "/{cdn_base}/live/{event}/{rendition}/index.m3u8?tok=...",
+    "request": "-",
+    "response": "200 rolling manifest, Cache-Control: max-age=1",
+    "notes": "Only short-TTL object in the live path; request collapsing essential."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/qoe",
+    "request": "{session, events:[{ts, type:'start'|'stall'|'bitrate_switch'|'error', cdn, throughput_kbps}]}",
+    "response": "204",
+    "notes": "Batched every 30s; feeds steering and dashboards."
+   },
+   {
+    "method": "POST",
+    "path": "/internal/steering/override",
+    "request": "{scope:{region, isp}, cdn_weights:{cdnA:0.2, cdnB:0.5, isp:0.3}, max_bitrate_kbps, ttl_min}",
+    "response": "200",
+    "notes": "Ops lever during events; audited."
+   },
+   {
+    "method": "GET",
+    "path": "/img/{asset_id}_{version}?w=360&q=75",
+    "request": "Accept: image/avif,image/webp",
+    "response": "200 image, Vary handled by normalised key",
+    "notes": "Width snapped to buckets (180/360/720/1080); format chosen from Accept and included in key."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Media object",
+    "store": "Object storage (S3-compatible), 2 regions",
+    "fields": [
+     "key v/{content_hash}/{rendition}/seg_{n}.m4s",
+     "size",
+     "checksum"
+    ],
+    "keys": "content_hash of the encoded rendition set",
+    "notes": "Re-encode produces a new hash, so caches never need purging for VOD."
+   },
+   {
+    "entity": "Steering weights",
+    "store": "Redis + config store (etcd)",
+    "fields": [
+     "scope (region, isp, device)",
+     "cdn weights",
+     "capacity headroom",
+     "overrides",
+     "updated_at"
+    ],
+    "keys": "steer:{region}:{isp}:{device}",
+    "notes": "Recomputed every 30-60s from RUM aggregates."
+   },
+   {
+    "entity": "QoE events",
+    "store": "Kafka -> ClickHouse/Druid",
+    "fields": [
+     "session",
+     "ts",
+     "cdn",
+     "isp",
+     "event",
+     "throughput",
+     "bitrate",
+     "stall_ms"
+    ],
+    "keys": "partition by session",
+    "notes": "Billions of events/day; 1-minute rollups for steering."
+   },
+   {
+    "entity": "Cache placement",
+    "store": "Fill service DB (PostgreSQL)",
+    "fields": [
+     "isp_cluster",
+     "content_hash",
+     "rendition",
+     "state",
+     "priority",
+     "fill_window"
+    ],
+    "keys": "(isp_cluster, content_hash)",
+    "notes": "Tracks what is pre-positioned where; steering reads availability."
+   },
+   {
+    "entity": "Session token",
+    "store": "Stateless (HMAC)",
+    "fields": [
+     "session_id",
+     "content_scope (path prefix)",
+     "exp",
+     "geo",
+     "sig"
+    ],
+    "keys": "n/a (verified with rotating keys)",
+    "notes": "Edge validates HMAC with keys rotated daily; no lookup needed."
+   }
+  ],
+  "classes": [
+   {
+    "name": "SteeringEngine",
+    "responsibility": "Scores candidate CDNs/clusters for a session.",
+    "methods": [
+     "rank(region, isp, device, title) -> list",
+     "applyOverrides(scope)"
+    ]
+   },
+   {
+    "name": "TokenSigner",
+    "responsibility": "Creates and verifies HMAC tokens for path prefixes.",
+    "methods": [
+     "sign(session, prefix, exp)",
+     "verify(tok, path, now)"
+    ]
+   },
+   {
+    "name": "CollapsingFetcher (edge/shield)",
+    "responsibility": "Ensures one upstream fetch per object at a time; others wait on the in-flight response stream.",
+    "methods": [
+     "get(key) -> stream",
+     "onUpstreamComplete(key)"
+    ]
+   },
+   {
+    "name": "ShieldRouter",
+    "responsibility": "Consistent-hashes object keys to shield nodes within a region.",
+    "methods": [
+     "nodeFor(key) -> node",
+     "onMembershipChange()"
+    ]
+   },
+   {
+    "name": "FillPlanner",
+    "responsibility": "Chooses titles/renditions to push per ISP cluster and schedules transfers in fill windows.",
+    "methods": [
+     "plan(cluster, forecast) -> list",
+     "schedule(window)"
+    ]
+   },
+   {
+    "name": "AbrController (player)",
+    "responsibility": "Chooses next rendition from throughput and buffer level; triggers CDN failover.",
+    "methods": [
+     "nextRendition(buffer_s, tput)",
+     "onSegmentError(cdn)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Steering score",
+    "explain": "Each candidate gets a score combining measured QoE for this ISP/region, available capacity and cost; weights become probabilities so traffic shifts smoothly and keeps exploring.",
+    "pseudocode": "def rank(region, isp, device, title):\n  cands = [c for c in clusters(region, isp) if c.healthy and c.has(title)]\n  for c in cands:\n    q = c.p50_tput(isp, region) / target_tput - 5 * c.error_rate - 3 * c.stall_ratio\n    h = min(1.0, c.headroom_gbps / c.capacity_gbps * 4)   # penalise near-full\n    cost = c.cost_per_gb / max_cost\n    c.score = q * h - 0.3 * cost\n  apply_overrides(cands, region, isp)\n  primary = weighted_choice(softmax([c.score for c in cands], temp=0.2))\n  fallback = best(c for c in cands if c.provider != primary.provider)\n  return [primary, fallback]\n"
+   },
+   {
+    "name": "Request collapsing with streaming",
+    "explain": "The first miss for an object starts an upstream fetch; concurrent requests attach to the same in-flight response and receive bytes as they arrive, so a live segment is fetched once per node even under a million requests.",
+    "pseudocode": "inflight = {}\ndef get(key):\n  if cache.has(key): return cache.stream(key)\n  if key in inflight: return inflight[key].subscribe()\n  f = inflight[key] = upstream.fetch_async(key, timeout=2s)\n  f.on_complete(lambda body: (cache.put(key, body, ttl_for(key)), inflight.pop(key)))\n  f.on_error(lambda e: (inflight.pop(key), negative_cache(key, 1s) if e.is_404 else None))\n  return f.subscribe()\n"
+   },
+   {
+    "name": "Buffer-based ABR with failover",
+    "explain": "Choose rendition mostly from buffer occupancy (BBA-style) and recent throughput; on repeated errors or very slow segments, switch to the fallback CDN base URL.",
+    "pseudocode": "def nextRendition(buffer_s, tput_kbps):\n  if buffer_s < 5: return lowest_rung_below(tput_kbps * 0.5)\n  if buffer_s > 20: return highest_rung_below(tput_kbps * 0.9)\n  return highest_rung_below(tput_kbps * 0.7)\n\ndef onSegmentResult(cdn, ok, dl_time, seg_dur):\n  if not ok or dl_time > 1.5 * seg_dur: cdn.strikes += 1\n  if cdn.strikes >= 2: switch_base_url(fallback)\n"
+   },
+   {
+    "name": "Fill planning for ISP caches",
+    "explain": "Rank titles by forecast hours per ISP cluster, place renditions until storage targets are met, and schedule transfers within off-peak windows respecting link capacity.",
+    "pseudocode": "def plan(cluster, forecast):\n  items = sorted(forecast[cluster], key=lambda t: t.hours / t.bytes, reverse=True)\n  budget = cluster.storage * 0.8\n  plan = []\n  for t in items:\n    for r in t.renditions_for(cluster.device_mix):\n      if budget >= r.bytes and not cluster.has(r): plan.append(r); budget -= r.bytes\n  return schedule(plan, window=('02:00','08:00'), max_gbps=cluster.fill_link * 0.7)\n"
+   }
+  ],
+  "sequence": "Player        Playback API    Steering      ISP cache      Shield        Origin\n  |--POST /playback->|            |              |              |             |\n  |                  |--rank()--->|              |              |             |\n  |                  |<-ISP,cdnB--|              |              |             |\n  |<-manifests+token-|            |              |              |             |\n  |--GET manifest ------------------------------>| hit          |             |\n  |<------------------------------------ 200 ---|              |             |\n  |--GET seg_1 (tok) ---------------------------->| miss         |             |\n  |                  |            |              |--GET seg_1-->| miss        |\n  |                  |            |              |              |--GET seg_1->|\n  |                  |            |              |              |<--- 200 ----|\n  |                  |            |              |<--- 200 -----| (cache)     |\n  |<---------------------------------- 200 -----| (cache)      |             |\n  |--POST /qoe (start=0.9s, tput=6Mbps) -------->| (to telemetry)             |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Live edge segment requested by millions within the same second.",
+   "handling": "Request collapsing at edge and shield with streaming to waiters; packager publishes the segment before the manifest references it so requests never race ahead of availability."
+  },
+  {
+   "case": "Player requests a live segment before it exists (clock drift, aggressive player).",
+   "handling": "Short negative cache (about 1s) for 404 at edge to stop herd on origin; manifest-driven requests only; players keep a target latency of 3 segments behind live edge."
+  },
+  {
+   "case": "Signed token in query string fragments the cache key.",
+   "handling": "Edge validates the token then strips it from the cache key; cache key = path only (content hash, rendition, segment)."
+  },
+  {
+   "case": "New blockbuster release: cold ISP caches at midnight launch.",
+   "handling": "Pre-position during previous night's fill window before release; shield pre-warm; steering prefers caches that report the title present."
+  },
+  {
+   "case": "CDN regional outage mid-match.",
+   "handling": "Player fails over to fallback base URL after 2 strikes; steering re-weights within 30-60s; ops drains the CDN in that region."
+  },
+  {
+   "case": "Total demand exceeds capacity in a region.",
+   "handling": "Cap ABR ceiling regionally (e.g. 720p) via steering response and manifest filtering; prioritise paying tiers; waiting room as last resort."
+  },
+  {
+   "case": "Shield node failure changes consistent-hash ownership.",
+   "handling": "Only that node's keys move (1/N); neighbours fetch from origin once with collapsing; virtual nodes spread the load."
+  },
+  {
+   "case": "Range requests for large progressive files fragment caching.",
+   "handling": "Prefer segmented delivery; for progressive files, cache in fixed-size chunks (e.g. 2 MB slices) so any range is served from cached slices."
+  },
+  {
+   "case": "Images requested at hundreds of arbitrary widths.",
+   "handling": "Snap widths to a few buckets and include format in the key; otherwise the variant explosion destroys hit ratio and floods the transform service."
+  },
+  {
+   "case": "Token sharing / hotlinking piracy.",
+   "handling": "Tokens bound to session and path prefix with short expiry, concurrent stream limits at the playback API, DRM, and forensic watermarking for premium."
+  },
+  {
+   "case": "Mobile handover changes IP and ISP mid-session.",
+   "handling": "Tokens not bound to exact IP (use session binding); player re-requests steering on persistent poor throughput."
+  },
+  {
+   "case": "Re-encode of a title with fixes.",
+   "handling": "New content hash and new URLs; old objects age out by LRU; no purge required and no mixed old/new segments within a session."
+  },
+  {
+   "case": "Origin region outage.",
+   "handling": "Origin replicated to a second region; shields fail over; edges use stale-if-error for manifests (VOD) and long-TTL segments are unaffected."
+  },
+  {
+   "case": "Geo-restricted content accessed via VPN.",
+   "handling": "Geo check at playback API with IP intelligence; token encodes allowed geo; edge rejects mismatches."
+  },
+  {
+   "case": "Clock skew between packager and edge causes premature manifest expiry.",
+   "handling": "Use relative max-age rather than absolute Expires; NTP across packagers; manifests carry media sequence numbers rather than wall-clock for ordering."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Commercial CDNs (Akamai, CloudFront, Fastly, Cloudflare)",
+   "layer": "Edge delivery",
+   "overview": "Global networks of cache PoPs with anycast/DNS routing, tiered caching and token auth.",
+   "why": "Instant reach and burst capacity for live peaks; multi-vendor removes single points of failure and gives price leverage.",
+   "alternatives": "Single CDN (simpler, but vendor risk and weaker negotiating position); fully self-built CDN (cheapest at huge scale, needs years of investment)."
+  },
+  {
+   "name": "ISP-embedded cache appliances (Open Connect style)",
+   "layer": "Edge delivery (owned)",
+   "overview": "Our own storage-heavy servers placed inside ISP networks or at IXPs, filled proactively off-peak and serving local subscribers.",
+   "why": "Biggest lever on cost and QoE: bytes never cross congested interconnects; ISPs benefit from lower transit.",
+   "alternatives": "Rely on CDNs' own ISP deployments; peering only at IXPs (less reach into last mile)."
+  },
+  {
+   "name": "Nginx / Varnish / Apache Traffic Server",
+   "layer": "Cache server software",
+   "overview": "HTTP caching proxies with request collapsing (proxy_cache_lock in nginx), slicing and tiered configurations.",
+   "why": "Mature, high-throughput (with sendfile and kernel TLS), used for shield and ISP caches.",
+   "alternatives": "Custom caches built on Envoy or in-house servers (more control, more effort)."
+  },
+  {
+   "name": "CMAF with HLS and DASH",
+   "layer": "Packaging",
+   "overview": "Common Media Application Format: fragmented MP4 segments usable by both HLS and DASH manifests.",
+   "why": "One set of segments for all devices doubles cache efficiency versus separate TS and fMP4 copies; supports low-latency chunked transfer.",
+   "alternatives": "HLS with MPEG-TS (older, separate copies); WebRTC for ultra-low latency (poor cacheability at scale)."
+  },
+  {
+   "name": "S3-compatible object storage",
+   "layer": "Origin",
+   "overview": "Durable blob storage with high throughput reads.",
+   "why": "Cheap, durable store for petabytes of renditions; cross-region replication for origin failover.",
+   "alternatives": "Self-hosted Ceph/MinIO; CDN vendor origin storage."
+  },
+  {
+   "name": "Widevine / FairPlay / PlayReady DRM",
+   "layer": "Content protection",
+   "overview": "Encryption with licence servers controlling decryption keys on devices.",
+   "why": "Required by content licences; segments stay cacheable because they are encrypted once (CENC/CBCS) and keys are separate.",
+   "alternatives": "Clear content with token auth only (insufficient for premium)."
+  },
+  {
+   "name": "Kafka + ClickHouse/Druid",
+   "layer": "QoE analytics",
+   "overview": "Event stream and real-time OLAP.",
+   "why": "Ingest billions of player events per day and produce 1-minute aggregates for steering and dashboards.",
+   "alternatives": "Vendor QoE analytics (e.g. Conviva) - fast to adopt but less control over steering inputs."
+  },
+  {
+   "name": "Image CDN / edge compute (e.g. Cloudflare Images, imgproxy at edge)",
+   "layer": "Image delivery",
+   "overview": "On-the-fly resize and format conversion close to users.",
+   "why": "Serve AVIF/WebP at the right size without storing every variant at origin.",
+   "alternatives": "Pre-generate all variants at upload (storage-heavy, inflexible)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Tiered caching and origin shield",
+   "explain": "A CDN has hundreds of edge locations. If each edge fetches independently from the origin on a miss, the origin sees one request per object per edge - hundreds of copies - and long-tail objects have poor hit ratios because each edge sees too few requests to keep them. Tiered caching adds intermediate layers. Edges that miss ask a regional upper tier (often called a mid-tier, parent or origin shield) instead of the origin. The shield aggregates demand from many edges, so its hit ratio is much higher, and only the shield's misses reach origin. A dedicated origin shield is a single designated tier location (or small set) per origin, which concentrates origin traffic further and lets the origin be sized for a tiny fraction of total load. The trade-offs: an extra hop adds latency on misses, the shield becomes a capacity hotspot that needs its own redundancy, and topology must be chosen so edges are close to their upper tier. Cloudflare's Smart Tiered Cache, for example, picks the upper tier closest to the origin based on latency measurements. For media, tiering matters most for the long tail of VOD and for the first seconds of every live segment.",
+   "in_this_design": "ISP caches and CDN edges sit under a regional shield cluster in each of two regions; only shield misses reach object storage or the packager. Live origin load becomes about one fetch per segment per rendition per shield node.",
+   "key_points": [
+    "Each tier aggregates demand, raising hit ratio for the long tail.",
+    "Origin is sized for shield misses, not for viewers.",
+    "Extra hop costs a little latency on misses only.",
+    "Shield must be redundant and consistent-hashed internally.",
+    "Choose upper tiers close to the origin; edges close to users."
+   ],
+   "qa": [
+    {
+     "q": "Why does a shield improve hit ratio for long-tail content?",
+     "a": "A long-tail object might be requested once a day per edge - too rarely to stay cached - but the shield sees the sum of all edges' requests, so it keeps the object and serves it to every edge that misses."
+    },
+    {
+     "q": "What is the cost of adding a shield?",
+     "a": "An extra hop on misses (tens of ms), a capacity hotspot that needs N+1 redundancy, and another layer to monitor. For media with immutable segments the trade is almost always worth it."
+    },
+    {
+     "q": "Live origin load with 15M viewers, 6 renditions, 2s segments and 10 shield nodes?",
+     "a": "With collapsing, roughly 6 renditions x 10 shield nodes / 2s = 30 requests per second - independent of viewer count."
+    }
+   ]
+  },
+  {
+   "name": "Request collapsing (coalescing) for hot objects",
+   "explain": "When an object is not yet in a cache and many clients request it at once, a naive cache forwards every request upstream. For a live stream this happens every few seconds: a new segment appears and millions of players ask for it within the same second. Request collapsing makes the cache treat concurrent misses for the same key as one: the first request triggers an upstream fetch and the rest wait for it (or, better, attach to the in-flight response and receive bytes as they stream in). In nginx this is proxy_cache_lock; Varnish and most CDNs do it by default for cacheable responses. Applied at every tier, collapsing turns a million requests into one per edge server, one per shield node and effectively one at origin. Subtleties: collapsing only works for responses that will be cacheable (if the response turns out to be private or an error, waiters must be released and may all retry); there must be a timeout so a slow upstream does not hang everyone; and errors such as 404 for a not-yet-published segment should be negatively cached for a very short time so the herd does not repeat every millisecond.",
+   "in_this_design": "Enabled at ISP caches, CDN edges (vendor config) and the shield; streaming to waiters so the first byte is not delayed; 404s negative-cached for 1s; upstream timeout 2s with fallback to the second shield.",
+   "key_points": [
+    "Live = a thundering herd every segment interval.",
+    "Collapse at every tier; stream bytes to waiters.",
+    "Release waiters on uncacheable responses or errors.",
+    "Negative-cache 404s briefly.",
+    "Origin load becomes independent of audience size."
+   ],
+   "qa": [
+    {
+     "q": "What happens without collapsing when a live segment is published?",
+     "a": "Every edge server forwards every concurrent miss, so the shield and origin see thousands to millions of identical requests in the first second - enough to overload them and cause stalls for everyone."
+    },
+    {
+     "q": "Why stream to waiters instead of waiting for the full object?",
+     "a": "A 2s segment at high bitrate is megabytes; streaming lets every waiting player start receiving bytes at the same time as the first, keeping time-to-first-byte low."
+    },
+    {
+     "q": "When can collapsing hurt?",
+     "a": "If the upstream response is uncacheable or slow, all waiters are blocked behind one request. Use lock timeouts and mark uncacheable URLs so they bypass collapsing."
+    }
+   ]
+  },
+  {
+   "name": "Consistent hashing within and across cache clusters",
+   "explain": "Inside a PoP or shield there are many cache servers. If requests are spread randomly, each server caches the same popular objects and the cluster's effective capacity is only one server's disk. Consistent hashing maps each object key to one (or a few) servers so the cluster behaves like one large cache: capacity adds up, and each object is fetched upstream once. Keys and servers are hashed onto a ring; a key belongs to the next server clockwise, and adding or removing a server moves only about 1/N of keys. Virtual nodes give each server many ring positions for even load. Variants used in CDNs include rendezvous (highest random weight) hashing, CARP, and Google's Maglev hashing for load balancers. Pure consistent hashing has a hot-object weakness: one viral object lands on one server. Practical systems therefore use bounded-load consistent hashing (spill to the next server when one exceeds a load factor such as 1.25x average) or replicate the hottest objects across several servers. For media, a common split is: hash on the content path for the long tail, and allow hot live segments to be served by any server in the PoP from a small in-memory tier.",
+   "in_this_design": "ShieldRouter uses consistent hashing with bounded loads over shield nodes; ISP cache clusters hash segment keys across appliances; the hottest live segments are replicated to all nodes in the cluster's RAM tier.",
+   "key_points": [
+    "Hashing makes N servers behave like one N-times-larger cache.",
+    "Membership change moves only ~1/N of keys.",
+    "Virtual nodes even out load.",
+    "Bounded loads or replication handle viral objects.",
+    "Rendezvous and Maglev hashing are common CDN variants."
+   ],
+   "qa": [
+    {
+     "q": "Why not just round-robin requests across cache servers in a PoP?",
+     "a": "Every server would cache the same objects, wasting disk and multiplying upstream fetches by the server count. Hashing partitions the key space so each object is cached once per PoP."
+    },
+    {
+     "q": "One live segment is on one server and it saturates. Fix?",
+     "a": "Bounded-load consistent hashing spills excess to the next servers, or treat known-hot live content as replicated to all servers' memory tier."
+    },
+    {
+     "q": "What happens when a shield node dies?",
+     "a": "Only its keys (about 1/N) remap to neighbours, which fetch them from origin once each with collapsing. Virtual nodes spread that extra load across all survivors."
+    }
+   ]
+  },
+  {
+   "name": "Request routing: DNS steering, anycast and multi-CDN",
+   "explain": "Getting a user to the right cache is as important as caching. Three mechanisms are common. DNS-based routing (GSLB) answers the CDN hostname with an IP chosen for the resolver's location, using EDNS Client Subnet to see the user's network; it is flexible but coarse, and TTL caching in resolvers slows changes. Anycast announces the same IP prefix from many PoPs via BGP so the network routes each user to a topologically near PoP; it is simple and fast to fail over but follows BGP's notion of nearness, not actual performance. Application-level steering has the service itself choose the server and hand the client a concrete URL - Netflix's control plane, for example, chooses Open Connect appliances per request based on health, file availability and network proximity learned from BGP. With multiple CDNs, a steering layer chooses the vendor per session using real user monitoring (RUM): measured throughput, errors and start times per ISP and region, combined with cost and contract commitments. Clients can be given a primary and fallback so that failover does not wait for DNS TTLs. Good steering keeps a small exploration share on every option so it notices when a worse option becomes better.",
+   "in_this_design": "Playback API calls the steering service, which ranks ISP caches and CDNs per (region, ISP, device) using 1-minute RUM aggregates, capacity headroom and cost, and returns primary and fallback base URLs. Inside each CDN, its own DNS/anycast chooses the PoP.",
+   "key_points": [
+    "DNS steering is flexible but slowed by resolver caching.",
+    "Anycast fails over fast but optimises BGP distance, not throughput.",
+    "App-level steering returns concrete URLs from live data.",
+    "Multi-CDN choice should be driven by RUM, capacity and cost.",
+    "Give clients a fallback so failover is instant."
+   ],
+   "qa": [
+    {
+     "q": "Why not rely on DNS to switch CDNs during an outage?",
+     "a": "Resolvers and devices cache DNS answers beyond their TTL, so a switch can take minutes for many users. Putting a fallback URL in the manifest lets the player switch on its next segment."
+    },
+    {
+     "q": "What data should drive CDN selection?",
+     "a": "Real user measurements per ISP and region - throughput, rebuffering, start time, errors - plus capacity headroom and per-GB cost. Synthetic tests alone miss last-mile reality."
+    },
+    {
+     "q": "Anycast sends Chennai users to a Mumbai PoP. Why could that happen and what do you do?",
+     "a": "BGP picks the path by AS-path and routing policy, not latency, so peering arrangements can pull traffic away. Work with the CDN on announcements, use DNS/app steering to target a specific PoP, or place ISP caches locally."
+    }
+   ]
+  },
+  {
+   "name": "Adaptive bitrate streaming and segment cacheability",
+   "explain": "Adaptive bitrate (ABR) streaming encodes each title into a ladder of renditions at different bitrates and resolutions, and splits each rendition into short segments (typically 2-6 seconds). A manifest (HLS playlist or DASH MPD) lists renditions and segments. The player measures throughput and its buffer, and picks the rendition for each next segment, so quality adapts to the network without stalling. From a CDN's perspective this design is a gift: every segment is a small, independent, plain HTTP object that never changes after it is written, so it can be cached with a very long TTL and served by any HTTP cache. Only manifests change - for VOD they are static too, and for live the rolling manifest changes every segment interval and gets a TTL of about one segment or less. Segment duration is a trade-off: shorter segments lower live latency and let ABR react faster, but increase request rates and per-request overhead; longer segments improve encoding efficiency and cache hit ratios per request. CMAF unifies HLS and DASH on one fragmented MP4 format, so one set of cached objects serves all devices, and supports chunked transfer for low-latency modes. Buffer-based ABR algorithms (like BBA from Netflix research) reduce rebuffering compared with pure throughput-based choices.",
+   "in_this_design": "CMAF segments: 4s VOD, 2s live; 6-rung ladder; segments immutable with year-long TTL; live manifests TTL 1s; player uses buffer-based ABR and can be told a regional max bitrate by steering to protect capacity.",
+   "key_points": [
+    "ABR = ladder of renditions x short segments x manifest.",
+    "Segments are immutable HTTP objects - perfect for caching.",
+    "Only live manifests need short TTLs.",
+    "Shorter segments: lower latency, more requests.",
+    "CMAF lets one cached copy serve HLS and DASH."
+   ],
+   "qa": [
+    {
+     "q": "Why does moving from MPEG-TS HLS plus fMP4 DASH to CMAF improve cache efficiency?",
+     "a": "Previously the same content was stored and cached twice in two container formats. CMAF uses one set of fMP4 segments for both, roughly halving edge storage and doubling per-object hit ratio."
+    },
+    {
+     "q": "What is the trade-off of 2s versus 6s segments for live?",
+     "a": "2s cuts glass-to-glass latency (players buffer about 3 segments) and lets ABR react faster, but triples request rates and manifest refreshes; 6s is cheaper and more cache-friendly but adds latency."
+    },
+    {
+     "q": "How can the CDN strategy cap peak bandwidth without changing encoding?",
+     "a": "Steering can return a max bitrate, or the manifest can be filtered to drop top rungs for a region, so players never request 1080p when capacity is short."
+    }
+   ]
+  },
+  {
+   "name": "Cache key design, immutable URLs and variant control",
+   "explain": "A cache stores responses under a cache key, usually derived from the URL and selected headers. Hit ratio depends heavily on that key being as coarse as correctness allows. Query parameters that do not change the content - tracking tags, session tokens, random cache-busters - fragment the key and turn hits into misses; they should be stripped or excluded after validation. The Vary header tells caches to key on request headers such as Accept-Encoding or Accept; varying on a high-cardinality header like User-Agent effectively disables caching. For content that changes, the most robust approach is immutable, versioned URLs: include a content hash or version in the path, set Cache-Control: max-age=31536000, immutable, and publish a new URL when content changes. Caches never need purging, there is no window where old and new versions mix, and rollbacks are just pointing back to the old URL. Mutable entry points (a manifest, an HTML page) stay short-TTL and refer to the immutable objects. For images, variant control means normalising parameters: snapping widths to a few buckets, mapping Accept to a small set of formats, and clamping quality - otherwise every device creates its own variant and the transform service becomes the origin for everything.",
+   "in_this_design": "Segment URLs carry the content hash; tokens validated then removed from the key; image keys use width buckets and a normalised format; only manifests and image metadata are short-TTL.",
+   "key_points": [
+    "Hit ratio lives or dies by the cache key.",
+    "Strip tokens and tracking params after validation.",
+    "Never Vary on User-Agent; normalise instead.",
+    "Immutable versioned URLs remove the need to purge.",
+    "Short-TTL entry points refer to long-TTL immutable objects."
+   ],
+   "qa": [
+    {
+     "q": "Hit ratio dropped from 97% to 60% after a release. First thing to check?",
+     "a": "The cache key: a new query parameter, a per-session token left in the key, or a new Vary header. Compare the distinct keys per object before and after."
+    },
+    {
+     "q": "Why prefer content-hash URLs over purging when a title is re-encoded?",
+     "a": "New URLs are instantly correct everywhere, old ones age out naturally, there is no purge storm, and a session never mixes old and new segments."
+    },
+    {
+     "q": "How do you serve WebP or AVIF without breaking caching?",
+     "a": "Map the Accept header to one of a few formats at the edge and include that normalised format in the key (or URL), rather than Vary: Accept with raw header values."
+    }
+   ]
+  },
+  {
+   "name": "Proactive placement versus pull-through caching (and eviction for large media)",
+   "explain": "Classic CDNs are pull-through: an object enters a cache only after someone requests it and it misses. That is simple and adapts to any demand, but the first viewers of every object pay the miss latency and the upstream path must carry the miss traffic exactly when demand is highest. Proactive placement (push) predicts what will be popular and copies it to caches ahead of time. Netflix's Open Connect is the best-known example: it forecasts what members will watch, then pushes content to appliances inside ISP networks during configurable off-peak fill windows, using spare bandwidth, and appliances can fill from each other. Netflix describes this as reducing upstream demand by orders of magnitude compared with demand-driven caching. Push works when demand is predictable (catalogue VOD, scheduled releases) and storage is large; pull remains necessary for the long tail and for anything unexpected, so real systems combine them. Eviction for media also differs from small-object caching: objects are large and one-off requests can churn a disk. Policies such as second-hit admission (cache only on the second request), size-aware LRU, and keeping the first segments of many titles (for fast start) while dropping later segments of unpopular ones improve byte hit ratio.",
+   "in_this_design": "FillPlanner pushes the forecast top titles per ISP cluster between 02:00 and 08:00 at up to 70% of the fill link; the long tail is pull-through via the shield; caches use second-hit admission for tail objects and always keep the first 30s of the top 20k titles.",
+   "key_points": [
+    "Pull adapts to anything; push removes misses for predictable demand.",
+    "Fill off-peak, serve on-peak - use idle bandwidth.",
+    "Combine: push the head, pull the tail.",
+    "Second-hit admission protects disks from one-off churn.",
+    "Keep first segments widely for fast starts."
+   ],
+   "qa": [
+    {
+     "q": "When does push placement beat pull-through?",
+     "a": "When demand is predictable and concentrated (new releases, popular catalogue), storage is ample, and off-peak bandwidth is cheap. It removes first-viewer misses and moves fill traffic out of the peak."
+    },
+    {
+     "q": "Why is second-hit admission useful for media caches?",
+     "a": "Many long-tail objects are requested once and never again; admitting them evicts useful content. Waiting for a second request filters out one-hit wonders at the cost of one extra miss for genuinely popular new objects."
+    },
+    {
+     "q": "A surprise viral title is not pre-positioned. What happens?",
+     "a": "Pull-through takes over: the shield fetches once, ISP caches fill on demand with collapsing, and the next night's fill plan includes it."
+    }
+   ]
+  },
+  {
+   "name": "Edge authentication: signed URLs and tokens",
+   "explain": "Media URLs are valuable: if anyone can fetch them, premium content leaks and hotlinkers consume our bandwidth. But edge caches cannot call a central auth service for every segment request - at millions of requests per second that would be a bottleneck and a single point of failure. Signed URLs and tokens solve this with cryptography instead of lookups. When a session starts, the backend creates a token containing claims such as the allowed path prefix, an expiry time, and optionally the session id or geography, and signs it with an HMAC key (or an asymmetric key) shared with the edges. Each edge verifies the signature and claims locally in microseconds, rejecting expired or tampered tokens. Keys are rotated on a schedule with an overlap period. Tokens should cover a path prefix (the whole title or event), not every segment, so the manifest can reference segments without per-segment signing, and the token must be excluded from the cache key so that all authorised users share cached objects. Tokens limit URL sharing but do not stop a determined pirate; DRM encrypts the media itself, and forensic watermarking traces leaks.",
+   "in_this_design": "TokenSigner issues HMAC tokens scoped to /v/{content_hash}/ or /live/{event}/ with 6h expiry and session binding; edges validate and strip them from the cache key; keys rotate daily; DRM for premium titles.",
+   "key_points": [
+    "Verify at the edge with crypto, not with a central lookup.",
+    "Scope tokens to a path prefix and short expiry.",
+    "Exclude tokens from the cache key.",
+    "Rotate signing keys with overlap.",
+    "Tokens limit sharing; DRM protects the content itself."
+   ],
+   "qa": [
+    {
+     "q": "Why not check entitlement with an auth service on every segment request?",
+     "a": "At millions of requests per second it adds latency and creates a central bottleneck and failure point. HMAC verification at the edge is stateless and microseconds per request."
+    },
+    {
+     "q": "Should the token be bound to the client IP?",
+     "a": "Strict IP binding breaks mobile users whose IP changes on handover or CGNAT. Bind to session and short expiry instead, and enforce concurrent stream limits at the playback API."
+    },
+    {
+     "q": "How do encrypted DRM segments stay cacheable?",
+     "a": "Content is encrypted once (CENC/CBCS) and the same encrypted segments are served to everyone; per-user control lives in the licence exchange, not in the segment bytes."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Single CDN vs multi-CDN vs own ISP caches",
+   "options": "One commercial CDN; multi-CDN; multi-CDN plus ISP-embedded caches",
+   "choice": "Multi-CDN plus ISP-embedded caches",
+   "why": "At about 24 PB/day owned caches cut cost and improve last-mile quality; multiple CDNs give burst capacity and resilience. Cost: operational complexity and steering logic."
+  },
+  {
+   "decision": "Push vs pull placement",
+   "options": "Pull-through only; push only; push head + pull tail",
+   "choice": "Push head + pull tail",
+   "why": "Predictable popular content gains most from pre-positioning; the long tail and surprises still need pull."
+  },
+  {
+   "decision": "Live segment duration",
+   "options": "1s (LL); 2s; 6s",
+   "choice": "2s",
+   "why": "15-30s latency target is met with fewer requests than 1s; 6s adds too much latency for sports."
+  },
+  {
+   "decision": "Routing mechanism",
+   "options": "DNS only; anycast only; app-level steering with fallback URLs",
+   "choice": "App-level steering, with each CDN's DNS/anycast inside",
+   "why": "Steering uses RUM and cost and gives instant client failover; vendor routing still picks PoPs."
+  },
+  {
+   "decision": "Content updates",
+   "options": "Purge and reuse URLs; immutable versioned URLs",
+   "choice": "Immutable versioned URLs",
+   "why": "No purge storms, no mixed versions, trivial rollback."
+  },
+  {
+   "decision": "Capacity shortfall handling",
+   "options": "Let everyone stall; cap ABR ceiling regionally; waiting room",
+   "choice": "Cap ABR ceiling first, waiting room last",
+   "why": "Lower quality for all beats stalls for many; admission control only when even capped bitrate does not fit."
+  },
+  {
+   "decision": "Auth at edge",
+   "options": "Central auth call; signed tokens",
+   "choice": "Signed tokens",
+   "why": "Stateless and scalable; central calls cannot keep up with segment request rates."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Commercial CDN regional outage",
+   "behavior": "Players fail over to fallback URL after 2 strikes; steering re-weights within 60s; ops drains region; capacity absorbed by other CDN and ISP caches."
+  },
+  {
+   "failure": "ISP cache cluster down",
+   "behavior": "Steering marks unhealthy from heartbeats; sessions move to CDNs; that ISP's traffic now crosses interconnects (watch peering capacity)."
+  },
+  {
+   "failure": "Shield node failure",
+   "behavior": "Consistent hashing remaps its keys; collapsing at neighbours; brief origin uptick."
+  },
+  {
+   "failure": "Origin / packager failure in one region",
+   "behavior": "Live: redundant encoder/packager pair in second region with identical segment numbering; shields fail over. VOD: replicated object storage."
+  },
+  {
+   "failure": "Steering service down",
+   "behavior": "Playback API uses last-known static weights cached locally; existing sessions unaffected."
+  },
+  {
+   "failure": "Signing key leak",
+   "behavior": "Rotate keys immediately; edges accept only new key after overlap; short token expiry limits exposure."
+  },
+  {
+   "failure": "Demand surge beyond total capacity",
+   "behavior": "Regional ABR caps, then waiting-room admission for new sessions; existing sessions prioritised."
+  }
+ ],
+ "metrics": [
+  "Video start time p50/p90 by ISP, region, device and CDN.",
+  "Rebuffer ratio and rebuffer events per hour.",
+  "Average delivered bitrate and share of time at top rung.",
+  "Playback failure rate (errors before start, mid-stream fatal errors).",
+  "Cache offload and hit ratio by tier (ISP cache, edge, shield), byte and request based.",
+  "Origin egress Gbps and request rate; shield collapse ratio.",
+  "Per-CDN throughput and error rate from RUM; steering distribution versus targets.",
+  "Egress capacity headroom per ISP/region in real time during events.",
+  "Live latency (glass-to-glass) and segment availability lag.",
+  "Cost per GB by CDN and commit utilisation."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you prepare for a record live event?",
+   "a": "Forecast peak concurrency and bitrate mix, reserve CDN capacity weeks ahead, verify ISP cache headroom per ISP, load-test the packager-shield path, pre-agree regional bitrate caps, run game-day failover drills, and staff a war room with steering controls and live QoE dashboards."
+  },
+  {
+   "q": "Why not serve everything from one CDN with a big contract?",
+   "a": "Vendor outages would take down every stream, no single vendor has unlimited capacity in every Indian ISP at peak, and multi-CDN keeps pricing competitive. Steering lets us use each where it performs best."
+  },
+  {
+   "q": "How do you decide where to place your own caches?",
+   "a": "By bytes delivered per ISP and region, current QoE gaps, and interconnect costs. Start with the top 5 ISPs carrying most traffic; an appliance pays back when its offloaded bytes times the CDN per-GB price exceeds its amortised cost."
+  },
+  {
+   "q": "How would you reduce live latency to under 5 seconds?",
+   "a": "Low-latency HLS/DASH with CMAF chunked transfer (sub-second chunks inside 2s segments), shorter player buffers, and edges that support chunked delivery - accepting more requests and less buffer against network jitter."
+  },
+  {
+   "q": "What happens to your cache hit ratio if users can seek anywhere in a long-tail film?",
+   "a": "Seeks request arbitrary segments; segmented delivery keeps each request a cacheable object. Tail objects mostly hit at the shield; second-hit admission keeps them from churning edge disks."
+  },
+  {
+   "q": "How do you measure that steering is actually helping?",
+   "a": "Keep a small randomised holdout of sessions with static weights and compare start time, rebuffer and bitrate; also track how often fallbacks fire."
+  },
+  {
+   "q": "Images are a different workload - what changes?",
+   "a": "Small objects, huge counts, request-rate bound rather than bandwidth bound. Normalise variants, use immutable versioned URLs, HTTP/2 or HTTP/3 multiplexing, aggressive client caching, and edge transforms with an origin cache of transformed variants."
+  }
+ ],
+ "key_points": [
+  "Media delivery is a bandwidth problem: do the egress math first (15M x 2.5 Mbps = about 37.5 Tbps).",
+  "Make everything cacheable: short CMAF segments, immutable content-hash URLs, only live manifests short-TTL.",
+  "Tiered caching plus request collapsing makes origin load independent of audience size.",
+  "Consistent hashing inside clusters turns many servers into one big cache; bounded loads for viral objects.",
+  "Push predictable popular content to ISP caches off-peak; pull the long tail through the shield.",
+  "Steer per session with real user measurements, capacity and cost; give players a fallback CDN in the manifest.",
+  "Plan for capacity shortfall: cap ABR ceilings regionally before anything stalls.",
+  "Authenticate at the edge with signed tokens excluded from the cache key; DRM for premium.",
+  "Measure QoE (start time, rebuffer ratio, bitrate) alongside offload and cost per GB."
+ ],
+ "quiz": [
+  {
+   "q": "15M concurrent viewers at an average 2.5 Mbps need roughly how much egress?",
+   "options": [
+    "37.5 Tbps",
+    "3.75 Tbps",
+    "375 Gbps",
+    "375 Tbps"
+   ],
+   "answer": 0,
+   "why": "15,000,000 x 2.5 Mbps = 37.5 million Mbps = 37.5 Tbps. 3.75 Tbps drops a factor of ten, a common slip."
+  },
+  {
+   "q": "What makes origin load for a live stream independent of the number of viewers?",
+   "options": [
+    "Short manifest TTLs",
+    "Anycast routing",
+    "DRM encryption",
+    "Tiered caching with request collapsing at each tier"
+   ],
+   "answer": 3,
+   "why": "Collapsing turns concurrent misses into one upstream fetch per node per tier, so origin sees a few requests per segment. Short manifest TTLs actually add requests."
+  },
+  {
+   "q": "Why are ABR video segments ideal for caching?",
+   "options": [
+    "They are small enough to fit in RAM",
+    "They are encrypted",
+    "They are immutable HTTP objects once written",
+    "They are personalised per user"
+   ],
+   "answer": 2,
+   "why": "Segments never change, so they can carry year-long TTLs and be served by any HTTP cache. Encryption is orthogonal; personalisation would hurt caching."
+  },
+  {
+   "q": "Which object in the live path needs a short TTL?",
+   "options": [
+    "Media segments",
+    "The rolling live manifest",
+    "Init segments",
+    "DRM-encrypted segments"
+   ],
+   "answer": 1,
+   "why": "The manifest changes every segment interval; segments and init segments are immutable."
+  },
+  {
+   "q": "Hit ratio fell from 97% to 60% after a player release. Most likely cause?",
+   "options": [
+    "A per-session token or new query parameter is now part of the cache key",
+    "Origin is slow",
+    "Too few CDN PoPs",
+    "Segments got longer"
+   ],
+   "answer": 0,
+   "why": "Cache key fragmentation creates a distinct key per session. A slow origin raises latency, not miss ratio."
+  },
+  {
+   "q": "Why use content-hash URLs for VOD renditions?",
+   "options": [
+    "To hide content from search engines",
+    "To enable DRM",
+    "To reduce manifest size",
+    "Updates get new URLs, so no purges and no mixed versions in a session"
+   ],
+   "answer": 3,
+   "why": "Immutable versioned URLs make caching trivially correct. DRM works with any URL scheme."
+  },
+  {
+   "q": "Why put a fallback CDN URL in the manifest instead of relying on DNS to fail over?",
+   "options": [
+    "DNS cannot point to two CDNs",
+    "Manifests are cached longer than DNS",
+    "Resolver/device DNS caching can delay switches for minutes; the player can switch on the next segment",
+    "Anycast forbids DNS failover"
+   ],
+   "answer": 2,
+   "why": "Client-side failover is immediate; DNS changes propagate slowly due to caching beyond TTL."
+  },
+  {
+   "q": "Round-robin across 20 cache servers in a PoP instead of hashing. Main effect?",
+   "options": [
+    "Better load balance with no downside",
+    "Each server caches the same popular objects, reducing effective capacity and multiplying upstream fetches",
+    "Lower latency",
+    "Fewer TLS handshakes"
+   ],
+   "answer": 1,
+   "why": "Without key partitioning the PoP behaves like one server's disk, with up to 20x upstream fetches. Load balance improves slightly but at a big hit-ratio cost."
+  },
+  {
+   "q": "A viral live segment overloads the one server it hashes to. Best remedy?",
+   "options": [
+    "Bounded-load consistent hashing or replicating hot objects across servers",
+    "Increase TTL",
+    "Switch to round-robin for everything",
+    "Purge the segment"
+   ],
+   "answer": 0,
+   "why": "Bounded loads spill excess to neighbours; hot replication spreads it. Round-robin for everything sacrifices hit ratio for the long tail."
+  },
+  {
+   "q": "When is proactive placement (push) most valuable?",
+   "options": [
+    "For unpredictable long-tail content",
+    "For live streams",
+    "For personalised images",
+    "For predictable popular content, filled during off-peak hours"
+   ],
+   "answer": 3,
+   "why": "Push uses idle bandwidth to pre-load what will be watched. Live content does not exist in advance, so it cannot be pushed."
+  },
+  {
+   "q": "Why can't edge caches check entitlement with a central auth service per segment?",
+   "options": [
+    "HTTP does not allow it",
+    "Tokens are cheaper to store",
+    "At millions of requests per second it adds latency and a central bottleneck",
+    "CDNs forbid outbound calls"
+   ],
+   "answer": 2,
+   "why": "HMAC tokens are verified locally in microseconds. Central checks would make auth the scaling limit and a single point of failure."
+  },
+  {
+   "q": "Strictly binding segment tokens to client IP mainly harms which users?",
+   "options": [
+    "Smart TV users on broadband",
+    "Mobile users whose IP changes on handover or CGNAT",
+    "Users in other countries",
+    "Users with ad blockers"
+   ],
+   "answer": 1,
+   "why": "Mobile IPs change mid-session, causing playback failures. Session binding plus short expiry is the usual compromise."
+  },
+  {
+   "q": "Total demand will exceed capacity by 15% during the final. Best first lever?",
+   "options": [
+    "Cap the ABR ceiling regionally (e.g. 720p)",
+    "Let players stall and recover",
+    "Disable DRM",
+    "Increase segment duration to 10s"
+   ],
+   "answer": 0,
+   "why": "Reducing top bitrate cuts bandwidth for everyone with modest quality loss. Longer segments do not reduce bytes and add latency."
+  },
+  {
+   "q": "What does an origin shield primarily improve?",
+   "options": [
+    "Client-side ABR decisions",
+    "DRM licence speed",
+    "DNS resolution time",
+    "Hit ratio for long-tail objects and protection of origin"
+   ],
+   "answer": 3,
+   "why": "The shield aggregates demand from many edges so rare objects stay cached and origin sees only shield misses."
+  },
+  {
+   "q": "Moving from separate MPEG-TS (HLS) and fMP4 (DASH) to CMAF roughly does what to edge storage for the same content?",
+   "options": [
+    "Doubles it",
+    "No change",
+    "Halves it",
+    "Reduces it by 90%"
+   ],
+   "answer": 2,
+   "why": "One set of fMP4 segments serves both protocols instead of two copies. 90% overstates it."
+  },
+  {
+   "q": "Players request a live segment that is not published yet and get 404s. What prevents an origin herd?",
+   "options": [
+    "Long TTL on 404s",
+    "Very short negative caching of 404s plus publishing segments before manifests reference them",
+    "Disabling collapsing",
+    "Bigger origin"
+   ],
+   "answer": 1,
+   "why": "A 1s negative cache absorbs the burst; correct publish order prevents it. A long 404 TTL would keep a now-existing segment unavailable."
+  },
+  {
+   "q": "Why use second-hit admission on media cache disks?",
+   "options": [
+    "To avoid evicting useful content for one-off long-tail requests",
+    "To speed up first requests",
+    "To reduce DRM cost",
+    "To enable range requests"
+   ],
+   "answer": 0,
+   "why": "Admitting only on the second request filters one-hit wonders. It slightly slows the first popular hit, the opposite of speeding first requests."
+  },
+  {
+   "q": "Images arrive at hundreds of arbitrary widths. Best approach?",
+   "options": [
+    "Vary on User-Agent",
+    "Disable image caching",
+    "Pre-generate every width at upload",
+    "Snap widths to a few buckets and normalise format into the key"
+   ],
+   "answer": 3,
+   "why": "Normalisation bounds the variant count so caches hit. Vary on User-Agent creates thousands of variants."
+  },
+  {
+   "q": "Live origin load with 6 renditions, 2s segments and 10 shield nodes, with collapsing, is about:",
+   "options": [
+    "7.5M requests/s",
+    "3,000 requests/s",
+    "30 requests/s",
+    "300k requests/s"
+   ],
+   "answer": 2,
+   "why": "6 x 10 / 2 = 30 req/s. 7.5M req/s is the viewer-facing segment request rate at the edges."
+  },
+  {
+   "q": "Main trade-off of 2s versus 6s live segments?",
+   "options": [
+    "2s improves compression",
+    "2s lowers latency but triples request and manifest-refresh rates",
+    "6s lowers latency",
+    "No difference for CDNs"
+   ],
+   "answer": 1,
+   "why": "Shorter segments reduce glass-to-glass latency at the cost of more requests. Longer segments compress slightly better, not 2s."
+  },
+  {
+   "q": "Which signal should primarily drive multi-CDN steering?",
+   "options": [
+    "Real user measurements (throughput, rebuffer, errors) per ISP/region plus capacity and cost",
+    "CDN marketing benchmarks",
+    "Ping latency from our data center",
+    "Alphabetical order"
+   ],
+   "answer": 0,
+   "why": "RUM captures last-mile reality per ISP. Data-center pings miss what users actually experience."
+  },
+  {
+   "q": "Why exclude the auth token from the cache key?",
+   "options": [
+    "Tokens are secret",
+    "Because CDNs cannot parse query strings",
+    "To make tokens expire faster",
+    "So all authorised users share the same cached object"
+   ],
+   "answer": 3,
+   "why": "With the token in the key, every session misses. The edge validates it first, then caches by path only."
+  }
+ ],
+ "references": [
+  {
+   "title": "Open Connect Overview (Netflix)",
+   "url": "https://openconnect.netflix.com/Open-Connect-Overview.pdf"
+  },
+  {
+   "title": "Introducing smarter Tiered Cache topology generation (Cloudflare blog)",
+   "url": "https://blog.cloudflare.com/introducing-smarter-tiered-cache-topology-generation/"
+  },
+  {
+   "title": "Introducing Regional Tiered Cache (Cloudflare blog)",
+   "url": "https://blog.cloudflare.com/introducing-regional-tiered-cache"
+  },
+  {
+   "title": "How Netflix streams movies to your TV (Network World)",
+   "url": "https://www.networkworld.com/article/691636/data-center-how-netflix-streams-movies-to-your-tv.html"
+  },
+  {
+   "title": "CDN edge cache low-level design: hierarchy, origin shield, invalidation, routing",
+   "url": "https://www.techinterview.org/post/3233469427/lld-cdn-edge-cache/?format=md"
+  }
+ ]
+}

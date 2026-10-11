@@ -1,0 +1,1244 @@
+{
+ "slug": "api-monitoring-alerting",
+ "title": "Design monitoring and alerting for a critical API",
+ "prompt": "Design monitoring and alerting for a critical API.",
+ "group": "reliability",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "The hard part is not collecting metrics but deciding what deserves to wake a human. A critical API (say checkout at 20k RPS peak) needs SLO-based alerts that page on user pain fast, stay quiet on noise, survive the outage they are reporting on, and point the responder at a runbook within seconds. The core tension is detection speed versus alert precision, and observability depth versus cardinality cost.",
+ "framework": {
+  "clarify": [
+   "Which API and who calls it? Assume a checkout/order-placement API used by app, web and partner clients; downtime loses revenue every second.",
+   "What traffic? Assume 5k RPS average, 20k RPS at sale peaks (10x spikes during big sale events), ~200 pods across 2 regions.",
+   "Is there an SLO already? Assume target 99.95% successful requests over 28 days and p99 latency under 400 ms; if none, I will propose one with product.",
+   "What counts as a failure? 5xx and timeouts count; 4xx caused by client input do not; 429 from our own throttling counts against us.",
+   "Who responds and how fast? Assume a 24x7 primary/secondary on-call rotation with a 5 minute ack target for pages.",
+   "Build vs buy and constraints: assume we may self-host Prometheus-style tooling for cost, and must keep observability spend under ~5-8% of infra spend.",
+   "Do we need business signals too (orders per minute, payment success rate) and not just technical ones? Assume yes.",
+   "Compliance: no PII or card data in logs or labels; retention of 30-90 days."
+  ],
+  "design": [
+   "Baseline: define SLIs first (availability = good/valid requests, latency = fraction under 400 ms), then derive alerts from the error budget, not from CPU or raw thresholds.",
+   "Instrumentation: RED metrics (rate, errors, duration histogram) per route and status class from the service via OpenTelemetry/Prometheus client; USE metrics for pods and dependencies; structured logs with trace_id; sampled traces.",
+   "Collection: HA pair of Prometheus per cluster scraping every 15 s, recording rules that precompute SLI ratios at 5m/30m/1h/6h windows, remote_write to a long-term TSDB for 13 months of downsampled history.",
+   "Alerting: multiwindow multi-burn-rate rules (14.4x over 1h with 5m confirm pages; 6x over 6h with 30m confirm pages; 1x over 3d tickets), routed via an Alertmanager cluster that groups, dedupes and inhibits to pager, chat and ticket.",
+   "Black-box: synthetic probes from 4 locations every 30 s that place a test order on a sandbox path, so we catch DNS, TLS, LB and CDN failures that server-side metrics never see.",
+   "Every page carries a summary, impact, dashboard link and runbook link; dashboards are layered: SLO overview, service RED, dependency, pod.",
+   "Meta-monitoring: an always-firing Watchdog alert to an external dead-man's switch so silence of the monitoring stack itself pages through a separate path."
+  ],
+  "defend": [
+   "Bottleneck is cardinality, not volume: labels like user_id or order_id would explode series; I allow only bounded labels (route, method, status_class, region, az) and enforce limits per scrape.",
+   "Scaling reads: dashboards and alerts read recording rules (pre-aggregated), not raw series; long-range queries hit the downsampled long-term store with query caching and splitting.",
+   "Scaling writes: shard scrape targets by hash across Prometheus pairs, and the long-term TSDB ingests through distributors with replication factor 3 and per-tenant limits.",
+   "Failure: the monitoring stack must be less coupled than the thing it watches: separate cluster, own DNS, alert path tested by a heartbeat, and a second pager vendor or SMS path for the dead-man switch.",
+   "Noise control: page only on SLO burn and on black-box failure; everything else is a ticket or a dashboard. Measure pages per on-call shift (target under 2) and percent of pages that were actionable (target over 80%).",
+   "Detection speed: 14.4x burn over 1h consumes 2% of a 28-day budget and fires in about 2-5 minutes on a hard outage; I can show the math for precision vs time-to-detect.",
+   "What I would measure about the monitoring itself: time to detect, time to ack, false-positive rate, scrape success, rule evaluation lag, alert delivery latency."
+  ],
+  "script": "Let me start by clarifying what critical means here. I will assume a checkout API at about 5k requests per second, peaking near 20k during sales, with an SLO of 99.95% success and p99 under 400 ms over 28 days, and a 24x7 on-call. My design principle is: alert on symptoms users feel, investigate with causes. So I define two SLIs, availability and latency, instrument RED metrics per route with bounded labels, and add black-box synthetic probes from four regions to catch what the server cannot see. Prometheus pairs scrape every 15 seconds, recording rules compute burn rates over several windows, and multiwindow burn-rate alerts page only when we are spending error budget fast enough to matter, roughly 2% of the budget in an hour. Alertmanager groups, dedupes and routes to the pager with a runbook and dashboard link. Then I will defend it: cardinality is the real bottleneck, the monitoring stack must survive the outage it reports, so there is a dead-man's switch through a separate path, and I measure the monitoring itself by time to detect and the percentage of pages that were actionable."
+ },
+ "brd": {
+  "problem": "The checkout API is the revenue path: at 20k RPS during a sale, one minute of total failure is roughly a million requests and lakhs of rupees in lost orders. Today incidents are often reported first by customers or the business on social media, alerts are CPU-threshold based and noisy, and on-call engineers ignore half the pages. We need monitoring that detects real user impact within minutes, routes it to the right person with context, and does not burn out the team.",
+  "goals": [
+   "Detect user-impacting failures of the critical API within 5 minutes (hard outage within 2-3 minutes).",
+   "Make at least 80% of pages actionable and keep pages to under 2 per on-call shift on average.",
+   "Tie alerting to SLOs and an error budget so reliability work is prioritised with data.",
+   "Give responders a path from page to probable cause in under 10 minutes via linked dashboards, traces and runbooks.",
+   "Ensure monitoring survives regional or cluster failure of the system it watches.",
+   "Provide business-level health (orders per minute, payment success) alongside technical health."
+  ],
+  "non_goals": [
+   "Building a general-purpose observability platform for every team (we design for one critical API, reusable later).",
+   "Full incident management workflow and postmortem tooling (covered by a separate incident response design).",
+   "Security intrusion detection and SIEM.",
+   "Cost attribution and FinOps dashboards."
+  ],
+  "stakeholders": [
+   {
+    "who": "On-call SRE and service engineers",
+    "needs": "Few, accurate pages with runbook and context; fast dashboards during an incident."
+   },
+   {
+    "who": "Engineering leadership",
+    "needs": "SLO compliance and error budget reports to steer reliability vs feature investment."
+   },
+   {
+    "who": "Business / category teams",
+    "needs": "Early warning on order and payment drops, especially during sale events."
+   },
+   {
+    "who": "Partner integrations team",
+    "needs": "Per-partner availability views to honour contractual SLAs."
+   },
+   {
+    "who": "Security and compliance",
+    "needs": "No PII or card data in telemetry; audited access to logs."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Mean time to detect (MTTD) for SEV1/SEV2",
+    "target": "under 5 minutes; under 3 minutes for full outage"
+   },
+   {
+    "metric": "Actionable page ratio",
+    "target": "over 80% of pages lead to a human action"
+   },
+   {
+    "metric": "Pages per on-call shift",
+    "target": "under 2 on average, under 5 at P95"
+   },
+   {
+    "metric": "Incidents first detected by customers",
+    "target": "under 5% of incidents"
+   },
+   {
+    "metric": "Alert delivery latency (rule fire to phone)",
+    "target": "p99 under 60 seconds"
+   },
+   {
+    "metric": "Monitoring stack availability",
+    "target": "99.99% for the alert path"
+   }
+  ],
+  "constraints": [
+   "No PII, card numbers or user identifiers in metric labels or unredacted logs.",
+   "Observability cost capped around 5-8% of the service's infra spend.",
+   "Must work across 2 regions and survive loss of one region.",
+   "Must integrate with the existing pager vendor and chat tool."
+  ],
+  "risks": [
+   {
+    "risk": "Alert fatigue causes real pages to be ignored",
+    "mitigation": "SLO burn-rate alerts only for paging, quarterly alert review, delete alerts with low actionability."
+   },
+   {
+    "risk": "Cardinality explosion makes the TSDB fall over during a sale",
+    "mitigation": "Label allowlist, per-target sample limits, cardinality dashboards and CI linting of metric names."
+   },
+   {
+    "risk": "Monitoring shares fate with production (same cluster, same DNS)",
+    "mitigation": "Separate cluster and accounts, cross-region scraping of black-box probes, external dead-man's switch."
+   },
+   {
+    "risk": "Wrong SLI definition hides real pain (e.g. counting 4xx as good when the client is broken)",
+    "mitigation": "Review SLI with product, pair server-side SLI with synthetic and client-side RUM signals."
+   },
+   {
+    "risk": "Runbooks rot and mislead responders",
+    "mitigation": "Runbook owner per alert, last-reviewed date, link checked in CI, updated as a postmortem action."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Priya, primary on-call SRE",
+    "needs": "A page at 3am that tells her what is broken, how bad, and the first three things to check."
+   },
+   {
+    "name": "Arjun, checkout service owner",
+    "needs": "Per-route latency and error breakdowns after each deploy, and a weekly SLO report."
+   },
+   {
+    "name": "Meera, engineering director",
+    "needs": "Error budget burn across the quarter to decide whether to freeze launches."
+   },
+   {
+    "name": "Business ops lead during a sale",
+    "needs": "Live orders per minute against forecast with an alert on sharp drops."
+   }
+  ],
+  "user_stories": [
+   "As an on-call engineer, I want to be paged only when users are affected so that I trust every page.",
+   "As an on-call engineer, I want each page to include impact, dashboard and runbook links so that I can start mitigating within minutes.",
+   "As a service owner, I want latency histograms per route so that I can see which endpoint regressed after a deploy.",
+   "As a service owner, I want slow-burn budget alerts as tickets so that chronic issues are fixed in working hours.",
+   "As an engineering director, I want an error budget report so that I can decide on release freezes with data.",
+   "As a business lead, I want an orders-per-minute anomaly alert so that I learn about revenue drops before customers tweet.",
+   "As an SRE, I want to silence alerts during planned maintenance so that pages stay meaningful.",
+   "As an SRE, I want to know if the monitoring system itself is down so that silence is never mistaken for health."
+  ],
+  "functional": [
+   "Collect RED metrics per route, method, status class, region and AZ with latency histograms.",
+   "Collect dependency metrics (DB pool usage, payment gateway latency, cache hit rate) and saturation metrics (CPU throttling, memory, queue depth).",
+   "Compute SLIs and burn rates via recording rules over 5m, 30m, 1h, 6h, 3d windows.",
+   "Evaluate multiwindow multi-burn-rate alerts and route by severity to pager, chat and ticket.",
+   "Run synthetic probes from at least 4 locations every 30 s against the public endpoint.",
+   "Group, deduplicate, inhibit and silence alerts; escalate unacknowledged pages after 5 minutes.",
+   "Provide layered dashboards with deploy annotations and drill-down to traces and logs via trace_id.",
+   "Emit a heartbeat to an external dead-man's switch and page via an independent path if it stops."
+  ],
+  "non_functional": [
+   {
+    "name": "Detection latency",
+    "target": "hard outage paged within 3 minutes; 2% budget burn in 1 h paged within 5 minutes"
+   },
+   {
+    "name": "Alert path availability",
+    "target": "99.99%, independent of the monitored cluster"
+   },
+   {
+    "name": "Metric freshness",
+    "target": "scrape interval 15 s, rule evaluation every 30 s, dashboards lag under 30 s"
+   },
+   {
+    "name": "Query latency",
+    "target": "dashboard panels p95 under 2 s for 24 h range, under 10 s for 30 d"
+   },
+   {
+    "name": "Retention",
+    "target": "raw metrics 15 d, downsampled (5m) 13 months, logs 7 d hot / 30 d cold, traces 7 d"
+   },
+   {
+    "name": "Cardinality budget",
+    "target": "under 2M active series for the API and its dependencies"
+   },
+   {
+    "name": "Overhead on the API",
+    "target": "under 2% CPU and under 1 ms p99 added latency from instrumentation"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "200 API pods, 2 regions, ~30 routes, 5 status classes, 3 AZs per region.",
+    "Each pod exposes ~1,500 series (histograms with 12 buckets dominate).",
+    "Peak 20k RPS, average log line 600 bytes, traces sampled at 5% with ~20 spans of 300 bytes each.",
+    "Scrape interval 15 s; Prometheus TSDB uses roughly 1.5-2 bytes per sample after compression."
+   ],
+   "math": [
+    "Active series: 200 pods x 1,500 = 300k series, plus dependencies and kube metrics ~ 0.5-0.7M total; well inside a 2M budget.",
+    "Ingest: 600k series / 15 s = 40k samples/s; per day 40k x 86,400 = 3.5B samples x 2 B = ~7 GB/day per replica; 15 d raw = ~105 GB per Prometheus replica.",
+    "Histogram cost check: 30 routes x 2 methods x 5 status x 12 buckets = 3,600 series per pod for one histogram if unbounded; so keep histograms on route x status_class only, and drop method where unused.",
+    "Logs: average 5k RPS x 600 B = 3 MB/s = ~260 GB/day; peak days ~600 GB; with 7 d hot index that is ~2-4 TB indexed, so sample 2xx access logs at 10% and keep 100% of errors.",
+    "Traces: 5k RPS x 5% x 20 spans x 300 B = 1.5 MB/s = ~130 GB/day; tail-sampling keeps 100% of error and slow traces.",
+    "Synthetic: 4 locations x 6 checks x every 30 s = ~0.8 probes/s, negligible load but 100% coverage of the public path.",
+    "Error budget: 99.95% over 28 days = 0.05% x 28 x 24 x 60 = ~20 minutes of full downtime, or ~1.2B requests x 0.0005 = ~600k failed requests at 5k RPS average."
+   ],
+   "summary": "Metrics are cheap (about 7 GB/day per replica, under 1M series) if labels stay bounded; logs and traces dominate cost, so sample successes and keep all failures. The error budget is about 20 minutes per 28 days, which sets how aggressive the burn-rate pages must be."
+  },
+  "out_of_scope": [
+   "Client-side real user monitoring SDK design (consumed as an input signal only).",
+   "Automated remediation beyond linking runbooks and simple auto-rollback hooks.",
+   "Monitoring for non-critical internal APIs.",
+   "Building a custom TSDB."
+  ]
+ },
+ "hld": {
+  "overview": "Two complementary views of the API. White-box: the service emits RED metrics, structured logs and traces through OpenTelemetry; Prometheus HA pairs scrape them, recording rules compute SLIs and burn rates, and a long-term TSDB keeps history. Black-box: synthetic probers outside the cluster exercise the public path like a customer. Alert rules page only on SLO burn and probe failure; Alertmanager groups and routes to the pager with runbook links. A meta-monitor watches the watcher.",
+  "diagram": "\n  Clients (app, web, partners)\n        |\n        v\n  +-------------+     access logs      +----------------+\n  | Edge / LB   |--------------------->| Log pipeline   |--> Object store (30d raw)\n  +------+------+                      | (Kafka -> ETL) |--> Log index (7d hot)\n         |                             +----------------+\n         v\n  +-------------+  /metrics scrape 15s  +------------------+   remote_write  +-------------+\n  | Checkout API|<----------------------| Prometheus pair  |---------------->| Long-term   |\n  | pods (x200) |  OTel spans (1-10%)   | per cluster (HA) |                 | TSDB (Mimir)|\n  +------+------+-------------+         +--------+---------+                 +------+------+\n         |                    |                  | recording rules (SLI, burn)        |\n         v                    v                  v                                    v\n  +-------------+     +--------------+   +----------------+   dedupe/route  +-------------+\n  | Deps: DB,   |     | Trace store  |   | Rule evaluator |---------------->|Alertmanager |\n  | payments,   |     | (Tempo)      |   | (burn-rate     |                 | cluster (3) |\n  | inventory   |     +--------------+   |  alerts)       |                 +------+------+\n  +-------------+                        +----------------+                        |\n                                                                    +--------------+-----+\n  +------------------+  probes every 30s from 4 regions             |              |     |\n  | Synthetic prober |---> public endpoint ---> results as metrics  v              v     v\n  +------------------+                                         Pager (on-call)  Slack  Ticket\n                                                                    |\n  +------------------+  heartbeat \"Watchdog\" alert every 1m         v\n  | Meta-monitor     |<-- if heartbeat stops -> page via 2nd path  Runbook link + dashboard\n  +------------------+\n",
+  "components": [
+   {
+    "name": "Instrumentation library (OpenTelemetry SDK + Prometheus client)",
+    "responsibility": "Emit request counters, latency histograms, dependency timings and trace spans with a bounded label set; inject trace_id into logs."
+   },
+   {
+    "name": "Prometheus HA pair per cluster",
+    "responsibility": "Scrape targets every 15 s via service discovery, evaluate recording and alert rules every 30 s, remote_write to long-term storage."
+   },
+   {
+    "name": "Long-term TSDB (Mimir/Thanos/Cortex style)",
+    "responsibility": "Horizontally scalable, replicated (RF=3) storage with downsampling and a global query view across regions."
+   },
+   {
+    "name": "Alertmanager cluster (3 nodes, gossip)",
+    "responsibility": "Deduplicate alerts from both Prometheus replicas, group by service and alertname, inhibit symptoms when a parent alert fires, silence, route to receivers."
+   },
+   {
+    "name": "Pager / on-call service",
+    "responsibility": "Deliver push, SMS and voice; manage rotations, acknowledgements and escalation after 5 minutes."
+   },
+   {
+    "name": "Synthetic prober",
+    "responsibility": "Run scripted checks (health, product page, add-to-cart, sandbox checkout) from 4 locations every 30 s; export success and latency as metrics."
+   },
+   {
+    "name": "Log pipeline (agent -> Kafka -> indexer)",
+    "responsibility": "Ship structured JSON logs, redact PII, sample 2xx, index for 7 days, archive to object storage."
+   },
+   {
+    "name": "Trace collector and store",
+    "responsibility": "OTel collector with tail-based sampling keeps all error and slow traces, 5% of the rest."
+   },
+   {
+    "name": "Dashboards (Grafana)",
+    "responsibility": "Layered views: SLO overview, service RED, dependency, infrastructure; deploy annotations; exemplars link to traces."
+   },
+   {
+    "name": "Meta-monitor / dead-man's switch",
+    "responsibility": "Receive an always-firing Watchdog alert every minute from an external SaaS; page via a separate channel if it stops."
+   },
+   {
+    "name": "Runbook repository",
+    "responsibility": "Versioned runbook per alert with owner, last-reviewed date, diagnosis steps and mitigations."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Fast-burn page on a bad deploy",
+    "steps": [
+     "Deploy at 14:00 introduces a bug; 3% of checkout calls return 500.",
+     "Pods increment http_requests_total{status_class=\"5xx\"}; Prometheus scrapes at 15 s.",
+     "Recording rules compute error ratio over 5m and 1h; with a 0.05% budget, 3% is a burn rate of 60x.",
+     "Rule: burn_1h > 14.4 and burn_5m > 14.4, for 2m. 1h ratio crosses 0.72% after ~15 minutes at 3%; at full outage it crosses within ~1 minute.",
+     "Both Prometheus replicas fire; Alertmanager dedupes by fingerprint, groups for 30 s, routes severity=page to the pager.",
+     "Priya gets a push with impact (\"3.1% checkout errors, budget burning 60x\"), dashboard and runbook link; deploy annotation shows the 14:00 release.",
+     "Runbook step 1: roll back the last deploy; burn rate falls, alert resolves, a postmortem ticket is created automatically."
+    ]
+   },
+   {
+    "name": "Black-box detection of an edge failure",
+    "steps": [
+     "A TLS certificate on the public LB expires; server-side metrics show traffic dropping, not errors.",
+     "Synthetic probes from all 4 locations fail the TLS handshake.",
+     "Alert: probe success < 50% in at least 2 locations for 2 minutes (avoids one flaky vantage point).",
+     "Page fires; a companion alert on traffic drop (requests down 60% versus same time last week) is inhibited because it is the same root symptom."
+    ]
+   },
+   {
+    "name": "Slow burn to ticket",
+    "steps": [
+     "A dependency adds sporadic timeouts: 0.06% errors for days.",
+     "Burn rate is about 1.2x, below page thresholds.",
+     "The 3d window rule (burn > 1 over 3 days with 6h confirm) opens a ticket to the service owner.",
+     "Weekly SLO report shows 60% budget consumed; team prioritises the fix."
+    ]
+   },
+   {
+    "name": "Monitoring stack failure",
+    "steps": [
+     "The monitoring cluster loses its network; no alerts can be sent.",
+     "The Watchdog alert stops arriving at the external dead-man's switch.",
+     "After 3 missed minutes, the external service pages on-call via SMS through a different vendor."
+    ]
+   }
+  ],
+  "data_flow": "Requests produce counters and histograms in-process; Prometheus pulls them every 15 s and writes to its local TSDB and to the long-term store. Recording rules turn raw counters into SLI ratios and burn rates; alert rules read those and push firing alerts to Alertmanager, which dedupes and sends to receivers. Logs flow push-based through agents to Kafka, are redacted, sampled and indexed; traces go to an OTel collector that tail-samples. Synthetic probe results flow back as metrics. Dashboards query the long-term store and jump to traces via exemplars and to logs via trace_id."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "GET",
+    "path": "/metrics",
+    "request": "Prometheus scrape, Accept: text/plain or OpenMetrics",
+    "response": "http_requests_total{route,method,status_class,region}, http_request_duration_seconds_bucket{route,le}, dependency_* series",
+    "notes": "Exposed on a separate port; scrape timeout 10 s; sample_limit 5,000 per target to stop cardinality bombs."
+   },
+   {
+    "method": "POST",
+    "path": "/api/v2/alerts (Alertmanager)",
+    "request": "[{labels:{alertname,service,severity,slo}, annotations:{summary,runbook_url,dashboard}, startsAt, endsAt}]",
+    "response": "200 OK",
+    "notes": "Sent by both Prometheus replicas; Alertmanager dedupes on the label-set fingerprint; resent every eval cycle while firing."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/incidents (pager integration)",
+    "request": "{dedup_key, severity, summary, source, links[], custom_details}",
+    "response": "{incident_id, status}",
+    "notes": "dedup_key = alert group key so repeats update the same incident instead of new pages."
+   },
+   {
+    "method": "POST",
+    "path": "/api/v2/silences",
+    "request": "{matchers:[{name:service,value:checkout}], startsAt, endsAt, createdBy, comment}",
+    "response": "{silenceID}",
+    "notes": "Maintenance windows; max duration 24 h enforced by policy; requires a ticket ID in comment."
+   },
+   {
+    "method": "GET",
+    "path": "/api/v1/query_range",
+    "request": "query=slo:error_ratio:rate1h{service=\"checkout\"}&start&end&step=60",
+    "response": "matrix of timestamp/value",
+    "notes": "Dashboards hit recording rules, not raw series; results cached by query frontend."
+   },
+   {
+    "method": "POST",
+    "path": "/heartbeat/{token} (dead-man switch)",
+    "request": "empty, sent every 60 s by Alertmanager Watchdog route",
+    "response": "200",
+    "notes": "External SaaS pages if no heartbeat for 3 minutes."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Time series sample",
+    "store": "Prometheus TSDB / long-term TSDB",
+    "fields": [
+     "metric name",
+     "label set (route, method, status_class, region, az, pod)",
+     "timestamp ms",
+     "float64 value"
+    ],
+    "keys": "series id = hash of sorted label set; blocks of 2 h, compacted; long-term store shards series by hash across ingesters with RF=3",
+    "notes": "Gorilla-style delta-of-delta timestamps and XOR float compression give ~1.3-2 bytes/sample."
+   },
+   {
+    "entity": "SLO definition",
+    "store": "Git (YAML) rendered into rules",
+    "fields": [
+     "service",
+     "sli_type (availability|latency)",
+     "good_query",
+     "valid_query",
+     "objective 0.9995",
+     "window 28d",
+     "page_windows",
+     "ticket_windows",
+     "owner",
+     "runbook_url"
+    ],
+    "keys": "service + sli_type",
+    "notes": "Single source of truth; a generator emits recording and alert rules so thresholds are never hand-typed."
+   },
+   {
+    "entity": "Alert instance",
+    "store": "Alertmanager in-memory + nflog replicated by gossip",
+    "fields": [
+     "fingerprint",
+     "labels",
+     "annotations",
+     "startsAt",
+     "endsAt",
+     "status",
+     "receivers notified",
+     "last notify time"
+    ],
+    "keys": "fingerprint (hash of labels)",
+    "notes": "Notification log prevents duplicate sends across the 3 nodes."
+   },
+   {
+    "entity": "Log event",
+    "store": "Kafka -> log index (7 d) -> object storage (30 d)",
+    "fields": [
+     "ts",
+     "level",
+     "service",
+     "route",
+     "status",
+     "latency_ms",
+     "trace_id",
+     "partner_id",
+     "error_code",
+     "msg"
+    ],
+    "keys": "index by day and service; partition Kafka by service",
+    "notes": "PII redacted at the agent; card numbers rejected by a regex filter."
+   },
+   {
+    "entity": "Trace span",
+    "store": "Trace store (object storage + index by trace_id)",
+    "fields": [
+     "trace_id",
+     "span_id",
+     "parent_id",
+     "service",
+     "operation",
+     "start",
+     "duration",
+     "status",
+     "attributes"
+    ],
+    "keys": "trace_id",
+    "notes": "Tail-sampling decision made after the full trace is assembled in the collector (10 s window)."
+   }
+  ],
+  "classes": [
+   {
+    "name": "SloRuleGenerator",
+    "responsibility": "Turn SLO YAML into recording rules and multiwindow burn-rate alerts.",
+    "methods": [
+     "load(slo_yaml)",
+     "recording_rules(windows)",
+     "page_alerts(burn_pairs)",
+     "ticket_alerts()",
+     "validate()"
+    ]
+   },
+   {
+    "name": "BurnRateEvaluator",
+    "responsibility": "Compute burn rate = observed error ratio / (1 - objective) per window and decide firing.",
+    "methods": [
+     "error_ratio(window)",
+     "burn(window)",
+     "should_fire(long, short, threshold)"
+    ]
+   },
+   {
+    "name": "AlertRouter",
+    "responsibility": "Match labels to routes, group, inhibit and dispatch to receivers.",
+    "methods": [
+     "route(alert)",
+     "group_key(alert)",
+     "inhibited(alert, active)",
+     "dispatch(group)"
+    ]
+   },
+   {
+    "name": "SyntheticProbe",
+    "responsibility": "Execute a scripted journey from a location and export results.",
+    "methods": [
+     "run()",
+     "assert_status()",
+     "assert_latency(ms)",
+     "export_metrics()"
+    ]
+   },
+   {
+    "name": "CardinalityGuard",
+    "responsibility": "Reject metrics with forbidden labels or above per-target sample limit; report top offenders.",
+    "methods": [
+     "check_labels(series)",
+     "enforce_limit(target)",
+     "top_series_by_metric()"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Multiwindow multi-burn-rate alerting",
+    "explain": "Burn rate is how fast we spend the error budget relative to a pace that would exactly exhaust it at the end of the window. With 99.95% and 28 days, burn 1 = 0.05% errors. A page needs both a long window (to be significant) and a short window (to reset quickly once fixed). Common pairs: 14.4x over 1h and 5m (2% of a 30-day budget), 6x over 6h and 30m (5%), and ticket at 1x over 3d and 6h (10%).",
+    "pseudocode": "budget = 1 - objective            # 0.0005\nfor (long, short, factor, sev) in [(1h,5m,14.4,page),(6h,30m,6,page),(3d,6h,1,ticket)]:\n    r_long  = errors(long)  / valid(long)\n    r_short = errors(short) / valid(short)\n    if r_long > factor*budget and r_short > factor*budget:\n        fire(sev, burn=r_long/budget)\n# low-traffic guard: require valid(long) >= 1000 requests, else use probe-based alert"
+   },
+   {
+    "name": "Latency SLI from histograms",
+    "explain": "A p99 average across pods is mathematically wrong. Instead count requests that met the threshold using the histogram bucket at le=0.4 and divide by total; that ratio is additive across pods and regions. Bucket boundaries must include the SLO threshold exactly.",
+    "pseudocode": "good  = sum(rate(http_request_duration_seconds_bucket{le=\"0.4\"}[5m]))\ntotal = sum(rate(http_request_duration_seconds_count[5m]))\nlatency_sli = good / total\n# for display only: histogram_quantile(0.99, sum by (le)(rate(..._bucket[5m])))"
+   },
+   {
+    "name": "Alertmanager grouping and inhibition",
+    "explain": "Alerts are grouped by labels so one incident sends one page; group_wait 30 s collects siblings, group_interval 5 m sends updates, repeat_interval 4 h re-notifies. Inhibition mutes downstream symptoms when a parent alert (region down) is firing.",
+    "pseudocode": "on alert a:\n  if any(inhibit_rule.source matches active and inhibit_rule.target matches a\n         and equal labels match): drop a\n  key = (route, a.labels[group_by])\n  groups[key].add(a)\n  if new group: schedule flush in group_wait (30s)\n  else if changed: schedule flush at group_interval (5m)\nflush(g): if not in nflog within repeat_interval: notify(receiver, g); nflog.record(g)"
+   }
+  ],
+  "sequence": "\nPod        Prometheus     RuleEval        Alertmanager      PagerSvc        OnCall\n |  scrape 15s  |              |                 |               |              |\n |<-------------|              |                 |               |              |\n |--counters--->|              |                 |               |              |\n |              |--every 30s-->| eval burn 1h/5m |               |              |\n |              |              |-- both > 14.4 ->|               |              |\n |              |              |   (for: 2m)     |-group 30s---->|              |\n |              |              |                 | dedupe by     |--push/SMS--->|\n |              |              |                 | fingerprint   |  ack in 5m?  |\n |              |              |                 |               |<--ack--------|\n |              |              |                 |               | no ack 5m -> |\n |              |              |                 |               | escalate L2  |\n |              |              |-- resolved ---->|-- resolve --->|--resolved--->|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Low-traffic route or 3am traffic: 2 errors out of 20 requests is a 10% error rate.",
+   "handling": "Require a minimum request count in the long window, aggregate small routes into the service SLI, and rely on synthetic probes for low-volume paths."
+  },
+  {
+   "case": "Total outage means zero requests reach the service, so the error ratio is 0/0 and looks healthy.",
+   "handling": "Black-box probes and a traffic-drop alert (rate below 40% of same time last week) catch absence of traffic; treat NaN as unhealthy in alert expressions with absent() checks."
+  },
+  {
+   "case": "Counter resets when pods restart during a crash loop.",
+   "handling": "Use rate()/increase() which handle resets; alert separately on restart counts; never compute deltas of raw counters by hand."
+  },
+  {
+   "case": "Both Prometheus replicas send the same alert.",
+   "handling": "Alertmanager dedupes on label fingerprint; replicas must have identical external labels except the replica label, which is dropped before sending."
+  },
+  {
+   "case": "Cardinality bomb: a developer adds order_id as a label before a sale.",
+   "handling": "CI lint for label allowlist, sample_limit per scrape fails the scrape loudly, cardinality dashboard alerts on series growth over 20% per day."
+  },
+  {
+   "case": "Alert storm: a regional network partition triggers 300 alerts across services.",
+   "handling": "Inhibition rules (region-down mutes service alerts in that region), grouping by region and alertname, and a single incident in the pager with dedup_key."
+  },
+  {
+   "case": "Flapping alert around the threshold.",
+   "handling": "Use for: 2m on rules, the short-window confirmation, and hysteresis via longer resolve windows; review flappers weekly."
+  },
+  {
+   "case": "Clock skew between pods and Prometheus.",
+   "handling": "Prometheus stamps samples at scrape time for pull metrics; NTP/chrony enforced; out-of-order samples rejected and counted."
+  },
+  {
+   "case": "The monitoring stack is in the region that fails.",
+   "handling": "Each region monitors itself plus a cross-region black-box prober; alert path through a global Alertmanager cluster spread across regions; external dead-man's switch."
+  },
+  {
+   "case": "Partner calls with a broken client cause many 4xx that are actually our fault (e.g. a contract change).",
+   "handling": "Classify 4xx by error_code; include 409/422 spikes from our schema changes in a separate deploy-health alert; per-partner dashboards."
+  },
+  {
+   "case": "Planned maintenance or a load test triggers pages.",
+   "handling": "Silences with expiry and ticket reference; load-test traffic tagged with a header and excluded from SLIs."
+  },
+  {
+   "case": "Pager vendor outage during an incident.",
+   "handling": "Secondary channel (SMS gateway or second vendor) for severity=page, and chat fallback; quarterly fire drill of the alert path."
+  },
+  {
+   "case": "Dependency (payment gateway) is down, not our code.",
+   "handling": "Still page because users are hurt, but the alert annotation and dashboard show dependency error rates first; runbook switches to the backup gateway."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Prometheus",
+   "layer": "Metrics collection and rule evaluation",
+   "overview": "Pull-based time series database with a dimensional label model, PromQL query language, and built-in rule evaluation.",
+   "why": "Industry standard for service metrics, cheap to run as HA pairs, great Kubernetes service discovery, recording rules make SLO math cheap.",
+   "alternatives": "Datadog or New Relic (faster to adopt, but cost scales with hosts and custom metrics); InfluxDB (push-based, weaker ecosystem for alerting)."
+  },
+  {
+   "name": "Grafana Mimir / Thanos",
+   "layer": "Long-term metrics storage",
+   "overview": "Horizontally scalable, multi-tenant Prometheus-compatible stores that keep history in object storage with replication and downsampling.",
+   "why": "Global view across regions and 13 months of history for SLO reports without scaling a single Prometheus.",
+   "alternatives": "VictoriaMetrics (very efficient single binary, smaller community); managed Amazon Managed Prometheus (less ops, vendor lock-in)."
+  },
+  {
+   "name": "Alertmanager",
+   "layer": "Alert routing",
+   "overview": "Receives alerts from Prometheus, dedupes, groups, inhibits, silences and routes to receivers; clusters via gossip.",
+   "why": "Native with Prometheus, routing tree by labels fits severity-based routing, HA without a database.",
+   "alternatives": "Grafana unified alerting (one UI, less mature routing); vendor routing in PagerDuty/Opsgenie (event rules, cost per user)."
+  },
+  {
+   "name": "OpenTelemetry",
+   "layer": "Instrumentation and trace collection",
+   "overview": "Vendor-neutral APIs, SDKs and a collector for metrics, logs and traces with context propagation.",
+   "why": "One SDK, avoids lock-in, collector does tail sampling and PII scrubbing centrally.",
+   "alternatives": "Vendor agents (easier, lock-in); Zipkin/Jaeger clients (traces only)."
+  },
+  {
+   "name": "Grafana",
+   "layer": "Dashboards",
+   "overview": "Visualisation tool over many data sources with annotations and exemplar links.",
+   "why": "Links metrics to traces (Tempo) and logs (Loki) in one click; dashboards as code.",
+   "alternatives": "Kibana (log-first), vendor dashboards (integrated, closed)."
+  },
+  {
+   "name": "Kafka + Loki/Elasticsearch",
+   "layer": "Log pipeline and search",
+   "overview": "Kafka buffers logs; Loki indexes only labels and stores chunks cheaply, Elasticsearch indexes full text.",
+   "why": "Kafka absorbs sale-time bursts; Loki is far cheaper for trace_id lookups, Elasticsearch better for free-text forensics.",
+   "alternatives": "Direct shipping to a SaaS (simpler, expensive at 500 GB/day); ClickHouse for logs (fast analytics, more ops)."
+  },
+  {
+   "name": "PagerDuty / Opsgenie",
+   "layer": "On-call and notification",
+   "overview": "Manages schedules, escalation policies, multi-channel delivery and acknowledgement tracking.",
+   "why": "Reliable delivery to phones with escalation and audit, which is hard to build.",
+   "alternatives": "Self-built SMS/voice via telecom APIs (cheap, fragile); Grafana OnCall (open source, fewer integrations)."
+  },
+  {
+   "name": "Blackbox exporter / synthetic SaaS",
+   "layer": "Black-box probing",
+   "overview": "Runs HTTP, TCP, DNS, TLS checks or scripted browser journeys from external locations.",
+   "why": "Catches failures before the service (DNS, CDN, certs) and absence of traffic.",
+   "alternatives": "Checkly/Catchpoint (global vantage points, cost); in-house probers in other clouds."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "SLI, SLO and error budgets",
+   "explain": "A service level indicator (SLI) is a carefully chosen measurement of user-facing behaviour, best expressed as a ratio: good events divided by valid events. For an API, availability SLI is non-5xx responses over all valid requests, and latency SLI is requests served under a threshold over all requests. A service level objective (SLO) puts a target on that ratio over a window, for example 99.95% over 28 rolling days. The error budget is simply 1 minus the SLO: here 0.05% of requests may fail, which at 5k RPS average is about 600k failed requests or 20 minutes of full downtime per 28 days. The budget turns reliability into a currency. If the team has budget left, it can ship faster and take risks; if the budget is exhausted, policy says freeze risky launches and spend time on reliability. Choosing the SLO is a product decision: too tight and every blip pages and slows delivery; too loose and users suffer while dashboards are green. Good SLIs are measured as close to the user as practical (load balancer logs or client telemetry beat the app's own view), and they exclude events users do not care about, such as health checks or client-caused 4xx. An SLA is different: a contract with penalties, usually looser than the internal SLO so you get warning before you owe money.",
+   "in_this_design": "Checkout has two SLOs: 99.95% availability and 99% of requests under 400 ms, 28-day window. Every paging alert is derived from these, so a page means budget is burning fast. The weekly report and release-freeze policy also read from them.",
+   "key_points": [
+    "Alert on symptoms (SLO burn), investigate with causes (CPU, pool usage).",
+    "SLI as a ratio of good/valid events makes it aggregatable across pods and regions.",
+    "Error budget = 1 - SLO; 99.95% over 28 days is about 20 minutes.",
+    "SLA is the external contract and should be looser than the SLO.",
+    "Budget policy is what gives the SLO teeth: freeze or prioritise reliability when spent."
+   ],
+   "qa": [
+    {
+     "q": "Why not set the SLO to 100%?",
+     "a": "Because it is unachievable and makes every dependency failure a breach; it also removes any budget for change. Users cannot tell 99.99% from 100% through their own flaky mobile networks, so the extra cost buys nothing."
+    },
+    {
+     "q": "Where would you measure the availability SLI?",
+     "a": "At the load balancer or gateway, so requests that never reached a healthy pod still count; supplemented by synthetic probes for traffic that never arrives, and client RUM for the full picture."
+    },
+    {
+     "q": "How do you handle 429s from our own rate limiter?",
+     "a": "If we throttle legitimate traffic because we are overloaded, that is our failure and counts as bad. Throttling an abusive partner over contract is excluded via a reason label."
+    },
+    {
+     "q": "What happens when the budget is exhausted?",
+     "a": "Per the agreed policy: freeze non-critical launches for that service, redirect the team to the top postmortem actions, and resume when the rolling window recovers. Leadership signs this policy in advance so it is not negotiated mid-incident."
+    }
+   ]
+  },
+  {
+   "name": "Multiwindow multi-burn-rate alerting",
+   "explain": "Naive alerts like error rate above 1% for 5 minutes either fire too often or too late, because they ignore how much budget is being consumed. Burn rate fixes this: burn rate = observed error ratio / allowed error ratio. A burn of 1 spends exactly the whole budget by the end of the window; a burn of 14.4 spends a 30-day budget in about 2 days, or 2% of it in one hour. The technique picks thresholds by deciding what fraction of budget is worth a page: 2% in 1 hour (14.4x) and 5% in 6 hours (6x) are paged, while 10% in 3 days (1x) becomes a ticket. Using only a long window gives precision but slow reset: after a fix, a 1-hour window keeps firing for up to an hour. Adding a short window (one twelfth of the long one, e.g. 5 minutes for 1 hour) and requiring both to exceed the threshold means the alert fires only when the problem is both significant and still happening, and stops within minutes of recovery. Detection time scales inversely with severity: a 100% outage trips the 14.4x 1h rule in under a minute of window fill (once 0.72% of the hour is bad), whereas a 1% error rate (20x) needs about 36 minutes. This gives high precision, decent recall and reasonable detection times without per-service hand tuning.",
+   "in_this_design": "The SloRuleGenerator emits three rule pairs from each SLO: 14.4x (1h, 5m) page, 6x (6h, 30m) page, 1x (3d, 6h) ticket. A low-traffic guard prevents tiny denominators from firing at night.",
+   "key_points": [
+    "Burn rate = error ratio / (1 - SLO).",
+    "14.4x over 1h = 2% of a 30-day budget; 6x over 6h = 5%; 1x over 3d = 10%.",
+    "The short window (1/12 of long) makes the alert reset quickly after recovery.",
+    "Detection time falls as severity rises, which is exactly what you want.",
+    "Same rules work for every service because they are relative to the SLO."
+   ],
+   "qa": [
+    {
+     "q": "Why not alert on error rate > 1% for 5 minutes?",
+     "a": "It ignores the SLO: at 99.95% a 0.5% error rate burns budget at 10x yet never fires, while a short 1.1% blip on a 99% SLO would page needlessly. Burn rate is relative to what users were promised."
+    },
+    {
+     "q": "How long does a total outage take to page with the 1h/14.4x rule?",
+     "a": "The 1h ratio must exceed 14.4 x 0.0005 = 0.72%, so about 26 seconds of full outage in the window, plus scrape and evaluation intervals and a for: 2m clause, so roughly 2-3 minutes end to end."
+    },
+    {
+     "q": "What is the downside of this scheme?",
+     "a": "It needs enough traffic for ratios to be meaningful and many recording rules per SLO; for low-traffic services you add synthetic traffic or use longer windows."
+    },
+    {
+     "q": "Why both a page at 6x/6h and 14.4x/1h?",
+     "a": "The 6h rule catches medium burns that would consume a big chunk of budget overnight but never reach 14.4x; the 1h rule catches fast, severe burns quickly."
+    }
+   ]
+  },
+  {
+   "name": "Pull vs push telemetry and the time series data model",
+   "explain": "Monitoring systems either pull (the collector scrapes an HTTP endpoint on each target at a fixed interval) or push (targets send data to a collector). Pull, used by Prometheus, has nice properties: the collector controls load, a failed scrape is itself a signal (the up metric goes to 0), and service discovery tells you what should exist, so missing targets are visible. Push suits short-lived jobs, clients behind NAT, and events like logs and traces. A time series is identified by a metric name plus a set of key-value labels; every unique label combination is a separate series stored as (timestamp, value) pairs. Counters only go up and are turned into rates by the query engine, which handles resets; gauges go up and down; histograms count observations into cumulative buckets so percentiles and threshold ratios can be computed across many instances. Storage engines like Prometheus TSDB and Facebook's Gorilla compress timestamps with delta-of-delta encoding and values with XOR, reaching around 1.3-2 bytes per sample, which is why metrics are far cheaper than logs per request. The cost driver is the number of active series, i.e. cardinality, which multiplies across labels: 30 routes x 5 status classes x 12 buckets x 200 pods is already 360k series for one histogram.",
+   "in_this_design": "Service metrics are pulled every 15 s so up==0 reveals dead pods; logs and traces are pushed through agents and the OTel collector; synthetic probe results are pulled from the blackbox exporter. Histograms are used for latency because averaging percentiles across pods is invalid.",
+   "key_points": [
+    "Pull makes target health observable; push suits batch jobs and events.",
+    "Each unique label combination is a series; cardinality is the cost driver.",
+    "Counters plus rate() survive restarts; never alert on raw counters.",
+    "Histograms aggregate across instances; summaries and precomputed percentiles do not.",
+    "Delta-of-delta and XOR compression give ~1.3-2 bytes per sample."
+   ],
+   "qa": [
+    {
+     "q": "Why can you not average p99 across 200 pods?",
+     "a": "Percentiles are not additive; the average of p99s can be far from the true global p99. Sum histogram buckets across pods and compute the quantile once, or better, count requests under the threshold."
+    },
+    {
+     "q": "When would you push metrics?",
+     "a": "Short batch jobs that may finish between scrapes (via a push gateway), or edge devices; for long-running services pull is preferred."
+    },
+    {
+     "q": "How do you choose histogram buckets?",
+     "a": "Include the SLO threshold exactly (0.4 s) and enough resolution around it, e.g. 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 2, 5; native or exponential histograms reduce this tuning."
+    }
+   ]
+  },
+  {
+   "name": "Cardinality control",
+   "explain": "Cardinality is the number of distinct time series a metric produces, the product of the distinct values of each label. It matters because every active series costs memory in the ingester index (often several KB each), CPU on every query, and storage. Adding a label with unbounded values, like user_id, order_id, full URL path with IDs, or error message text, can turn a few thousand series into millions within minutes, and the classic failure is the metrics system falling over during the exact traffic spike you needed it for. Control works at several layers. In code review and CI: a metric naming and label allowlist, route templates (/orders/{id} not /orders/123). At scrape time: sample_limit and label_limit per target so a bad deploy fails its scrape loudly rather than exploding the TSDB. At ingestion: per-tenant series limits in the long-term store. Operationally: a cardinality dashboard showing top metrics by series count and growth, with an alert on sudden growth. High-cardinality questions (which user, which order) belong in logs and traces, which are indexed differently and sampled, while metrics answer how many and how fast. Exemplars bridge the two: a histogram bucket can carry a trace_id of one example request, so you can jump from a latency spike to a concrete trace without a label per request.",
+   "in_this_design": "Labels are restricted to route template, method, status_class, region, az and pod; per-partner breakdown uses a bounded partner_tier label plus logs for exact partner ids. sample_limit is 5,000 per target, and a CI linter blocks forbidden label names.",
+   "key_points": [
+    "Series count is the product of label value counts.",
+    "Unbounded labels (ids, raw paths, messages) go to logs/traces, not metrics.",
+    "Fail the scrape, not the TSDB: use sample_limit.",
+    "Exemplars link a metric bucket to a trace without per-request labels.",
+    "Watch series growth as a first-class alert."
+   ],
+   "qa": [
+    {
+     "q": "A team wants per-customer latency metrics. What do you say?",
+     "a": "Not as a metric label for millions of customers; offer per-tier metrics, plus logs or traces queried by customer id, or a separate analytics pipeline in a columnar store."
+    },
+    {
+     "q": "How do you detect a cardinality explosion early?",
+     "a": "Track prometheus_tsdb_head_series and per-metric series counts, alert on growth over 20% per day or a new metric above 50k series, and enforce sample_limit."
+    },
+    {
+     "q": "Why does cardinality hurt queries more than ingestion sometimes?",
+     "a": "A query like sum by (route) over a high-cardinality metric must touch every matching series; dashboards refreshing every 10 s multiply this, which is why recording rules pre-aggregate."
+    }
+   ]
+  },
+  {
+   "name": "Symptom vs cause alerting and the four golden signals",
+   "explain": "Google's SRE practice recommends monitoring four golden signals for any user-facing system: latency (time to serve, separating successful and failed requests because fast errors distort averages), traffic (demand, e.g. RPS), errors (rate of failed requests, explicit or implicit like wrong content), and saturation (how full the most constrained resource is, such as CPU, connection pool or queue depth). RED (rate, errors, duration) is the request-centric subset; USE (utilisation, saturation, errors) is the resource-centric view for infrastructure. The key design principle is to page on symptoms and use causes for diagnosis. Symptoms are what users experience: errors and slowness. Causes are what might lead there: high CPU, a full disk, a replica lag. Paging on causes creates noise, because many causes never hurt users (CPU at 90% may be fine) and you cannot enumerate every cause, so some outages slip through. Symptom-based pages are fewer and always meaningful. Cause-based signals still matter: they are shown on dashboards, used as tickets for capacity, and occasionally page when they predict imminent symptom failure with no time to react, such as a disk filling in under 4 hours or a certificate expiring in 7 days.",
+   "in_this_design": "Pages come from SLO burn (errors, latency) and black-box failures. Saturation signals like DB pool at 90% or CPU throttling appear on the dependency dashboard and as tickets; only predictive ones with short time-to-failure (disk, certs) page.",
+   "key_points": [
+    "Golden signals: latency, traffic, errors, saturation.",
+    "RED for requests, USE for resources.",
+    "Page on symptoms, diagnose with causes.",
+    "Separate latency of successes and failures.",
+    "Predictive cause alerts are fine when time-to-failure is short."
+   ],
+   "qa": [
+    {
+     "q": "Should high CPU page someone?",
+     "a": "Not by itself; if latency and errors are within SLO, users are fine. It goes to a dashboard or capacity ticket. If CPU saturation is causing latency burn, the SLO alert already pages."
+    },
+    {
+     "q": "Give an example of a cause alert that should page.",
+     "a": "TLS certificate expiring in under 7 days with renewal failing, or a disk projected to fill in under 4 hours using predict_linear, because when the symptom appears it is too late."
+    },
+    {
+     "q": "How does traffic help as a signal?",
+     "a": "A sudden drop in traffic is often the only sign of an upstream failure (DNS, app crash, CDN) because no requests arrive to fail; compare against the same time last week."
+    }
+   ]
+  },
+  {
+   "name": "Black-box vs white-box monitoring",
+   "explain": "White-box monitoring uses internal signals exposed by the system: metrics, logs, traces and profiles. It is rich and explains why something is broken, but it only sees requests that reach the instrumented code. Black-box monitoring tests externally visible behaviour like a user would: an HTTP probe, a TLS handshake, a DNS lookup, or a scripted multi-step journey run from several vantage points. It sees the whole path, including DNS, CDN, load balancers, certificates and firewall rules, and it detects absence of traffic, but it tells you little about why. Each covers the other's blind spots. A typical gap for white-box is the outage where nothing arrives, so error rate is zero over zero; a typical gap for black-box is coverage, since a probe exercises only a few paths and sampled frequently it can miss partial failures affecting 2% of users. Probes should run from multiple locations and the alert should require failures from several of them, so a single bad vantage point does not page. Probes that mutate state (placing an order) must use sandbox accounts and be excluded from business metrics. Client-side real user monitoring is a third view, measuring actual devices and networks, valuable for mobile-heavy markets where the last mile dominates.",
+   "in_this_design": "Four probe locations run six checks every 30 s, including a sandbox checkout; the alert needs failure from at least 2 locations for 2 minutes. Probe success feeds a secondary availability SLI and covers the zero-traffic blind spot.",
+   "key_points": [
+    "White-box explains why; black-box proves whether.",
+    "Black-box catches DNS, CDN, LB, TLS and zero-traffic failures.",
+    "Require multiple vantage points to fail before paging.",
+    "Mutating probes need sandbox accounts and exclusion from business metrics.",
+    "RUM adds the device and network view."
+   ],
+   "qa": [
+    {
+     "q": "Server metrics are green but users complain. What happened?",
+     "a": "Likely a failure before the service: DNS, CDN, certificate or client release. Black-box probes and traffic-drop alerts would catch it; RUM would show client errors."
+    },
+    {
+     "q": "Why not rely only on probes?",
+     "a": "They sample a few paths at fixed intervals, so partial failures (one shard, one partner, 2% of traffic) are invisible and diagnosis is impossible without white-box data."
+    },
+    {
+     "q": "How do you stop a flaky probe location from paging?",
+     "a": "Require at least 2 of 4 locations failing, a for clause of 2 minutes, and alert separately (ticket) on a single location's health."
+    }
+   ]
+  },
+  {
+   "name": "Alert routing, deduplication, grouping and inhibition",
+   "explain": "Between rule evaluation and a human's phone sits a routing layer whose job is to turn many alert instances into a small number of meaningful notifications. Deduplication merges identical alerts from redundant sources, such as two Prometheus replicas, by hashing their label sets into a fingerprint. Grouping batches related alerts so one notification describes many: waiting a group_wait (e.g. 30 s) after the first alert collects siblings, group_interval (5 m) controls how often updates are sent, and repeat_interval (4 h) re-notifies on long-running alerts. Inhibition suppresses alerts that are consequences of another firing alert, for example muting every service alert in ap-south-1 when RegionDown for ap-south-1 is firing. Silences mute matching alerts for a time range, used for maintenance. Routing is a tree of label matchers: severity=page goes to the pager, severity=ticket to the issue tracker, team=payments to that team's rotation. For high availability, Alertmanager instances run as a cluster gossiping silences and a notification log; each instance may receive the alert, but the notification log ensures only one sends, accepting rare duplicates over missed pages, a deliberate availability-over-consistency choice. The pager service then handles acknowledgement and escalation, using a dedup key so updates attach to the same incident.",
+   "in_this_design": "Both replicas send to a 3-node Alertmanager cluster spread across regions; routes are severity- and team-based; region-down inhibits service alerts; pager dedup_key equals the group key, and unacked pages escalate to the secondary after 5 minutes.",
+   "key_points": [
+    "Dedupe by label fingerprint; keep replica labels out of the fingerprint.",
+    "group_wait 30 s, group_interval 5 m, repeat_interval 4 h are sane defaults.",
+    "Inhibit consequences when the cause alert is firing.",
+    "Clustered Alertmanager prefers duplicate notifications over missed ones (AP).",
+    "Silences need expiry and an owner."
+   ],
+   "qa": [
+    {
+     "q": "Why does Alertmanager prefer duplicates over missing a page?",
+     "a": "In a partition each side keeps notifying; consistency would require a quorum that could block notification. A duplicate page is mildly annoying; a missed one can cost hours of outage."
+    },
+    {
+     "q": "How do you avoid 300 pages in a regional outage?",
+     "a": "Inhibit service alerts when a region-level alert is firing, group by region and alertname, and use a pager dedup key so updates join one incident."
+    },
+    {
+     "q": "What is the risk of inhibition?",
+     "a": "A real, independent problem may be hidden while the parent alert fires; keep inhibition rules narrow with equal-label matching and review them after incidents."
+    }
+   ]
+  },
+  {
+   "name": "Sampling for logs and traces (head vs tail)",
+   "explain": "At thousands of requests per second, keeping every log line and every trace is expensive: our numbers give roughly 260 GB of logs and over 2 TB of traces a day unsampled. Sampling keeps a representative or interesting subset. Head-based sampling decides at the start of a request (e.g. keep 5% by hashing trace_id) and propagates the decision downstream so a trace is either complete or absent; it is cheap but blind, because at the start you do not know if the request will fail or be slow, so rare errors are mostly discarded. Tail-based sampling buffers all spans of a trace in a collector for a few seconds after it completes and then decides with full knowledge: keep all errors, all requests over the latency threshold, and a small percentage of normal ones. It costs memory and requires routing all spans of a trace to the same collector instance, usually via consistent hashing on trace_id. For logs, a common policy is to keep 100% of warnings and errors, sample successful access logs, and rate-limit identical messages to stop a log storm from a hot loop. Whatever is sampled must be counted accurately elsewhere: metrics stay unsampled so rates remain exact, and sampled data carries its sampling rate so counts can be re-weighted.",
+   "in_this_design": "Metrics are never sampled. Logs keep all non-2xx and 10% of 2xx. Traces use tail sampling in an OTel collector tier load-balanced by trace_id: keep all errors and requests over 400 ms plus 5% of the rest, giving about 130 GB/day.",
+   "key_points": [
+    "Metrics exact, logs and traces sampled.",
+    "Head sampling is cheap but misses rare failures.",
+    "Tail sampling keeps all errors and slow traces; needs trace_id affinity.",
+    "Record sampling rate to re-weight counts.",
+    "Rate-limit duplicate log lines to survive log storms."
+   ],
+   "qa": [
+    {
+     "q": "Why can you not compute error rate from sampled traces?",
+     "a": "You can only if you re-weight by the sampling probability, and tail sampling biases towards errors deliberately; use unsampled metrics for rates and traces for examples."
+    },
+    {
+     "q": "How does tail sampling scale horizontally?",
+     "a": "A load-balancing collector layer routes spans by consistent hash of trace_id so all spans of a trace land on one sampler; adding nodes remaps only a fraction of traces."
+    },
+    {
+     "q": "What happens to logs during a storm when a service logs the same error 50k times a second?",
+     "a": "Agent-side rate limiting and deduplication emit one line with a count; Kafka buffers bursts; error metrics still show the true rate."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "What triggers a page",
+   "options": "Threshold on causes (CPU, error % fixed) vs SLO burn-rate on symptoms",
+   "choice": "SLO multiwindow burn-rate plus black-box probes",
+   "why": "Pages correlate with user pain and budget impact, cutting noise; causes stay on dashboards and tickets."
+  },
+  {
+   "decision": "Build on open source vs buy SaaS observability",
+   "options": "Prometheus/Mimir/Grafana self-hosted vs Datadog/New Relic",
+   "choice": "Self-hosted core with SaaS for paging and external dead-man switch",
+   "why": "At 500 GB/day logs and millions of series SaaS cost is high; paging reliability is worth buying and gives independence from our own infra."
+  },
+  {
+   "decision": "Scrape interval",
+   "options": "5 s vs 15 s vs 60 s",
+   "choice": "15 s",
+   "why": "Fast enough for 2-3 minute detection; 5 s triples samples and cost for little gain; 60 s delays detection and blurs rate() windows."
+  },
+  {
+   "decision": "Trace sampling",
+   "options": "Head-based 1% vs tail-based keep errors and slow + 5%",
+   "choice": "Tail-based",
+   "why": "Incidents are about rare bad requests; head sampling throws most of them away. Cost is a collector tier with trace_id affinity."
+  },
+  {
+   "decision": "Alert routing HA semantics",
+   "options": "Strongly consistent single notifier vs gossip cluster that may duplicate",
+   "choice": "Gossip cluster (prefer duplicates)",
+   "why": "A missed page is far worse than a double page; availability over consistency for the alert path."
+  },
+  {
+   "decision": "Where to measure the SLI",
+   "options": "In app code vs at the load balancer vs on the client",
+   "choice": "Load balancer for the SLO, app for diagnosis, RUM as a secondary view",
+   "why": "LB counts requests that never reached a healthy pod; app view misses them; client view is noisy from networks outside our control."
+  },
+  {
+   "decision": "Log index technology",
+   "options": "Full-text index (Elasticsearch) vs label-only index (Loki)",
+   "choice": "Loki for most, short full-text retention for forensics",
+   "why": "Most incident queries are by trace_id or labels; full-text indexing 500 GB/day is several times more expensive."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Prometheus replica crashes",
+   "behavior": "Other replica keeps scraping and alerting; Alertmanager dedupes so no gap; long-term store has data from the surviving replica; restart replays the WAL."
+  },
+  {
+   "failure": "Alertmanager cluster partitioned",
+   "behavior": "Each side notifies independently; on-call may get a duplicate page; notification log reconciles when healed."
+  },
+  {
+   "failure": "Whole monitoring cluster or region down",
+   "behavior": "Watchdog heartbeat stops; external dead-man switch pages via SMS within 3 minutes; the other region's prober and Alertmanager continue to cover cross-region checks."
+  },
+  {
+   "failure": "Long-term TSDB ingestion overloaded during a sale",
+   "behavior": "Local Prometheus still evaluates alerts from its own TSDB, so paging is unaffected; remote_write queues and retries with backoff; dashboards may lag."
+  },
+  {
+   "failure": "Pager vendor outage",
+   "behavior": "Secondary route sends SMS via a second provider and posts to the incident chat channel; tested quarterly."
+  },
+  {
+   "failure": "Log pipeline backlog",
+   "behavior": "Kafka buffers hours of logs; agents drop debug level first; metrics and traces unaffected so detection still works, only forensic search lags."
+  },
+  {
+   "failure": "Bad rule deployed (syntax ok, logic wrong) silences a real alert",
+   "behavior": "Rules are unit-tested with promtool against synthetic series in CI; synthetic probes provide an independent page path."
+  }
+ ],
+ "metrics": [
+  "slo:availability:ratio_rate{window} and slo:latency:ratio_rate{window} for 5m, 30m, 1h, 6h, 3d",
+  "Error budget remaining (percent of 28-day budget)",
+  "RPS by route and region, with same-time-last-week comparison",
+  "p50/p95/p99 latency per route from histograms",
+  "Dependency error rate and latency (DB, payments, inventory), connection pool utilisation",
+  "Business: orders per minute vs forecast, payment success rate",
+  "Synthetic probe success and latency per location",
+  "Monitoring health: scrape success (up), rule evaluation duration and missed iterations, remote_write lag, head series count",
+  "Alert quality: pages per shift, actionable ratio, MTTD, time to ack, alert delivery latency"
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you set the SLO if the business has never had one?",
+   "a": "Look at the last 3-6 months of real performance, pick a target slightly below what users have been getting so you do not commit to unachievable reliability, validate with product what level users notice, start with an internal SLO without penalties, and revisit quarterly."
+  },
+  {
+   "q": "Your team gets 15 pages a week. How do you fix it?",
+   "a": "Pull every page from the last month and label actionable or not; delete or demote cause-based alerts to tickets; convert remaining threshold alerts to burn-rate; fix flapping with for clauses and short-window confirmation; add inhibition for cascades. Track actionable ratio and pages per shift as team KPIs."
+  },
+  {
+   "q": "How do you monitor during a sale where traffic is 10x and patterns change?",
+   "a": "SLO burn rates are ratios so they scale with traffic; anomaly alerts on business metrics use the sale forecast as baseline rather than last week; pre-scale the monitoring stack, raise series limits in advance, and run a war room dashboard with business and technical signals."
+  },
+  {
+   "q": "What if the metrics system itself is slow during the incident?",
+   "a": "Alerts evaluate on local Prometheus independent of the long-term store; dashboards use recording rules; we keep a lightweight read-only incident dashboard; and probes and the dead-man switch give independent paths."
+  },
+  {
+   "q": "How do you tie deploys to alerts?",
+   "a": "Deploys publish annotations to Grafana and a deploy_info metric; alert annotations include the last deploy in the window; canary analysis compares canary vs baseline SLI and auto-rolls back before the global SLO burns."
+  },
+  {
+   "q": "How would you use anomaly detection or ML here?",
+   "a": "For business signals with strong seasonality, like orders per minute, compare to a forecast band and alert on large sustained deviations as a ticket or low-urgency page. I would not use ML for primary paging: SLO burn is explainable and precise, and opaque models erode on-call trust."
+  },
+  {
+   "q": "How do you make runbooks useful?",
+   "a": "One per paging alert, linked in the annotation, with first diagnostic queries, known mitigations (rollback, failover, scale), escalation contacts, and a last-reviewed date; CI checks the link exists; postmortems update them."
+  },
+  {
+   "q": "How do you handle multi-tenant or per-partner SLAs?",
+   "a": "Add a bounded partner_tier label for metrics, per-partner SLO computed from access logs in a batch job, and a per-partner synthetic check for top partners with contractual SLAs."
+  }
+ ],
+ "key_points": [
+  "Start from SLIs and SLOs; alerts are derived from the error budget, not invented.",
+  "Page on symptoms users feel; use causes for dashboards and tickets.",
+  "Multiwindow multi-burn-rate: 14.4x over 1h with 5m confirm, 6x over 6h with 30m, 1x over 3d as a ticket.",
+  "Combine white-box metrics with black-box probes to catch zero-traffic and edge failures.",
+  "Cardinality is the real scaling limit; bound labels and push ids to logs and traces.",
+  "Histograms and good/total ratios, never averaged percentiles.",
+  "The alert path must not share fate with production: HA pairs, clustered Alertmanager, external dead-man switch.",
+  "Every page has impact, dashboard and runbook links; unacked pages escalate in 5 minutes.",
+  "Measure the monitoring: MTTD, actionable page ratio, pages per shift.",
+  "Metrics exact, logs and traces sampled with tail-based sampling for errors and slow requests."
+ ],
+ "quiz": [
+  {
+   "q": "Checkout has a 99.95% availability SLO over 28 days. Roughly how much full downtime does the error budget allow?",
+   "options": [
+    "About 2 minutes",
+    "About 20 minutes",
+    "About 3.5 hours",
+    "About 4 hours"
+   ],
+   "answer": 1,
+   "why": "0.05% of 28 x 24 x 60 = 40,320 minutes is about 20 minutes. 3.5-4 hours is closer to a 99.5% SLO, a common slip when people drop a nine."
+  },
+  {
+   "q": "What is the burn rate when the API serves 0.5% errors against a 99.95% SLO?",
+   "options": [
+    "10",
+    "0.5",
+    "5",
+    "50"
+   ],
+   "answer": 0,
+   "why": "Burn = 0.005 / 0.0005 = 10. Answering 5 confuses 0.05% with 0.1% budget."
+  },
+  {
+   "q": "Why does the fast-burn page require both a 1h and a 5m window above 14.4x?",
+   "options": [
+    "The 5m window makes detection faster than the 1h window alone",
+    "Prometheus cannot evaluate a 1h window without a 5m one",
+    "It halves the number of recording rules",
+    "The 5m window lets the alert stop soon after the problem is fixed"
+   ],
+   "answer": 3,
+   "why": "The long window gives significance; the short window confirms the problem is still happening so the alert resets quickly. It does not make detection faster, since both must be true, which is the tempting misconception."
+  },
+  {
+   "q": "A complete outage at the load balancer means no requests reach the pods. What does the app-level error ratio show?",
+   "options": [
+    "100% errors",
+    "A spike of 5xx",
+    "0/0, which may look healthy or absent",
+    "Latency rising to the timeout"
+   ],
+   "answer": 2,
+   "why": "No requests means no errors counted; rate ratio becomes NaN or disappears. That is why black-box probes and traffic-drop alerts exist. 100% errors is tempting but assumes requests arrived."
+  },
+  {
+   "q": "Which label is safe to add to http_requests_total?",
+   "options": [
+    "order_id",
+    "status_class (2xx..5xx)",
+    "Raw URL path including IDs",
+    "Error message text"
+   ],
+   "answer": 1,
+   "why": "status_class has 5 values. Raw paths look harmless but contain IDs and explode cardinality just like order_id."
+  },
+  {
+   "q": "How should a global p99 latency be computed across 200 pods?",
+   "options": [
+    "Sum histogram buckets across pods, then compute the quantile",
+    "Average each pod's p99",
+    "Take the max of each pod's p99",
+    "Take the median pod's p99"
+   ],
+   "answer": 0,
+   "why": "Histogram buckets are additive; quantiles are not. Max of p99s is tempting as conservative but is driven by one outlier pod and is not the true p99."
+  },
+  {
+   "q": "An engineer proposes paging when CPU exceeds 85% for 10 minutes. Best response?",
+   "options": [
+    "Accept; CPU is a leading indicator",
+    "Lower it to 70% to get earlier warning",
+    "Page only during sales",
+    "Make it a ticket or dashboard signal; page on SLO burn instead"
+   ],
+   "answer": 3,
+   "why": "CPU is a cause; users may be fine at 85%. Lowering the threshold increases noise. Saturation belongs on dashboards and capacity tickets."
+  },
+  {
+   "q": "Two Prometheus replicas scrape the same targets and both fire the same alert. What prevents a double page?",
+   "options": [
+    "The pager vendor ignores the second",
+    "Only the leader replica evaluates rules",
+    "Alertmanager dedupes by the label-set fingerprint",
+    "Rules use a distributed lock"
+   ],
+   "answer": 2,
+   "why": "Replicas evaluate independently; Alertmanager merges identical label sets. Prometheus has no leader election, which makes the third option a tempting but wrong assumption."
+  },
+  {
+   "q": "Alertmanager in a partitioned cluster will typically:",
+   "options": [
+    "Stop notifying until a quorum is restored",
+    "Notify from both sides, risking duplicates",
+    "Drop all firing alerts",
+    "Elect a new leader via Raft"
+   ],
+   "answer": 1,
+   "why": "It favours availability: duplicates over missed pages. Quorum blocking is the consistency choice that it deliberately avoids."
+  },
+  {
+   "q": "Which failure is most likely missed by white-box metrics but caught by synthetic probes?",
+   "options": [
+    "An expired TLS certificate on the public load balancer",
+    "A slow SQL query on one route",
+    "Connection pool exhaustion",
+    "Memory leak in one pod"
+   ],
+   "answer": 0,
+   "why": "The TLS failure prevents requests reaching the service, so app metrics show a drop not errors. The others are visible in white-box data."
+  },
+  {
+   "q": "Roughly how many samples per second does Prometheus ingest for 600k active series scraped every 15 s?",
+   "options": [
+    "4k",
+    "400k",
+    "9M",
+    "40k"
+   ],
+   "answer": 3,
+   "why": "600,000 / 15 = 40,000 samples/s. 9M is per-minute thinking multiplied wrongly."
+  },
+  {
+   "q": "Tail-based trace sampling is preferred here mainly because:",
+   "options": [
+    "It uses less memory than head sampling",
+    "It needs no collector",
+    "It can keep all error and slow traces",
+    "It makes metrics more accurate"
+   ],
+   "answer": 2,
+   "why": "Tail sampling decides after seeing the outcome. It actually needs more memory and a collector tier, so the first option is the tempting wrong one."
+  },
+  {
+   "q": "At 3am a route gets 20 requests in 5 minutes and 2 fail. The burn-rate alert fires and wakes on-call. Best fix?",
+   "options": [
+    "Raise the SLO target",
+    "Add a minimum valid-request count to the alert and lean on probes for low traffic",
+    "Disable alerting at night",
+    "Lower the scrape interval to 5 s"
+   ],
+   "answer": 1,
+   "why": "Small denominators make ratios noisy; a minimum-volume guard plus synthetic traffic is the standard fix. Disabling night alerts would miss real outages."
+  },
+  {
+   "q": "Which is the best SLI for availability of the checkout API?",
+   "options": [
+    "Ratio of non-5xx responses to valid requests measured at the load balancer",
+    "Pod uptime percentage",
+    "Average CPU idle",
+    "Number of successful health checks"
+   ],
+   "answer": 0,
+   "why": "SLIs should reflect user-facing outcomes at the closest practical point. Health checks are tempting but exercise a trivial path, not real checkout."
+  },
+  {
+   "q": "A 6x burn sustained for 6 hours consumes about what fraction of a 30-day error budget?",
+   "options": [
+    "0.5%",
+    "2%",
+    "20%",
+    "5%"
+   ],
+   "answer": 3,
+   "why": "6 x 6h / 720h = 5%. 2% corresponds to 14.4x over 1h, the common mix-up."
+  },
+  {
+   "q": "During a regional network partition, 300 service alerts fire. What most directly reduces the noise?",
+   "options": [
+    "Increasing repeat_interval",
+    "Lowering group_wait",
+    "Inhibition rules that mute service alerts when RegionDown is firing",
+    "Adding more Alertmanager replicas"
+   ],
+   "answer": 2,
+   "why": "Inhibition suppresses consequences of a known cause. repeat_interval only affects re-notifications of already-sent alerts."
+  },
+  {
+   "q": "Why should the dead-man's switch live outside your own infrastructure?",
+   "options": [
+    "External services have better dashboards",
+    "So a failure of your monitoring stack cannot also silence the alert that it failed",
+    "It is cheaper",
+    "Prometheus cannot send heartbeats internally"
+   ],
+   "answer": 1,
+   "why": "The heartbeat proves the alert path works end to end; hosting it on the same infra shares fate. Cost and dashboards are irrelevant to the purpose."
+  },
+  {
+   "q": "A dashboard query for 30 days of p99 by route times out. Best fix?",
+   "options": [
+    "Use recording rules and downsampled long-term data",
+    "Increase query timeout to 5 minutes",
+    "Reduce scrape interval",
+    "Add more labels to narrow the query"
+   ],
+   "answer": 0,
+   "why": "Pre-aggregation and downsampling make long-range queries cheap. More labels increases series and cost; a longer timeout just hides the problem."
+  },
+  {
+   "q": "Your metrics show 0.04% errors (within SLO) but customer support reports many failed orders. Most likely explanation?",
+   "options": [
+    "The SLO is too strict",
+    "Prometheus is dropping samples",
+    "The histogram buckets are wrong",
+    "The SLI is measured at a point that misses some failures (e.g. client or edge) or counts some failures as good"
+   ],
+   "answer": 3,
+   "why": "A mismatch between SLI and user experience is the classic trap; validate with RUM and probes. Dropped samples would usually show up as scrape errors."
+  },
+  {
+   "q": "Which practice best keeps runbooks trustworthy?",
+   "options": [
+    "Write them once at launch",
+    "Store them in a wiki nobody edits",
+    "Owner and last-reviewed date per alert, CI link checks, updates as postmortem actions",
+    "Generate them with no human review"
+   ],
+   "answer": 2,
+   "why": "Runbooks rot; ownership and review cadence prevent it. Writing once at launch is the common real-world failure."
+  },
+  {
+   "q": "Which combination should normally produce a page rather than a ticket?",
+   "options": [
+    "1x burn over 3 days",
+    "14.4x burn over 1h confirmed by 5m",
+    "Disk filling in 30 days",
+    "One probe location failing"
+   ],
+   "answer": 1,
+   "why": "Fast burn means significant user pain now. The 3-day 1x burn is real but slow, so it is a ticket; a single location may be a vantage-point problem."
+  },
+  {
+   "q": "Why use a separate port and sample_limit for /metrics?",
+   "options": [
+    "To isolate scrape traffic and make a cardinality explosion fail the scrape instead of the TSDB",
+    "To speed up the API",
+    "Prometheus requires it",
+    "To encrypt metrics"
+   ],
+   "answer": 0,
+   "why": "sample_limit protects the shared TSDB from one bad target. Separate ports are about isolation, not a Prometheus requirement."
+  }
+ ],
+ "references": [
+  {
+   "title": "Google SRE workbook guidance summarised: How to alert on SLOs (Google Cloud community)",
+   "url": "https://medium.com/google-cloud/how-to-alert-on-slos-2a5ce8c4e7dd"
+  },
+  {
+   "title": "Grafana: How to implement multi-window, multi-burn-rate alerts",
+   "url": "https://grafana.com/blog/how-to-implement-multi-window-multi-burn-rate-alerts-with-grafana-cloud/"
+  },
+  {
+   "title": "SRE book notes: Monitoring Distributed Systems",
+   "url": "https://bitmaybewise.substack.com/p/sre-book-notes-monitoring-distributed"
+  },
+  {
+   "title": "PagerTree: Four golden signals of SRE monitoring",
+   "url": "https://pagertree.com/learn/devops/what-is-site-reliability-engineering-sre/four-golden-signals-sre-monitoring"
+  },
+  {
+   "title": "Last9: Error budgets and burn rate alerting",
+   "url": "https://last9.io/blog/error-budget.md"
+  }
+ ]
+}

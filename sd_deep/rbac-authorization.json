@@ -1,0 +1,1096 @@
+{
+ "slug": "rbac-authorization",
+ "title": "Design role-based access control (centralized authorization service)",
+ "prompt": "Design authorization for role-based access control.",
+ "group": "security",
+ "source": "beyz",
+ "difficulty": "Hard",
+ "minutes": 100,
+ "summary": "Authentication tells you who the caller is; authorization decides, on every request, whether that caller may do this action on this resource. The interesting tension is that checks sit on the hot path of every service (hundreds of thousands per second, single-digit millisecond budgets) yet must reflect revocations quickly and never be fooled by stale data, which is the 'new enemy' problem. The senior design separates a policy decision point from enforcement points, models roles plus resource scopes as tuples, serves checks from replicated, versioned in-memory indexes, and lets callers ask for consistency only when they need it.",
+ "framework": {
+  "clarify": [
+   "Who consumes it: internal microservices (seller portal, admin console, warehouse tools) checking user actions, and possibly service-to-service calls? Assume about 300 services in many languages.",
+   "Model granularity: pure RBAC (role -> permissions), RBAC scoped to resources (role on a tenant/seller/warehouse), or full ABAC/ReBAC (attributes, ownership, sharing)? Assume scoped RBAC with role hierarchy and a few attribute conditions (region, time).",
+   "Scale: 20M principals (users plus service accounts), 2M tenants (sellers), 500 roles, 5k permissions, about 400M role-assignment tuples; peak 500k checks/s.",
+   "Latency budget: p99 under 5ms for a check from inside the data center, since services may make several checks per request.",
+   "Revocation freshness: when a seller removes an employee, how fast must access end? Assume within 10 seconds, and immediately (read-your-writes) for the admin who made the change.",
+   "Need for list queries: besides 'can X do Y on Z', do we need 'which resources can X see' (for filtering listings)? Assume yes, for warehouses and stores, which is much harder than check.",
+   "Audit and compliance: every grant change must be audited, with who-approved; SOX-like separation of duties for finance roles."
+  ],
+  "design": [
+   "Baseline: each service hard-codes 'if user.role == ADMIN' with roles in a JWT. Fails on revocation latency, inconsistency between services and audit, so we centralize decisions.",
+   "Components: Policy Admin API (manage roles, permissions, assignments), Tuple Store (Spanner/CockroachDB or sharded Postgres) as source of truth with change log, Check service (stateless PDP fleet with in-memory indexes), Watch/changelog stream, client SDK + sidecar (PEP) with local decision cache, Audit log.",
+   "Data model: permission = (resource_type, action); role = named set of permissions with inheritance; assignment tuple = (subject, role, scope) where scope is global, tenant:123 or warehouse:BLR-4. Groups expand to members.",
+   "APIs: Check(subject, action, resource, context, consistency) -> allow/deny + reason; BatchCheck; ListResources(subject, action, type); WriteTuples (with precondition); Watch(from_revision); Expand(role, scope) for audits.",
+   "Critical path: service calls sidecar -> local cache hit (about 50us) or gRPC to nearest Check replica -> resolve subject's roles in scope and ancestors from in-memory index -> union permissions -> evaluate conditions -> decision with revision number -> cache for 5-30s keyed with revision."
+  ],
+  "defend": [
+   "Bottleneck: fan-out in graph expansion (user -> groups -> roles -> scope ancestors). Keep the graph shallow (bounded depth 4), precompute flattened user->effective-role sets per scope, and short-circuit on the first allow.",
+   "Scaling reads: Check is read-only and served from in-memory replicas fed by the changelog; add replicas horizontally and shard the index by tenant when it outgrows RAM (400M tuples x about 40B = 16GB per full replica).",
+   "Scaling writes: assignment writes are small (hundreds/s) but bursty during bulk onboarding; write to the tuple store with a monotonic revision, append to changelog, replicas apply in order. Bulk imports go through a throttled batch path.",
+   "Consistency: each write returns a revision token; callers that just changed permissions pass at_least=revision and the PDP waits until its replica has applied it (or forwards to the leader). Everyone else uses bounded staleness (max 10s).",
+   "Failure: SDK has a 20ms timeout, one retry with jitter to a different replica, then a per-action fail mode: fail closed for writes and admin actions, fail open-with-audit only for explicitly marked low-risk reads. Bulkhead per calling service so one noisy caller cannot exhaust the PDP.",
+   "Measure: check p50/p99, cache hit rate, replica revision lag, deny rate by service (spikes signal bad deploys or attacks), and policy evaluation errors."
+  ],
+  "script": "I will first pin the model: scoped RBAC, meaning roles are granted on a scope such as a seller account or a warehouse, with role inheritance and a few conditions like region. Scale is around 400 million assignment tuples and 500k checks per second with a p99 of 5ms, and when a seller removes an employee, access must end within 10 seconds. Design: a Policy Admin API writes assignment tuples to a strongly consistent store and stamps each change with a revision. A changelog streams those changes to a fleet of stateless check servers that hold the whole graph in memory, so a check is a few hash lookups. Services enforce through a sidecar SDK with a short-lived local cache. To defend it: reads scale by adding replicas and sharding by tenant; the subtle problem is staleness, so writes return a revision token and callers who need read-your-writes pass it, while everyone else tolerates 10 seconds. On failure, we fail closed for anything sensitive. I would watch check latency, replica lag and deny-rate anomalies."
+ },
+ "brd": {
+  "problem": "Authorization logic is scattered across hundreds of services: role names are hard-coded, roles are baked into long-lived tokens, and every team reimplements checks slightly differently. Removed employees of sellers keep access for hours, auditors cannot answer 'who can refund orders for seller X', and every new feature reinvents permission plumbing.",
+  "goals": [
+   "One authoritative model and service for all permission decisions across seller, admin and warehouse surfaces.",
+   "Revocations effective within 10 seconds platform-wide; immediately for the actor who made the change.",
+   "Check latency p99 under 5ms so teams adopt it without caching hacks.",
+   "Answer audit questions ('who can do X on Y', 'what can user U do') in seconds.",
+   "Let product teams define new permissions and roles via config without code deployments of the auth service."
+  ],
+  "non_goals": [
+   "Authentication, login and token issuance.",
+   "Data-level row filtering inside every database (we provide ListResources, not a query rewriter).",
+   "Network-level access control (firewalls, service mesh mTLS policies).",
+   "End-user sharing features like Google Docs style link sharing in phase 1."
+  ],
+  "stakeholders": [
+   {
+    "who": "Product engineering teams",
+    "needs": "A simple SDK call, low latency, clear deny reasons for debugging."
+   },
+   {
+    "who": "Sellers (tenant admins)",
+    "needs": "Invite staff, assign roles like 'Catalog Manager', revoke instantly."
+   },
+   {
+    "who": "Security and Compliance",
+    "needs": "Least privilege, separation of duties, full audit trail, access reviews."
+   },
+   {
+    "who": "Internal ops / support",
+    "needs": "Time-bound elevated access (break-glass) with approval."
+   },
+   {
+    "who": "Platform SRE",
+    "needs": "A service that degrades predictably and never becomes a single point of global outage."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Check latency",
+    "target": "p99 < 5ms, p50 < 1ms (with sidecar cache)"
+   },
+   {
+    "metric": "Revocation propagation",
+    "target": "p99 < 10s"
+   },
+   {
+    "metric": "Adoption",
+    "target": "90% of services migrated off hard-coded checks in 3 quarters"
+   },
+   {
+    "metric": "Availability of Check",
+    "target": "99.995%"
+   },
+   {
+    "metric": "Audit query time ('who can X on Y')",
+    "target": "< 5s"
+   }
+  ],
+  "constraints": [
+   "Must coexist with legacy role claims in tokens during migration (shadow mode comparing decisions).",
+   "Services are written in Java, Go, Python and Node; enforcement must be language agnostic (gRPC + sidecar).",
+   "Data residency: tuples for Indian sellers stay in India regions.",
+   "No new single point of failure on the order or checkout path."
+  ],
+  "risks": [
+   {
+    "risk": "Authorization service outage blocks every service",
+    "mitigation": "Multiple replicas per zone, local SDK cache, per-action fail-open/closed policy, bulkheads per caller."
+   },
+   {
+    "risk": "Stale replica grants access after revocation (new enemy problem)",
+    "mitigation": "Revision tokens for read-your-writes, bounded staleness SLO with lag alerting."
+   },
+   {
+    "risk": "Policy mistakes grant wide access (for example a role accidentally inheriting admin)",
+    "mitigation": "Policy-as-code reviews, dry-run diff showing affected principals, staged rollout, anomaly alerts on allow-rate jumps."
+   },
+   {
+    "risk": "Teams bypass the service with local caches that never expire",
+    "mitigation": "Official SDK with enforced max TTL and shadow-mode verification; lint rules on hard-coded role checks."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Seller owner",
+    "needs": "Create staff accounts, assign roles scoped to their stores, see who has access."
+   },
+   {
+    "name": "Service developer",
+    "needs": "Call check(user, 'order.refund', order:123) and get an answer with a reason quickly."
+   },
+   {
+    "name": "Compliance auditor",
+    "needs": "Export all principals with finance permissions and their approvers, quarterly."
+   },
+   {
+    "name": "Support agent",
+    "needs": "Temporary elevated access to a seller's account with automatic expiry."
+   }
+  ],
+  "user_stories": [
+   "As a seller owner, I want to grant 'Inventory Manager' to a staff member for only my Bangalore warehouse so that they cannot touch other locations.",
+   "As a seller owner, I want removing a staff member to cut access within seconds so that a fired employee cannot export my data.",
+   "As a developer, I want to define a new permission 'returns.approve' in config and attach it to roles so that I do not need an auth-service deploy.",
+   "As a developer, I want a batch check for 100 items on a page so that rendering a list costs one round trip.",
+   "As an auditor, I want to list every user who can issue refunds above 10,000 INR so that I can review least privilege.",
+   "As a support agent, I want a 2-hour break-glass grant approved by my lead so that I can fix an urgent seller issue without permanent access.",
+   "As a security engineer, I want separation-of-duties rules (a user cannot hold both 'payout.create' and 'payout.approve') enforced on assignment so that fraud needs collusion.",
+   "As a seller owner, I want a page showing only the stores I can manage so that I never see forbidden data."
+  ],
+  "functional": [
+   "Manage permissions (resource_type.action), roles (set of permissions, with inheritance), and groups (sets of principals).",
+   "Assign roles to principals or groups on a scope: global, tenant, or sub-resource (warehouse, store); scopes form a hierarchy (tenant contains warehouses).",
+   "Check(subject, permission, resource, context) with optional conditions (region match, time window, amount threshold) evaluated from context.",
+   "BatchCheck up to 100 items; ListResources(subject, permission, type) with pagination.",
+   "Time-bound grants with automatic expiry; approval workflow for privileged roles.",
+   "Separation-of-duties constraints validated on write.",
+   "Revision tokens on write; Check accepts at_least_revision for read-your-writes.",
+   "Full audit log of grants, revokes and (sampled) decisions with reasons; Expand API for 'why was this allowed'."
+  ],
+  "non_functional": [
+   {
+    "name": "Check latency",
+    "target": "p99 < 5ms server side; sidecar cache hit < 0.2ms"
+   },
+   {
+    "name": "Throughput",
+    "target": "500k checks/s peak, headroom to 1M"
+   },
+   {
+    "name": "Availability",
+    "target": "99.995% for Check; 99.9% for admin writes"
+   },
+   {
+    "name": "Freshness",
+    "target": "Bounded staleness 10s; read-your-writes on request"
+   },
+   {
+    "name": "Durability",
+    "target": "Tuple store RPO 0, multi-zone synchronous replication"
+   },
+   {
+    "name": "Auditability",
+    "target": "100% of writes audited, decisions sampled 1% plus all denies on sensitive actions"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "20M principals; 2M seller tenants with an average of 5 staff; 500k internal employees and service accounts.",
+    "About 400M assignment tuples including group memberships and scope edges; average tuple about 40 bytes in memory after interning ids.",
+    "Peak 500k checks/s; 60% served by sidecar cache; writes average 200/s, bulk onboarding bursts to 5k/s.",
+    "Each check expands on average 3 roles and 2 scope ancestors."
+   ],
+   "math": [
+    "Memory per full replica: 400M x 40B = 16GB, plus indexes (forward and reverse) about 2x = 32-40GB; fits on 64GB machines, or shard by tenant into 4 shards of about 10GB.",
+    "Server-side checks: 500k x 40% cache miss = 200k/s. One core does about 20k in-memory checks/s (50us each), so 10 cores of work; with 3x headroom and 3 zones, about 30 replicas of 4 cores.",
+    "Changelog: 200 writes/s x 200B = 40KB/s steady, bursts 1MB/s; every replica tails it easily.",
+    "Audit decisions: 1% of 500k = 5k/s x 300B = 1.5MB/s, about 130GB/day raw.",
+    "Bootstrap: a new replica loads a 16GB snapshot from object storage at about 500MB/s in about 35s, then tails the changelog from the snapshot revision."
+   ],
+   "summary": "The whole authorization graph fits in memory of a single large machine (tens of GB), so checks are pure in-memory work and scale by replication. Writes are tiny. The hard engineering is freshness and fan-out, not raw storage."
+  },
+  "out_of_scope": [
+   "Authentication and MFA.",
+   "Row-level security rewriting inside databases.",
+   "Consumer-facing sharing (share link with anyone).",
+   "Policy authoring UI beyond a basic admin console in phase 1."
+  ]
+ },
+ "hld": {
+  "overview": "Writes go through the Policy Admin API, which validates constraints (separation of duties, approvals), writes tuples to a strongly consistent store, and records each change with a monotonically increasing revision in a changelog table that is published to Kafka. Check servers are stateless processes that bootstrap from a periodic snapshot in object storage and then tail the changelog to keep an in-memory, versioned graph of assignments, groups, role definitions and scope ancestry. Services enforce decisions through a sidecar or in-process SDK (the PEP) that caches decisions for a few seconds and calls the nearest Check replica via gRPC. A separate List/Index service maintains reverse indexes (permission+type -> resources per subject) for ListResources. Audit events go to Kafka and the SIEM.",
+  "diagram": "\n  Admin UI / Seller console\n        |\n        v\n  +-------------------+  txn   +----------------------+\n  | Policy Admin API  |------->| Tuple store          |\n  | validate SoD,     |        | (Spanner/Cockroach)  |\n  | approvals, schema |        | tuples + changelog   |\n  +-------------------+        +----------+-----------+\n                                          | CDC (revision ordered)\n                                          v\n                               +----------------------+   snapshot\n                               | Kafka authz.changes  |----------> S3 snapshots\n                               +-----+----------+-----+\n                                     |          |\n                     tail + apply    |          | tail\n                                     v          v\n  +-----------+  gRPC   +----------------+  +------------------+\n  | Service A |-------->| Check replicas |  | List/Reverse idx |\n  |  + SDK    |  check  | in-mem graph   |  | (per tenant)     |\n  |  cache 5s |<--------| @revision R    |  +------------------+\n  +-----------+         +----------------+\n        |\n        v  decision events (sampled)\n  +-------------+\n  | Audit/SIEM  |\n  +-------------+\n",
+  "components": [
+   {
+    "name": "Policy Admin API",
+    "responsibility": "CRUD for permissions, roles, groups and assignments; validates schema, separation-of-duties and approval requirements; returns a revision token."
+   },
+   {
+    "name": "Tuple Store",
+    "responsibility": "Source of truth for tuples (subject, relation/role, object/scope) and the ordered changelog; strongly consistent, multi-zone."
+   },
+   {
+    "name": "Changelog stream (Kafka)",
+    "responsibility": "Revision-ordered stream of tuple changes, partitioned by tenant, consumed by Check replicas, List index and caches."
+   },
+   {
+    "name": "Snapshotter",
+    "responsibility": "Every 15 minutes writes a compact serialized graph at revision R to object storage for fast replica bootstrap."
+   },
+   {
+    "name": "Check service (PDP)",
+    "responsibility": "In-memory graph evaluation of Check/BatchCheck with conditions; reports the revision it evaluated at."
+   },
+   {
+    "name": "List / reverse index service",
+    "responsibility": "Precomputed subject -> accessible resources per (type, permission) for listing and filtering."
+   },
+   {
+    "name": "SDK / sidecar (PEP)",
+    "responsibility": "Enforcement in the calling service: decision cache with max TTL, timeouts, retries, fail mode per action, shadow mode."
+   },
+   {
+    "name": "Policy-as-code repo",
+    "responsibility": "Role and permission definitions in versioned YAML reviewed via pull requests and deployed with dry-run diffs."
+   },
+   {
+    "name": "Audit pipeline",
+    "responsibility": "Records every write with actor and approver, sampled decisions and all sensitive denies; feeds access reviews."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Check on the hot path",
+    "steps": [
+     "Order service handles 'refund order 987' for user u42; SDK builds Check(u42, order.refund, order:987, ctx{amount:12000, seller:s7}).",
+     "SDK looks in local cache keyed (subject, permission, resource, condition-hash) with TTL 5s; hit returns immediately.",
+     "On miss, gRPC to the nearest healthy Check replica with a 20ms deadline.",
+     "Replica resolves resource to its scope chain: order:987 -> seller:s7 -> global (resource-to-scope mapping supplied by the caller or a parent lookup).",
+     "Replica gets u42's direct roles plus group roles on each scope in the chain from in-memory maps, unions role permissions (precomputed flattened with inheritance).",
+     "If order.refund is present, evaluate conditions attached to the grant (amount <= 10,000 for 'Refund Agent'; amount above requires 'Refund Manager'). Here 12,000 needs Refund Manager.",
+     "Return {allowed:false, reason:'refund amount exceeds role limit', revision: R}; SDK caches and the service returns 403."
+    ]
+   },
+   {
+    "name": "Revoke a staff member with read-your-writes",
+    "steps": [
+     "Seller owner calls DELETE assignment(u42, Catalog Manager, seller:s7).",
+     "Admin API validates the owner has role.manage on seller:s7 (itself a check), deletes the tuple in a transaction and appends changelog row revision R+1.",
+     "Response returns revision token R+1; the seller UI passes it on its next page load.",
+     "CDC publishes the change; replicas apply it within about 1-2 seconds; SDK caches expire within 5s.",
+     "Any Check with at_least_revision=R+1 on a lagging replica waits up to 50ms for catch-up, else is forwarded to a replica that has R+1."
+    ]
+   },
+   {
+    "name": "List stores a user can manage",
+    "steps": [
+     "Seller portal calls ListResources(u42, store.manage, type=store, tenant=s7).",
+     "List service reads the reverse index for (tenant s7, permission store.manage): subject -> set of store ids, maintained from the changelog.",
+     "Returns paginated ids with the revision; the portal fetches store details by id from the catalog service."
+    ]
+   }
+  ],
+  "data_flow": "Policy definitions flow from the policy-as-code repo to the Admin API. Assignment changes flow Admin API -> tuple store (transaction) -> changelog -> Kafka -> Check replicas, List index and snapshotter. Checks flow from services through the SDK to replicas and back; decisions and sampled audits flow to Kafka -> SIEM/warehouse. No request-path data flows into the tuple store."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "gRPC",
+    "path": "AuthZ.Check",
+    "request": "{subject:'user:u42', permission:'order.refund', resource:'order:987', scope_hint:'seller:s7', context:{amount:12000}, consistency:{at_least_revision?:'R123', max_staleness_ms?:10000}}",
+    "response": "{allowed:bool, reason:str, matched_grant?:{role, scope}, revision:'R125'}",
+    "notes": "20ms client deadline; idempotent; safe to retry on another replica."
+   },
+   {
+    "method": "gRPC",
+    "path": "AuthZ.BatchCheck",
+    "request": "{subject, items:[{permission, resource, scope_hint}] x <=100, context}",
+    "response": "{results:[{allowed, reason}], revision}",
+    "notes": "Shares scope and role resolution across items; used for rendering lists."
+   },
+   {
+    "method": "gRPC",
+    "path": "AuthZ.ListResources",
+    "request": "{subject, permission, resource_type, tenant, page_token, page_size<=500}",
+    "response": "{resource_ids:[...], next_page_token, revision}",
+    "notes": "Served from reverse index; eventual consistency with revision returned."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/assignments",
+    "request": "{subject, role, scope, expires_at?, justification?, precondition_revision?}",
+    "response": "201 {assignment_id, revision}",
+    "notes": "Validates SoD and approval policy; optimistic concurrency via precondition_revision."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/assignments/{id}",
+    "request": "none",
+    "response": "200 {revision}",
+    "notes": "Writes a tombstone; revocations are prioritised in the changelog consumer."
+   },
+   {
+    "method": "PUT",
+    "path": "/v1/roles/{role}",
+    "request": "{permissions:[...], inherits:[...], conditions:{...}}",
+    "response": "200 {revision, affected_principals_estimate}",
+    "notes": "Usually applied from policy-as-code CI with dry-run first."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/explain",
+    "request": "?subject&permission&resource",
+    "response": "{allowed, path:[subject->group->role->scope], revision}",
+    "notes": "Debug and audit; slower path with full trace."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "tuples",
+    "store": "Spanner / CockroachDB (or Postgres sharded by tenant_id)",
+    "fields": [
+     "tenant_id",
+     "object_type",
+     "object_id (scope)",
+     "relation (role or member)",
+     "subject_type",
+     "subject_id",
+     "subject_relation?",
+     "expires_at?",
+     "created_by",
+     "created_rev"
+    ],
+    "keys": "PK (tenant_id, object_type, object_id, relation, subject_type, subject_id); secondary index (tenant_id, subject_id)",
+    "notes": "Same shape as Zanzibar tuples: seller:s7#catalog_manager@user:u42; group nesting via subject_relation (group:g1#member)."
+   },
+   {
+    "entity": "changelog",
+    "store": "Same DB, then Kafka authz.changes",
+    "fields": [
+     "revision (monotonic)",
+     "tenant_id",
+     "op (insert|delete)",
+     "tuple",
+     "ts",
+     "actor"
+    ],
+    "keys": "PK revision; Kafka key tenant_id",
+    "notes": "Revision from commit timestamp (Spanner TrueTime) or a sequence; replicas apply in order per tenant partition."
+   },
+   {
+    "entity": "role_definitions",
+    "store": "Tuple store + policy-as-code git",
+    "fields": [
+     "role",
+     "permissions[]",
+     "inherits[]",
+     "conditions (CEL expressions)",
+     "privileged bool",
+     "sod_conflicts[]"
+    ],
+    "keys": "PK role",
+    "notes": "Flattened permission set precomputed in replicas on change."
+   },
+   {
+    "entity": "in-memory graph (replica)",
+    "store": "Check process RAM",
+    "fields": [
+     "subjectRoles: map[(subject, scope)] -> roleBitset",
+     "groupMembers: map[subject] -> groups",
+     "scopeParent: map[scope] -> parent",
+     "rolePerms: map[role] -> permissionBitset",
+     "appliedRevision"
+    ],
+    "keys": "Interned integer ids for subjects/scopes; bitsets for roles (500) and permissions (5k)",
+    "notes": "Copy-on-write segments per tenant so readers never block on apply."
+   },
+   {
+    "entity": "reverse index",
+    "store": "List service (RocksDB per shard)",
+    "fields": [
+     "(tenant, permission, subject) -> sorted resource ids",
+     "revision"
+    ],
+    "keys": "Prefix key tenant|permission|subject",
+    "notes": "Rebuilt per tenant when role definitions change."
+   }
+  ],
+  "classes": [
+   {
+    "name": "CheckEngine",
+    "responsibility": "Evaluates Check/BatchCheck over the in-memory graph at a revision.",
+    "methods": [
+     "check(req) -> Decision",
+     "batchCheck(req) -> Decision[]",
+     "effectivePermissions(subject, scopeChain) -> Bitset"
+    ]
+   },
+   {
+    "name": "GraphStore",
+    "responsibility": "Holds the versioned in-memory graph and applies changelog entries.",
+    "methods": [
+     "apply(change)",
+     "appliedRevision()",
+     "waitFor(revision, timeout) -> bool",
+     "loadSnapshot(uri)"
+    ]
+   },
+   {
+    "name": "ConditionEvaluator",
+    "responsibility": "Compiles and evaluates CEL conditions attached to grants against request context.",
+    "methods": [
+     "compile(expr) -> Program",
+     "eval(program, ctx) -> bool|error"
+    ]
+   },
+   {
+    "name": "AssignmentService",
+    "responsibility": "Validates and writes assignments; enforces SoD and approvals.",
+    "methods": [
+     "assign(req) -> revision",
+     "revoke(id) -> revision",
+     "validateSoD(subject, role)"
+    ]
+   },
+   {
+    "name": "AuthzClient (SDK)",
+    "responsibility": "Caching, deadlines, retries, fail-mode policy, shadow mode.",
+    "methods": [
+     "check(...) -> bool",
+     "batchCheck(...)",
+     "withConsistency(revision)",
+     "failMode(permission) -> OPEN|CLOSED"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Scoped RBAC check with role inheritance and conditions",
+    "explain": "Walk the scope chain from the resource up to global. At each scope, union roles assigned directly to the subject and to any group the subject belongs to (groups pre-flattened). Role permission sets are precomputed with inheritance as bitsets, so testing a permission is a bit test. Conditions are only evaluated for roles that grant the permission.",
+    "pseudocode": "check(subject, perm, resource, ctx, minRev):\n  if minRev and graph.applied < minRev:\n     if not graph.waitFor(minRev, 50ms): return forwardToFreshReplica()\n  chain = scopeChain(resource)          # order:987 -> seller:s7 -> global\n  principals = [subject] + flatGroups[subject]\n  for scope in chain:\n    for p in principals:\n      for role in subjectRoles[(p, scope)]:\n        if role.expired(now): continue\n        if rolePerms[role].has(perm):\n          if role.condition is None or eval(role.condition, ctx):\n             return ALLOW(role, scope, graph.applied)\n  return DENY('no matching grant', graph.applied)"
+   },
+   {
+    "name": "Applying the changelog without blocking readers",
+    "explain": "Replicas apply ordered changes per tenant into copy-on-write segments. Readers take a pointer to the current segment version and never lock. Deletes (revocations) are applied before inserts within the same batch so a racing grant+revoke never leaves a window of extra privilege.",
+    "pseudocode": "loop:\n  batch = kafka.poll(max=500)\n  for tenant, changes in groupBy(batch, tenant):\n     seg = graph.segment(tenant).clone()\n     for c in sorted(changes, key=(revision)):\n        if c.op == DELETE: seg.remove(c.tuple)\n        else: seg.add(c.tuple)\n     graph.swap(tenant, seg)            # atomic pointer swap\n  graph.applied = max(revision in batch)\n  commit offsets"
+   },
+   {
+    "name": "Separation-of-duties validation on write",
+    "explain": "Before committing an assignment, compute the subject's effective roles on the scope including the new one and reject if any conflicting pair from the SoD table is present. Runs inside the write transaction to avoid two concurrent grants slipping past each other.",
+    "pseudocode": "assign(subject, role, scope):\n  txn:\n    current = SELECT roles FOR UPDATE WHERE subject, scope_chain(scope)\n    eff = flatten(current + [role])\n    for (a, b) in SOD_CONFLICTS:\n       if a in eff and b in eff: abort('SoD violation', a, b)\n    insert tuple; rev = append changelog\n  return rev"
+   }
+  ],
+  "sequence": "\nService     SDK/sidecar      Check replica       GraphStore        Admin API     TupleDB\n  |  check()    |                  |                   |                 |             |\n  |------------>| cache lookup     |                   |                 |             |\n  |             |-- miss: gRPC --->|                   |                 |             |\n  |             |                  | applied>=minRev?  |                 |             |\n  |             |                  |------------------>|                 |             |\n  |             |                  | scope chain, roles, perm bitset     |             |\n  |             |                  | eval CEL condition                  |             |\n  |             |<-- allow, rev R -|                   |                 |             |\n  |<-- true ----| cache 5s         |                   |                 |             |\n  |             |                  |                   |  revoke(u42)    |             |\n  |             |                  |                   |                 |-- txn ----->|\n  |             |                  |                   |<-- CDC R+1 (via Kafka) -------|\n  |             |                  |                   | apply delete    |             |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "New enemy problem: owner removes Alice from a store, then uploads a confidential price file; a lagging replica still thinks Alice has access and lets her read it.",
+   "handling": "Content writes record the revision at which they happened; reads of that content pass at_least_revision so the check cannot be evaluated on a snapshot older than the ACL change (Zanzibar zookie pattern)."
+  },
+  {
+   "case": "Grant and revoke for the same tuple arrive in the same changelog batch out of order.",
+   "handling": "Apply strictly by revision per tenant partition; Kafka keyed by tenant preserves order. Never reorder by op type across revisions."
+  },
+  {
+   "case": "Group cycles: group A contains B, B contains A.",
+   "handling": "Reject cyclic membership on write with a graph traversal; at read, flatten with a visited set and a depth cap of 8."
+  },
+  {
+   "case": "Super-tenant hot key: a marketplace-wide 'global support' role checked on every request.",
+   "handling": "Global grants are small and replicated to every replica; cache the flattened global permission set per subject; no single partition is involved."
+  },
+  {
+   "case": "Very large tenant (enterprise seller with 50k staff and 20k stores) dominates a shard.",
+   "handling": "Split that tenant into its own shard group; use bitsets and interned ids; ListResources paginates and may return 'all stores' as a wildcard grant instead of enumerating."
+  },
+  {
+   "case": "Time-bound break-glass grant expires while cached in SDKs.",
+   "handling": "Expiry evaluated at check time from tuple expires_at; SDK cache TTL capped at min(5s, expires_at - now)."
+  },
+  {
+   "case": "Role definition change affects 2M principals at once (for example removing a permission from 'Seller Staff').",
+   "handling": "Role definitions are small and flattened in every replica on apply, so it is one change, not 2M; the reverse index rebuild is throttled per tenant; dry-run shows the count before merging."
+  },
+  {
+   "case": "Confused deputy: a service checks its own service-account permission instead of the end user's.",
+   "handling": "SDK requires the end-user subject from the verified token context; service-to-service calls propagate the original user and the calling service, and policy can require both."
+  },
+  {
+   "case": "Check service unreachable during a deploy for 30 seconds.",
+   "handling": "SDK serves stale cached decisions up to 60s for actions marked fail-open-stale; sensitive actions fail closed with a clear error; retries use jitter to avoid a thundering herd on recovery."
+  },
+  {
+   "case": "Resource-to-scope mapping is wrong or missing (order not yet replicated to the mapping store).",
+   "handling": "Callers pass scope_hint from their own data; replica treats an unknown resource as having only the global scope, which yields deny unless a global grant exists (safe default)."
+  },
+  {
+   "case": "Clock skew affects time-window conditions and expiries.",
+   "handling": "Use replica server time synced by NTP, not client time; add small leeway only in the restrictive direction (expire slightly early, never late)."
+  },
+  {
+   "case": "Bulk onboarding imports 5M tuples and floods the changelog, delaying revocations.",
+   "handling": "Bulk path uses a separate low-priority topic; replicas consume the revocation/priority topic first; bulk loads may also be applied via a new snapshot."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Google Spanner or CockroachDB",
+   "layer": "Tuple store",
+   "overview": "Distributed SQL databases with serializable transactions and globally ordered commit timestamps.",
+   "why": "Gives a total order of changes (revision) and external consistency, which makes revision tokens meaningful across regions.",
+   "alternatives": "Sharded Postgres by tenant with a per-shard sequence (simpler, revisions only ordered per shard, cross-tenant snapshot harder); DynamoDB (scales, but weaker transactional guarantees for SoD validation)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Changelog distribution",
+   "overview": "Partitioned, replayable commit log.",
+   "why": "Ordered per tenant partition, replayable from a snapshot revision, many independent consumers (replicas, list index, audit).",
+   "alternatives": "Database CDC directly into replicas via Debezium-like connectors (fewer hops but couples replicas to DB); polling the changelog table (simple, more load)."
+  },
+  {
+   "name": "gRPC with sidecar / in-process SDK",
+   "layer": "Enforcement (PEP)",
+   "overview": "Binary RPC with deadlines and load balancing; a small library or local proxy per service.",
+   "why": "Language-agnostic, low overhead, deadlines and retries built in; the sidecar provides a shared local cache.",
+   "alternatives": "REST/JSON (more overhead, still fine at lower scale); embedding the full engine as a library in each service like OPA (no network hop but every service needs the data)."
+  },
+  {
+   "name": "Open Policy Agent (OPA) / Rego",
+   "layer": "Optional attribute policies",
+   "overview": "General-purpose policy engine evaluating declarative rules over JSON input.",
+   "why": "Useful for ABAC-style guardrails (for example deny refunds from outside India) layered on top of RBAC.",
+   "alternatives": "CEL expressions inline in role conditions (simpler, faster, less expressive); hard-coded checks (no)."
+  },
+  {
+   "name": "CEL (Common Expression Language)",
+   "layer": "Condition evaluation",
+   "overview": "Small, non-Turing-complete expression language with predictable evaluation cost.",
+   "why": "Safe to evaluate on the hot path in microseconds; conditions like ctx.amount <= 10000 && ctx.region == 'IN'.",
+   "alternatives": "Rego (more powerful, slower); JavaScript sandbox (unbounded cost, risky)."
+  },
+  {
+   "name": "OpenFGA / SpiceDB (Zanzibar-style)",
+   "layer": "Build-versus-buy option",
+   "overview": "Open-source authorization services modelled on Google Zanzibar with tuples, schemas and consistency tokens.",
+   "why": "Implements check, expand, list and zookie-like tokens out of the box; good starting point or reference design.",
+   "alternatives": "Building in-house (full control over scoped RBAC, conditions and performance); commercial SaaS (fast, data residency concerns)."
+  },
+  {
+   "name": "Object storage (S3/GCS) snapshots",
+   "layer": "Replica bootstrap",
+   "overview": "Durable blob storage.",
+   "why": "A 16GB snapshot loads in under a minute, avoiding a full replay of the changelog.",
+   "alternatives": "Replay Kafka from the beginning with compaction (slow at 400M tuples); peer-to-peer copy from a healthy replica (fast, more coupling)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Access control models: RBAC, ABAC and ReBAC",
+   "explain": "Access control models answer one question in different ways: may subject S perform action A on resource R? In Role-Based Access Control (RBAC), permissions are attached to roles, and roles are assigned to users. Admins think in job functions such as Catalog Manager, which keeps policy small: 500 roles instead of millions of user-permission pairs. Pure RBAC has no concept of which resource, so real systems add scoped RBAC: a role is granted on a scope (a tenant, a store) and applies to everything inside it. Role hierarchies let a role inherit another, for example Manager inherits Staff. Attribute-Based Access Control (ABAC) decides using attributes of the subject, resource, action and environment, through rules like 'allow if user.department == resource.department and time is within business hours'. ABAC is very expressive but harder to audit, because you cannot easily list who has access; you have to evaluate the rule against every user. Relationship-Based Access Control (ReBAC), popularised by Google Zanzibar, stores relationships as tuples (doc:1#viewer@user:alice, folder:f#parent@doc:1) and computes permissions by following edges. Ownership, sharing and nested folders become natural, and RBAC is a special case where roles are relations on a scope object. In practice, mature systems blend them: RBAC or ReBAC for the who-has-what graph, plus a few ABAC conditions for context such as amount limits, region or device posture.",
+   "in_this_design": "Scoped RBAC stored as Zanzibar-style tuples (seller:s7#catalog_manager@user:u42), with scope hierarchy edges and group membership, plus CEL conditions on grants for ABAC-style limits like refund amount.",
+   "key_points": [
+    "RBAC: permissions to roles, roles to users; easy to audit, coarse.",
+    "Scoped RBAC adds 'on which tenant/resource'; hierarchy adds inheritance.",
+    "ABAC: rules over attributes; expressive but hard to answer 'who can'.",
+    "ReBAC: relationships as tuples and graph traversal; RBAC is a special case.",
+    "Blend: graph for who-has-what, conditions for context."
+   ],
+   "qa": [
+    {
+     "q": "Why not pure ABAC for everything?",
+     "a": "Audit and listing become expensive: answering 'who can refund for seller s7' means evaluating a rule against every principal. Rules are also harder for tenant admins to reason about. Keeping grants explicit as tuples and using ABAC only for conditions keeps both performance and auditability."
+    },
+    {
+     "q": "How do you avoid role explosion (thousands of near-duplicate roles)?",
+     "a": "Use scopes instead of baking resources into role names (no 'Manager-BLR-4'), allow conditions for limits instead of 'RefundAgent-10k' and 'RefundAgent-50k', and allow tenant-defined custom roles built from a fixed permission catalog."
+    },
+    {
+     "q": "When would you move from RBAC to ReBAC?",
+     "a": "When access depends on relationships between objects, such as ownership, sharing, nested folders or delegated management. Then storing those edges and traversing them is cleaner than simulating them with roles."
+    }
+   ]
+  },
+  {
+   "name": "Policy Decision Point vs Policy Enforcement Point",
+   "explain": "The PDP/PEP split comes from the XACML standard, and it is the architectural backbone of centralized authorization. The Policy Enforcement Point sits in the application, at the moment an action is about to happen. It gathers the facts (who, what, which resource, context), asks for a decision, and then enforces it by continuing or returning 403. The Policy Decision Point holds the policy and data and computes allow or deny. Separating them gives one place where policy lives and is audited, consistent decisions across languages and services, and the ability to change policy without redeploying applications. The cost is that the decision is now remote, which adds latency and a dependency on the PDP's availability. Systems mitigate this in three ways: put the PDP close (sidecar or same zone), cache decisions in the PEP for short periods, and push the policy data to the PDP replicas so decisions are local memory operations. Two other roles complete the picture. The Policy Administration Point is where policy is authored and changed. The Policy Information Point supplies extra attributes the PDP needs, such as which seller an order belongs to. A frequent design mistake is a PEP that is too smart, re-implementing parts of the policy locally; another is a PEP that does not pass enough context, forcing the PDP into slow lookups on the hot path.",
+   "in_this_design": "SDK/sidecar is the PEP (cache, deadlines, fail mode); Check replicas are the PDP with in-memory data; the Admin API plus policy-as-code repo is the PAP; callers supply scope_hint and context so the PDP rarely needs a PIP lookup.",
+   "key_points": [
+    "PEP enforces in the app; PDP decides; PAP authors policy; PIP supplies attributes.",
+    "Centralized PDP means consistent, auditable decisions across 300 services.",
+    "Latency mitigated by locality, in-memory data and short PEP caches.",
+    "Pass context from the PEP to avoid PDP lookups on the hot path."
+   ],
+   "qa": [
+    {
+     "q": "Why not embed the policy engine as a library in every service and skip the network hop?",
+     "a": "That works when the data is small (OPA bundles), but our graph is tens of GB. Every service would need to load and keep it fresh. A shared replica fleet with a sidecar cache gives sub-millisecond hits and keeps data distribution in one place."
+    },
+    {
+     "q": "What should the PEP cache key include?",
+     "a": "Subject, permission, resource (or scope) and a hash of the condition-relevant context. Leaving out context could reuse an allow for 5,000 INR on a 50,000 INR refund."
+    },
+    {
+     "q": "How do you migrate 300 services safely?",
+     "a": "Shadow mode: the SDK computes the new decision alongside the legacy check, logs mismatches and enforces the legacy result. Fix mismatches per service, then flip enforcement per permission with a kill switch."
+    }
+   ]
+  },
+  {
+   "name": "Consistency for authorization: the new enemy problem, revision tokens and bounded staleness",
+   "explain": "Authorization data is read millions of times more often than it is written, so it is replicated and cached. Replication introduces staleness, and in authorization staleness has a sharp edge that Google's Zanzibar paper called the new enemy problem. There are two variants. First, Alice removes Bob from a document and then adds new secret content; if a stale replica still shows Bob's old access, Bob sees the new content. Second, ACL changes applied out of order: removing Bob then granting Carol, applied as grant-then-remove, opens a window. The fix is to respect causality: a check must be evaluated on a snapshot at least as new as the ACL change that preceded the content. Zanzibar does this with zookies, opaque tokens that encode a timestamp. A content write obtains a zookie from Zanzibar and stores it with the content; later checks pass the zookie and the server evaluates at a snapshot no older than it. Most checks do not need this and can use any reasonably fresh snapshot, which lets servers use cached and replicated data for speed. This is a per-request consistency choice: strong when the caller needs causality, bounded staleness otherwise. It requires a globally ordered revision for every change, which is why Zanzibar sits on Spanner's TrueTime timestamps, and replicas that know exactly which revision they have applied.",
+   "in_this_design": "Every write returns a revision. Callers that must see their own change (the seller UI after a revoke, content created after an ACL change) pass at_least_revision; replicas wait up to 50ms or forward. Default checks accept bounded staleness of 10s, which is monitored as replica lag.",
+   "key_points": [
+    "New enemy = stale or reordered ACLs granting access to content created after revocation.",
+    "Revision tokens let callers demand 'at least as fresh as X' only when needed.",
+    "Requires totally ordered revisions and replicas that track applied revision.",
+    "Default to bounded staleness for speed; strong only on demand."
+   ],
+   "qa": [
+    {
+     "q": "Why not make every check strongly consistent?",
+     "a": "That would route every check to the leader or force replicas to confirm they are current, which costs a round trip and destroys cache hit rates at 500k checks/s. Most checks tolerate seconds of staleness; only causally dependent ones need tokens."
+    },
+    {
+     "q": "What does a replica do if asked for revision R+1 but it has only applied R?",
+     "a": "Wait briefly (up to 50ms) for the changelog to catch up; if it does not, forward the request to a fresher replica or the primary store. It must never answer at R."
+    },
+    {
+     "q": "Why apply revocations strictly in revision order rather than prioritizing deletes?",
+     "a": "Reordering across revisions can break causality (a delete of a later grant could be applied before that grant, then the grant re-adds access). Within the same revision batch, applying deletes before inserts is safe; across revisions, order rules."
+    }
+   ]
+  },
+  {
+   "name": "Caching decisions and invalidation (TTL, versioned keys)",
+   "explain": "Caching is the main lever for latency in authorization, and also the main source of security bugs. A decision cache maps (subject, permission, resource, context) to allow or deny. There are two ways to keep it correct. TTL-based expiry accepts that cached entries may be wrong for up to TTL seconds, which is simple and robust but bounds revocation latency by the TTL. Event-based invalidation pushes change events to caches so they evict affected entries. It is faster, but computing the affected entries from a tuple change is hard: removing a user from a group affects every decision that relied on that group, across every resource. A useful middle path is versioned keys. Include the revision or a per-subject or per-tenant version counter in the cache key, so any change to the tenant bumps the version and old entries simply stop being hit and age out. Negative caching (caching denies) needs care, because a new grant should take effect quickly. Use shorter TTLs for denies, or include the version. Where you cache matters as well. A per-process cache has the lowest latency and the lowest hit rate; a shared sidecar or node cache has a higher hit rate; a cache inside the PDP (memoising sub-results such as a group flattening) helps every caller. Always bound cache TTLs centrally so a team cannot set a one-hour cache and silently break revocation guarantees.",
+   "in_this_design": "SDK cache with max TTL 5s (less for expiring grants), key includes condition-context hash and the tenant version seen in the last response; replicas memoise flattened group membership and role permission bitsets, recomputed on change.",
+   "key_points": [
+    "Cache TTL is a revocation-latency budget; enforce a platform-wide maximum.",
+    "Versioned keys make invalidation cheap: bump the version, old entries die.",
+    "Cache denies for a shorter time than allows.",
+    "Memoise expensive sub-results (group flattening) inside the PDP."
+   ],
+   "qa": [
+    {
+     "q": "Your revocation SLO is 10s. How do you budget it?",
+     "a": "Changelog publish about 1s, replica apply p99 2s, SDK cache TTL 5s, leaving about 2s margin. If any component drifts (replica lag alert at 3s), the SLO is at risk, so each piece has its own alert."
+    },
+    {
+     "q": "Why not invalidate SDK caches precisely on every tuple change?",
+     "a": "Mapping a group membership change to every affected (subject, resource) decision cached across thousands of pods is expensive and error prone. Short TTLs plus versioned keys get most of the benefit cheaply."
+    },
+    {
+     "q": "Should denies be cached?",
+     "a": "Yes, briefly, to protect the PDP from repeated denied requests by bots, but with a shorter TTL (1s) so new grants feel instant to users."
+    }
+   ]
+  },
+  {
+   "name": "Replicated in-memory state from a changelog (snapshot plus log tailing)",
+   "explain": "Many read-heavy systems keep a full copy of a dataset in memory on every serving node, derived from a single source of truth. The pattern has two parts. A durable, ordered changelog records every mutation with a sequence number, and nodes apply mutations in order to reach the same state, as in state machine replication. A periodic snapshot (the state at sequence N) lets a new node start quickly: load the snapshot, then replay the log from N+1. Because every node applies the same changes in the same order, every node converges, and each knows exactly which sequence number it has applied, which is what makes consistency tokens possible. The design choices are snapshot frequency (more frequent means faster bootstrap but more write cost), log retention (at least two snapshot intervals), and how to apply updates without blocking readers. Copy-on-write structures or immutable segments swapped atomically let reads proceed lock-free. When data outgrows a single node's memory, you shard: each node holds a subset (for example by tenant), and a routing layer sends requests to the right shard, trading simplicity for capacity. Watch for skew, where one huge tenant in a shard dominates its memory and CPU. This is how many systems serve feature flags, routing tables and authorization graphs at very high QPS with microsecond lookups.",
+   "in_this_design": "Check replicas load a 15-minute snapshot from object storage (about 35s for 16GB), then tail Kafka authz.changes from the snapshot revision; per-tenant copy-on-write segments are swapped atomically; replicas report appliedRevision for consistency tokens.",
+   "key_points": [
+    "Ordered log plus deterministic apply means all replicas converge.",
+    "Snapshots bound bootstrap time; keep log retention longer than the snapshot interval.",
+    "Copy-on-write segments allow lock-free reads during apply.",
+    "Shard by tenant when the graph exceeds node RAM; handle big-tenant skew."
+   ],
+   "qa": [
+    {
+     "q": "A replica crashes and restarts. How does it rejoin without serving stale data?",
+     "a": "It loads the latest snapshot, replays the log to the head, and only then passes readiness. Until then the load balancer sends no traffic. Its applied revision is reported in responses so callers can detect staleness."
+    },
+    {
+     "q": "Kafka retention is 24h but the snapshotter has been broken for 2 days. What happens to new replicas?",
+     "a": "They cannot bridge the gap from the old snapshot, so bootstrap fails. Alert on snapshot age, set retention to at least several snapshot intervals, and support a fallback full export from the tuple store."
+    },
+    {
+     "q": "When would you shard instead of fully replicating?",
+     "a": "When the graph no longer fits comfortably in RAM (say over 50% of the node) or apply throughput lags. Shard by tenant since almost all checks are tenant-local, and keep global grants replicated to every shard."
+    }
+   ]
+  },
+  {
+   "name": "Least privilege, separation of duties and just-in-time access",
+   "explain": "Least privilege says every principal should hold only the permissions needed for its current job, for only as long as needed. It limits the blast radius of a compromised account or a malicious insider. In practice privileges creep: people change teams and keep old roles, and temporary grants become permanent. Three mechanisms keep this in check. Separation of duties (SoD) ensures that critical processes need two different people, for example the person who creates a vendor payout cannot also approve it, so fraud requires collusion. SoD is enforced as conflict rules between roles, either statically (you cannot hold both roles) or dynamically (you can hold both, but not act on the same transaction with both). Just-in-time (JIT) access replaces standing privileges with time-bound grants: an engineer requests production database access for 2 hours with a justification, an approver signs off, and the grant expires automatically. Break-glass is the emergency version, with immediate access, loud alerts and mandatory review afterwards. Periodic access reviews, where managers recertify their reports' roles quarterly, catch the rest. All three depend on the authorization system supporting expiry, approvals and good audit queries, which is why they are designed in rather than added later.",
+   "in_this_design": "Role definitions carry privileged flags and SoD conflict lists validated transactionally on assignment; grants support expires_at with check-time evaluation; privileged roles require approval workflow; Expand and audit exports power quarterly access reviews.",
+   "key_points": [
+    "Least privilege limits blast radius; privileges creep without active controls.",
+    "SoD: conflicting roles cannot be held (static) or used on the same item (dynamic).",
+    "JIT and break-glass replace standing admin access with expiring grants.",
+    "Access reviews need fast 'who has what' queries."
+   ],
+   "qa": [
+    {
+     "q": "How do you enforce SoD when two admins grant conflicting roles to the same user at the same time?",
+     "a": "Validate inside a serializable transaction that reads the subject's current roles with a lock (or uses a precondition revision), so one of the two transactions aborts."
+    },
+    {
+     "q": "What makes break-glass safe?",
+     "a": "It is time-boxed (for example 1 hour), requires a justification, pages security immediately, records every action taken under it, and triggers a mandatory post-incident review."
+    },
+    {
+     "q": "How does dynamic SoD differ from static SoD?",
+     "a": "Static forbids holding both roles. Dynamic allows both but blocks the same person from creating and approving the same payout, so it needs the transaction's history as context in the check."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Where to evaluate",
+   "options": "Roles in JWT checked locally | Central PDP per request | Embedded engine with pushed data",
+   "choice": "Central PDP replicas with sidecar cache",
+   "why": "Tokens go stale and bloat; embedding a 16GB graph in every service is wasteful; replicas plus a short cache give 5ms p99 with central policy."
+  },
+  {
+   "decision": "Model",
+   "options": "Flat RBAC | Scoped RBAC with conditions | Full ReBAC schema",
+   "choice": "Scoped RBAC stored as tuples, ReBAC-ready",
+   "why": "Matches how sellers think (roles on stores) while the tuple format leaves room for ownership and sharing later."
+  },
+  {
+   "decision": "Consistency",
+   "options": "Always strong | Always eventual | Per-request with revision tokens",
+   "choice": "Per-request",
+   "why": "Strong for causal cases (after revoke, new content), bounded staleness for the 99% that do not need it."
+  },
+  {
+   "decision": "Cache TTL in SDK",
+   "options": "0s | 5s | 60s",
+   "choice": "5s max, shorter for denies and expiring grants",
+   "why": "Fits inside the 10s revocation SLO while giving about 60% hit rate."
+  },
+  {
+   "decision": "Fail mode when PDP unreachable",
+   "options": "Always open | Always closed | Per-permission policy",
+   "choice": "Per-permission, default closed",
+   "why": "Viewing your own order list can serve stale allows; refunds, payouts and admin actions must fail closed."
+  },
+  {
+   "decision": "Build vs buy",
+   "options": "OpenFGA/SpiceDB | Build in-house | SaaS",
+   "choice": "Start from SpiceDB/OpenFGA concepts, build in-house for scoped conditions and residency",
+   "why": "Reuse proven Zanzibar ideas while keeping control over latency, conditions and Indian data residency."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Check replica fleet in one zone down",
+   "behavior": "SDK load-balances to other zones with 20ms deadline; a cross-zone call adds about 1ms. Capacity planned N+1 zones."
+  },
+  {
+   "failure": "Changelog consumer lag (replicas stale by minutes)",
+   "behavior": "Replica lag alert at 3s; replicas past 30s mark themselves unready; checks with at_least_revision are forwarded; SLO breach paged."
+  },
+  {
+   "failure": "Tuple store unavailable",
+   "behavior": "Checks keep working from in-memory replicas (reads unaffected); grant/revoke writes fail with 503 and the UI shows retry; emergency revocations can be applied through a direct replica override channel that is reconciled later."
+  },
+  {
+   "failure": "Bad role definition deployed (accidentally grants admin)",
+   "behavior": "Allow-rate anomaly detection per permission triggers alert; policy-as-code rollback re-applies the previous definition within minutes; audit identifies affected decisions."
+  },
+  {
+   "failure": "Thundering herd after an outage as all SDK caches are cold",
+   "behavior": "Retries with exponential backoff and jitter, request coalescing in the sidecar (one in-flight check per key), per-caller concurrency limits at the PDP."
+  },
+  {
+   "failure": "Snapshot corrupted",
+   "behavior": "Replicas verify a checksum and revision metadata before loading; fall back to the previous snapshot plus longer log replay."
+  }
+ ],
+ "metrics": [
+  "Check latency p50/p99/p999 server side and client side",
+  "SDK cache hit rate and cached-entry age",
+  "Replica applied-revision lag (seconds behind head) per replica",
+  "Revocation end-to-end time (write commit to first deny observed), sampled synthetic probes",
+  "Allow/deny ratio per permission and per calling service, with anomaly detection",
+  "Requests with at_least_revision and their wait/forward rate",
+  "Errors and timeouts per caller; fail-open events count",
+  "Policy evaluation errors (CEL errors, missing context)",
+  "Snapshot age and bootstrap duration",
+  "Privileged grants outstanding, expiring JIT grants, SoD violations blocked"
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you support 'show me only orders I can see' on a list page with 10k orders?",
+   "a": "Do not check 10k items. Use ListResources to get accessible scopes (for example 3 stores) and push that as a filter into the order query (store_id IN ...). Check individually only for page-sized batches via BatchCheck."
+  },
+  {
+   "q": "How do you handle service-to-service authorization?",
+   "a": "Services have service-account principals with roles. Calls carry both the service identity (mTLS/SPIFFE) and the end-user context; policy can require that the calling service is allowed to act on behalf of users for that permission, which prevents confused-deputy problems."
+  },
+  {
+   "q": "What if a tenant wants custom roles?",
+   "a": "Allow tenant-scoped role definitions built from the global permission catalog, stored as tuples under the tenant. Replicas flatten them per tenant. Cap the number per tenant (for example 50) to bound memory."
+  },
+  {
+   "q": "How would you go multi-region?",
+   "a": "Spanner-style global store for ordered revisions, Kafka mirrored per region, replicas in every region. Checks are local; revision tokens work across regions because revisions are globally ordered. Indian tenants' tuples can be pinned to India regions with region-scoped shards."
+  },
+  {
+   "q": "How do you test a policy change before rollout?",
+   "a": "Policy-as-code PR runs unit tests (expected allow/deny tables) and a dry-run against a snapshot that reports how many principals gain or lose each permission. Then canary on one replica group in shadow mode and compare decisions."
+  },
+  {
+   "q": "How do you debug 'user says they should have access'?",
+   "a": "Call Explain, which returns the evaluated path (or why no path matched), the revision used and any failed condition. Support tooling shows this without exposing other tenants' data."
+  },
+  {
+   "q": "How does this compare to Zanzibar?",
+   "a": "Same ideas: tuples, a changelog-fed in-memory serving layer, consistency tokens and Leopard-like denormalised indexes for groups. We specialise for scoped RBAC with conditions and a smaller scale (hundreds of millions of tuples versus trillions)."
+  }
+ ],
+ "key_points": [
+  "Separate PEP (SDK/sidecar) from PDP (check replicas) and PAP (admin API + policy-as-code).",
+  "Scoped RBAC stored as Zanzibar-style tuples: role granted on a scope, inherited down the scope tree.",
+  "The whole graph (about 16GB) fits in memory, so checks are microsecond lookups; scale by replication, shard by tenant later.",
+  "Changelog with global revisions feeds replicas; snapshots bound bootstrap time.",
+  "New enemy problem solved with revision tokens: strong consistency on demand, bounded staleness by default.",
+  "Revocation SLO 10s budgeted across publish, apply and a 5s max SDK cache TTL.",
+  "Fail closed by default, fail open only for explicitly low-risk reads; bulkheads per caller.",
+  "Least privilege via SoD on write, JIT expiring grants and access reviews.",
+  "ListResources plus query filtering for list pages, not N individual checks."
+ ],
+ "quiz": [
+  {
+   "q": "A seller removes an employee and immediately uploads a confidential price sheet. A lagging replica lets the employee read it. What is this called and what fixes it?",
+   "options": [
+    "Thundering herd; request coalescing",
+    "Confused deputy; propagate end-user identity",
+    "New enemy problem; evaluate the check at a revision at least as new as the ACL change",
+    "Role explosion; use scoped roles"
+   ],
+   "answer": 2,
+   "why": "The read must be evaluated on a snapshot no older than the revocation. Confused deputy is about a service using its own privileges, which is not what happened here."
+  },
+  {
+   "q": "Why not put the user's roles in the JWT and check locally in each service?",
+   "options": [
+    "JWTs cannot hold arrays",
+    "Roles go stale until the token expires, tokens bloat, and scoped grants across thousands of stores do not fit",
+    "Signature verification is too slow",
+    "JWTs are always encrypted"
+   ],
+   "answer": 1,
+   "why": "Staleness and size are the real problems. JWT verification is fast, so speed is not the issue."
+  },
+  {
+   "q": "Roughly how much memory does a full replica need for 400M tuples at about 40 bytes, with forward and reverse indexes?",
+   "options": [
+    "About 400 MB",
+    "About 4 TB",
+    "About 1.6 GB",
+    "About 32-40 GB"
+   ],
+   "answer": 3,
+   "why": "400M x 40B = 16GB, doubled for indexes. That fits on a large machine, which is why in-memory serving works."
+  },
+  {
+   "q": "Your revocation SLO is 10 seconds. A team sets the SDK cache TTL to 60 seconds for performance. What is the impact?",
+   "options": [
+    "Revoked users may keep access up to about 60s for that service, breaking the SLO",
+    "No impact; replicas enforce revocation",
+    "Checks become strongly consistent",
+    "Only denies are affected"
+   ],
+   "answer": 0,
+   "why": "Cached allows are served without asking replicas, so cache TTL directly bounds revocation latency. This is why the platform must enforce a max TTL."
+  },
+  {
+   "q": "Which access model makes 'list every user who can refund for seller s7' hardest to answer?",
+   "options": [
+    "Scoped RBAC",
+    "ReBAC with tuples",
+    "ABAC rules over arbitrary attributes",
+    "Flat RBAC"
+   ],
+   "answer": 2,
+   "why": "ABAC requires evaluating a rule against every principal. ReBAC and RBAC keep explicit edges that can be indexed and expanded."
+  },
+  {
+   "q": "A replica is asked to check with at_least_revision R+1 but has applied only R. Best behaviour?",
+   "options": [
+    "Answer at R and include R in the response",
+    "Wait briefly for catch-up, else forward to a fresher replica",
+    "Return deny",
+    "Return allow if the cached answer was allow"
+   ],
+   "answer": 1,
+   "why": "Answering at R violates the causality the caller asked for. Returning deny is safe but causes spurious failures when a short wait or forward would give the right answer."
+  },
+  {
+   "q": "Two admins concurrently grant 'payout.create' and 'payout.approve' to the same user. How do you keep separation of duties?",
+   "options": [
+    "Run a nightly job that removes violations",
+    "Check SoD in the SDK at decision time only",
+    "Rely on the UI to block it",
+    "Validate inside a serializable transaction that locks the subject's roles, so one write aborts"
+   ],
+   "answer": 3,
+   "why": "Only transactional validation prevents the race. A nightly job leaves a window of hours in which fraud is possible."
+  },
+  {
+   "q": "Check servers apply the changelog. Why key the Kafka topic by tenant_id?",
+   "options": [
+    "To preserve the order of changes within a tenant while allowing parallelism across tenants",
+    "To encrypt each tenant's data separately",
+    "Because Kafka requires numeric keys",
+    "To guarantee exactly-once delivery"
+   ],
+   "answer": 0,
+   "why": "Per-key ordering is what Kafka provides. Exactly-once is not needed here because applies can be made idempotent by revision."
+  },
+  {
+   "q": "A list page shows 10,000 orders and needs to hide forbidden ones. What is the best approach?",
+   "options": [
+    "10,000 individual Check calls",
+    "Cache all decisions for the user for an hour",
+    "ListResources to get accessible scopes, then filter the query, plus BatchCheck for the visible page",
+    "Skip authorization for list pages"
+   ],
+   "answer": 2,
+   "why": "Per-item checks multiply load by 10,000; filtering by accessible scopes is one call. Long caches break revocation."
+  },
+  {
+   "q": "The PDP is unreachable for 30 seconds. What is the best default for a refund API?",
+   "options": [
+    "Fail open and audit",
+    "Allow if the user was allowed in the last hour",
+    "Allow admins only",
+    "Fail closed and return a retryable error"
+   ],
+   "answer": 3,
+   "why": "Refunds move money; a 30-second outage is cheaper than unauthorised refunds. Fail-open-with-audit suits only low-risk reads."
+  },
+  {
+   "q": "Why should deny decisions be cached for a shorter time than allows?",
+   "options": [
+    "Denies are more expensive to compute",
+    "So that newly granted access takes effect quickly for the user who was just granted it",
+    "Denies are never cached",
+    "To reduce memory"
+   ],
+   "answer": 1,
+   "why": "A user who just got access expects it now. Denies are not more expensive, but caching them briefly still protects the PDP from bots."
+  },
+  {
+   "q": "A role definition change removes one permission from 'Seller Staff', held by 2M principals. What is the cost on check replicas?",
+   "options": [
+    "One small change: role permission sets are flattened per role, not per principal",
+    "2M tuple updates must be replayed",
+    "All replicas must reload a snapshot",
+    "Every SDK cache must be flushed explicitly"
+   ],
+   "answer": 0,
+   "why": "Roles are indirection. The principals keep the same role tuple, and only the role's permission bitset changes. The reverse index may need a throttled rebuild."
+  },
+  {
+   "q": "Which is the PEP in this design?",
+   "options": [
+    "The tuple store",
+    "The snapshotter",
+    "The SDK/sidecar inside each calling service",
+    "The admin console"
+   ],
+   "answer": 2,
+   "why": "The enforcement point sits where the action happens and enforces the PDP's decision. The admin console is part of the PAP."
+  },
+  {
+   "q": "p99 check latency jumps from 3ms to 40ms after onboarding an enterprise seller with 50k staff and 20k stores. Most likely cause?",
+   "options": [
+    "Kafka retention too short",
+    "Graph fan-out and a hot shard: large group expansions and big per-tenant segments on one shard",
+    "JWT signing",
+    "SDK cache TTL too long"
+   ],
+   "answer": 1,
+   "why": "A huge tenant inflates traversal and concentrates load on its shard. The fix is pre-flattened groups, bitsets and moving the tenant to its own shard group."
+  },
+  {
+   "q": "A service checks permissions using its own service account instead of the end user. Which vulnerability is this?",
+   "options": [
+    "Confused deputy",
+    "New enemy",
+    "Privilege creep",
+    "Role explosion"
+   ],
+   "answer": 0,
+   "why": "The service has broad rights and is tricked into using them on behalf of a user who lacks them. Pass the end-user subject in every check."
+  },
+  {
+   "q": "Why load replicas from a snapshot rather than replaying the changelog from the beginning?",
+   "options": [
+    "Kafka cannot be replayed",
+    "Snapshots are more consistent than logs",
+    "Snapshots remove the need for revisions",
+    "Replaying hundreds of millions of historical changes is slow; snapshot plus tail starts in under a minute"
+   ],
+   "answer": 3,
+   "why": "Kafka can replay, but full history is huge and retention is limited. Snapshots carry a revision, so revisions remain essential."
+  },
+  {
+   "q": "What is the main benefit of CEL over a general-purpose scripting language for grant conditions?",
+   "options": [
+    "It can call external services",
+    "It is non-Turing-complete with predictable, bounded evaluation cost on the hot path",
+    "It supports loops over databases",
+    "It encrypts context"
+   ],
+   "answer": 1,
+   "why": "Bounded cost and safety matter in a 5ms budget. Calling external services from a condition is exactly what you want to avoid."
+  },
+  {
+   "q": "Roughly how many server-side checks per second remain at 500k peak with a 60% SDK cache hit rate?",
+   "options": [
+    "300k",
+    "50k",
+    "200k",
+    "500k"
+   ],
+   "answer": 2,
+   "why": "40% of 500k miss the cache, which is 200k/s, about 10 cores of in-memory evaluation before headroom."
+  },
+  {
+   "q": "A bulk import of 5M tuples is delaying revocations in the changelog. Best fix?",
+   "options": [
+    "Increase the SDK cache TTL",
+    "Send bulk changes through a separate low-priority path or snapshot, keeping revocations on the priority stream",
+    "Disable revocations during imports",
+    "Process deletes before inserts globally regardless of revision"
+   ],
+   "answer": 1,
+   "why": "Isolating bulk traffic protects the revocation SLO. Reordering deletes across revisions breaks causality."
+  },
+  {
+   "q": "Which statement best describes the new enemy problem's two variants?",
+   "options": [
+    "Ignoring ACL update order, and misapplying an old ACL to new content",
+    "Token theft and replay",
+    "Hot keys and data skew",
+    "Cache stampede and cold start"
+   ],
+   "answer": 0,
+   "why": "Zanzibar describes both: changes applied out of order, and content evaluated against an ACL snapshot older than the content's creation."
+  },
+  {
+   "q": "A grant has expires_at in 3 seconds. The SDK normally caches for 5 seconds. What should the cache TTL be?",
+   "options": [
+    "5 seconds, since TTLs are fixed",
+    "0 seconds; never cache expiring grants",
+    "min(5s, time until expiry), here about 3 seconds",
+    "Until the next revision"
+   ],
+   "answer": 2,
+   "why": "Capping by expiry keeps the cache from outliving the grant while still caching. Never caching works but wastes PDP capacity."
+  }
+ ],
+ "references": [
+  {
+   "title": "Google Zanzibar (Wikipedia)",
+   "url": "https://en.wikipedia.org/wiki/Google_Zanzibar"
+  },
+  {
+   "title": "WorkOS - Google Zanzibar explained",
+   "url": "https://workos.com/blog/google-zanzibar"
+  },
+  {
+   "title": "OpenFGA - Zanzibar concepts",
+   "url": "https://openfga.dev/docs/learn/zanzibar.md"
+  },
+  {
+   "title": "Aserto - Google Zanzibar Drive ReBAC authorization model",
+   "url": "https://aserto.com/blog/google-zanzibar-drive-rebac-authorization-model"
+  }
+ ]
+}

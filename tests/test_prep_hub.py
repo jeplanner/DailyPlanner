@@ -191,3 +191,63 @@ def test_ai_sde_progress_upsert_names_its_conflict_target(auth_client, monkeypat
     ip_title = ip.AI_SDE_ENTRIES[0]["title"]
     auth_client.post("/api/ai-sde/progress", json={"title": ip_title, "studied": True})
     assert saved and saved[-1] == "ai_sde_progress?on_conflict=user_id,entry_title"
+
+
+# ── System design deep dives ───────────────────────────────────────────
+
+def test_every_deep_dive_file_is_complete():
+    """A half-written file is skipped at load; this makes sure none is."""
+    import glob, json, os
+    import sd_deep_bank as b
+    files = sorted(glob.glob("sd_deep/*.json"))
+    assert len(files) >= 70
+    for path in files:
+        slug = os.path.basename(path)[:-5]
+        errs = b.validate(json.load(open(path, encoding="utf-8")), slug)
+        assert not errs, f"{slug}: {errs[:5]}"
+    assert len(b.DESIGNS) == len(files)
+    # All 55 Beyz prompts are covered, plus the classics, Uber first.
+    assert sum(1 for d in b.DESIGNS if d["source"] == "beyz") == 55
+    assert b.DESIGNS[0]["slug"] == "uber"
+    uber = b.BY_SLUG["uber"]
+    assert len(uber["quiz"]) >= 60 and len(uber["concepts"]) >= 14
+
+
+def test_deep_dive_list_and_detail(auth_client):
+    j = auth_client.get("/api/sd-deep").get_json()
+    assert j["total"] >= 70 and [s["step"] for s in j["framework"]] == ["Clarify", "Design", "Defend"]
+    first = j["designs"][0]
+    assert first["slug"] == "uber" and first["id"] == "dd0"
+    assert "brd" not in first, "the list should stay thin"
+    d = auth_client.get("/api/sd-deep/uber").get_json()
+    for k in ("brd", "prd", "hld", "lld", "edge_cases", "tech_stack", "concepts", "quiz"):
+        assert d[k]
+    assert auth_client.get("/api/sd-deep/nope").status_code == 404
+
+
+def test_deep_dive_has_its_own_page_and_pdf(auth_client):
+    r = auth_client.get("/interview-prep/design/uber")
+    html = r.get_data(as_text=True)
+    assert r.status_code == 200 and 'data-deep="uber"' in html and "prep_deep.js" in html
+    assert auth_client.get("/interview-prep/design/not-a-design").status_code == 302
+    pdf = auth_client.get("/interview-prep/design/url-shortener/pdf")
+    assert pdf.status_code == 200 and pdf.data[:4] == b"%PDF"
+
+
+def test_quiz_score_keeps_the_best_and_marks_studied_at_80(auth_client, db):
+    r = auth_client.post("/api/prep/progress", json={"bank": "sddeep", "id": "dd0", "quiz_pct": 60}).get_json()
+    assert r["best"] == 60 and not r["done"]
+    r = auth_client.post("/api/prep/progress", json={"bank": "sddeep", "id": "dd0", "quiz_pct": 85}).get_json()
+    assert r["best"] == 85 and r["done"]
+    r = auth_client.post("/api/prep/progress", json={"bank": "sddeep", "id": "dd0", "quiz_pct": 40}).get_json()
+    assert r["best"] == 85 and r["done"]
+    got = auth_client.get("/api/prep/progress?bank=sddeep").get_json()
+    assert got["done"] == ["dd0"] and got["quiz"]["dd0"] == 85
+    assert auth_client.post("/api/prep/progress", json={"bank": "sddeep", "id": "dd0", "quiz_pct": 101}).status_code == 400
+
+
+def test_deep_dives_can_be_scheduled():
+    import routes.interview_prep as ip
+    import sd_deep_bank as b
+    assert "?" not in ip.PREP_BANKS["sddeep"]["page"]
+    assert ip._prep_lookup("sddeep", "dd0", b.DESIGNS[0]["title"])[0] == b.DESIGNS[0]["title"]

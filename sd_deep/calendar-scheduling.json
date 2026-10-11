@@ -1,0 +1,1210 @@
+{
+ "slug": "calendar-scheduling",
+ "title": "Design a calendar scheduling system (Google Calendar / Outlook)",
+ "prompt": "Design a calendar scheduling system.",
+ "group": "classic",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 100,
+ "summary": "A calendar looks like CRUD on events, but the interesting parts are time itself and coordination between people. Recurring events with exceptions must be stored as rules not rows, time zones and daylight saving must not shift a 9am standup, free/busy queries across dozens of attendees must answer in milliseconds, and booking a shared meeting room is a genuine double-booking race that needs a consistency guarantee. On top of that, reminders are a giant distributed timer problem that must fire once, on time, for hundreds of millions of events.",
+ "framework": {
+  "clarify": [
+   "Scope: personal and work calendars with events, invitations (RSVP), recurring events, reminders, free/busy lookup, and meeting room booking. Confirm whether 'find a time' suggestions are in scope (assume yes, basic).",
+   "Scale: assume 500M users, 100M daily active, average 10 events per user per week, 1B calendars including shared and resource calendars.",
+   "Read/write mix: reads dominate (views of day/week, free/busy) at roughly 50:1; writes are event create/update/RSVP.",
+   "Time semantics: events stored with an IANA time zone; recurring events follow the organiser's zone across DST changes. All-day events are dates, not instants.",
+   "Consistency: an attendee may see an invite a few seconds late (eventual), but a meeting room must never be double-booked (strong).",
+   "Reminders: delivered within 30 seconds of the scheduled time, at most once from the user's perspective, via push, email and SMS.",
+   "Interop: must sync with external clients over CalDAV and iCalendar (RFC 5545), and send invites by email (iMIP) to external users.",
+   "Latency targets: week view p95 under 200ms; free/busy for 20 attendees over a week p95 under 300ms."
+  ],
+  "design": [
+   "Baseline: an Event table with start/end and an Attendee table, a REST API, and a cron job that scans for reminders. Then fix the three things it gets wrong: recurrence, fan-out to attendees, and reminders at scale.",
+   "Data model: store a recurring series once with an RRULE plus exception rows (modified or cancelled instances), and expand instances on read for a bounded window; materialise expanded instances into a per-user agenda index for fast views and free/busy.",
+   "Components: API gateway, Event service (source of truth, sharded by calendarId), Invitation/fan-out service, Agenda index (per-user materialised instances), Free/busy service, Resource booking service, Reminder scheduler (timer wheel over a time-bucketed store), Notification service, Sync service (CalDAV, push channels, sync tokens).",
+   "APIs: POST /calendars/{id}/events, PATCH /events/{id}?scope=this|following|all, POST /events/{id}/rsvp, POST /freebusy {attendees, window}, GET /calendars/{id}/events?timeMin&timeMax&syncToken.",
+   "Critical path for creating a meeting: validate and write the event in the organiser's calendar shard (with idempotency key), atomically book any room via a conditional write on the room's time slots, write an outbox record, then asynchronously fan out invitations to each attendee's calendar and agenda index, and enqueue reminders.",
+   "Reminder path: event write produces reminder jobs keyed by fire-minute bucket; scheduler workers own bucket shards, load the next minute's bucket into an in-memory timer wheel, fire with a dedupe key, and the notification service delivers."
+  ],
+  "defend": [
+   "Bottleneck: fan-out for large meetings (an all-hands with 20,000 attendees) and free/busy queries across many calendars. Handle big invites asynchronously in batches and let very large events be referenced from a shared group calendar instead of copied.",
+   "Scale reads: per-user agenda index stores pre-expanded instances for the next 12-18 months; week view is one range scan on (userId, startTime). Free/busy reads a compact busy-interval projection and is cached for 60s with invalidation on change.",
+   "Scale writes: shard events by calendarId (hash) so writes to different calendars never contend; recurring series writes are O(1) because instances are not stored individually beyond the agenda horizon.",
+   "Room double-booking: use a conditional write (compare-and-set) on the room's slot rows or a serializable transaction scoped to one room; contention is per room so it scales.",
+   "Failure: outbox plus at-least-once consumers for fan-out with idempotent upserts; reminder scheduler uses leased bucket ownership so a dead worker's buckets are picked up within seconds; timeouts and retries with jitter to email/SMS providers with fallbacks between providers.",
+   "Measure: agenda view p95, free/busy p95, invite fan-out lag p99, reminder lateness distribution (fire time minus scheduled time), duplicate reminder rate, room booking conflict rate, sync token invalidations."
+  ],
+  "script": "Before designing, I want to pin down scope and the hard parts. I am assuming Google Calendar scale, around 100 million daily users, reads outnumbering writes about 50 to 1, events with invitations and RSVPs, recurring events, reminders, free/busy lookup and meeting rooms. Attendees can see invites a few seconds late, but rooms must never be double-booked, and reminders should fire within about 30 seconds. My baseline is an events table plus attendees, and I will evolve it in three places. First, recurring events are stored once as an RFC 5545 rule with exceptions, in the organiser's time zone so DST does not shift them, and expanded into a per-user agenda index for fast views and free/busy. Second, creating a meeting writes the organiser's copy and an outbox record in one transaction, books rooms with a conditional write, and fans out invites asynchronously and idempotently. Third, reminders run on a sharded, time-bucketed scheduler with timer wheels. Then I will defend the big-meeting fan-out, the room race, DST and scheduler failover."
+ },
+ "brd": {
+  "problem": "People and organisations lose hours coordinating when to meet: finding a common free slot across busy schedules, booking rooms, tracking who accepted, and remembering meetings across time zones. The business needs a reliable calendar that makes scheduling a few clicks, never double-books shared resources, and reminds people on time, while interoperating with other calendar systems.",
+  "goals": [
+   "Create and view personal and shared calendars with sub-200ms views.",
+   "Schedule meetings with invitations, RSVPs and automatic attendee calendar updates.",
+   "Correct recurring events across time zones and daylight saving changes.",
+   "Free/busy lookup and suggested times across many attendees.",
+   "Conflict-free booking of meeting rooms and other resources.",
+   "Timely reminders across push, email and SMS."
+  ],
+  "non_goals": [
+   "Video conferencing itself (we only attach a link from a conferencing provider).",
+   "Full task/project management.",
+   "AI-driven optimisation of a whole organisation's schedule.",
+   "Payment or paid-booking flows (appointment marketplaces)."
+  ],
+  "stakeholders": [
+   {
+    "who": "Individual users",
+    "needs": "Fast views, easy scheduling, correct times when travelling."
+   },
+   {
+    "who": "Executive assistants",
+    "needs": "Delegated access to manage someone else's calendar, free/busy across teams."
+   },
+   {
+    "who": "Workplace / facilities teams",
+    "needs": "Room utilisation, no double-booking, auto-release of no-show rooms."
+   },
+   {
+    "who": "Enterprise IT admins",
+    "needs": "Domain-wide sharing policy, external sharing controls, audit logs, CalDAV interop."
+   },
+   {
+    "who": "Platform / SRE",
+    "needs": "Predictable load around top-of-hour reminder spikes, cost control."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Week view latency",
+    "target": "p95 under 200ms"
+   },
+   {
+    "metric": "Free/busy for 20 attendees, 1 week",
+    "target": "p95 under 300ms"
+   },
+   {
+    "metric": "Reminder lateness",
+    "target": "99.9% delivered within 30s of scheduled time"
+   },
+   {
+    "metric": "Room double-bookings",
+    "target": "zero"
+   },
+   {
+    "metric": "Invite fan-out lag",
+    "target": "p99 under 5s for meetings under 500 attendees"
+   },
+   {
+    "metric": "Availability",
+    "target": "99.95% for read, 99.9% for write"
+   }
+  ],
+  "constraints": [
+   "Must implement iCalendar (RFC 5545) semantics for recurrence and interoperate over CalDAV and email invites.",
+   "Time zone rules change (governments change DST rules with weeks of notice); the IANA tz database must be updatable without data migration.",
+   "Top-of-hour spike: a large share of meetings start at :00 and :30, so reminders cluster at :50, :55, :25.",
+   "Enterprise data residency for some tenants."
+  ],
+  "risks": [
+   {
+    "risk": "DST or tz database change shifts meetings by an hour.",
+    "mitigation": "Store local wall time plus IANA zone for recurring events and compute UTC at expansion time; re-expand agenda when tzdata updates."
+   },
+   {
+    "risk": "Reminder storm at the top of the hour overwhelms notification providers.",
+    "mitigation": "Pre-load buckets, spread sends within the allowed window, provider rate limiting with multiple vendors."
+   },
+   {
+    "risk": "Huge meetings (company all-hands) cause fan-out spikes.",
+    "mitigation": "Batch async fan-out with backpressure; large-group invites via group calendar reference."
+   },
+   {
+    "risk": "Calendar spam (unsolicited invites auto-added to calendars).",
+    "mitigation": "Only auto-add from known senders; spam scoring for external invites."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Busy manager",
+    "needs": "Sees day at a glance, schedules 1:1s and team meetings quickly."
+   },
+   {
+    "name": "Executive assistant",
+    "needs": "Manages several calendars, finds slots across many attendees and rooms."
+   },
+   {
+    "name": "Remote team member",
+    "needs": "Correct times across time zones, reliable reminders on phone."
+   },
+   {
+    "name": "Facilities admin",
+    "needs": "Configure rooms, capacity, booking policies, utilisation reports."
+   }
+  ],
+  "user_stories": [
+   "As a user, I want to create an event with a title, time, location and description so that I can plan my day.",
+   "As an organiser, I want to invite attendees and see their RSVPs so that I know who is coming.",
+   "As an organiser, I want to see attendees' free/busy and suggested times so that I can pick a slot that works.",
+   "As a user, I want a weekly standup that repeats every weekday at 9am in my time zone so that I do not recreate it.",
+   "As a user, I want to move just this Thursday's standup without affecting the rest of the series.",
+   "As an organiser, I want to book a 10-person room that is guaranteed not to be double-booked.",
+   "As a user, I want a reminder 10 minutes before each meeting on my phone.",
+   "As an assistant, I want delegated edit access to my manager's calendar.",
+   "As a user, I want my calendar to sync with my phone's native calendar app via CalDAV."
+  ],
+  "functional": [
+   "CRUD on calendars and events, including all-day and multi-day events.",
+   "Recurring events using RRULE, with per-instance exceptions and 'this / this and following / all' edits.",
+   "Invitations with RSVP (accepted, declined, tentative), guest permissions and organiser updates propagated to attendees.",
+   "Free/busy query and suggested times across attendees and rooms, respecting working hours.",
+   "Resource (room) calendars with capacity, features and conflict-free booking.",
+   "Reminders and notifications (push, email, SMS) with per-event and default settings.",
+   "Sharing and delegation: see free/busy only, see details, edit, manage sharing.",
+   "Sync: incremental sync tokens, push channels (webhooks), CalDAV and iCalendar import/export, email invites for external guests."
+  ],
+  "non_functional": [
+   {
+    "name": "Read latency",
+    "target": "day/week view p95 under 200ms"
+   },
+   {
+    "name": "Free/busy latency",
+    "target": "p95 under 300ms for 20 attendees x 1 week"
+   },
+   {
+    "name": "Availability",
+    "target": "99.95% read, 99.9% write"
+   },
+   {
+    "name": "Consistency",
+    "target": "read-your-writes for the organiser; eventual (under 5s) for attendees; linearizable per room for bookings"
+   },
+   {
+    "name": "Reminder timeliness",
+    "target": "99.9% within 30s; duplicate rate under 0.01%"
+   },
+   {
+    "name": "Durability",
+    "target": "no event loss; 3 replicas; point-in-time recovery 30 days"
+   },
+   {
+    "name": "Correctness",
+    "target": "zero DST-induced shifts of recurring events"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "500M users, 100M DAU.",
+    "Each DAU opens calendar views about 10 times a day.",
+    "Each user creates or updates about 2 events per day; average 4 attendees per event.",
+    "40% of events are recurring; a recurring series expands to about 250 instances per year.",
+    "Each user has about 3 reminders per day.",
+    "Event record about 2KB; agenda instance row about 200 bytes."
+   ],
+   "math": [
+    "View reads: 100M x 10 / 86,400 ~= 11.6k reads/s average; peak (morning in a big region, x5) ~= 60k reads/s.",
+    "Event writes: 100M x 2 / 86,400 ~= 2.3k writes/s average, ~12k/s peak.",
+    "Fan-out writes to attendee agendas: 2.3k x 4 ~= 9.3k/s average, ~50k/s peak.",
+    "Free/busy queries: assume 20M scheduling actions per day x 3 queries ~= 700/s average, but each touches about 10 calendars -> ~7k calendar range reads/s.",
+    "Event storage: 500M users x 500 events/yr x 2KB ~= 500 TB/yr before compression; series stored once.",
+    "Agenda index: 500M users x ~1,500 instances in a 18-month horizon x 200B ~= 150 TB, the largest hot store.",
+    "Reminders: 100M x 3 = 300M per day ~= 3.5k/s average; top-of-hour burst with 40% of a region's reminders in a 1-minute window can reach ~150k/s."
+   ],
+   "summary": "Reads around 60k/s at peak and modest writes (~12k/s) are easy to shard; the real load shapes are the attendee fan-out (~50k agenda writes/s), a ~150 TB per-user agenda index, and reminder bursts of ~150k/s around the top of the hour that the scheduler and notification tier must absorb."
+  },
+  "out_of_scope": [
+   "Video meeting infrastructure.",
+   "Travel booking and expense integration.",
+   "ML-based smart scheduling across an organisation.",
+   "Public appointment booking pages with payments."
+  ]
+ },
+ "hld": {
+  "overview": "The Event service is the source of truth, sharded by calendarId, storing series (with RRULE), single events and exceptions. Every change is written with an outbox record in the same transaction; a CDC stream drives the Fan-out service (writing attendee copies and updating per-user Agenda indexes), the Reminder scheduler, the Sync service, and search. Free/busy reads busy intervals from the Agenda index. Rooms are resource calendars whose bookings go through a Booking service that enforces no-overlap with a conditional write per room. Reminders are stored in time buckets and fired by sharded scheduler workers using in-memory timer wheels; delivery goes through a Notification service with multiple providers.",
+  "diagram": "\n   Web / Mobile / CalDAV clients / Email (iMIP)\n                 |\n          +------v-------+\n          | API Gateway  |  auth, rate limit, idempotency keys\n          +--+---+---+---+\n             |   |   |\n   +---------+   |   +------------------+\n   v             v                      v\n+----------+ +-----------+        +--------------+\n| Event    | | Free/Busy |<------>| Agenda Index |  (userId, start) instances\n| Service  | | Service   |        | (Cassandra)  |\n+----+-----+ +-----------+        +------^-------+\n     | txn: event + outbox                |\n     v                                    |\n+-----------+    +---------+        +-----+------+\n| Event DB  |--->| Outbox  |--CDC-->|  Kafka     |---> Search, Sync/CalDAV push\n| (sharded  |    | table   |        +--+------+--+\n| Postgres/ |    +---------+           |      |\n| Spanner)  |                          v      v\n+-----------+                 +----------+ +-----------+\n     ^                        | Fan-out  | | Reminder  |\n     |                        | Service  | | Scheduler |-- timer wheels\n+----+------+                 +----------+ +-----+-----+\n| Booking   | rooms: CAS on                      |\n| Service   | (roomId, slot)                     v\n+-----------+                              +--------------+\n                                           | Notification |-> APNs/FCM, email, SMS\n                                           +--------------+\n",
+  "components": [
+   {
+    "name": "API Gateway",
+    "responsibility": "Authentication (OAuth), per-user rate limits, idempotency-key handling, routing to services, CalDAV endpoint translation."
+   },
+   {
+    "name": "Event Service",
+    "responsibility": "Source of truth for calendars, events, series and exceptions; validates RRULEs and time zones; writes event and outbox row in one transaction; enforces ACLs and delegation."
+   },
+   {
+    "name": "Fan-out Service",
+    "responsibility": "Consumes event changes; upserts attendee copies (attendee view of the event plus RSVP state) and updates per-user Agenda index; batches large guest lists; sends iMIP emails to external guests."
+   },
+   {
+    "name": "Agenda Index",
+    "responsibility": "Per-user materialised list of event instances for the next 18 months (expanded from rules), partitioned by userId and clustered by start time; powers views and free/busy."
+   },
+   {
+    "name": "Free/Busy Service",
+    "responsibility": "Merges busy intervals across attendees and rooms, applies working hours and time zones, returns busy blocks and suggested slots; caches results for 60s."
+   },
+   {
+    "name": "Booking Service (resources)",
+    "responsibility": "Conflict-free booking of rooms using per-room conditional writes or per-room serialised transactions; supports auto-release for no-shows."
+   },
+   {
+    "name": "Reminder Scheduler",
+    "responsibility": "Stores reminder jobs in minute buckets, assigns bucket shards to workers via leases, loads upcoming buckets into hierarchical timer wheels, fires with dedupe keys."
+   },
+   {
+    "name": "Notification Service",
+    "responsibility": "Delivers push (APNs/FCM), email and SMS with provider failover, retries with jitter, per-user preferences and quiet hours."
+   },
+   {
+    "name": "Sync Service",
+    "responsibility": "Incremental sync via sync tokens, webhook push channels, CalDAV/ICS import and export, external calendar polling."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Create a meeting with attendees and a room",
+    "steps": [
+     "Client sends POST /calendars/{orgCal}/events with Idempotency-Key, start 2026-10-14T10:00 Asia/Kolkata, 60 min, 6 attendees, room R12.",
+     "Gateway checks the idempotency key; Event service validates and resolves times to UTC for storage of single events.",
+     "Booking service attempts a conditional insert for R12 for the covering 15-minute slots; if any slot exists the booking fails and the API returns 409 with alternatives.",
+     "Event service writes the event row plus an outbox row (EventCreated) in one transaction on the organiser's shard; responds 201 to the organiser (read-your-writes).",
+     "Outbox relay publishes to Kafka partitioned by eventId; Fan-out upserts attendee copies keyed by (attendeeCalendarId, eventId) and adds agenda instances.",
+     "Reminder scheduler consumes the event and writes reminder jobs into bucket minute(10:00 - 10min) for each attendee's reminder setting.",
+     "Notification service sends invitations (push for internal users, iMIP email for external); RSVPs come back as PATCHes to the attendee copy and propagate to the organiser."
+    ]
+   },
+   {
+    "name": "Fire a reminder",
+    "steps": [
+     "Scheduler worker holds leases on bucket shards 0-63 for the hour; at T-2 minutes it loads bucket 09:50 into an in-memory timer wheel.",
+     "At 09:50:00 the wheel fires job {eventId, instanceStart, userId, method}; worker checks the event still exists and the instance is not cancelled.",
+     "Worker writes a fired marker with key hash(eventId, instanceStart, userId, method) using insert-if-absent; if it already exists, skip (duplicate).",
+     "Worker hands the job to Notification service, which sends via FCM; on provider timeout it retries with backoff and jitter, then fails over to a second provider or channel.",
+     "Metric records lateness = sendTime - scheduledTime."
+    ]
+   },
+   {
+    "name": "Free/busy and find a time",
+    "steps": [
+     "Client sends POST /freebusy {attendees: 12 users + 2 rooms, window: next 5 working days}.",
+     "Service fetches each calendar's busy intervals from Agenda index (range scan by userId and time) in parallel, with a 150ms per-call timeout; private events return busy without details.",
+     "Intervals are converted to UTC, merged per attendee, then a sweep line over all attendees finds windows of at least the required duration inside everyone's working hours.",
+     "Partial result is returned if a few calendars time out, flagged as 'unknown' for those attendees, rather than failing the whole query."
+    ]
+   },
+   {
+    "name": "Edit 'this and following' of a recurring series",
+    "steps": [
+     "User edits the 2026-11-05 instance of a weekly series, choosing 'this and following'.",
+     "Event service splits the series: original RRULE gets UNTIL=2026-11-04 (end of previous instance), and a new series starts 2026-11-05 with the new properties, linked by a parent id.",
+     "Exceptions after the split point move to the new series or are dropped per policy.",
+     "Fan-out updates attendee copies and re-expands agenda instances for both series in the horizon; reminder jobs for affected instances are rewritten."
+    ]
+   }
+  ],
+  "data_flow": "Writes land in the Event DB (organiser's calendar shard) together with an outbox record. CDC pushes changes to Kafka; consumers derive attendee copies, the per-user Agenda index, reminder buckets, sync change logs and search documents. Reads for views and free/busy go to the Agenda index; reads of a single event's details go to the Event DB. Room bookings are a synchronous, strongly consistent side path on the write."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/calendars/{calendarId}/events",
+    "request": "Idempotency-Key header; {summary, start:{dateTime, timeZone}|{date}, end, recurrence:['RRULE:FREQ=WEEKLY;BYDAY=MO,WE'], attendees:[{email}], resources:[roomId], reminders:[{method:'push', minutes:10}]}",
+    "response": "201 {eventId, iCalUID, etag, status}",
+    "notes": "409 ROOM_CONFLICT with suggestions if a resource is busy."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/calendars/{calendarId}/events",
+    "request": "?timeMin&timeMax&singleEvents=true&syncToken&pageToken",
+    "response": "{items:[instance], nextPageToken, nextSyncToken}",
+    "notes": "singleEvents expands recurrences; syncToken returns only changes since last sync, 410 GONE forces full resync."
+   },
+   {
+    "method": "PATCH",
+    "path": "/v1/events/{eventId}",
+    "request": "If-Match: etag; ?scope=this|following|all&instanceStart=; partial event body",
+    "response": "200 {event, etag}",
+    "notes": "Optimistic concurrency via etag; scope decides exception vs series split."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/events/{eventId}/rsvp",
+    "request": "{instanceStart?, response: accepted|declined|tentative, comment}",
+    "response": "200 {attendeeStatus}",
+    "notes": "Writes attendee copy and emits change to organiser."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/freebusy",
+    "request": "{timeMin, timeMax, timeZone, items:[{id}], durationMinutes?, workingHoursOnly?}",
+    "response": "{calendars:{id:{busy:[{start,end}], errors?}}, suggestions:[{start,end}]}",
+    "notes": "Partial results with per-calendar errors allowed."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/resources/{roomId}/bookings",
+    "request": "{eventId, start, end}",
+    "response": "201 {bookingId} | 409 {conflicts}",
+    "notes": "Usually invoked internally by Event service."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/calendars/{calendarId}/watch",
+    "request": "{address: webhookUrl, ttlSeconds}",
+    "response": "{channelId, expiration}",
+    "notes": "Push notification channel for sync clients."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Event (master / series)",
+    "store": "Postgres or Spanner, sharded by calendarId",
+    "fields": [
+     "calendarId",
+     "eventId",
+     "iCalUID",
+     "organizerId",
+     "summary",
+     "description",
+     "startLocal",
+     "endLocal",
+     "timeZone (IANA)",
+     "isAllDay",
+     "rrule",
+     "exdates[]",
+     "seriesParentId",
+     "sequence",
+     "etag",
+     "status",
+     "visibility",
+     "updatedAt"
+    ],
+    "keys": "PK (calendarId, eventId); unique iCalUID per calendar",
+    "notes": "Recurring series stored once with local wall time plus zone; single events also store startUtc for indexing."
+   },
+   {
+    "entity": "EventException",
+    "store": "Same shard as master",
+    "fields": [
+     "calendarId",
+     "eventId",
+     "originalStart (recurrence-id)",
+     "overrides (json)",
+     "cancelled"
+    ],
+    "keys": "PK (calendarId, eventId, originalStart)",
+    "notes": "Modified or cancelled instances of a series, per RFC 5545 RECURRENCE-ID."
+   },
+   {
+    "entity": "AttendeeCopy",
+    "store": "Postgres/Spanner, sharded by attendee calendarId",
+    "fields": [
+     "calendarId",
+     "eventId",
+     "organizerCalendarId",
+     "responseStatus",
+     "personalReminders",
+     "colorId",
+     "hidden"
+    ],
+    "keys": "PK (calendarId, eventId)",
+    "notes": "Each attendee's own view; RSVP and personal settings live here."
+   },
+   {
+    "entity": "AgendaInstance",
+    "store": "Cassandra / Bigtable",
+    "fields": [
+     "userId",
+     "startUtc",
+     "eventId",
+     "instanceStart",
+     "endUtc",
+     "busy (bool)",
+     "title (if visible)",
+     "calendarId"
+    ],
+    "keys": "Partition userId (plus year bucket for heavy users); clustering startUtc ASC",
+    "notes": "Materialised 18-month horizon; a nightly job extends the horizon."
+   },
+   {
+    "entity": "RoomSlot",
+    "store": "Spanner / Postgres with unique constraint",
+    "fields": [
+     "roomId",
+     "slotStart (15-min grain)",
+     "eventId",
+     "bookingId"
+    ],
+    "keys": "PK (roomId, slotStart)",
+    "notes": "Unique key makes double booking impossible; insert all slots in one transaction."
+   },
+   {
+    "entity": "ReminderJob",
+    "store": "Cassandra / DynamoDB",
+    "fields": [
+     "bucketMinute",
+     "shardId",
+     "jobId",
+     "userId",
+     "eventId",
+     "instanceStart",
+     "method",
+     "status"
+    ],
+    "keys": "Partition (bucketMinute, shardId); clustering jobId",
+    "notes": "Fired-marker table keyed by jobId with TTL 7 days for dedupe."
+   }
+  ],
+  "classes": [
+   {
+    "name": "RecurrenceExpander",
+    "responsibility": "Expands RRULE plus EXDATE plus exceptions into concrete instances for a window in a given zone.",
+    "methods": [
+     "expand(series, windowStart, windowEnd) -> [Instance]",
+     "nextAfter(series, t)",
+     "split(series, at) -> (head, tail)"
+    ]
+   },
+   {
+    "name": "EventService",
+    "responsibility": "Validates and persists events with outbox and ACL checks.",
+    "methods": [
+     "create(cmd, idemKey)",
+     "update(eventId, patch, scope, etag)",
+     "delete(eventId, scope)",
+     "get(eventId)"
+    ]
+   },
+   {
+    "name": "FreeBusyCalculator",
+    "responsibility": "Merges busy intervals and finds common free slots.",
+    "methods": [
+     "busy(calendarIds, window) -> map",
+     "suggest(busyMap, duration, workingHours) -> [Slot]"
+    ]
+   },
+   {
+    "name": "RoomBookingService",
+    "responsibility": "Atomic conflict-free booking of resources.",
+    "methods": [
+     "book(roomId, start, end, eventId)",
+     "release(bookingId)",
+     "autoReleaseNoShows()"
+    ]
+   },
+   {
+    "name": "ReminderScheduler",
+    "responsibility": "Owns bucket shards and fires reminder jobs on time and once.",
+    "methods": [
+     "acquireShards()",
+     "preload(bucketMinute)",
+     "tick()",
+     "fire(job)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Recurrence expansion with time zones",
+    "explain": "Generate occurrences in the series' local wall time and zone, then convert each to UTC. This keeps a 9:00 Asia/Kolkata or America/New_York meeting at 9:00 local across DST changes. Apply EXDATEs and exceptions after generation. Always bound by window and a max count to protect against rules like FREQ=SECONDLY.",
+    "pseudocode": "def expand(series, win_start, win_end):\n    tz = ZoneInfo(series.time_zone)\n    out = []\n    for local_start in rrule_iter(series.rrule, dtstart=series.start_local):\n        start_utc = to_utc(local_start, tz)     # resolves DST gaps/overlaps\n        if start_utc >= win_end or len(out) > 5000: break\n        if local_start in series.exdates: continue\n        exc = exceptions.get((series.id, local_start))\n        if exc and exc.cancelled: continue\n        inst = apply_override(series, local_start, exc)\n        if inst.end_utc > win_start: out.append(inst)\n    return out"
+   },
+   {
+    "name": "Free/busy merge and slot finding (sweep line)",
+    "explain": "Collect busy intervals of all attendees, sort by start, merge overlaps into a union of busy time, then walk gaps inside working hours to find slots of the requested duration. O(N log N) for N intervals.",
+    "pseudocode": "def find_slots(busy_lists, win, duration, working):\n    ivs = sorted(i for lst in busy_lists for i in lst)\n    merged = []\n    for s, e in ivs:\n        if merged and s <= merged[-1][1]:\n            merged[-1][1] = max(merged[-1][1], e)\n        else:\n            merged.append([s, e])\n    slots, cur = [], win.start\n    for s, e in merged + [[win.end, win.end]]:\n        for gap in intersect((cur, s), working):\n            if gap.end - gap.start >= duration: slots.append(gap)\n        cur = max(cur, e)\n    return slots[:10]"
+   },
+   {
+    "name": "Conflict-free room booking",
+    "explain": "Discretise to 15-minute slots and insert one row per slot with a unique key (roomId, slotStart) in a single transaction. Any concurrent booking that overlaps collides on at least one key and fails. Alternative for arbitrary precision: a serializable transaction that checks for overlapping intervals, or a Postgres exclusion constraint on tstzrange.",
+    "pseudocode": "def book(room, start, end, event_id):\n    slots = [t for t in range15(floor15(start), ceil15(end))]\n    with txn():\n        for t in slots:\n            insert RoomSlot(room, t, event_id)   # fails on duplicate key\n    return booking_id\n# Postgres alternative:\n# EXCLUDE USING gist (room_id WITH =, tstzrange(start,end) WITH &&)"
+   },
+   {
+    "name": "Hierarchical timer wheel for reminders",
+    "explain": "A timer wheel is a circular array of slots, each a list of timers due in that tick; advancing the pointer each tick fires one slot in O(1). Hierarchical wheels (seconds, minutes) handle longer horizons. Workers only load the next couple of minutes from the durable bucket store, so memory stays small and restart is cheap.",
+    "pseudocode": "wheel = [[] for _ in range(120)]        # 1-second ticks, 2 minutes\ndef preload(bucket):\n    for job in store.scan(bucket, my_shards):\n        wheel[(job.fire_at - now()) % 120].append(job)\ndef tick():\n    for job in wheel[pos]:\n        if store.insert_if_absent('fired', job.id):\n            notify.enqueue(job)\n    wheel[pos].clear(); pos = (pos + 1) % 120"
+   }
+  ],
+  "sequence": "\nOrg       Gateway    EventSvc    BookingSvc   EventDB+Outbox  Kafka   FanOut   Reminders\n |--POST-->|           |            |              |           |        |         |\n | IdemKey |--create-->|            |              |           |        |         |\n |         |           |--book R12->|              |           |        |         |\n |         |           |            |--insert slots (unique)-->|        |         |\n |         |           |<--booked---|              |           |        |         |\n |         |           |--txn: event + outbox----->|           |        |         |\n |<--201 eventId, etag-|            |              |           |        |         |\n |         |           |            |              |--CDC----->|        |         |\n |         |           |            |              |           |--evt-->|         |\n |         |           |            |              |           | attendee copies  |\n |         |           |            |              |           | + agenda upsert  |\n |         |           |            |              |           |--evt------------>|\n |         |           |            |              |           |   reminder jobs  |\n |         |           |            |              |           |   into buckets   |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Weekly 9:00 meeting in America/New_York crosses the DST change.",
+   "handling": "Series stored as local time plus IANA zone; expansion yields 9:00 local both sides of the change, which is 13:00 UTC before and 14:00 UTC after. Attendees in India see it move by an hour locally, which is correct."
+  },
+  {
+   "case": "Event scheduled at 02:30 local on a spring-forward day (time does not exist).",
+   "handling": "Resolve per RFC 5545 guidance: shift forward by the gap length (03:30) and show a warning in the UI."
+  },
+  {
+   "case": "Event at 01:30 on a fall-back day (time occurs twice).",
+   "handling": "Pick the first occurrence (earlier offset) deterministically; store the resolved UTC for single events."
+  },
+  {
+   "case": "Government changes DST rules with short notice.",
+   "handling": "Ship updated tzdata, then re-expand affected series in the agenda index and recompute reminder jobs; single events stored as local-plus-zone for future dates are recomputed too."
+  },
+  {
+   "case": "Two organisers book the same room for overlapping times at the same instant.",
+   "handling": "Unique (roomId, slotStart) keys or an exclusion constraint guarantee one wins; the loser gets 409 with alternative rooms and times."
+  },
+  {
+   "case": "Client retries event creation after a timeout.",
+   "handling": "Idempotency-Key stored with the result for 24 hours returns the same eventId instead of creating a duplicate meeting."
+  },
+  {
+   "case": "Infinite or pathological RRULE (FREQ=MINUTELY with no end).",
+   "handling": "Validate allowed frequencies, cap instances generated per expansion (for example 5,000) and cap the horizon; reject SECONDLY/MINUTELY from untrusted clients."
+  },
+  {
+   "case": "Editing one instance of a series and then editing the whole series.",
+   "handling": "Series edits propagate to instances unless the changed field was overridden in an exception; time changes to the series usually reset exceptions after warning the user."
+  },
+  {
+   "case": "All-hands invite to 20,000 attendees.",
+   "handling": "Fan-out in batches of 500 with backpressure, invite a group address so membership resolves lazily, and store one shared event referenced by attendees instead of 20,000 full copies where possible."
+  },
+  {
+   "case": "Reminder scheduler worker dies at 09:49:58 holding the 09:50 bucket.",
+   "handling": "Lease expires in about 10s; a new worker loads the bucket and fires late but within the 30s SLO; fired-marker dedupe prevents doubles if the old worker partially fired."
+  },
+  {
+   "case": "Event deleted after its reminder job was enqueued.",
+   "handling": "Worker re-checks event and instance status before firing (or the delete writes a tombstone the worker checks); no reminder for cancelled meetings."
+  },
+  {
+   "case": "Attendee in a different time zone views an all-day event.",
+   "handling": "All-day events are floating dates (no zone); they display on the same date for everyone, not shifted into the previous day."
+  },
+  {
+   "case": "External attendee replies via email with a stale SEQUENCE number.",
+   "handling": "Use iCalendar SEQUENCE and DTSTAMP to ignore replies to outdated versions of the event."
+  },
+  {
+   "case": "Sync client's token is too old after compaction of the change log.",
+   "handling": "Return 410 GONE so the client performs a full sync and gets a fresh token."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Postgres (Citus) or Spanner",
+   "layer": "Event source of truth",
+   "overview": "Relational databases with transactions; Citus shards Postgres, Spanner is globally distributed with external consistency.",
+   "why": "Events plus outbox in one transaction, etags for optimistic concurrency, unique constraints and exclusion constraints for rooms.",
+   "alternatives": "DynamoDB with transactions (managed, more modelling effort for range constraints); MySQL with Vitess."
+  },
+  {
+   "name": "Cassandra / Bigtable",
+   "layer": "Agenda index and reminder buckets",
+   "overview": "Wide-column stores with partition keys and sorted clustering columns, built for heavy writes and range scans.",
+   "why": "Agenda rows partitioned by userId and clustered by start time make a week view one sequential read; reminder buckets partitioned by (minute, shard) are naturally time-ordered.",
+   "alternatives": "Elasticsearch for agenda (adds search, heavier); Redis sorted sets for near-term reminders (fast, memory bound)."
+  },
+  {
+   "name": "Kafka",
+   "layer": "Change stream",
+   "overview": "Partitioned replicated log with consumer groups.",
+   "why": "Carries outbox events to fan-out, reminders, sync and search with replay ability; partition by eventId keeps per-event ordering.",
+   "alternatives": "Pub/Sub or Kinesis (managed); a database queue table for smaller scale."
+  },
+  {
+   "name": "Debezium (CDC) / outbox relay",
+   "layer": "Integration",
+   "overview": "Reads the database's write-ahead log and publishes row changes as events.",
+   "why": "Implements the transactional outbox without dual writes.",
+   "alternatives": "Polling publisher that reads the outbox table every 100ms (simpler, adds latency and DB load)."
+  },
+  {
+   "name": "Redis",
+   "layer": "Caching and idempotency",
+   "overview": "In-memory key-value store with TTLs.",
+   "why": "Caches free/busy results (TTL 60s), idempotency keys (24h), and hot calendar ACLs.",
+   "alternatives": "Memcached (no TTL-rich structures); in-process caches (no sharing)."
+  },
+  {
+   "name": "IANA tz database (via ICU / java.time / zoneinfo)",
+   "layer": "Time library",
+   "overview": "The canonical database of time zone rules and history, updated several times a year.",
+   "why": "Correct DST transitions and historical offsets; libraries apply rules at expansion time.",
+   "alternatives": "Storing fixed UTC offsets (breaks across DST, never acceptable for recurring events)."
+  },
+  {
+   "name": "APNs / FCM / SES / SMS gateways",
+   "layer": "Notification delivery",
+   "overview": "Platform push services and email/SMS providers.",
+   "why": "Reach devices reliably; multiple providers allow failover.",
+   "alternatives": "Single provider (simpler, a single point of failure); in-app only notifications."
+  },
+  {
+   "name": "CalDAV / iCalendar (RFC 5545, RFC 4791)",
+   "layer": "Interop protocols",
+   "overview": "Standards for calendar data format and access over WebDAV.",
+   "why": "Native phone calendars and other vendors speak these; required for enterprise adoption.",
+   "alternatives": "Proprietary API only (blocks third-party clients)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Time zones, DST and storing time correctly",
+   "explain": "There are two different things people call 'a time'. An instant is an absolute point on the global timeline, best stored as UTC (or epoch milliseconds). A wall-clock time is what a clock on the wall in a particular place shows, like '9:00 in Chennai' or '9:00 in New York'. Converting between them needs a time zone rule set, and those rules change: daylight saving time shifts offsets twice a year in many countries, and governments change the rules themselves, sometimes with only weeks of notice. The IANA time zone database (names like Asia/Kolkata, America/New_York) captures current and historical rules and is updated several times a year. A fixed offset like +05:30 is not a time zone; it cannot tell you what happens next March. The practical rule for calendars: past or one-off events can be stored as UTC instants plus the original zone for display, but recurring events and future events whose meaning is local must be stored as local wall time plus IANA zone, and converted to UTC only when expanded, using the rules in force at that time. Some local times do not exist (the hour skipped on spring-forward) and some occur twice (fall-back), so every conversion needs a deterministic policy for gaps and overlaps. All-day events are dates, not instants, and must not be shifted at all.",
+   "in_this_design": "Series store startLocal plus timeZone; the RecurrenceExpander converts each occurrence to UTC at expansion time. Agenda instances are in UTC for fast range queries. When tzdata updates, a job re-expands affected series and rewrites reminder jobs.",
+   "key_points": [
+    "Instant (UTC) and wall time (local plus zone) are different things.",
+    "Store recurring events as local time plus IANA zone, not UTC.",
+    "A UTC offset is not a time zone.",
+    "Handle nonexistent and ambiguous local times deterministically.",
+    "All-day events are floating dates."
+   ],
+   "qa": [
+    {
+     "q": "Why not just store everything in UTC?",
+     "a": "Because a weekly 9:00 standup in New York is 13:00 UTC in summer and 14:00 UTC in winter. If you store the first instance in UTC and add 7 days, after the DST change the meeting moves to 8:00 or 10:00 local. Recurring events need local time plus zone; UTC is fine for derived indexes."
+    },
+    {
+     "q": "How do you handle a tz database update that changes a country's DST rule?",
+     "a": "Deploy new tzdata to all services, find series and future single events in that zone, re-expand their instances in the agenda index, and recompute their reminder jobs. Because the source data is local plus zone, nothing in the source of truth changes."
+    },
+    {
+     "q": "Whose time zone governs a recurring meeting with attendees in India and the US?",
+     "a": "The organiser's (the series' zone). Attendees see it converted to their own zone, so the India attendee may see it shift by an hour when the US changes DST, which is the correct behaviour."
+    }
+   ]
+  },
+  {
+   "name": "Recurrence rules and materialisation (RRULE expansion)",
+   "explain": "A recurring event could be stored as one row per occurrence, but a daily meeting with no end date would be infinite rows, and editing the series would mean rewriting thousands of rows. RFC 5545 (iCalendar) instead defines a compact rule language: RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR;UNTIL=20271231T000000Z or COUNT=10, combined with DTSTART, EXDATE (excluded dates) and RDATE (extra dates). Individual occurrences that differ from the rule are stored as exceptions identified by RECURRENCE-ID, the original start time of that instance. To answer 'what is on my calendar this week', the system expands the rule into instances for that window, applies exclusions and exceptions, and returns concrete events. Expanding on every read is CPU heavy when a user has dozens of series and when free/busy touches many users, so large systems materialise: they precompute instances for a bounded horizon (say 12 to 18 months) into an index and extend the horizon with a background job, while the rule remains the source of truth. Edits to 'this and following' split a series into two: the old one gets an UNTIL just before the split and a new series begins. Expansion must be bounded (max count, max horizon) to resist pathological rules.",
+   "in_this_design": "Series and exceptions live in the Event DB; the Fan-out service expands them into the per-user Agenda index for 18 months; a nightly job extends horizons; reads of far-future windows expand on the fly.",
+   "key_points": [
+    "Store rules, not rows; materialise a bounded horizon for reads.",
+    "Exceptions are keyed by RECURRENCE-ID (original start).",
+    "'This and following' means splitting the series.",
+    "Always cap expansion count and horizon.",
+    "The rule is the truth; materialised instances are a rebuildable cache."
+   ],
+   "qa": [
+    {
+     "q": "Why not store every instance as a row?",
+     "a": "Unbounded series would be infinite, series edits would rewrite thousands of rows and race with exceptions, and storage would explode. Store the rule and materialise a window for reads."
+    },
+    {
+     "q": "How do you query 'events next Tuesday' if you only store rules?",
+     "a": "Read the agenda index (pre-expanded). For windows beyond the horizon, load series overlapping the window (by series start and UNTIL) and expand them in memory for just that window."
+    },
+    {
+     "q": "What happens to exceptions when the series time changes?",
+     "a": "The exception is keyed by the original start; if the series' time moves, those keys no longer match generated instances. Common policy is to warn and drop time-based exceptions while keeping non-time overrides that can be re-mapped by date."
+    }
+   ]
+  },
+  {
+   "name": "Transactional outbox and change data capture",
+   "explain": "When a service must update its database and also tell other services about the change, doing two separate writes (DB then message broker) creates a dual-write problem: if the process crashes between them, the database says the meeting exists but no one was invited, or a message announces a meeting that was rolled back. Distributed transactions (two-phase commit) across the DB and broker are slow and poorly supported. The transactional outbox pattern fixes this by writing the event into an outbox table in the same local database transaction as the business change. Either both commit or neither does. A separate relay then publishes outbox rows to the broker, either by polling the table or, better, by tailing the database's write-ahead log with change data capture (Debezium). Publishing is at-least-once: the relay may crash after sending but before marking a row as sent, so consumers must be idempotent, typically by upserting on a natural key or recording processed event ids. Ordering is preserved per aggregate if the broker partitions by aggregate id.",
+   "in_this_design": "Event service writes the event and an outbox row in one transaction. CDC publishes to Kafka partitioned by eventId. Fan-out, reminders, sync and search consume idempotently (upserts keyed by (calendarId, eventId) and event version).",
+   "key_points": [
+    "Dual writes lose consistency on crash.",
+    "Outbox row commits atomically with the business row.",
+    "Relay is at-least-once; consumers must be idempotent.",
+    "Partition by aggregate id to keep per-event order.",
+    "Use version numbers to drop stale updates."
+   ],
+   "qa": [
+    {
+     "q": "Why not publish to Kafka first and then write the DB?",
+     "a": "If the DB write then fails, consumers have already acted on an event that does not exist. Any ordering of two independent writes has a crash window; the outbox puts both in one atomic commit."
+    },
+    {
+     "q": "Consumers might see the same event twice. How do they cope?",
+     "a": "Upsert by (calendarId, eventId) and compare the event version (SEQUENCE or a monotonic version); apply only if newer. Reprocessing an old or duplicate event is then a no-op."
+    },
+    {
+     "q": "How do you keep updates to one event in order?",
+     "a": "Partition the topic by eventId so all changes for one event go to one partition and are consumed in order; also carry a version so out-of-order delivery from retries can be detected."
+    }
+   ]
+  },
+  {
+   "name": "Preventing double booking: concurrency control on shared resources",
+   "explain": "Two people trying to book the same room at overlapping times is a classic race: both read 'free', both write 'booked'. This is a write skew anomaly, and it is not prevented by snapshot isolation, the default in many databases, because each transaction writes a different row. There are several correct approaches. Pessimistic locking: lock the room row with SELECT ... FOR UPDATE before checking and inserting, which serialises bookings per room. Optimistic concurrency: read a version number and update only if it is unchanged (compare-and-set), retrying on failure. Materialising the conflict: turn the overlap check into a uniqueness check by discretising time into slots and inserting one row per (room, slot) under a unique key, so the database's own uniqueness enforcement detects the conflict. Constraint-based: Postgres exclusion constraints on a time range with the overlap operator reject overlapping intervals natively. Serializable isolation also works but may abort more transactions. Whatever the approach, the contention domain should be one resource, so throughput scales with the number of rooms and does not need a global lock.",
+   "in_this_design": "RoomSlot rows with primary key (roomId, slotStart) at 15-minute granularity inserted in one transaction; or an exclusion constraint where Postgres is used. Losers receive 409 with alternatives.",
+   "key_points": [
+    "Check-then-insert races are write skew; snapshot isolation does not stop them.",
+    "Materialise the conflict into a unique key, or use an exclusion constraint.",
+    "Scope locking to one resource so it scales horizontally.",
+    "Return a helpful 409 with alternatives."
+   ],
+   "qa": [
+    {
+     "q": "Why isn't snapshot isolation enough to prevent double booking?",
+     "a": "Both transactions read the same snapshot showing the room free, and each inserts a different booking row, so there is no write-write conflict to detect. That is write skew; you need a lock, a serializable level, or a constraint that turns it into a conflict on the same key."
+    },
+    {
+     "q": "What are the downsides of 15-minute slots?",
+     "a": "Meetings at 10:05 must occupy whole slots, wasting a little capacity, and long bookings insert many rows. An exclusion constraint on time ranges avoids both but ties you to Postgres-like features."
+    },
+    {
+     "q": "Should personal calendars also prevent overlaps?",
+     "a": "No. People legitimately double-book themselves; show a conflict warning instead. Only scarce shared resources need hard guarantees."
+    }
+   ]
+  },
+  {
+   "name": "Distributed job scheduling with timer wheels and leased shards",
+   "explain": "Scheduling hundreds of millions of future actions (reminders) is a distributed timer problem. A naive cron that runs 'SELECT reminders WHERE fire_at <= now()' every minute becomes a full-table scan hammering the database and a single point of failure. The scalable approach has three parts. First, a durable store organised by time: jobs are written into buckets keyed by their fire minute and a shard number, so the work due in a given minute is a small set of partitions. Second, ownership: scheduler workers acquire leases on shard ranges from a coordinator (ZooKeeper, etcd, or a lease table), so each bucket shard is processed by exactly one worker at a time, and a dead worker's shards are reassigned when its lease expires. Third, an in-memory timer wheel: a worker pre-loads the next one or two minutes of its buckets into a circular array of slots indexed by second, and a ticking pointer fires each slot in O(1) time, which is how Kafka and Netty implement huge numbers of timeouts. Because handover can cause double firing, each firing records a marker with an insert-if-absent; a second attempt sees it and skips. Clustered work at the top of the hour is smoothed by preloading early and spreading sends inside the allowed lateness window.",
+   "in_this_design": "ReminderJob rows partitioned by (bucketMinute, shardId) with 1,024 shards; workers lease shard ranges; preload 2 minutes ahead into a 1-second-tick wheel; fired-marker dedupe; Notification service handles retries and provider failover.",
+   "key_points": [
+    "Bucket jobs by fire time so 'what is due' is a cheap lookup.",
+    "Lease shards to workers; failover by lease expiry.",
+    "Timer wheel gives O(1) insert and fire.",
+    "Dedupe firing with an insert-if-absent marker.",
+    "Pre-load to absorb top-of-hour spikes."
+   ],
+   "qa": [
+    {
+     "q": "What happens if a meeting time changes after reminders are scheduled?",
+     "a": "The update event deletes or supersedes the old reminder jobs and writes new ones. As a safety net, the worker validates the event and instance before firing, so a stale job for a moved meeting is skipped."
+    },
+    {
+     "q": "How do you guarantee at-most-once reminders from the user's view?",
+     "a": "You cannot guarantee exactly-once delivery to a phone, but you can make the system's attempt unique: an insert-if-absent fired marker keyed by (eventId, instanceStart, userId, method). Providers may still occasionally duplicate; clients collapse by notification id."
+    },
+    {
+     "q": "Why not use a message queue with delayed delivery for every reminder?",
+     "a": "Many queues limit delay (SQS max 15 minutes) or keep delayed messages expensively; reminders can be months out and must be editable or cancellable. A bucketed store plus near-term loading into memory is cheaper and supports edits."
+    }
+   ]
+  },
+  {
+   "name": "Read-optimised materialised views and fan-out on write (CQRS)",
+   "explain": "Command Query Responsibility Segregation separates the model you write to from the models you read from. Writes go to a normalised source of truth optimised for correctness; reads are served from one or more denormalised views optimised for specific queries, kept up to date asynchronously from the change stream. In social feeds this is called fan-out on write: when someone posts, copy a pointer to every follower's timeline so that reading a timeline is a single cheap lookup. The alternative, fan-out on read, assembles the view at query time from many sources, which is cheaper on writes but expensive and slow on reads. Most large systems mix the two: fan-out on write for the common case and fan-out on read for outliers whose fan-out would be enormous (celebrities in a feed, all-hands meetings in a calendar). The cost of materialised views is eventual consistency between the write and the view, extra storage, and the need to rebuild views from the source when the derivation logic changes, which is why the source of truth plus a replayable change log matters.",
+   "in_this_design": "The per-user Agenda index is a materialised view fed by the change stream; week views and free/busy read it with one range scan. Huge events (over 5,000 attendees) are not copied per user; instead the agenda read merges in subscribed group calendars at read time.",
+   "key_points": [
+    "Write model for correctness, read models for speed.",
+    "Fan-out on write makes reads O(1) lookups.",
+    "Hybrid: fan-out on read for giant outliers.",
+    "Views are rebuildable from the source and the log.",
+    "Expose read-your-writes to the author by reading the source after their own write."
+   ],
+   "qa": [
+    {
+     "q": "The organiser creates a meeting and immediately refreshes. It is not in the week view yet. Fix?",
+     "a": "Give the author read-your-writes: the client inserts the event optimistically, or the API merges the user's recent writes (from the source DB, last 30 seconds) into the agenda result until the view catches up."
+    },
+    {
+     "q": "How do you rebuild the agenda index after a bug in expansion?",
+     "a": "Replay: for affected users, re-expand series from the Event DB and rewrite their partitions, throttled, while reads fall back to on-the-fly expansion for users marked dirty."
+    },
+    {
+     "q": "When is fan-out on read better for calendars?",
+     "a": "For events with very large audiences or subscribed public calendars (holidays, sports schedules) where copying to millions of agendas would waste storage and write capacity."
+    }
+   ]
+  },
+  {
+   "name": "Idempotency keys and optimistic concurrency (etags)",
+   "explain": "Two different problems affect API writes on unreliable networks. First, duplicates: a client times out and retries a POST that actually succeeded, producing two meetings. The fix is an idempotency key: the client generates a unique key per logical operation and sends it with every attempt; the server stores the key with the response (for 24 hours, say) and returns the stored response on a repeat. The key-to-result write must be atomic with the operation or the second attempt can slip through. Second, lost updates: two editors read version 5 of an event and both write changes; the second write silently overwrites the first. The fix is optimistic concurrency: each resource has a version or etag, the client sends If-Match with the version it read, and the server applies the write only if the current version matches, otherwise returns 412 Precondition Failed so the client can refetch and merge. iCalendar adds its own SEQUENCE number for the same reason across systems: attendee clients ignore updates or replies that carry an older sequence than the one they hold.",
+   "in_this_design": "POST create uses Idempotency-Key stored in Redis plus a unique constraint in the DB. PATCH uses If-Match etags. iCalendar SEQUENCE orders updates sent by email to external guests.",
+   "key_points": [
+    "Idempotency keys stop duplicate creates on retry.",
+    "Etags with If-Match stop lost updates.",
+    "Store key and result atomically with the effect.",
+    "SEQUENCE plays the same role across calendar systems."
+   ],
+   "qa": [
+    {
+     "q": "What if the idempotency key store is Redis and Redis loses the key?",
+     "a": "Back it with a unique constraint in the source DB on (calendarId, idempotencyKey) so a duplicate insert fails and returns the existing event. Redis is the fast path, the DB is the guarantee."
+    },
+    {
+     "q": "Why not use last-writer-wins for event edits?",
+     "a": "Two assistants editing different fields would lose one's changes silently. Etags force a refetch and merge, and field-level patches reduce conflicts further."
+    },
+    {
+     "q": "How long should idempotency keys be retained?",
+     "a": "Longer than the maximum client retry window; 24 hours is common for mobile clients that may retry after coming back online."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Recurring event storage",
+   "options": "One row per instance; rule plus exceptions; rule plus materialised horizon",
+   "choice": "Rule plus exceptions as truth, materialised 18-month agenda for reads",
+   "why": "Compact, editable series with fast reads; horizon cache is rebuildable."
+  },
+  {
+   "decision": "Attendee propagation",
+   "options": "Synchronous writes to all attendee calendars; async fan-out via outbox; fan-out on read",
+   "choice": "Async fan-out with outbox, fan-out on read for very large events",
+   "why": "Organiser gets a fast response; attendees see updates within seconds; giant events do not explode storage."
+  },
+  {
+   "decision": "Room conflict prevention",
+   "options": "Application check then insert; per-room lock; unique slot rows; exclusion constraint",
+   "choice": "Unique slot rows (or exclusion constraint on Postgres)",
+   "why": "Database enforces correctness under concurrency without application races; contention scoped to one room."
+  },
+  {
+   "decision": "Reminder scheduling",
+   "options": "Cron scanning DB; delayed queue messages; bucketed store plus timer wheels",
+   "choice": "Bucketed store plus leased workers with timer wheels",
+   "why": "Scales to hundreds of millions of jobs, supports edits and cancellation, O(1) firing."
+  },
+  {
+   "decision": "Free/busy computation",
+   "options": "Expand rules on every query; read materialised busy intervals",
+   "choice": "Read materialised intervals with 60s cache",
+   "why": "Free/busy spans many users; precomputation keeps p95 under 300ms."
+  },
+  {
+   "decision": "Consistency for attendees",
+   "options": "Strong (synchronous) everywhere; eventual with read-your-writes for organiser",
+   "choice": "Eventual for attendees, strong for the organiser's own view and for rooms",
+   "why": "Seconds of lag for invites is acceptable; rooms are the one place correctness is absolute."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Fan-out consumers lag (Kafka backlog)",
+   "behavior": "Organiser sees the event immediately; attendees see it late. Autoscale consumers, prioritise small meetings over bulk invites, alert on lag above 30s."
+  },
+  {
+   "failure": "Reminder worker crash",
+   "behavior": "Lease expires (about 10s), shards reassigned, bucket reloaded; reminders fire a few seconds late, dedupe prevents doubles."
+  },
+  {
+   "failure": "Push provider (FCM) outage",
+   "behavior": "Circuit breaker opens after error threshold; fall back to email or SMS for high-priority reminders; retries with exponential backoff and jitter."
+  },
+  {
+   "failure": "Event DB shard primary failure",
+   "behavior": "Automatic failover to a synchronous replica in about 30s; writes to that shard fail fast with retryable errors; reads served from agenda index unaffected."
+  },
+  {
+   "failure": "Agenda index partition unavailable",
+   "behavior": "Fall back to on-the-fly expansion from the Event DB for affected users with a higher latency budget; free/busy marks those calendars 'unknown' if timeouts hit."
+  },
+  {
+   "failure": "Bad tzdata deploy",
+   "behavior": "Canary the tzdata version, compare expansion outputs for a sample of series before and after, and keep the ability to roll back the library version."
+  }
+ ],
+ "metrics": [
+  "Week view latency p50/p95/p99 and error rate.",
+  "Free/busy latency p95 and per-calendar timeout rate.",
+  "Fan-out lag (outbox commit to attendee agenda written) p99.",
+  "Reminder lateness histogram and percentage within 30s.",
+  "Duplicate reminder rate (fired-marker collisions) and provider error rates.",
+  "Room booking 409 rate and auto-release counts.",
+  "Outbox relay backlog and CDC lag.",
+  "Sync 410 GONE rate (full resyncs) and CalDAV request latency."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you implement 'find a time' for 30 attendees across 3 time zones?",
+   "a": "Fetch busy intervals for each attendee from the agenda index in parallel, convert everything to UTC, intersect each attendee's working hours (in their zone) to get available windows, then sweep to find windows where all (or a configurable quorum, like all required plus 80% optional) are free. Rank by earliest, fewest conflicts with optional attendees and least fragmentation."
+  },
+  {
+   "q": "How do you scale to a user who has 50,000 events (an assistant managing many calendars)?",
+   "a": "Agenda partition per user plus year bucket keeps partitions bounded; views read only the window. For heavy assistants viewing many calendars, fetch in parallel and paginate."
+  },
+  {
+   "q": "How do you sync with an external CalDAV server or Outlook?",
+   "a": "Use sync tokens or ctags to pull incremental changes, map iCalUID to our eventId, honour SEQUENCE for ordering, and push our changes with If-Match etags. Conflicts resolve by SEQUENCE, then last-modified."
+  },
+  {
+   "q": "How would you auto-release booked rooms when nobody shows up?",
+   "a": "Require check-in on a room panel or app within 10 minutes of start; a scheduled job (same scheduler as reminders) releases the RoomSlot rows if no check-in, and notifies the organiser."
+  },
+  {
+   "q": "How do you protect against invite spam?",
+   "a": "Do not auto-add events from unknown external senders (show them as pending), apply spam classification on external iMIP mail, and rate limit invites per sender."
+  },
+  {
+   "q": "Where would you put data for an India-resident enterprise tenant?",
+   "a": "Tenant-level region pinning: Event DB shard, agenda partitions, Kafka cluster and scheduler in the India region; cross-region free/busy calls go through an API that exposes only busy intervals."
+  },
+  {
+   "q": "What changes if we must show a meeting to 1 million subscribers (a public holiday calendar)?",
+   "a": "Never fan out. Treat it as a subscribed calendar merged at read time, cache its expanded instances per window in a CDN-cacheable form, and let user overrides (hide, reminders) be stored per user."
+  }
+ ],
+ "key_points": [
+  "Store recurring events as RRULE plus exceptions, in local wall time plus IANA zone.",
+  "Materialise a bounded horizon into a per-user agenda index; rules remain the truth.",
+  "Rooms are the one place for hard consistency: unique slot keys or an exclusion constraint.",
+  "Personal calendars may overlap; show a warning instead of blocking.",
+  "Outbox plus CDC to fan out invites; idempotent, versioned consumers.",
+  "Fan-out on write for normal meetings, fan-out on read for huge events and public calendars.",
+  "Reminders: time-bucketed store, leased shards, timer wheels, insert-if-absent dedupe.",
+  "Plan for the top-of-hour spike: preload and spread within the lateness SLO.",
+  "Idempotency keys for creates, etags for updates, SEQUENCE for interop.",
+  "Free/busy is a sweep-line merge over busy intervals with partial results on timeouts."
+ ],
+ "quiz": [
+  {
+   "q": "A weekly 9:00 New York standup was stored as its first instance in UTC plus 7-day increments. What breaks?",
+   "options": [
+    "After the DST change the meeting shows at 8:00 or 10:00 local",
+    "Nothing, UTC is always correct",
+    "Attendees in other zones see it on the wrong date",
+    "The meeting stops recurring"
+   ],
+   "answer": 0,
+   "why": "Recurring local-time events must be stored as local time plus zone. Option A is the tempting 'always use UTC' rule, which is right for instants but wrong for recurring wall-clock events."
+  },
+  {
+   "q": "Two organisers book the same room for overlapping times under snapshot isolation with a check-then-insert. What happens?",
+   "options": [
+    "The database detects the conflict automatically",
+    "One deadlocks forever",
+    "Both can succeed because it is write skew on different rows",
+    "The second insert overwrites the first"
+   ],
+   "answer": 2,
+   "why": "Each transaction inserts a different row, so there is no write-write conflict. Many assume (A) that the DB catches it, which needs serializable isolation or a constraint."
+  },
+  {
+   "q": "Which is the best primary key for discretised room booking rows?",
+   "options": [
+    "(bookingId)",
+    "(organizerId, slotStart)",
+    "(eventId, roomId)",
+    "(roomId, slotStart)"
+   ],
+   "answer": 3,
+   "why": "Uniqueness on (roomId, slotStart) makes overlapping bookings collide. (eventId, roomId) is tempting but two events could still hold the same slot."
+  },
+  {
+   "q": "Roughly how many agenda writes per second at peak if 12k event writes/s each have 4 attendees?",
+   "options": [
+    "About 3k/s",
+    "About 50k/s",
+    "About 12k/s",
+    "About 500k/s"
+   ],
+   "answer": 1,
+   "why": "12k x 4 is about 48k, so around 50k/s. 12k ignores the fan-out factor."
+  },
+  {
+   "q": "Why use a transactional outbox instead of writing to the DB and then publishing to Kafka?",
+   "options": [
+    "It avoids the crash window between two independent writes",
+    "Kafka is too slow for calendar events",
+    "It guarantees exactly-once delivery to consumers",
+    "It removes the need for consumers to be idempotent"
+   ],
+   "answer": 0,
+   "why": "The outbox makes the business write and the event atomic. It does not give exactly-once delivery (C); the relay is at-least-once so consumers still must be idempotent."
+  },
+  {
+   "q": "How should 'edit this and all following' on instance 2026-11-05 of a weekly series be stored?",
+   "options": [
+    "Delete the series and create individual events",
+    "Add an exception for every future instance",
+    "Set UNTIL on the original series before 11-05 and create a new series starting 11-05",
+    "Change the original series DTSTART to 11-05"
+   ],
+   "answer": 2,
+   "why": "Splitting the series preserves past history and keeps future edits compact. Changing DTSTART (D) would rewrite past occurrences."
+  },
+  {
+   "q": "Reminder p99 lateness jumps to 3 minutes only at :50 and :55 each hour. Most likely cause?",
+   "options": [
+    "Clock skew on clients",
+    "DST transition",
+    "Kafka partition imbalance for events",
+    "Top-of-hour reminder burst saturating workers or notification providers"
+   ],
+   "answer": 3,
+   "why": "Meetings cluster at :00, so reminders cluster 5-10 minutes before. DST (B) happens twice a year, not hourly."
+  },
+  {
+   "q": "A scheduler worker's lease expires while it is mid-way through firing a bucket; a new worker reloads the bucket. What prevents duplicate reminders?",
+   "options": [
+    "The old worker stops instantly when the lease expires",
+    "An insert-if-absent fired marker keyed by event, instance, user and method",
+    "Kafka exactly-once semantics",
+    "Push providers deduplicate everything"
+   ],
+   "answer": 1,
+   "why": "A durable dedupe marker makes the firing unique. Assuming the old worker stops instantly (A) is the classic lease misconception."
+  },
+  {
+   "q": "Which store layout makes a week view a single sequential read?",
+   "options": [
+    "Agenda instances partitioned by userId, clustered by start time",
+    "Events partitioned by eventId",
+    "Events partitioned by organiser, clustered by title",
+    "A global secondary index on start time"
+   ],
+   "answer": 0,
+   "why": "Per-user partition sorted by time is one range scan. A global index on start time (D) mixes all users and becomes a hot spot."
+  },
+  {
+   "q": "An all-day 'Holiday' event shows on the previous day for users west of the organiser. What went wrong?",
+   "options": [
+    "Recurrence expansion bug",
+    "Free/busy cache staleness",
+    "The all-day event was stored as a UTC instant instead of a floating date",
+    "Wrong RSVP status"
+   ],
+   "answer": 2,
+   "why": "All-day events are dates, not instants. Converting to UTC shifts them across date boundaries."
+  },
+  {
+   "q": "Why materialise only 18 months of instances instead of all future instances?",
+   "options": [
+    "Databases cannot store dates beyond 2 years",
+    "Free/busy only looks 18 months ahead by law",
+    "RFC 5545 forbids it",
+    "Unbounded series would be infinite; a horizon bounds storage and a background job extends it"
+   ],
+   "answer": 3,
+   "why": "Infinite series need a bounded cache. The other options are invented constraints."
+  },
+  {
+   "q": "A client times out on POST create event and retries. Without protection what happens and what fixes it?",
+   "options": [
+    "Nothing happens; HTTP POST is idempotent",
+    "A duplicate meeting is created; fix with an Idempotency-Key stored with the result",
+    "The second request is rejected by TCP",
+    "Fix with an etag on the POST"
+   ],
+   "answer": 1,
+   "why": "POST is not idempotent (A is wrong). Etags (D) guard updates to existing resources, not creates."
+  },
+  {
+   "q": "Two assistants edit different fields of the same event concurrently. Best way to avoid one silently losing changes?",
+   "options": [
+    "Etag with If-Match and refetch-merge on 412",
+    "Last writer wins",
+    "Lock the calendar for 5 minutes",
+    "Fan-out on read"
+   ],
+   "answer": 0,
+   "why": "Optimistic concurrency catches the conflict. Last-writer-wins (B) is what causes silent loss."
+  },
+  {
+   "q": "A 20,000-attendee all-hands invite is created. Best approach?",
+   "options": [
+    "Write 20,000 attendee copies synchronously before responding",
+    "Reject meetings larger than 500",
+    "Batch async fan-out with backpressure, or reference via a group calendar merged at read time",
+    "Send one email and skip calendar updates"
+   ],
+   "answer": 2,
+   "why": "Async or read-time merge keeps the organiser fast and protects the system. Synchronous writes (A) would take minutes and time out."
+  },
+  {
+   "q": "What does a hierarchical timer wheel give the reminder scheduler?",
+   "options": [
+    "Durable storage of reminders",
+    "Automatic DST handling",
+    "Exactly-once delivery to phones",
+    "O(1) insertion and firing of many near-term timers in memory"
+   ],
+   "answer": 3,
+   "why": "The wheel is an in-memory O(1) structure; durability comes from the bucket store, not the wheel."
+  },
+  {
+   "q": "Free/busy across 12 attendees: 1 calendar times out. Best behaviour?",
+   "options": [
+    "Fail the whole request",
+    "Return results with that attendee marked unknown",
+    "Retry indefinitely",
+    "Treat the attendee as free"
+   ],
+   "answer": 1,
+   "why": "Partial results keep the feature useful. Treating them as free (D) could book a meeting over their commitments."
+  },
+  {
+   "q": "Why does the outbox topic partition by eventId?",
+   "options": [
+    "To keep all changes for one event in order for consumers",
+    "To spread load evenly by organiser",
+    "Because Kafka requires numeric keys",
+    "To make consumers stateless"
+   ],
+   "answer": 0,
+   "why": "Per-key ordering prevents an older update from overwriting a newer one in attendee copies."
+  },
+  {
+   "q": "An event is at 02:30 local on a spring-forward day. What should the system do?",
+   "options": [
+    "Store it unchanged and let clients decide",
+    "Reject all events on DST days",
+    "Apply a deterministic rule such as shifting forward by the gap and warn the user",
+    "Convert to the nearest fixed UTC offset permanently"
+   ],
+   "answer": 2,
+   "why": "Nonexistent local times need a deterministic policy so all clients agree. Leaving it to clients (A) causes inconsistent displays."
+  },
+  {
+   "q": "Roughly how many reminders per day for 100M DAU at 3 reminders each?",
+   "options": [
+    "3M",
+    "30M",
+    "3B",
+    "300M"
+   ],
+   "answer": 3,
+   "why": "100M x 3 = 300M per day, about 3.5k/s average with large hourly bursts."
+  },
+  {
+   "q": "Organiser creates a meeting and refreshes the week view; it is missing because fan-out has not reached the agenda yet. Best fix?",
+   "options": [
+    "Make all fan-out synchronous",
+    "Read-your-writes: merge the user's recent writes from the source DB into the view",
+    "Increase Kafka partitions",
+    "Cache the week view for longer"
+   ],
+   "answer": 1,
+   "why": "Read-your-writes fixes the author's experience cheaply. Synchronous fan-out (A) harms latency for everyone."
+  },
+  {
+   "q": "Which is not a valid way to prevent room double booking?",
+   "options": [
+    "Read availability from the 60-second free/busy cache, then insert",
+    "Unique (roomId, slotStart) rows",
+    "SELECT ... FOR UPDATE on the room row, then check and insert",
+    "Postgres exclusion constraint on tstzrange with overlap"
+   ],
+   "answer": 0,
+   "why": "The cache can be stale and the read-then-insert still races. The other three let the database enforce exclusivity."
+  },
+  {
+   "q": "A sync client returns after 90 days and its sync token's change log was compacted. Correct response?",
+   "options": [
+    "Return an empty change list",
+    "Replay from the beginning of time automatically",
+    "Return 410 GONE so the client does a full sync",
+    "Return 500"
+   ],
+   "answer": 2,
+   "why": "Explicit 410 tells the client its token is invalid. An empty list (A) silently leaves the client wrong."
+  }
+ ],
+ "references": [
+  {
+   "title": "RFC 5545 iCalendar: 3.3.10 Recurrence Rule (icalendar.org)",
+   "url": "https://icalendar.org/iCalendar-RFC-5545/3-3-10-recurrence-rule.html"
+  },
+  {
+   "title": "RFC 5545 on the IETF datatracker",
+   "url": "https://datatracker.ietf.org/doc/rfc5545/"
+  },
+  {
+   "title": "System Design: Design Google Calendar (techinterview.org)",
+   "url": "https://www.techinterview.org/post/3233474350/system-design-design-google-calendar-scheduling-recurring-events-reminders-timezone-free-busy-room-booking-sync/"
+  },
+  {
+   "title": "Low-Level Design: Calendar App, recurring events and conflict detection (techinterview.org)",
+   "url": "https://techinterview.org/lld-calendar-app/"
+  }
+ ]
+}

@@ -1,0 +1,1184 @@
+{
+ "slug": "url-shortener",
+ "title": "Design a URL Shortener (TinyURL / Bitly)",
+ "prompt": "Design a URL shortener.",
+ "group": "classic",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "A URL shortener looks trivial - map a 7 character key to a long URL - but it is a textbook read-heavy key-value system with a 100:1 read/write ratio, a hard uniqueness requirement on keys, and a redirect path that must answer in single-digit milliseconds from a cache. The core tensions are how to generate short, unique, non-guessable keys without a global bottleneck, and how to keep click analytics off the redirect hot path.",
+ "framework": {
+  "clarify": [
+   "Scale: assume 100M new short links per month (about 40 writes/s average, 400/s peak) and 10B redirects per month (about 4K/s average, 40K/s peak) - confirm the 100:1 read/write ratio.",
+   "Key length and alphabet: Base62 [0-9a-zA-Z]; 7 characters gives 62^7 = 3.5 trillion keys - enough for 100+ years at this rate. Confirm whether custom aliases (vanity URLs) are required.",
+   "Redirect semantics: 301 (permanent, browser caches it, we lose analytics on repeat clicks) or 302 (temporary, every click hits us). Assume 302 because analytics is a product feature.",
+   "Lifetime: do links expire? Assume default no expiry, optional TTL per link, and that deleted or expired links return 404/410.",
+   "Analytics: is a click counter enough or do we need per-click dimensions (country, referrer, device) queryable within minutes? Assume near-real-time aggregates, raw events kept 90 days.",
+   "Same long URL submitted twice: same short key or a new one? Assume a new key per request for logged-in users (each campaign wants its own stats), dedupe optional.",
+   "Abuse: links are a phishing and malware vector - assume we must scan destinations and be able to disable a link globally within a minute.",
+   "Availability vs consistency: redirects must be highly available (99.99%); a link created a few hundred ms ago being briefly unresolvable in another region is acceptable."
+  ],
+  "design": [
+   "Baseline: one stateless API service, one key-value table short_key -> {long_url, owner, created_at, expires_at}, and a 302 redirect endpoint. Get this correct before scaling.",
+   "Key generation: a counter-based ID (range-allocated blocks from a coordinator such as ZooKeeper/etcd, 1M IDs per block per server) encoded in Base62 and passed through a reversible bijective shuffle so keys are not sequential.",
+   "Write path: POST /v1/links validates the URL, runs a safe-browsing check, takes the next ID from the local block, encodes it, writes the row with a conditional put (if-not-exists), returns the short URL.",
+   "Read path: GET /{key} -> CDN/edge (cache 302s for popular keys for a short TTL) -> redirect service -> Redis cache (LRU, ~20% hot keys) -> DynamoDB/Cassandra on miss; respond 302 with Location header.",
+   "Analytics path: the redirect service emits a click event asynchronously (fire-and-forget into a local buffer -> Kafka); a stream job (Flink) aggregates per key per minute into an OLAP store (ClickHouse/Druid).",
+   "Custom aliases: same table, conditional write on the alias key; a reserved-words list blocks 'admin', 'api', etc.",
+   "Admin and abuse: a link-status flag checked on every redirect (cached), with a pub/sub invalidation so a takedown propagates to all caches in under 60s."
+  ],
+  "defend": [
+   "Bottleneck: the redirect read path. 40K/s peak is easy for Redis (a single node does 100K+ ops/s) but the long tail of cold keys hits the database, so size the cache on the working set and keep DB reads single-partition point lookups.",
+   "Scaling reads: CDN caching of redirects for hot links, Redis cluster sharded by key hash, read replicas / DynamoDB on-demand for misses; negative caching of unknown keys for 60s to absorb scanners.",
+   "Scaling writes: writes are tiny (about 500 bytes) and only 400/s peak; the risk is the ID generator. Range allocation means the coordinator is hit once per million IDs, not per write.",
+   "Failure behaviour: if the cache tier fails, redirects fall through to the DB with a circuit breaker and per-node concurrency limits; if Kafka is down, click events go to a local disk spool and are replayed - a redirect is never blocked on analytics.",
+   "Retries: client POST carries an Idempotency-Key so a retried create returns the same short link; server-to-DB retries use exponential backoff with full jitter and a 3-attempt cap.",
+   "Multi-region: active-active redirect in every region from a globally replicated table; creates can be served from any region because ID blocks are region-partitioned, so no cross-region coordination on write.",
+   "Measure: redirect p50/p99 latency (target p99 < 20ms at origin), cache hit ratio (> 95%), 404 rate (scanner detection), create error rate, click-event lag, and time-to-takedown."
+  ],
+  "script": "Before drawing anything, I want to pin the shape. I am assuming 100 million new links a month and a hundred to one read to write ratio, so roughly 40K redirects a second at peak against 400 creates a second. That tells me this is a read-heavy key-value problem where the redirect path must be served from cache. I will use 302 redirects because click analytics is part of the product, 7 character Base62 keys which give 3.5 trillion combinations, and I will treat abuse takedown as a first-class requirement. The design is three paths. Create: validate, scan for malware, take an ID from a pre-allocated range, encode it to Base62 with a shuffle so keys are not guessable, conditional write to a key-value store. Redirect: edge, then Redis, then the database, answering a 302 in a few milliseconds. Analytics: an async click event to Kafka, aggregated by a stream job, never on the hot path. To defend it, the interesting pieces are key generation without a global lock, cache sizing for a skewed workload, what happens when the cache or Kafka dies, and how a takedown reaches every cache in under a minute."
+ },
+ "brd": {
+  "problem": "Long URLs are unwieldy in SMS, print, social posts and QR codes, and marketers cannot tell which channel drove a click. The business needs a branded short-link service that is fast, always up, safe for end users, and that turns every click into attribution data for campaigns.",
+  "goals": [
+   "Create a short link in under 200ms p99 and redirect in under 50ms p99 end to end for users worldwide.",
+   "Redirects available 99.99% of the time - a broken short link on a printed poster cannot be fixed.",
+   "Provide click analytics (count, geography, referrer, device) visible within 5 minutes.",
+   "Prevent the platform from being used to distribute phishing and malware; takedown within 60 seconds.",
+   "Support branded custom domains and vanity aliases for paying business customers.",
+   "Keep cost per million redirects low enough for a free tier to be sustainable."
+  ],
+  "non_goals": [
+   "Hosting the destination content or previewing pages.",
+   "A full marketing suite (A/B testing landing pages, email campaigns).",
+   "Guaranteeing that a destination URL stays alive - we only own the redirect.",
+   "Exactly-once click counting - plus or minus 0.1% is acceptable for analytics."
+  ],
+  "stakeholders": [
+   {
+    "who": "End users clicking links",
+    "needs": "Instant, safe redirects; never land on malware."
+   },
+   {
+    "who": "Link creators (marketers, individuals)",
+    "needs": "Fast creation, memorable aliases, trustworthy click stats."
+   },
+   {
+    "who": "Enterprise customers",
+    "needs": "Custom domains, SSO, API rate limits, SLA, data export."
+   },
+   {
+    "who": "Trust and Safety team",
+    "needs": "Scanning, reporting, bulk takedown, audit trail."
+   },
+   {
+    "who": "SRE / platform",
+    "needs": "Simple stateless services, clear SLOs, cheap scaling of reads."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Redirect availability",
+    "target": ">= 99.99% monthly"
+   },
+   {
+    "metric": "Redirect p99 latency at origin",
+    "target": "< 20 ms"
+   },
+   {
+    "metric": "Cache hit ratio on redirects",
+    "target": ">= 95%"
+   },
+   {
+    "metric": "Malicious link takedown time",
+    "target": "< 60 s from flag to global block"
+   },
+   {
+    "metric": "Analytics freshness",
+    "target": "< 5 min lag p95"
+   },
+   {
+    "metric": "Cost per million redirects",
+    "target": "< 0.05 USD infra"
+   }
+  ],
+  "constraints": [
+   "Short keys must be 7 characters or fewer for SMS and print.",
+   "Once issued, a key must never be reassigned to a different URL (trust).",
+   "Data residency: EU customers' analytics must stay in EU regions.",
+   "Must work behind corporate proxies and with link-preview bots that pre-fetch URLs."
+  ],
+  "risks": [
+   {
+    "risk": "Platform domain gets blocklisted by email providers due to spam links",
+    "mitigation": "Pre-scan with Safe Browsing APIs, rate-limit anonymous creation, rescan popular links periodically."
+   },
+   {
+    "risk": "Enumeration of sequential keys exposes private links",
+    "mitigation": "Bijective shuffle of IDs, optional longer keys for private links, 404 rate limiting per IP."
+   },
+   {
+    "risk": "Key generator outage blocks all creates",
+    "mitigation": "Range allocation with 1M IDs pre-fetched per node; coordinator outage tolerated for hours."
+   },
+   {
+    "risk": "Analytics pipeline lag or loss undermines paid tier",
+    "mitigation": "Disk-spooled event buffers, Kafka RF=3, replayable raw events."
+   },
+   {
+    "risk": "Hot link (viral tweet) overwhelms one cache shard",
+    "mitigation": "CDN caching plus local in-process LRU for the top keys."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Priya, growth marketer",
+    "needs": "Creates hundreds of campaign links per week via API, needs per-channel click breakdowns."
+   },
+   {
+    "name": "Casual user",
+    "needs": "Pastes a long link, gets a short one, no signup."
+   },
+   {
+    "name": "Rahul, T&S analyst",
+    "needs": "Finds and disables malicious links in bulk, sees who created them."
+   },
+   {
+    "name": "Enterprise admin",
+    "needs": "Uses go.company.com as a branded domain, manages team permissions."
+   }
+  ],
+  "user_stories": [
+   "As a casual user, I want to paste a long URL and get a short link instantly so that I can share it in a tweet.",
+   "As a marketer, I want to choose a custom alias like /diwali-sale so that the link is memorable on a poster.",
+   "As a marketer, I want to see clicks by country, referrer and device per hour so that I can attribute campaign performance.",
+   "As a link creator, I want to set an expiry date so that a limited offer link stops working after the sale.",
+   "As an API client, I want to retry a create safely so that network timeouts do not create duplicate links.",
+   "As a T&S analyst, I want to disable a link and every link pointing to the same domain so that a phishing campaign is stopped quickly.",
+   "As an end user, I want the redirect to be instant so that I do not abandon the page.",
+   "As an enterprise admin, I want to use my own domain so that recipients trust the link."
+  ],
+  "functional": [
+   "Create a short link from a long URL (http/https only, max 2,048 characters) with optional alias, expiry and tags.",
+   "Redirect GET /{key} with HTTP 302 and Location header; 404 for unknown, 410 for expired or disabled.",
+   "Custom alias: 3-30 characters [a-zA-Z0-9-_], unique per domain, reserved-word list enforced.",
+   "Update destination (paid tier) and delete/disable a link; key is never reused.",
+   "Analytics API: clicks over time, top countries, referrers, devices; CSV export.",
+   "Abuse: synchronous Safe Browsing check at creation, asynchronous rescans, user reporting, admin takedown.",
+   "Rate limits: anonymous 10 creates/min/IP, free 1K/day, enterprise per contract.",
+   "Custom domains with automatic TLS certificates."
+  ],
+  "non_functional": [
+   {
+    "name": "Redirect latency",
+    "target": "p99 < 20 ms at origin, < 50 ms at user including edge"
+   },
+   {
+    "name": "Create latency",
+    "target": "p99 < 200 ms (including malware lookup)"
+   },
+   {
+    "name": "Availability",
+    "target": "99.99% redirects, 99.9% create and analytics"
+   },
+   {
+    "name": "Durability",
+    "target": "No link mapping ever lost (11 nines object durability on backups, RF=3)"
+   },
+   {
+    "name": "Consistency",
+    "target": "Read-your-writes for the creator; other regions eventually consistent within 1 s"
+   },
+   {
+    "name": "Analytics freshness",
+    "target": "p95 < 5 min"
+   },
+   {
+    "name": "Security",
+    "target": "Keys not enumerable; takedown global in < 60 s"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "100M new links/month; 10B redirects/month (100:1).",
+    "Average record size 500 bytes (key 7 B, URL avg 100-200 B, metadata, index overhead).",
+    "Links retained 10 years by default.",
+    "Click event about 200 bytes (key, ts, country, referrer hash, UA family, IP prefix).",
+    "Peak traffic is 10x average.",
+    "80/20 skew: 20% of links get 80% of clicks."
+   ],
+   "math": [
+    "Writes: 100M / (30 x 86,400 s) = about 40/s average, 400/s peak.",
+    "Reads: 10B / 2.6M s = about 3,900/s average, about 40K/s peak.",
+    "Storage of links: 100M x 500 B = 50 GB/month, 600 GB/year, 6 TB over 10 years (before RF=3 -> 18 TB).",
+    "Key space: 62^7 = 3.52 trillion; at 1.2B links/year we use 0.03% per year.",
+    "Click events: 10B x 200 B = 2 TB/month raw; 90-day retention -> 6 TB raw, aggregates are about 1% of that.",
+    "Cache: daily active keys maybe 20M; 20M x 500 B = 10 GB - fits comfortably in a 3-shard Redis cluster with replicas.",
+    "Bandwidth: redirect response about 500 B -> 40K/s x 500 B = 20 MB/s peak egress, trivial."
+   ],
+   "summary": "A small write load (400/s peak), a moderate read load (40K/s peak) that a cache absorbs, about 600 GB of new mapping data per year, and an analytics stream of about 2 TB/month that is the largest data volume in the system. Key space is not a constraint at 7 characters."
+  },
+  "out_of_scope": [
+   "Link-in-bio pages and QR code designer UI.",
+   "Billing and subscription management.",
+   "Full-text search across a user's links (simple prefix/tag filtering only).",
+   "Rewriting or proxying destination content."
+  ]
+ },
+ "hld": {
+  "overview": "Three decoupled paths share one source of truth. The create path is a stateless API that validates and scans URLs, takes a unique ID from a locally cached range, encodes it to Base62 and does a conditional write to a globally replicated key-value store. The redirect path is a separate, minimal service behind a CDN that resolves key -> URL via an in-process LRU, then Redis, then the database, and emits a click event asynchronously. The analytics path consumes click events from Kafka, enriches them (GeoIP, UA parsing), aggregates per key per minute and writes to an OLAP store that powers dashboards.",
+  "diagram": "                +-----------+          +------------------+\n  creator ----->|  API GW   |--------->|  Link API (k8s)  |---> Safe Browsing check\n                | auth, RL  |          |  ID range cache  |\n                +-----------+          +--------+---------+\n                                                | conditional put        +-----------+\n                      ID ranges (1M/block)      v                        | ZooKeeper |\n                  <---------------------- +-----------+  <-------------- | /etcd     |\n                                          | DynamoDB  |  global tables   +-----------+\n                                          | links tbl |----+\n                                          +-----------+    | miss\n  clicker --> CDN edge --> L7 LB --> Redirect svc --> Redis cluster\n              (hot 302s)              | in-proc LRU      (LRU, 10 GB)\n                                      |\n                                      v async (buffer, never blocks)\n                                  +-------+     +-------+     +------------+\n                                  | Kafka |---->| Flink |---->| ClickHouse |--> Analytics API\n                                  +-------+     +-------+     +------------+\n                                      |\n                                      +--> S3 raw events (90 d)\n  T&S console --> Admin svc --> links tbl (status=DISABLED) --> pub/sub invalidate caches\n",
+  "components": [
+   {
+    "name": "API Gateway",
+    "responsibility": "TLS, auth (API keys/OAuth), per-tenant rate limiting (token bucket), request routing."
+   },
+   {
+    "name": "Link API service",
+    "responsibility": "Validate and normalise URL, call Safe Browsing, allocate ID, encode Base62, conditional write, idempotency handling."
+   },
+   {
+    "name": "ID range allocator",
+    "responsibility": "Hands out disjoint 1M-ID blocks to API nodes via an atomic counter in ZooKeeper/etcd; region bits in the ID avoid cross-region coordination."
+   },
+   {
+    "name": "Links store (DynamoDB / Cassandra)",
+    "responsibility": "Source of truth for key -> URL, partitioned by short key hash, RF=3, multi-region replication."
+   },
+   {
+    "name": "Redirect service",
+    "responsibility": "Minimal hot path: lookup, status/expiry check, 302 response, async click emit. Separate deployable so feature work never slows it."
+   },
+   {
+    "name": "Redis cache cluster",
+    "responsibility": "Read-through cache of key -> {url, status, expires_at}; also negative cache for unknown keys."
+   },
+   {
+    "name": "CDN / edge",
+    "responsibility": "Caches 302 responses for the hottest keys for 60 s with Cache-Control, absorbs viral spikes and DDoS."
+   },
+   {
+    "name": "Kafka + Flink analytics pipeline",
+    "responsibility": "Durable click stream, enrichment, per-minute aggregation, late-event handling with watermarks."
+   },
+   {
+    "name": "ClickHouse (OLAP)",
+    "responsibility": "Columnar store for aggregates and recent raw clicks, sub-second dashboard queries."
+   },
+   {
+    "name": "Trust and Safety service",
+    "responsibility": "Async rescans, user reports, domain blocklists, takedown with cache invalidation fan-out."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Create short link",
+    "steps": [
+     "Client POST /v1/links with long_url and Idempotency-Key header.",
+     "Gateway authenticates and checks the token bucket for the tenant.",
+     "Link API checks idempotency table: if key seen, return the stored response.",
+     "Normalise URL (lowercase scheme/host, strip default port), reject non-http(s) and our own domain (loop prevention).",
+     "Safe Browsing lookup with 100 ms timeout; on timeout, create link as PENDING_SCAN and scan async.",
+     "Take next ID from local block (refill from allocator when 10% remains), shuffle, Base62-encode to 7 chars.",
+     "PutItem with condition attribute_not_exists(short_key); on conflict (only possible for aliases) return 409.",
+     "Write-through the new mapping into Redis in the local region, return 201 with short URL."
+    ]
+   },
+   {
+    "name": "Redirect",
+    "steps": [
+     "Browser GET https://sho.rt/aZ3kQ9x hits the CDN; hot keys served from edge cache (60 s TTL).",
+     "On edge miss, LB routes to redirect service; check in-process LRU (top 100K keys, 5 s TTL).",
+     "Then Redis GET; on miss, DynamoDB GetItem (eventually consistent read), populate Redis with 24 h TTL.",
+     "If unknown: cache negative result 60 s and return 404; if expired/disabled: 410.",
+     "Respond 302 Location: long_url, Cache-Control: private, max-age=0 (unless hot-key edge caching applies).",
+     "Push click event to in-memory ring buffer; a background thread batches to Kafka every 50 ms or 500 events."
+    ]
+   },
+   {
+    "name": "Takedown",
+    "steps": [
+     "T&S marks link or destination domain DISABLED in the links store.",
+     "Admin service publishes invalidate(key) on Redis pub/sub and a CDN purge API call.",
+     "Redirect nodes drop the key from in-process LRU; next request reloads status and returns 410 with warning page.",
+     "Audit log records who, when, why."
+    ]
+   }
+  ],
+  "data_flow": "Writes flow API -> links store (conditional put) -> Redis write-through, and replicate to other regions asynchronously in about 1 s. Reads flow edge -> in-process LRU -> Redis -> links store, each layer filling the one above. Click events flow redirect service -> local buffer -> Kafka (RF=3, partitioned by short key) -> Flink (enrich, 1-minute tumbling windows, 10-minute allowed lateness) -> ClickHouse aggregates and S3 raw archive. Control-plane events (takedowns, destination updates) flow admin -> store -> pub/sub invalidations -> every cache layer."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/links",
+    "request": "Headers: Authorization, Idempotency-Key. Body: {long_url, alias?, domain?, expires_at?, tags?[]}",
+    "response": "201 {short_url, key, long_url, created_at, expires_at, status}",
+    "notes": "409 if alias taken; 422 if URL malformed or blocked; 429 when rate limited."
+   },
+   {
+    "method": "GET",
+    "path": "/{key}",
+    "request": "No body. Headers used: User-Agent, Referer, X-Forwarded-For.",
+    "response": "302 Location: long_url | 404 | 410 (expired/disabled, shows interstitial)",
+    "notes": "Served by redirect service, never by the API service; HEAD supported for link-preview bots."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/links/{key}/stats?from&to&granularity=hour&dims=country,referrer",
+    "request": "Query params",
+    "response": "{series:[{ts, clicks}], top:{country:[...], referrer:[...]}}",
+    "notes": "Reads ClickHouse aggregates; owner-only."
+   },
+   {
+    "method": "PATCH",
+    "path": "/v1/links/{key}",
+    "request": "{long_url?, expires_at?, status?}",
+    "response": "200 updated link",
+    "notes": "Destination change triggers re-scan and cache invalidation; key never changes."
+   },
+   {
+    "method": "DELETE",
+    "path": "/v1/links/{key}",
+    "request": "-",
+    "response": "204",
+    "notes": "Soft delete: status=DELETED, key permanently retired."
+   },
+   {
+    "method": "POST",
+    "path": "/admin/v1/takedowns",
+    "request": "{keys?[], domain?, reason}",
+    "response": "202 {job_id}",
+    "notes": "Bulk disable; propagates invalidations; audited."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Link",
+    "store": "DynamoDB global table (or Cassandra RF=3)",
+    "fields": [
+     "short_key (PK, string)",
+     "domain",
+     "long_url",
+     "owner_id",
+     "created_at",
+     "expires_at (TTL attribute)",
+     "status (ACTIVE|PENDING_SCAN|DISABLED|DELETED)",
+     "url_hash"
+    ],
+    "keys": "Partition key = domain#short_key, point lookups only; GSI on owner_id + created_at for 'my links'; GSI on url_hash for domain takedown.",
+    "notes": "Hash-partitioned so keys spread evenly; conditional write for uniqueness; never hard-deleted so keys are not reused."
+   },
+   {
+    "entity": "IdempotencyRecord",
+    "store": "DynamoDB table with TTL 24 h",
+    "fields": [
+     "tenant_id#idempotency_key (PK)",
+     "request_hash",
+     "response_body",
+     "created_at"
+    ],
+    "keys": "PK only",
+    "notes": "If same key arrives with a different request_hash, return 422."
+   },
+   {
+    "entity": "IdBlock",
+    "store": "ZooKeeper / etcd",
+    "fields": [
+     "/idgen/{region}/next_block (int64)"
+    ],
+    "keys": "One counter znode per region",
+    "notes": "Compare-and-set increment; each block = 1,000,000 IDs."
+   },
+   {
+    "entity": "ClickEvent",
+    "store": "Kafka topic clicks (48 partitions, RF=3) -> S3 parquet",
+    "fields": [
+     "event_id",
+     "short_key",
+     "ts",
+     "ip_prefix",
+     "country",
+     "referrer_host",
+     "ua_family",
+     "is_bot"
+    ],
+    "keys": "Kafka partition key = short_key",
+    "notes": "Raw kept 90 days; IP truncated to /24 for privacy."
+   },
+   {
+    "entity": "ClickAgg",
+    "store": "ClickHouse SummingMergeTree",
+    "fields": [
+     "short_key",
+     "minute",
+     "country",
+     "referrer_host",
+     "device",
+     "clicks"
+    ],
+    "keys": "ORDER BY (short_key, minute); PARTITION BY toYYYYMM(minute)",
+    "notes": "Rolled up to hourly after 30 days."
+   }
+  ],
+  "classes": [
+   {
+    "name": "KeyGenerator",
+    "responsibility": "Owns the local ID block, refills ahead of exhaustion, maps ID -> 7-char key.",
+    "methods": [
+     "next_key() -> str",
+     "_refill_async()",
+     "_permute(id: int) -> int",
+     "encode_base62(n: int) -> str"
+    ]
+   },
+   {
+    "name": "LinkService",
+    "responsibility": "Create/update/delete orchestration, validation, idempotency, scanning.",
+    "methods": [
+     "create(req, idem_key) -> Link",
+     "update(key, patch) -> Link",
+     "disable(key, reason)",
+     "_normalize(url) -> str"
+    ]
+   },
+   {
+    "name": "RedirectHandler",
+    "responsibility": "Hot path resolution through cache layers and response building.",
+    "methods": [
+     "handle(key, req) -> Response",
+     "_resolve(key) -> LinkView|None",
+     "_emit_click(key, req)"
+    ]
+   },
+   {
+    "name": "ClickBuffer",
+    "responsibility": "Bounded lock-free ring buffer, batches to Kafka, spools to disk when Kafka is unavailable.",
+    "methods": [
+     "offer(event) -> bool",
+     "flush()",
+     "spool_to_disk(batch)",
+     "replay_spool()"
+    ]
+   },
+   {
+    "name": "TakedownService",
+    "responsibility": "Disables links/domains and fans out invalidations.",
+    "methods": [
+     "disable_keys(keys, reason)",
+     "disable_domain(host)",
+     "publish_invalidation(keys)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Range-allocated counter + Base62 with bijective shuffle",
+    "explain": "Each API node reserves a block of 1M consecutive integers with one atomic increment in etcd, then hands them out locally with no coordination. To avoid sequential, guessable keys, the integer is passed through a bijection on [0, 62^7) - a small Feistel network keyed by a secret - so consecutive IDs map to scattered values, and uniqueness is preserved because a bijection never collides. The result is Base62-encoded and left-padded to 7 characters.",
+    "pseudocode": "BLOCK = 1_000_000\ndef refill():\n    start = etcd.atomic_incr('/idgen/' + region) * BLOCK   # one RPC per million keys\n    return range(start, start + BLOCK)\n\ndef next_key():\n    if remaining() < 0.1 * BLOCK: refill_async()\n    n = block.pop()\n    p = feistel_permute(n, rounds=4, key=SECRET, domain=62**7)  # cycle-walk if out of domain\n    return base62(p).rjust(7, '0')\n\nALPHA = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'\ndef base62(n):\n    s = ''\n    while n > 0:\n        n, r = divmod(n, 62)\n        s = ALPHA[r] + s\n    return s or '0'\n"
+   },
+   {
+    "name": "Read-through redirect with negative caching",
+    "explain": "Three cache layers with decreasing hit rates and increasing cost. The in-process LRU absorbs viral keys without a network hop; Redis holds the daily working set; the database is only touched on cold keys. Unknown keys are cached as a tombstone so scanners do not hammer the database. A per-key singleflight lock collapses concurrent misses into one DB read (cache stampede protection).",
+    "pseudocode": "def resolve(key):\n    v = lru.get(key)\n    if v: return v\n    v = redis.get('l:' + key)\n    if v is None:\n        v = singleflight(key, lambda: db.get_item(key))   # one DB call per key per node\n        redis.set('l:' + key, v or TOMBSTONE, ex=86400 if v else 60)\n    lru.put(key, v, ttl=5)\n    return None if v == TOMBSTONE else v\n\ndef handle(key, req):\n    link = resolve(key)\n    if not link: return 404\n    if link.status != ACTIVE or (link.expires_at and now() > link.expires_at): return 410\n    click_buffer.offer(event(key, req))    # non-blocking, drops if full\n    return redirect(302, link.long_url)\n"
+   },
+   {
+    "name": "Token bucket rate limiting for creates",
+    "explain": "Per tenant/IP bucket stored in Redis with capacity B and refill rate r; a Lua script atomically refills by elapsed time and takes a token. Allows short bursts while bounding the sustained rate, which is what stops scripted spam link creation.",
+    "pseudocode": "-- KEYS[1]=bucket, ARGV: rate, capacity, now_ms\ntokens, ts = HMGET bucket 'tokens' 'ts'\ntokens = min(capacity, tokens + (now_ms - ts) * rate / 1000)\nif tokens < 1 then return 0 end\nHMSET bucket 'tokens' tokens - 1 'ts' now_ms ; PEXPIRE bucket 60000\nreturn 1\n"
+   }
+  ],
+  "sequence": "Browser        CDN          RedirectSvc      Redis        DynamoDB      Kafka\n   | GET /aZ3k   |                |              |              |            |\n   |------------>| miss           |              |              |            |\n   |             |--------------->| LRU miss     |              |            |\n   |             |                |---GET l:aZ3k>|              |            |\n   |             |                |<--nil--------|              |            |\n   |             |                |---GetItem(aZ3k)------------>|            |\n   |             |                |<--{url,ACTIVE}--------------|            |\n   |             |                |---SET ex 86400>|            |            |\n   |             |                |--offer(click) to buffer (async)--------->|\n   |             |<--302 Location-|              |              |            |\n   |<--302-------|                |              |              |            |\n   | GET long_url (to destination site)                                      |\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Two creates race for the same custom alias",
+   "handling": "Conditional put (attribute_not_exists) makes the store the arbiter; exactly one wins, the other gets 409 and alias suggestions."
+  },
+  {
+   "case": "Client times out and retries a create",
+   "handling": "Idempotency-Key lookup returns the original 201 body; without a key, a second link is created (harmless but noted in docs)."
+  },
+  {
+   "case": "API node crashes holding half a block of IDs",
+   "handling": "Those IDs are simply never used; with 3.5T keyspace losing up to 1M per crash is irrelevant. Uniqueness is unaffected."
+  },
+  {
+   "case": "etcd/ZooKeeper unavailable",
+   "handling": "Nodes keep serving from pre-fetched blocks (refill at 10% remaining = about 100K spare); alert, and creates degrade only after hours."
+  },
+  {
+   "case": "Viral link: 200K clicks/s on one key",
+   "handling": "Edge caches the 302 for 60 s; in-process LRU holds it on every redirect node; Redis shard sees almost nothing. Analytics events are sampled-then-scaled if the per-key Kafka partition lags."
+  },
+  {
+   "case": "Scanner enumerating random keys",
+   "handling": "Negative cache tombstones for 60 s, per-IP 404-rate limiter (e.g. > 50 404s/min -> challenge or block), WAF rules at edge."
+  },
+  {
+   "case": "Link-preview bots (Slack, WhatsApp, Twitter) inflate clicks",
+   "handling": "Classify by UA and known IP ranges; record as is_bot and exclude from default stats; answer HEAD cheaply."
+  },
+  {
+   "case": "Destination becomes malicious after creation (domain hijacked)",
+   "handling": "Periodic rescans weighted by click volume, user reports, domain-level takedown via url_hash/host GSI, 410 interstitial."
+  },
+  {
+   "case": "Redirect loop: short URL points to another short URL of ours",
+   "handling": "Reject our own domains at create; for third-party shorteners, cap chain resolution when scanning at 5 hops."
+  },
+  {
+   "case": "Link expires while cached",
+   "handling": "expires_at is stored with the cached value and checked on every request, so a cached entry never serves past expiry."
+  },
+  {
+   "case": "Destination updated, stale caches serve old URL",
+   "handling": "Update publishes invalidation to Redis and LRU via pub/sub and purges CDN; worst case bounded by LRU TTL 5 s and CDN TTL 60 s."
+  },
+  {
+   "case": "Region failure",
+   "handling": "DNS/anycast fails over to another region; global table already has the data (replication lag about 1 s); links created in the last second in the lost region may 404 briefly - acceptable per requirements."
+  },
+  {
+   "case": "Very long or malformed URLs (unicode, IDN, javascript: scheme)",
+   "handling": "Max 2,048 chars, allow only http/https, punycode-normalise IDN hosts, reject data:/javascript:, percent-encode safely in Location header to prevent header injection."
+  },
+  {
+   "case": "Offensive words appearing in random keys",
+   "handling": "Post-encode check against a profanity list; on hit, skip that ID and take the next one."
+  },
+  {
+   "case": "Kafka outage during a traffic peak",
+   "handling": "Click buffer spools to local disk (bounded, e.g. 5 GB); redirects unaffected; replay when Kafka returns; if disk fills, drop and count dropped events."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "DynamoDB global tables (or Cassandra)",
+   "layer": "Primary store",
+   "overview": "Managed, hash-partitioned key-value/wide-column store with single-digit ms point reads and multi-region active-active replication.",
+   "why": "The access pattern is pure point lookup by key; conditional writes give uniqueness; global tables give regional reads; scaling is automatic.",
+   "alternatives": "Cassandra (self-managed, cheaper at huge scale, LWT for uniqueness is slower); PostgreSQL sharded (strong consistency, easy queries, but you own sharding and failover); MySQL + Vitess."
+  },
+  {
+   "name": "Redis Cluster",
+   "layer": "Cache",
+   "overview": "In-memory data store sharded over 16,384 hash slots, sub-millisecond GET, replicas for failover.",
+   "why": "10 GB working set fits in memory; handles 100K+ ops/s per shard; supports TTLs, pub/sub for invalidation and Lua for rate limiting.",
+   "alternatives": "Memcached (simpler, multithreaded, no persistence or pub/sub); DAX (DynamoDB-native, less flexible)."
+  },
+  {
+   "name": "CDN (CloudFront / Akamai / Cloudflare)",
+   "layer": "Edge",
+   "overview": "Globally distributed caching proxies close to users.",
+   "why": "Caches hot 302s, terminates TLS near users, absorbs DDoS and viral spikes.",
+   "alternatives": "No CDN (simpler but every click crosses oceans); edge compute (Cloudflare Workers + KV) to run the entire redirect at the edge."
+  },
+  {
+   "name": "etcd / ZooKeeper",
+   "layer": "Coordination",
+   "overview": "Raft/ZAB-based strongly consistent small key-value store for coordination.",
+   "why": "A linearizable counter for range allocation; touched once per million IDs.",
+   "alternatives": "A DB sequence table with row lock (fine at this rate); Snowflake-style IDs with worker bits (no coordinator, but 64-bit IDs encode to 11 chars, too long)."
+  },
+  {
+   "name": "Apache Kafka",
+   "layer": "Event stream",
+   "overview": "Partitioned, replicated append-only log with consumer groups and replay.",
+   "why": "Decouples click analytics from redirects, buffers spikes, allows replay after a bug in aggregation.",
+   "alternatives": "Kinesis (managed, shard limits 1 MB/s writes); Pulsar; direct writes to OLAP (couples hot path to analytics)."
+  },
+  {
+   "name": "Apache Flink",
+   "layer": "Stream processing",
+   "overview": "Stateful stream processor with event-time windows, watermarks and exactly-once checkpoints.",
+   "why": "Per-key per-minute aggregation with late-event handling; checkpointed state.",
+   "alternatives": "Kafka Streams (library, simpler ops); Spark Structured Streaming (micro-batch, higher latency); ClickHouse materialized views directly on a Kafka engine table."
+  },
+  {
+   "name": "ClickHouse",
+   "layer": "Analytics store",
+   "overview": "Columnar OLAP database with very fast aggregations and MergeTree engines.",
+   "why": "Dashboards slice billions of clicks by time/country/referrer in under a second; compression keeps cost low.",
+   "alternatives": "Druid/Pinot (real-time ingestion, more moving parts); BigQuery (serverless but higher query latency and per-query cost)."
+  },
+  {
+   "name": "Google Safe Browsing / internal URL reputation",
+   "layer": "Trust and Safety",
+   "overview": "API and local hash-prefix database of known malicious URLs.",
+   "why": "Blocks known phishing/malware at create time within a 100 ms budget using the local prefix list.",
+   "alternatives": "VirusTotal (richer, slower, quota-limited); in-house ML classifier on URL features (needs labelled data)."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "Unique ID generation (counters, range allocation, Snowflake, hashing)",
+   "explain": "Any system that names things needs identifiers that never collide. There are four broad families. First, a single central counter such as a database auto-increment: trivially unique and compact, but it is a single point of failure and a throughput ceiling because every write takes a lock on one row. Second, range or block allocation: a coordinator hands each worker a block of N consecutive numbers with one atomic operation, and the worker hands them out locally. Coordination cost drops by a factor of N, and workers can survive a coordinator outage until their block runs out; the cost is that IDs are only roughly ordered and a crashed worker wastes its unused range. Third, structured IDs like Twitter's Snowflake: 64 bits made of a 41-bit millisecond timestamp, a 10-bit worker ID and a 12-bit per-millisecond sequence, generated with no coordination at all as long as worker IDs are unique and clocks do not go backwards. Instagram used a similar 41/13/10 split inside PostgreSQL. Fourth, content hashing: hash the input (MD5, SHA-256) and take a prefix. This is deterministic, so the same input yields the same ID, but truncating a hash re-introduces collisions by the birthday paradox - with 62^7 possible keys you expect the first collision after only about 1.9 million random keys, so every insert needs a collision check and retry. Random IDs (UUIDv4) avoid coordination but are 128 bits, too long for a short link. The choice is a trade-off among length, ordering, coordination, and predictability.",
+   "in_this_design": "Short keys must be 7 characters, which means the ID must fit in about 41.6 bits (62^7). Snowflake's 64 bits would encode to 11 characters, so we use range allocation: etcd hands each API node a 1M block, one atomic increment per million links. With 400 creates/s peak, a node exhausts a block in hours, so the coordinator is almost idle. A Feistel permutation then scrambles the integer so keys are not sequential, while staying unique.",
+   "key_points": [
+    "Uniqueness from a counter is guaranteed by construction; uniqueness from truncated hashes is probabilistic and needs a check.",
+    "Range allocation turns a per-write coordination cost into a per-block cost.",
+    "Birthday bound: collisions become likely after about sqrt(keyspace) random draws.",
+    "Snowflake IDs need unique worker IDs and monotonic clocks; clock rollback must stall the generator.",
+    "Sequential IDs leak business volume and allow enumeration - permute them."
+   ],
+   "qa": [
+    {
+     "q": "Why not just hash the long URL with MD5 and take 7 characters?",
+     "a": "Because it is probabilistic: by the birthday bound we expect collisions after roughly 1.9M links in a 3.5T space, so every create needs a read-check-retry, and distinct users shortening the same URL would share a key and its analytics. A counter is collision-free by construction."
+    },
+    {
+     "q": "What happens to IDs if a node with an allocated block dies?",
+     "a": "The unused part of the block is lost. That is fine: at 1M per block and 3.5T total space we could lose a block every minute for years. We never try to reclaim, because reclaiming risks double issue."
+    },
+    {
+     "q": "How do you prevent people from guessing the next short link?",
+     "a": "Apply a keyed bijection (a small Feistel network or multiplication by a number coprime to 62^7 modulo 62^7) before encoding. Uniqueness is preserved because it is a permutation, and without the secret consecutive IDs look random. For private links, offer longer 10-12 character random keys."
+    },
+    {
+     "q": "When would you choose Snowflake instead?",
+     "a": "When you need time-ordered 64-bit IDs with zero coordination, for example message or tweet IDs where sorting by ID equals sorting by time, and length is not a user-facing constraint."
+    }
+   ]
+  },
+  {
+   "name": "Base62 encoding and key space sizing",
+   "explain": "Base62 is positional notation with 62 symbols: ten digits, 26 lowercase and 26 uppercase letters. Converting an integer is repeated division by 62, collecting remainders; decoding is a multiply-and-add loop. It is preferred over Base64 for URLs because Base64's '+' and '/' need escaping in URLs, and URL-safe Base64's '-' and '_' are often mangled by people retyping links. Each Base62 character carries log2(62) = 5.95 bits, so k characters give 62^k keys: 6 characters give 56.8 billion, 7 give 3.52 trillion, 8 give 218 trillion. Sizing is a simple calculation: estimate total links over the system lifetime and add a large safety factor because keys are never reused. A common refinement is to remove visually ambiguous characters (0/O, 1/l/I) giving Base57 or Base58 (Bitcoin uses Base58) which helps when links are read aloud or printed. Case sensitivity is another trade-off: some systems treat paths case-insensitively, and humans often mistype case, so a case-insensitive alphabet (Base36) is safer but needs 8 characters for comparable space. Left-padding to a fixed width keeps keys uniform and makes it easy to validate format before touching any cache or database - a cheap filter against garbage requests.",
+   "in_this_design": "We need about 1.2B keys per year; 7 Base62 characters (3.52T) last centuries. Keys are validated against ^[0-9A-Za-z]{7}$ at the edge so malformed requests never reach Redis. Custom aliases use a wider alphabet including '-' and '_' and live in the same table but a distinct namespace check.",
+   "key_points": [
+    "log2(62) is about 5.95 bits per character; 7 chars is about 41.7 bits.",
+    "62^6 = 56.8B, 62^7 = 3.52T, 62^8 = 218T.",
+    "Base62 avoids URL-escaping problems of Base64.",
+    "Base58 trades a little space for human readability.",
+    "Validate key shape at the edge to cheaply reject junk."
+   ],
+   "qa": [
+    {
+     "q": "Why 7 characters and not 6?",
+     "a": "6 gives 56.8B keys, enough for about 47 years at 1.2B/year in theory, but with region bits, wasted blocks and vanity space it gets tight and you can never reuse keys. 7 gives 60x headroom for one extra character."
+    },
+    {
+     "q": "Would you make keys case-insensitive?",
+     "a": "Only if links are commonly typed by hand. Case-insensitive Base36 needs 8 characters for similar space. For links mostly clicked or scanned, case-sensitive Base62 is the better trade."
+    },
+    {
+     "q": "How do you avoid offensive words in generated keys?",
+     "a": "Either remove vowels from the alphabet so words cannot form, or check generated keys against a blocklist and skip IDs that match. Skipping is fine because the ID space is abundant."
+    }
+   ]
+  },
+  {
+   "name": "Caching patterns (cache-aside, read-through, write-through, negative caching, stampede protection)",
+   "explain": "A cache stores the results of expensive reads in faster storage. In cache-aside (lazy loading) the application checks the cache, and on a miss reads the database and populates the cache; only requested data is cached, but the first read is slow and stale data persists until TTL or invalidation. Read-through moves that logic into the cache layer. Write-through writes to the cache and the database together, so the cache is always warm for new items but you may cache items that are never read. Write-behind acknowledges after writing the cache and flushes asynchronously - fast but risks loss. Eviction policy matters: LRU evicts the least recently used item and suits recency-skewed workloads; LFU suits stable popularity. Two classic failure modes: the thundering herd or cache stampede, where a hot key expires and thousands of concurrent requests all miss and hammer the database at once - fixed with request coalescing (singleflight), probabilistic early refresh, or a short lock; and cache penetration, where requests for keys that do not exist always miss and hit the database - fixed by negative caching (store a tombstone with a short TTL) or a Bloom filter of existing keys. Multi-tier caching (in-process, distributed, CDN) trades freshness for latency at each layer, so invalidation must reach every tier or TTLs must bound staleness.",
+   "in_this_design": "The redirect path is cache-aside across three tiers: in-process LRU (5 s TTL, top 100K keys), Redis (24 h TTL), CDN for the hottest keys (60 s). New links are written through to Redis because creators often click their own link immediately. Unknown keys get a 60 s tombstone to blunt scanners, and singleflight collapses concurrent misses per node.",
+   "key_points": [
+    "Zipf-like skew is why a 10 GB cache gives > 95% hit ratio.",
+    "Short TTL at the outermost tier bounds staleness after updates or takedowns.",
+    "Negative caching stops cache penetration from scanners.",
+    "Singleflight or a short lock prevents stampedes on hot-key expiry.",
+    "Cache values must carry enough state (status, expires_at) to make the decision without the DB."
+   ],
+   "qa": [
+    {
+     "q": "A viral link's Redis entry expires and DB load spikes. What happened and how do you fix it?",
+     "a": "Cache stampede: thousands of concurrent misses each query the database. Fix with singleflight per key per node, jittered TTLs so hot keys do not expire together, and probabilistic early refresh where a request near expiry refreshes in the background."
+    },
+    {
+     "q": "Would a Bloom filter help here?",
+     "a": "Yes for penetration: a Bloom filter of all existing keys (3.5B keys at 1% FPR is about 4 GB) lets you reject unknown keys without a DB read. Negative caching is simpler and handles most scanner traffic, so I would add the Bloom filter only if 404 traffic becomes significant."
+    },
+    {
+     "q": "How do you ensure a takedown is not undone by a stale cache?",
+     "a": "Invalidate actively (pub/sub to all redirect nodes, Redis DEL, CDN purge) and bound worst-case staleness with short TTLs on the outer tiers. Cached values include status so a refreshed entry is immediately correct."
+    },
+    {
+     "q": "Why write-through on create rather than pure cache-aside?",
+     "a": "Creators and their audiences click new links within seconds; write-through avoids a guaranteed miss and protects against replication lag in the DB making a fresh link look missing."
+    }
+   ]
+  },
+  {
+   "name": "Data partitioning and consistent hashing",
+   "explain": "When data outgrows one machine it is split into partitions (shards). Range partitioning assigns contiguous key ranges to shards, which supports range scans but creates hot spots when keys are sequential (all new writes land on the last shard). Hash partitioning applies a hash function to the key and maps the hash to a shard, spreading load evenly but giving up efficient range queries. Naive hash mod N has a problem: changing N remaps almost every key, forcing a massive data move. Consistent hashing places both nodes and keys on a ring of hash values; each key belongs to the first node clockwise. Adding or removing a node moves only about 1/N of the keys. Virtual nodes (each physical node owns many points on the ring) smooth out imbalance and let bigger machines take more load. Redis Cluster uses a variant: 16,384 fixed hash slots assigned to nodes, with slots migrating between nodes. DynamoDB and Cassandra hash the partition key and split partitions automatically when they get hot or large. Choosing the partition key is the critical design decision: it must have high cardinality, spread traffic evenly, and match the dominant access pattern so most requests touch exactly one partition.",
+   "in_this_design": "The partition key is domain#short_key, which is high-cardinality and uniformly distributed because the permuted IDs are scattered. Every redirect is a single-partition point read. Redis Cluster hashes keys into 16,384 slots, so adding a cache shard moves about 1/N of slots. Kafka click events are partitioned by short_key so per-key aggregation is local to one Flink task.",
+   "key_points": [
+    "Partition key = the key of your dominant access pattern.",
+    "Hash partitioning spreads load; range partitioning enables scans.",
+    "Consistent hashing moves about 1/N of keys on membership change; mod-N moves nearly all.",
+    "Virtual nodes or fixed slots fix ring imbalance.",
+    "Sequential keys plus range partitioning = hot last shard."
+   ],
+   "qa": [
+    {
+     "q": "If you used raw sequential IDs as range-partitioned keys, what goes wrong?",
+     "a": "All new writes go to the shard owning the highest range, and new links are also the hottest for reads, so one shard takes most traffic. Hashing or permuting the key spreads it."
+    },
+    {
+     "q": "How do you handle a single key that is too hot for its partition?",
+     "a": "Do not shard further - replicate the value: CDN and in-process caches absorb it. For writes (like a counter on a hot key) you would split into N sub-counters and sum on read."
+    },
+    {
+     "q": "Redis Cluster vs a consistent hash ring - what is the difference?",
+     "a": "Redis uses 16,384 fixed slots mapped to nodes, so rebalancing moves whole slots and clients learn the map via MOVED redirects. A ring maps hashes directly to node tokens. Both bound data movement on scaling; slots make ownership explicit and easy to reason about."
+    }
+   ]
+  },
+  {
+   "name": "Replication, consistency and multi-region (CAP / PACELC)",
+   "explain": "Replication keeps copies of data on multiple machines for durability, availability and read scaling. In leader-follower replication one node takes writes and streams them to followers; reads from followers may be stale (replication lag). In leaderless systems like Dynamo and Cassandra a write goes to N replicas and succeeds when W acknowledge; reads query R replicas, and if R + W > N the read set overlaps the write set so you see the latest acknowledged write. Multi-region active-active setups replicate asynchronously between regions and resolve conflicts, often with last-writer-wins timestamps. The CAP theorem says that during a network partition you must choose between consistency (refuse some requests) and availability (answer with possibly stale data). PACELC extends it: Else, when there is no partition, you still trade Latency against Consistency, because waiting for remote replicas adds latency. Most user-facing read paths choose availability and low latency with bounded staleness, and protect correctness-critical writes with conditional operations or a single home region for the record. Read-your-writes consistency - a user always sees their own changes - can be achieved by routing their reads to the region they wrote to or by writing through a cache.",
+   "in_this_design": "Redirects are AP/EL: every region serves from its local replica of a DynamoDB global table; replication lag is about 1 s. Uniqueness is protected because each region has its own ID block range, so two regions never generate the same key. Custom aliases are the exception: they are written in a single home region with a strongly consistent conditional put to prevent two regions granting the same alias.",
+   "key_points": [
+    "R + W > N gives overlapping quorums and reads see the latest acknowledged write.",
+    "CAP is about partitions; PACELC adds the everyday latency/consistency trade.",
+    "Avoid conflicts by construction (region-partitioned ID ranges) rather than resolving them.",
+    "Single-home region for globally unique user-chosen names.",
+    "Write-through cache gives creators read-your-writes."
+   ],
+   "qa": [
+    {
+     "q": "Two regions accept the same custom alias simultaneously. How do you prevent it?",
+     "a": "Route all alias claims to one home region (or use a strongly consistent store like Spanner/a single DynamoDB region with conditional put). Global tables use last-writer-wins, which would silently overwrite one claim, so they are wrong for this specific write."
+    },
+    {
+     "q": "Is eventual consistency acceptable for redirects?",
+     "a": "Yes. The mapping is immutable after creation except rare updates, so staleness only matters for the first second after creation in another region and for destination updates, both bounded by replication lag and cache TTLs."
+    },
+    {
+     "q": "What does PACELC say about your design?",
+     "a": "It is PA/EL: under partition we keep serving redirects from local replicas; otherwise we choose low latency local reads over cross-region consistent reads."
+    }
+   ]
+  },
+  {
+   "name": "Asynchronous event pipelines and at-least-once delivery",
+   "explain": "Decoupling a hot path from secondary work is done by emitting events to a durable log and letting consumers process them later. The producer's latency then depends only on handing the event off, not on downstream processing. Delivery semantics matter. At-most-once: send and forget, events can be lost. At-least-once: retry until acknowledged, events can be duplicated. Exactly-once: each event affects the result once, which in practice is achieved as at-least-once delivery plus idempotent or transactional processing (Kafka's idempotent producer and transactions, Flink checkpoints with two-phase commit sinks). Buffers between producer and log need backpressure policies: block the producer (bad on a latency-critical path), drop events (lose data), or spill to disk. Stream processors aggregate events in windows based on event time, and use watermarks to decide when a window is complete while allowing some lateness, because mobile and network delays make events arrive out of order. Keeping raw events in cheap storage lets you reprocess when the aggregation logic has a bug - the log becomes the source of truth for analytics.",
+   "in_this_design": "Click events are emitted from a bounded in-memory buffer, batched to Kafka every 50 ms with acks=all and the idempotent producer. If Kafka is unreachable the buffer spills to local disk; if the disk budget is exhausted events are dropped and counted, never blocking a redirect. Flink aggregates by key per minute with 10 minutes of allowed lateness and dedupes by event_id within the window.",
+   "key_points": [
+    "Never put analytics on the critical path of a redirect.",
+    "At-least-once plus idempotent processing equals effectively-once.",
+    "Backpressure choice on a hot path: spill or drop, never block.",
+    "Event time plus watermarks handle out-of-order events.",
+    "Keep raw events to allow replay and backfill."
+   ],
+   "qa": [
+    {
+     "q": "Why not increment a counter in Redis on every click?",
+     "a": "It works for a single counter but couples the hot path to another network call, gives no dimensions (country, referrer), and is lost if Redis fails. A log-based pipeline gives replay, enrichment and decoupling."
+    },
+    {
+     "q": "How do you avoid double counting when the producer retries?",
+     "a": "Enable Kafka's idempotent producer (sequence numbers per partition) and give each event a UUID that Flink dedupes on within the window; downstream sinks write with Flink checkpoints for exactly-once state."
+    },
+    {
+     "q": "What happens to analytics during a Kafka outage?",
+     "a": "Redirect nodes spool events to disk and replay later; dashboards show a delay but no loss unless the spool budget is exceeded, in which case we record how many events were dropped so stats can be flagged as partial."
+    }
+   ]
+  },
+  {
+   "name": "Rate limiting (token bucket, sliding window)",
+   "explain": "Rate limiting bounds how fast a client can consume a resource, protecting capacity and deterring abuse. The fixed window counter counts requests per calendar interval; it is cheap but allows double bursts at window edges. The sliding window log stores every request timestamp and is exact but memory-heavy. The sliding window counter approximates by weighting the previous window's count, a good compromise. The token bucket holds up to B tokens refilled at rate r; each request takes a token, allowing bursts of B while capping the sustained rate at r. Leaky bucket smooths output to a constant rate. In a distributed system the state must be shared (Redis with atomic Lua scripts) or approximated locally per node with the global limit divided among nodes. Limits are keyed on identity - API key, user, IP, or IP prefix - and responses should return 429 with Retry-After so well-behaved clients back off.",
+   "in_this_design": "Creates are limited per tenant and per IP with a Redis token bucket (anonymous: burst 10, 10/min). Redirects are not rate limited per key, but 404 responses are limited per IP to stop enumeration, and the CDN's WAF applies coarse per-IP limits for DDoS.",
+   "key_points": [
+    "Token bucket = burst capacity B plus sustained rate r.",
+    "Use atomic Lua scripts in Redis to avoid race conditions in check-then-set.",
+    "Key limits on the identity that matches the abuse vector.",
+    "Return 429 with Retry-After.",
+    "Fail open for availability-critical paths if the limiter store is down."
+   ],
+   "qa": [
+    {
+     "q": "Your Redis limiter is down - fail open or closed?",
+     "a": "For creates I would fail open with a local per-node fallback limit, because blocking all creates is worse than briefly allowing extra; for anonymous traffic during an active abuse incident I might fail closed."
+    },
+    {
+     "q": "Why token bucket over fixed window?",
+     "a": "Fixed window allows 2x the limit at window boundaries and gives no burst shaping; token bucket gives a clean burst allowance and smooth sustained rate with O(1) state."
+    },
+    {
+     "q": "How would you limit scanners hitting random keys?",
+     "a": "Rate limit 404s per IP and /24 prefix rather than all requests, since legitimate users rarely hit 404s; escalate to CAPTCHA or block at the WAF."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Key generation strategy",
+   "options": "Hash of URL + collision check; random + check; central counter; range-allocated counter; Snowflake",
+   "choice": "Range-allocated counter with keyed permutation",
+   "why": "No collisions by construction, 7-char keys, coordinator touched once per million, non-guessable after permutation."
+  },
+  {
+   "decision": "301 vs 302 redirect",
+   "options": "301 permanent (browser caches), 302/307 temporary",
+   "choice": "302",
+   "why": "Every click reaches us so analytics and takedowns work; 301 would be cached by browsers indefinitely and a disabled malicious link would keep redirecting."
+  },
+  {
+   "decision": "Primary store",
+   "options": "Sharded PostgreSQL; DynamoDB/Cassandra; Redis only",
+   "choice": "DynamoDB global tables",
+   "why": "Point lookups only, auto-partitioning, multi-region; relational features are not needed. Redis-only risks durability."
+  },
+  {
+   "decision": "Dedupe same long URL",
+   "options": "Return existing key; always new key",
+   "choice": "New key per request (optional dedupe for anonymous)",
+   "why": "Separate keys give separate analytics per campaign; dedupe requires a URL-hash index and leaks that someone else shortened the URL."
+  },
+  {
+   "decision": "Analytics ingestion",
+   "options": "Synchronous DB write; Redis counter; async Kafka pipeline",
+   "choice": "Async Kafka + Flink",
+   "why": "Keeps redirect latency independent of analytics, enables enrichment and replay."
+  },
+  {
+   "decision": "Edge caching of redirects",
+   "options": "Never cache; cache all; cache only hot keys briefly",
+   "choice": "Hot keys, 60 s",
+   "why": "Absorbs spikes while bounding takedown staleness and only slightly undercounting (edge logs can be merged)."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Redis cluster node failure",
+   "behavior": "Replica promoted in about 10-15 s; meanwhile misses go to the DB with singleflight and a concurrency limit; in-process LRU covers hot keys."
+  },
+  {
+   "failure": "Primary store throttling or regional outage",
+   "behavior": "Redirects for cached keys continue; cold keys return 503 after a 50 ms timeout with one jittered retry; traffic shifts to another region via DNS."
+  },
+  {
+   "failure": "ID coordinator down",
+   "behavior": "No impact until local blocks run low (hours); alerts fire; creates fail only after pre-fetched IDs are exhausted."
+  },
+  {
+   "failure": "Kafka unavailable",
+   "behavior": "Click events spool to disk, redirects unaffected, analytics lag grows and is shown on dashboards."
+  },
+  {
+   "failure": "Safe Browsing API slow",
+   "behavior": "100 ms timeout; link created as PENDING_SCAN, redirects through a warning interstitial until the async scan clears it (configurable per tenant)."
+  },
+  {
+   "failure": "Bad deploy of redirect service",
+   "behavior": "Canary at 1% with automated rollback on 5xx or p99 regression; redirect service changes rarely and is separate from the API."
+  }
+ ],
+ "metrics": [
+  "Redirect latency p50/p99 at origin and at edge, per region.",
+  "Cache hit ratio per tier (LRU, Redis, CDN) and DB read QPS.",
+  "Redirect status mix: 302 vs 404 vs 410 vs 5xx; 404 rate per IP prefix.",
+  "Create latency and error rate, Safe Browsing timeout rate.",
+  "ID block remaining per node and coordinator health.",
+  "Click buffer fill level, disk spool size, dropped events count.",
+  "Kafka consumer lag and analytics freshness (event time to visible).",
+  "Takedown propagation time (flag to first 410 at every region)."
+ ],
+ "follow_ups": [
+  {
+   "q": "How would you support 10x more traffic tomorrow?",
+   "a": "Reads scale horizontally: more redirect pods, more Redis shards (slots migrate), more CDN caching. DynamoDB on-demand absorbs cold reads. Writes at 4K/s are still trivial; the ID allocator is untouched. Analytics needs more Kafka partitions and Flink parallelism, planned ahead because repartitioning changes key-to-partition mapping."
+  },
+  {
+   "q": "Can you build it without any coordinator?",
+   "a": "Yes: give each node a static unique worker ID and build IDs from worker ID plus a local counter persisted in blocks, or use random keys with a conditional put and retry on collision. At 7 characters random keys collide rarely at first but probability grows with fill; at 0.03%/year fill the retry rate is negligible, so this is a reasonable alternative."
+  },
+  {
+   "q": "Why not run the whole redirect at the edge?",
+   "a": "That is a valid evolution: Cloudflare Workers with KV can serve redirects at the edge, removing origin round trips. The trade-offs are eventually consistent KV (seconds to propagate), vendor lock-in, and doing analytics from edge logs. I would start with origin plus CDN and move the top hot set to the edge."
+  },
+  {
+   "q": "How do you handle a request for analytics on a link with 1B clicks?",
+   "a": "Dashboards read pre-aggregated per-minute and per-hour rollups in ClickHouse, not raw events; queries scan rollup rows bounded by time range, so a billion clicks is a few hundred thousand rows."
+  },
+  {
+   "q": "What if a link's owner wants to change the destination?",
+   "a": "Allowed for paid tiers. Update the row, rescan the new URL, invalidate all cache tiers, and keep a version history for audit. Because we use 302, browsers pick up the change immediately."
+  },
+  {
+   "q": "How do you delete user data for privacy requests?",
+   "a": "Mark links deleted (keys retired, not reused), delete owner PII, and purge raw click events by key via partition-level deletes in S3/ClickHouse within the SLA; aggregates without personal data can remain."
+  },
+  {
+   "q": "How would you detect phishing that Safe Browsing misses?",
+   "a": "Signals: new account, many links to newly registered domains, lookalike brand names in the URL, sudden click spikes from email referrers. Feed into a classifier, send suspicious links to an interstitial, and allow user reports."
+  }
+ ],
+ "key_points": [
+  "It is a read-heavy key-value problem: 100:1 reads, 40K redirects/s peak, so design the cache first.",
+  "7 Base62 characters = 3.5 trillion keys; we use 0.03% per year.",
+  "Range-allocated counters give collision-free keys with one coordinator call per million; permute to stop enumeration.",
+  "302 not 301, because analytics and takedowns require every click to reach us.",
+  "Redirect service is separate, tiny and boring; analytics is async through Kafka and never blocks a redirect.",
+  "Three cache tiers with negative caching and singleflight handle viral keys and scanners.",
+  "Conditional writes make the store the arbiter for custom alias races.",
+  "Abuse is a first-class requirement: scan on create, rescan, global takedown in under 60 s.",
+  "Multi-region active-active reads; region-partitioned ID ranges avoid write conflicts."
+ ],
+ "quiz": [
+  {
+   "q": "Roughly how many unique keys do 7 Base62 characters provide?",
+   "options": [
+    "56.8 billion",
+    "3.5 trillion",
+    "218 trillion",
+    "4.3 billion"
+   ],
+   "answer": 1,
+   "why": "62^7 is about 3.52 trillion. 56.8 billion is 62^6 - the tempting answer if you miscount by one character."
+  },
+  {
+   "q": "Why does a URL shortener that sells click analytics usually return 302 instead of 301?",
+   "options": [
+    "302 is faster for browsers to follow",
+    "301 is not supported by mobile browsers",
+    "Browsers cache 301 so repeat clicks never reach the service",
+    "302 allows POST bodies to be forwarded"
+   ],
+   "answer": 2,
+   "why": "A 301 is cached by the browser, so later clicks bypass the service and are not counted and cannot be blocked. Speed is not the difference; both are a single round trip."
+  },
+  {
+   "q": "You take the first 7 Base62 characters of an MD5 hash as the key. Approximately when do collisions become likely?",
+   "options": [
+    "After about 2 million links",
+    "After about 3.5 trillion links",
+    "Never, MD5 is collision resistant",
+    "After about 1 billion links"
+   ],
+   "answer": 0,
+   "why": "Birthday bound: about sqrt(62^7) = 1.9 million. MD5's full-length collision resistance is irrelevant once truncated to 42 bits."
+  },
+  {
+   "q": "Peak redirect QPS is 40K and Redis hit ratio drops from 98% to 90%. How does DB read load change?",
+   "options": [
+    "It rises about 10%",
+    "It doubles",
+    "It rises about 5x",
+    "It is unchanged because of replicas"
+   ],
+   "answer": 2,
+   "why": "Misses go from 2% to 10% of 40K: 800/s to 4,000/s, a 5x increase. Small hit-ratio changes are large relative changes in miss traffic - a common trap."
+  },
+  {
+   "q": "What is the main benefit of range-allocated ID blocks over a single DB auto-increment?",
+   "options": [
+    "IDs become globally time-ordered",
+    "Coordination happens once per block instead of per write",
+    "IDs become unguessable",
+    "It removes the need for a database"
+   ],
+   "answer": 1,
+   "why": "Each node gets 1M IDs per atomic call. Ordering actually gets weaker, and unguessability needs a separate permutation step."
+  },
+  {
+   "q": "A hot key's cache entry expires and DB CPU spikes for a few seconds. Best fix?",
+   "options": [
+    "Increase DB instance size",
+    "Use 301 redirects",
+    "Disable the cache for hot keys",
+    "Request coalescing (singleflight) plus jittered TTLs"
+   ],
+   "answer": 3,
+   "why": "That is a stampede: concurrent misses on one key. Coalescing collapses them into one DB read; bigger DBs only hide the symptom."
+  },
+  {
+   "q": "Scanners request millions of random non-existent keys. Which technique most directly protects the DB?",
+   "options": [
+    "Negative caching of unknown keys",
+    "Write-through caching",
+    "Increasing Redis memory",
+    "Longer TTL for existing keys"
+   ],
+   "answer": 0,
+   "why": "Cache penetration is solved by caching the 'not found' result (or a Bloom filter). Write-through only helps keys that exist."
+  },
+  {
+   "q": "Two users in different regions request the same custom alias at the same time on a multi-region last-writer-wins table. What happens?",
+   "options": [
+    "Both get 409",
+    "One silently overwrites the other unless alias claims go to a single home region",
+    "The DB rejects the second write",
+    "Both succeed with different keys"
+   ],
+   "answer": 1,
+   "why": "LWW replication resolves conflicts by timestamp, so one claim silently wins after both were told 201. Conditional puts are only atomic within one region."
+  },
+  {
+   "q": "Why apply a Feistel permutation to counter IDs before Base62 encoding?",
+   "options": [
+    "To compress the ID",
+    "To make collisions less likely",
+    "To make keys non-sequential while keeping them unique",
+    "To make keys case-insensitive"
+   ],
+   "answer": 2,
+   "why": "A permutation is a bijection, so uniqueness is preserved and sequential IDs look random. It does not affect collision probability, which is already zero."
+  },
+  {
+   "q": "Kafka is down for 10 minutes. What should the redirect service do with click events?",
+   "options": [
+    "Return 503 to preserve data integrity",
+    "Write clicks synchronously to DynamoDB",
+    "Block until Kafka recovers",
+    "Spool to local disk with a bounded budget and replay later"
+   ],
+   "answer": 3,
+   "why": "Redirects must never depend on analytics. Synchronous DB writes would couple redirect latency to a new dependency and multiply DB load."
+  },
+  {
+   "q": "Approximately how much link data is added per year at 100M links/month and 500 bytes each, before replication?",
+   "options": [
+    "6 GB",
+    "60 GB",
+    "600 GB",
+    "6 TB"
+   ],
+   "answer": 2,
+   "why": "1.2B x 500 B = 600 GB/year. 6 TB is the 10-year total."
+  },
+  {
+   "q": "Which partition key best fits the redirect access pattern?",
+   "options": [
+    "created_at",
+    "owner_id",
+    "short_key (hashed)",
+    "long_url"
+   ],
+   "answer": 2,
+   "why": "Every redirect is a point lookup by short key. owner_id would make big accounts hot and require a scan to find a key."
+  },
+  {
+   "q": "Why keep the redirect service separate from the link-management API?",
+   "options": [
+    "Different programming languages are required",
+    "So that feature deploys and heavy queries cannot degrade the hot path",
+    "Because Redis cannot be shared",
+    "To save on TLS certificates"
+   ],
+   "answer": 1,
+   "why": "Bulkheading: the redirect path has a 99.99% target and tiny code; isolating it limits blast radius. The other options are not real constraints."
+  },
+  {
+   "q": "A link is taken down. Which bounds how long the CDN can still redirect to the bad URL if the purge call fails?",
+   "options": [
+    "The Redis TTL of 24 h",
+    "The DynamoDB replication lag",
+    "The CDN cache TTL for that response (60 s)",
+    "The browser's 301 cache"
+   ],
+   "answer": 2,
+   "why": "The edge holds its own copy for its TTL. Redis TTL is irrelevant because Redis gets an explicit DEL, and we do not use 301."
+  },
+  {
+   "q": "Which is the best reason to dedupe identical long URLs into one key for anonymous users only?",
+   "options": [
+    "It saves meaningful storage",
+    "It improves redirect latency",
+    "Logged-in users want separate analytics per link, anonymous users do not see analytics",
+    "It prevents collisions"
+   ],
+   "answer": 2,
+   "why": "Storage saved is tiny at 500 B/link. The real reason is product: per-campaign stats for account users."
+  },
+  {
+   "q": "Token bucket with capacity 10 and refill 10/min: a client idle for 5 minutes sends 15 requests instantly. How many succeed?",
+   "options": [
+    "15",
+    "10",
+    "50",
+    "1"
+   ],
+   "answer": 1,
+   "why": "Tokens cap at capacity, so only 10 are available; 50 is the tempting answer if you forget the cap."
+  },
+  {
+   "q": "Why is eventual consistency acceptable for the redirect read path?",
+   "options": [
+    "Mappings are effectively immutable, so staleness only affects the first second after creation or rare updates",
+    "DynamoDB does not offer strong reads",
+    "Redirects are not important",
+    "Clients retry automatically"
+   ],
+   "answer": 0,
+   "why": "Immutability makes stale reads almost always correct. DynamoDB does offer strongly consistent reads in a region, so that is not the reason."
+  },
+  {
+   "q": "Analytics shows 30% more clicks than the customer's own site logs. Most likely cause?",
+   "options": [
+    "Kafka duplicates",
+    "Link-preview bots and crawlers counted as clicks",
+    "Clock skew",
+    "CDN caching"
+   ],
+   "answer": 1,
+   "why": "Slack, WhatsApp and social previews fetch every link posted. CDN caching would undercount, not overcount, and idempotent producers keep duplicates far below 30%."
+  },
+  {
+   "q": "Which statement about Snowflake IDs for this system is correct?",
+   "options": [
+    "They need a central coordinator per ID",
+    "They are random and unordered",
+    "They fit easily in 7 Base62 characters",
+    "Their 64 bits encode to about 11 Base62 characters, too long for a short link"
+   ],
+   "answer": 3,
+   "why": "64 bits / 5.95 bits per char is about 11 characters. Snowflake needs no per-ID coordinator - only unique worker IDs."
+  },
+  {
+   "q": "Redirect p99 jumps from 15 ms to 300 ms while p50 is unchanged. Which is the most likely first suspect?",
+   "options": [
+    "The CDN is down",
+    "Cache misses hitting a throttled DB partition or GC pauses",
+    "Base62 decoding is slow",
+    "Kafka consumer lag"
+   ],
+   "answer": 1,
+   "why": "A tail-only regression points to the slow path (misses) or pauses. A CDN outage would shift p50 too; consumer lag does not affect the redirect path."
+  },
+  {
+   "q": "Why is IP address truncated to /24 in stored click events?",
+   "options": [
+    "To save Kafka bandwidth",
+    "Privacy: enough for geo analytics without storing a personal identifier",
+    "Because IPv6 is unsupported",
+    "To improve partitioning"
+   ],
+   "answer": 1,
+   "why": "Truncation minimises personal data under privacy laws while keeping country/city accuracy. Bandwidth savings are trivial."
+  },
+  {
+   "q": "Which change best reduces end-user latency for users in India hitting a US-only origin?",
+   "options": [
+    "Bigger Redis cluster in the US",
+    "Switching to 301",
+    "Serving redirects from regional replicas or the edge in India",
+    "Shorter keys"
+   ],
+   "answer": 2,
+   "why": "A trans-Pacific round trip is about 200-250 ms; only moving the lookup closer removes it. 301 helps only repeat clicks and breaks analytics."
+  }
+ ],
+ "references": [
+  {
+   "title": "System Design: URL Shortener (TinyURL/Bitly) - techinterview.org",
+   "url": "https://www.techinterview.org/post/3233474158/system-design-url-shortener-tinyurl-bitly-base62-encoding-key-generation-analytics-redirection-caching-database/"
+  },
+  {
+   "title": "bit.ly system design - building a url shortener",
+   "url": "https://tautik.bearblog.dev/url-shortener/"
+  },
+  {
+   "title": "Design a URL Shortener - Codemia",
+   "url": "https://codemia.io/practice/design-a-url-shortener"
+  },
+  {
+   "title": "Sharding & IDs at Instagram",
+   "url": "https://instagram-engineering.com/1cf5a71e5a5c"
+  }
+ ]
+}

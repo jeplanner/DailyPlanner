@@ -1,0 +1,1153 @@
+{
+ "slug": "job-queue",
+ "title": "Design a Job Queue (background task processing)",
+ "prompt": "Design a job queue for background tasks.",
+ "group": "messaging",
+ "source": "beyz",
+ "difficulty": "Medium",
+ "minutes": 90,
+ "summary": "A job queue decouples the request path from slow or flaky work (emails, invoices, image resizing, refunds) so the user gets a fast answer and the work still happens. The core tension is that you can never make delivery exactly-once across a network: you choose at-least-once with leases, retries and idempotent handlers, and then spend the design budget on durability, fairness between tenants, backpressure when workers fall behind, and making poison jobs visible instead of silently looping.",
+ "framework": {
+  "clarify": [
+   "What kinds of jobs: short (under 1s, e.g. send push) versus long (minutes, e.g. report export)? I will assume most are under 5s and a long tail up to 15 minutes.",
+   "Scale: assume 100M jobs per day on normal days and 10x bursts during sale events, peak around 15k enqueues per second.",
+   "Delivery guarantee: is at-least-once acceptable if handlers are idempotent? I will assume yes; exactly-once side effects are the handler's job using idempotency keys.",
+   "Do we need delayed and scheduled jobs (run at T, retry after backoff) and recurring cron-like jobs? Assume delayed yes, cron is a thin layer on top.",
+   "Ordering: global FIFO is not required; best-effort FIFO per queue, strict ordering only per ordering key when a producer asks for it.",
+   "Multi-tenancy: many teams share the platform, so one noisy queue must not starve others. Need per-queue concurrency and rate limits.",
+   "Durability: once enqueue returns 200 the job must survive a node or AZ loss (RPO 0 for acked jobs).",
+   "Visibility: producers want job status and results; operators want DLQ inspection and redrive."
+  ],
+  "design": [
+   "Baseline first: a single Postgres table jobs(id, queue, status, run_at, attempts) and workers doing SELECT ... FOR UPDATE SKIP LOCKED. Works to roughly 1-5k jobs/s; say this out loud and then scale it.",
+   "Enqueue path: stateless Enqueue API validates, assigns a ULID job_id, checks the optional dedup key, writes to a Kafka topic (acks=all, min.insync.replicas=2) and returns 202 with the job_id.",
+   "Relay (dispatcher) consumes Kafka partitions and moves due jobs into a Ready Store (Redis sorted sets per queue shard, score = run_at); future jobs go to a delay set. Kafka offsets commit only after the Redis write succeeds.",
+   "Workers pull with Lease(queue, max=10, visibility=30s): an atomic Lua script pops ready jobs and records them in an in-flight set with deadline now+30s. Workers heartbeat to extend, then Ack or Nack.",
+   "Reaper returns expired leases to ready; Nack schedules a retry with exponential backoff plus jitter; after max_attempts the job goes to a DLQ topic with the last error.",
+   "Job State Store (sharded MySQL or DynamoDB keyed by job_id) keeps status, attempts, last_error and result pointer for GET /jobs/{id} and audit, TTL 7 days.",
+   "Control plane (queue registry in etcd/Consul): per-queue max_attempts, backoff policy, visibility timeout, concurrency cap, rate limit, priority class."
+  ],
+  "defend": [
+   "Bottleneck: the Ready Store shard for a hot queue. Fix by splitting a queue into N virtual shards (queue#0..queue#15) and having workers lease round-robin across shards.",
+   "Scale writes: Kafka absorbs bursts (it is a sequential append log, 50-100 MB/s per partition); if workers fall behind the backlog grows in Kafka, not in Redis memory, which is exactly the failure Slack hit with Redis-only queues.",
+   "Scale reads/dequeue: workers lease in batches of 10-100 and use long polling (wait up to 20s) so empty queues do not hammer Redis; autoscale worker pools on lag and oldest-job age.",
+   "Failure behaviour: worker crash means the lease expires and the job is redelivered; Redis shard loss is recovered by replaying Kafka from the last committed offset; retries use full jitter; poison jobs are quarantined to a DLQ after 5 attempts; per-queue bulkheads stop one queue from eating all worker slots.",
+   "Measure: enqueue rate, dequeue rate, queue depth, age of oldest ready job (the SLO metric), lease expiries, retry rate, DLQ inflow, handler p99, and end-to-end latency from enqueue to start.",
+   "Degradation: under overload shed low-priority queues first (bulk email before payment refunds), and pause relaying for a queue rather than dropping its jobs."
+  ],
+  "script": "Let me clarify first. I will assume around 100 million jobs a day with sale-day peaks of 15 thousand per second, mostly short jobs with a tail up to 15 minutes, many teams sharing the platform, and at-least-once delivery with idempotent handlers, because exactly-once delivery over a network is not achievable. Once enqueue returns, the job must survive an AZ loss. For the design, I will start with the simplest thing, a Postgres table with SKIP LOCKED, and show where it breaks. Then the scaled version: a stateless enqueue API writing to Kafka with acks all as the durable buffer, a relay that moves due jobs into Redis sorted sets per queue shard, and workers that lease jobs with a 30 second visibility timeout, heartbeat, and ack. Failures go back with exponential backoff and jitter, and after five attempts into a dead letter queue. A state store answers job status. To defend it: Kafka absorbs bursts so Redis never fills up, hot queues are split into virtual shards, every queue has concurrency and rate limits so one team cannot starve another, and the SLO I alert on is the age of the oldest ready job per queue."
+ },
+ "brd": {
+  "problem": "Product teams run slow, failure-prone work inline in user requests (sending invoices, refund calls to payment gateways, image processing, seller notifications). This inflates checkout latency, fails user requests when a downstream is flaky, and loses work when a pod restarts mid-task. Each team has built its own cron-plus-table solution with different bugs. We need one shared, reliable background job platform.",
+  "goals": [
+   "Move slow work off the request path so user-facing p99 drops and the user gets an immediate acknowledgement.",
+   "Guarantee that an accepted job is never lost and is eventually executed or explicitly dead-lettered.",
+   "Give every team self-service queues with retries, delays, rate limits and a DLQ without building infra.",
+   "Isolate tenants so one team's backlog or bad deploy cannot starve other teams' jobs.",
+   "Make failures visible: job status, error reasons, DLQ redrive, and per-queue dashboards."
+  ],
+  "non_goals": [
+   "Exactly-once execution of arbitrary side effects; the platform gives at-least-once plus tools for idempotency.",
+   "Complex workflow orchestration with branching and compensation (that is a workflow engine like Temporal).",
+   "Stream processing with windowing and joins (that is Flink/Kafka Streams).",
+   "Sub-10ms dispatch latency for real-time messaging."
+  ],
+  "stakeholders": [
+   {
+    "who": "Product engineering teams (checkout, seller, notifications)",
+    "needs": "A simple enqueue API, reliable retries, and clear status for their jobs."
+   },
+   {
+    "who": "SRE / platform team",
+    "needs": "Predictable capacity, per-queue isolation, runbooks for backlog and DLQ."
+   },
+   {
+    "who": "Finance and payments",
+    "needs": "No lost or double refunds and settlement jobs; audit trail."
+   },
+   {
+    "who": "Customer support",
+    "needs": "Ability to see whether a customer's refund or invoice job ran and why it failed."
+   },
+   {
+    "who": "Security",
+    "needs": "Payload encryption for PII and access control per queue."
+   }
+  ],
+  "success_metrics": [
+   {
+    "metric": "Accepted jobs lost",
+    "target": "0 (RPO 0 for acked enqueues)"
+   },
+   {
+    "metric": "Enqueue API p99 latency",
+    "target": "under 50 ms"
+   },
+   {
+    "metric": "Age of oldest ready job (default queues)",
+    "target": "under 30 s p99 on normal days, under 5 min on sale peaks"
+   },
+   {
+    "metric": "Platform availability for enqueue",
+    "target": "99.99 percent monthly"
+   },
+   {
+    "metric": "Teams migrated off home-grown cron tables",
+    "target": "80 percent within two quarters"
+   },
+   {
+    "metric": "Jobs ending in DLQ without an alert reaching the owning team",
+    "target": "0"
+   }
+  ],
+  "constraints": [
+   "Must run on existing Kafka and Redis fleets operated by the platform team.",
+   "Payloads limited to 256 KB; larger data must be passed by reference (object storage key).",
+   "PII payloads must be encrypted at rest and in transit and purged within retention limits.",
+   "Must support Java, Go and Python clients used across the company."
+  ],
+  "risks": [
+   {
+    "risk": "Teams write non-idempotent handlers and cause double side effects on redelivery.",
+    "mitigation": "Ship idempotency helpers in the SDK, require a dedup key for payment queues, and document at-least-once loudly."
+   },
+   {
+    "risk": "A bad deploy makes every job fail and floods retries, amplifying load on a downstream.",
+    "mitigation": "Exponential backoff with jitter, per-queue circuit breaker that pauses the queue when failure rate exceeds 50 percent."
+   },
+   {
+    "risk": "Sale-day surge exhausts Redis memory.",
+    "mitigation": "Kafka is the durable buffer; relay is rate-limited and only moves a bounded window into Redis."
+   },
+   {
+    "risk": "Platform becomes a single point of failure for many teams.",
+    "mitigation": "Multi-AZ deployment, cell-based sharding of queues, graceful degradation by priority class."
+   }
+  ]
+ },
+ "prd": {
+  "personas": [
+   {
+    "name": "Producer engineer",
+    "needs": "Enqueue a job in one call with delay, priority and dedup options, and query its status."
+   },
+   {
+    "name": "Worker/handler owner",
+    "needs": "Receive jobs in batches, extend leases for long work, and control retry policy."
+   },
+   {
+    "name": "On-call operator",
+    "needs": "See backlog and failing queues, pause/resume queues, inspect and redrive the DLQ."
+   }
+  ],
+  "user_stories": [
+   "As a checkout engineer, I want to enqueue a send-invoice job and return to the user immediately so that checkout latency does not include PDF generation.",
+   "As a payments engineer, I want to pass a dedup key with a refund job so that a retried enqueue does not create two refund jobs.",
+   "As a seller-platform engineer, I want to schedule a job to run 24 hours later so that I can send a reminder without a cron table.",
+   "As a handler owner, I want my job retried with exponential backoff when the downstream returns 503 so that transient failures heal without paging me.",
+   "As an on-call operator, I want to pause a queue whose handler is failing so that it stops hammering a broken dependency while jobs keep accumulating safely.",
+   "As a support agent, I want to look up a job by id and see its attempts and last error so that I can answer a customer.",
+   "As a platform owner, I want per-queue concurrency limits so that a bulk email campaign cannot consume worker capacity needed by refunds.",
+   "As a handler owner of long exports, I want to heartbeat my lease so that a 10-minute job is not redelivered to another worker mid-run."
+  ],
+  "functional": [
+   "Enqueue a job with queue name, payload (up to 256 KB), optional delay or run_at, priority, dedup key and ordering key.",
+   "Lease jobs in batches with a configurable visibility timeout; extend (heartbeat), ack, or nack with a reason.",
+   "Automatic retries with per-queue max_attempts and backoff policy (exponential with full jitter, capped).",
+   "Dead letter queue per queue with inspection, bulk redrive and purge.",
+   "Job status API: queued, scheduled, leased, succeeded, failed-retrying, dead, cancelled; with attempts and last error.",
+   "Cancel a job that has not started.",
+   "Queue administration: create, configure limits, pause and resume, view metrics.",
+   "Optional per-ordering-key FIFO where only one job per key is in flight at a time."
+  ],
+  "non_functional": [
+   {
+    "name": "Enqueue latency",
+    "target": "p99 under 50 ms, p50 under 10 ms"
+   },
+   {
+    "name": "Dispatch latency (ready to leased)",
+    "target": "p99 under 1 s when workers are free"
+   },
+   {
+    "name": "Durability",
+    "target": "acked jobs survive loss of one AZ; 3 replicas, min 2 in sync"
+   },
+   {
+    "name": "Availability",
+    "target": "enqueue 99.99 percent; dequeue 99.95 percent"
+   },
+   {
+    "name": "Throughput",
+    "target": "sustain 15k enqueues/s and 15k completions/s, burst to 30k/s for 10 minutes"
+   },
+   {
+    "name": "Delivery semantics",
+    "target": "at-least-once; duplicate rate under 0.1 percent in steady state"
+   },
+   {
+    "name": "Isolation",
+    "target": "a single queue can use at most its configured share of worker slots and Redis ops"
+   }
+  ],
+  "capacity": {
+   "assumptions": [
+    "100M jobs/day normal, 10x hour-level peaks on sale days.",
+    "Average payload 2 KB (most are ids and small JSON), envelope metadata 300 bytes.",
+    "Average handler time 500 ms, p99 10 s; 2 percent of jobs retry at least once.",
+    "Job state kept 7 days; Kafka retention 3 days for replay.",
+    "About 500 queues owned by 80 teams."
+   ],
+   "math": [
+    "Average enqueue rate: 100M / 86,400 s = about 1,160 jobs/s; sale-day peak 10x = about 12k/s, plan for 15k/s.",
+    "Ingress bandwidth at peak: 15k x 2.3 KB = about 35 MB/s; Kafka with replication factor 3 writes about 105 MB/s across brokers.",
+    "Kafka storage: 100M x 2.3 KB = 230 GB/day raw, x3 replicas x 3 days = about 2.1 TB; a 12-broker cluster is comfortable.",
+    "Workers needed (Little's law): concurrency = rate x time = 15k/s x 0.5 s = 7,500 concurrent slots; at 50 slots per worker pod that is 150 pods at peak.",
+    "Ready Store memory: keep at most 5 minutes of backlog in Redis: 15k x 300 s x 2.5 KB = about 11 GB; spread over 8 shards of 4 GB headroom each.",
+    "Job state store: 100M rows/day x 7 days = 700M rows at about 500 bytes = 350 GB; status writes about 3 per job so 3.5k writes/s average, 45k/s peak, hence a sharded store.",
+    "Redis ops: each job costs about 4 ops (add, lease, ack, state hint), 15k x 4 = 60k ops/s; one Redis shard does 100k+ simple ops/s, so 8 shards leaves headroom for Lua scripts."
+   ],
+   "summary": "Peak about 15k jobs/s, 35 MB/s ingress, about 2 TB of Kafka retention, roughly 11 GB of hot ready state in Redis across 8 shards, about 7,500 concurrent worker slots, and a sharded state store holding about 700M rows."
+  },
+  "out_of_scope": [
+   "Multi-step workflow orchestration with compensation (use a workflow engine).",
+   "Cross-region active-active job execution; we run active-passive per region.",
+   "Exactly-once side effects on third-party systems (handlers own idempotency).",
+   "Large payload storage; payloads over 256 KB go to object storage by reference."
+  ]
+ },
+ "hld": {
+  "overview": "Producers call a stateless Enqueue API that writes each job to Kafka, the durable source of truth for accepted jobs. A Relay tier consumes Kafka and moves jobs that are due into a Redis-based Ready Store (sorted sets per queue shard), keeping future-dated jobs in a delay set. Workers lease jobs from a Lease service using atomic Lua scripts that move items to an in-flight set with a deadline; they heartbeat, ack or nack. A Reaper returns expired leases, the Retry scheduler applies backoff, and exhausted jobs go to a DLQ. A sharded Job State Store backs status queries and audit. A control plane holds per-queue policy.",
+  "diagram": "\n Producers (checkout, seller, notif services)\n        | POST /queues/{q}/jobs\n        v\n +----------------+   acks=all    +---------------------------+\n | Enqueue API    |-------------->| Kafka  jobs.p0 / p1 / p2  |\n | (stateless)    |               | RF=3, minISR=2, 3d retain |\n +----------------+               +-------------+-------------+\n        | dedup check (Redis SETNX)            | consume\n        v                                      v\n +----------------+             +--------------------------+\n | Job State Store|<----------- | Relay / Dispatcher       |\n | sharded MySQL  |  status     | rate limit per queue     |\n +----------------+             +------------+-------------+\n        ^                                    | ZADD ready / delay\n        |                                    v\n        |                     +-------------------------------+\n        |                     | Ready Store (Redis, 8 shards) |\n        |                     | ready:{q#s} delay:{q#s}       |\n        |                     | inflight:{q#s} (deadline)     |\n        |                     +---+-----------------------+---+\n        |                         | Lua lease/ack         | expired\n        |                         v                       v\n        |                +-----------------+     +---------------+\n        +----------------| Worker pools    |     | Reaper/Retry  |\n          ack/nack state | per queue, HPA  |     | backoff+jitter|\n                         +--------+--------+     +-------+-------+\n                                  | after max attempts   |\n                                  v                      v\n                          +-------------------------------+\n                          | DLQ topic + redrive console   |\n                          +-------------------------------+\n Control plane (etcd): queue config, limits, pause flags\n",
+  "components": [
+   {
+    "name": "Enqueue API",
+    "responsibility": "Stateless HTTP/gRPC front door: authN/Z per queue, payload validation and size limit, ULID job_id, dedup key check, write to Kafka with acks=all, return 202 with job_id."
+   },
+   {
+    "name": "Kafka cluster",
+    "responsibility": "Durable, replicated append log of accepted jobs, partitioned by queue and ordering key; buffers bursts so downstream backlog does not exhaust memory; allows replay after Ready Store loss."
+   },
+   {
+    "name": "Relay / Dispatcher",
+    "responsibility": "Consumes Kafka partitions, places due jobs into ready sets and future jobs into delay sets, applies per-queue relay rate limits and pause flags, commits offsets only after successful writes."
+   },
+   {
+    "name": "Ready Store (Redis cluster)",
+    "responsibility": "Per queue shard: ready ZSET (score = priority-adjusted run_at), delay ZSET, in-flight ZSET (score = lease deadline) and job hash; all transitions done by atomic Lua scripts."
+   },
+   {
+    "name": "Lease service",
+    "responsibility": "Worker-facing API for lease, heartbeat, ack, nack; enforces per-queue concurrency caps with a counter; supports long polling up to 20 s."
+   },
+   {
+    "name": "Worker pools",
+    "responsibility": "Team-owned handler processes using the SDK; autoscaled on queue lag and oldest-job age; run handlers with timeouts and report results."
+   },
+   {
+    "name": "Reaper and Retry scheduler",
+    "responsibility": "Every second scans in-flight sets for expired deadlines and returns jobs to ready (attempt + 1); moves due delay entries to ready; routes exhausted jobs to DLQ."
+   },
+   {
+    "name": "Job State Store",
+    "responsibility": "Sharded MySQL (or DynamoDB) keyed by job_id holding status, attempts, timestamps, last_error and result pointer; 7-day TTL; feeds status API and support tools."
+   },
+   {
+    "name": "DLQ and redrive console",
+    "responsibility": "Per-queue dead-letter topic plus UI/API to inspect, filter by error, bulk redrive to the main queue or purge."
+   },
+   {
+    "name": "Control plane",
+    "responsibility": "Queue registry in etcd/Consul with policies: max_attempts, backoff, visibility timeout, concurrency, rate limit, priority class, owner and alert routing."
+   }
+  ],
+  "flows": [
+   {
+    "name": "Enqueue to completion (happy path)",
+    "steps": [
+     "Producer calls POST /queues/refunds/jobs with payload and dedup_key=order123-refund.",
+     "Enqueue API checks SET dedup:refunds:order123-refund NX EX 86400; if it already exists, it returns the original job_id.",
+     "API writes the envelope to Kafka topic jobs.p0 keyed by queue#shard with acks=all, then writes status=queued to the state store asynchronously and returns 202.",
+     "Relay consumes the record, sees run_at <= now, runs Lua: HSET job:{id}, ZADD ready:{refunds#3} score; commits offset after success.",
+     "Worker calls Lease(refunds, max=10, visibility=30s); the Lua script pops the lowest scores, ZADDs them to inflight with deadline now+30s, increments the concurrency counter.",
+     "Handler runs, heartbeats every 10 s if long, then calls Ack(job_id, lease_token); Lua removes it from inflight and job hash; state store set to succeeded."
+    ]
+   },
+   {
+    "name": "Failure, retry and dead-letter",
+    "steps": [
+     "Handler gets 503 from the payment gateway and calls Nack(job_id, retryable=true, error).",
+     "Lease service computes delay = random(0, min(cap=15 min, base=2 s x 2^attempt)) and ZADDs to delay:{q#s} with score now+delay.",
+     "Reaper moves it to ready when due; attempts increments each time.",
+     "If the worker crashed instead, the lease deadline passes and the Reaper treats it as a failed attempt.",
+     "After max_attempts (default 5) the job is written to the DLQ topic with all attempt errors, state store set to dead, and the owning team is alerted.",
+     "Operator fixes the bug and bulk-redrives from the console; redriven jobs keep their job_id so idempotent handlers dedupe."
+    ]
+   },
+   {
+    "name": "Backlog during sale peak",
+    "steps": [
+     "Enqueue spikes to 25k/s; Kafka absorbs it at disk speed.",
+     "Relay respects the per-queue relay rate and the Ready Store high-water mark (for example 5 minutes of work), so Redis memory stays bounded.",
+     "Autoscaler sees oldest-job age rising and scales worker pools to their max.",
+     "If still behind, the control plane sheds low-priority queues (marketing email) by pausing their relay while p0 queues (payments) keep flowing."
+    ]
+   }
+  ],
+  "data_flow": "Job envelope (id, queue, payload or pointer, run_at, attempts, dedup and ordering keys) flows Producer -> Enqueue API -> Kafka (durable) -> Relay -> Redis ready/delay sets -> Lease -> Worker -> Ack. Status transitions are written to the Job State Store at enqueue, lease, and terminal states. Failed jobs loop through the delay set with backoff; exhausted ones go to the DLQ topic. Kafka is the replay source if Redis loses data; the state store is the query source of truth for humans."
+ },
+ "lld": {
+  "apis": [
+   {
+    "method": "POST",
+    "path": "/v1/queues/{queue}/jobs",
+    "request": "{payload, delay_s?, run_at?, priority?: 0-9, dedup_key?, ordering_key?, max_attempts?}",
+    "response": "202 {job_id, status: queued|scheduled, deduped: bool}",
+    "notes": "Dedup window 24 h; payload over 256 KB rejected with 413; per-producer rate limit returns 429 with Retry-After."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/queues/{queue}/lease",
+    "request": "{max_jobs: 1-100, visibility_s: 5-900, wait_s: 0-20, worker_id}",
+    "response": "200 {jobs: [{job_id, payload, attempt, lease_token, deadline}]}",
+    "notes": "Long poll; returns empty list after wait_s; respects queue concurrency cap."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/jobs/{job_id}/heartbeat",
+    "request": "{lease_token, extend_s}",
+    "response": "200 {deadline} or 409 lease_lost",
+    "notes": "409 means the lease expired and someone else may own the job; handler should stop."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/jobs/{job_id}/ack",
+    "request": "{lease_token, result_ref?}",
+    "response": "200 or 409 lease_lost",
+    "notes": "Ack with a stale token is rejected so a zombie worker cannot complete a job twice."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/jobs/{job_id}/nack",
+    "request": "{lease_token, retryable: bool, error, retry_after_s?}",
+    "response": "200 {next_run_at or dead}",
+    "notes": "Non-retryable errors go straight to DLQ."
+   },
+   {
+    "method": "GET",
+    "path": "/v1/jobs/{job_id}",
+    "request": "-",
+    "response": "200 {status, attempts, created_at, last_error, result_ref}",
+    "notes": "Served from the Job State Store."
+   },
+   {
+    "method": "POST",
+    "path": "/v1/queues/{queue}/dlq/redrive",
+    "request": "{filter: {error_code?, since?}, limit}",
+    "response": "202 {redrive_id, count}",
+    "notes": "Rate-limited redrive to avoid a thundering herd."
+   }
+  ],
+  "data_model": [
+   {
+    "entity": "Job envelope",
+    "store": "Kafka topic jobs.p{priority}",
+    "fields": [
+     "job_id (ULID)",
+     "queue",
+     "payload or payload_ref",
+     "run_at",
+     "priority",
+     "dedup_key",
+     "ordering_key",
+     "max_attempts",
+     "trace_id",
+     "created_at"
+    ],
+    "keys": "Partition key = queue + '#' + (ordering_key or hash(job_id) mod 16)",
+    "notes": "RF=3, min.insync.replicas=2, retention 3 days; source for replay."
+   },
+   {
+    "entity": "Ready / delay / in-flight sets",
+    "store": "Redis Cluster",
+    "fields": [
+     "ready:{q#s} ZSET member=job_id score=run_at_ms - priority*1000",
+     "delay:{q#s} ZSET score=run_at_ms",
+     "inflight:{q#s} ZSET score=lease_deadline_ms",
+     "job:{id} HASH payload, attempt, lease_token",
+     "conc:{q} counter"
+    ],
+    "keys": "Hash tag {q#s} keeps all keys of one queue shard in the same Redis slot so Lua scripts are atomic",
+    "notes": "AOF everysec plus replica; still treated as rebuildable from Kafka."
+   },
+   {
+    "entity": "Job state",
+    "store": "Sharded MySQL (16 shards) or DynamoDB",
+    "fields": [
+     "job_id",
+     "queue",
+     "status",
+     "attempts",
+     "created_at",
+     "updated_at",
+     "last_error",
+     "result_ref",
+     "owner_team"
+    ],
+    "keys": "PK job_id; shard = hash(job_id); secondary index (queue, status, updated_at) for operator queries",
+    "notes": "TTL 7 days via partitioned tables dropped daily."
+   },
+   {
+    "entity": "Dedup keys",
+    "store": "Redis",
+    "fields": [
+     "dedup:{q}:{key} -> job_id"
+    ],
+    "keys": "SET NX EX 86400",
+    "notes": "Enqueue-side dedup only; handler-side idempotency is separate."
+   },
+   {
+    "entity": "Queue config",
+    "store": "etcd",
+    "fields": [
+     "queue",
+     "owner",
+     "max_attempts",
+     "backoff_base_s",
+     "backoff_cap_s",
+     "visibility_s",
+     "concurrency",
+     "rate_per_s",
+     "priority_class",
+     "paused"
+    ],
+    "keys": "key /queues/{name}",
+    "notes": "Watched by Relay and Lease service; changes apply within seconds."
+   }
+  ],
+  "classes": [
+   {
+    "name": "EnqueueService",
+    "responsibility": "Validate, dedup, assign id, produce to Kafka.",
+    "methods": [
+     "enqueue(queue, req) -> JobId",
+     "checkDedup(queue, key) -> Optional[JobId]",
+     "partitionFor(queue, orderingKey) -> int"
+    ]
+   },
+   {
+    "name": "Relay",
+    "responsibility": "Move jobs from Kafka into the Ready Store respecting limits.",
+    "methods": [
+     "poll() -> List[Record]",
+     "place(job) -> void",
+     "commitIfAllPlaced(offsets)",
+     "throttle(queue)"
+    ]
+   },
+   {
+    "name": "LeaseManager",
+    "responsibility": "Atomic lease, heartbeat, ack and nack via Lua.",
+    "methods": [
+     "lease(queue, n, visibility) -> List[Lease]",
+     "heartbeat(jobId, token, extend) -> Deadline",
+     "ack(jobId, token)",
+     "nack(jobId, token, retryable, err)"
+    ]
+   },
+   {
+    "name": "RetryPolicy",
+    "responsibility": "Compute next run time.",
+    "methods": [
+     "nextDelay(attempt) -> Duration",
+     "isExhausted(attempt) -> bool"
+    ]
+   },
+   {
+    "name": "Reaper",
+    "responsibility": "Recover expired leases and promote due delayed jobs.",
+    "methods": [
+     "reclaimExpired(shard, now, limit)",
+     "promoteDue(shard, now, limit)"
+    ]
+   },
+   {
+    "name": "WorkerRuntime (SDK)",
+    "responsibility": "Run handlers with concurrency, heartbeats and timeouts.",
+    "methods": [
+     "register(queue, handler, concurrency)",
+     "runLoop()",
+     "withHeartbeat(lease, fn)"
+    ]
+   }
+  ],
+  "algorithms": [
+   {
+    "name": "Atomic lease (Lua in Redis)",
+    "explain": "Popping from ready and recording the lease must be one atomic step, otherwise a crash between them loses the job or two workers get it. The Lua script also enforces the per-queue concurrency cap.",
+    "pseudocode": "lease(q_shard, n, vis_ms, now, cap):\n  inflight = GET conc:{q}\n  n = min(n, cap - inflight)\n  if n <= 0: return []\n  ids = ZRANGEBYSCORE ready:{qs} -inf now LIMIT 0 n\n  for id in ids:\n    ZREM ready:{qs} id\n    token = random128()\n    HSET job:{id} lease_token token\n    HINCRBY job:{id} attempt 1\n    ZADD inflight:{qs} (now + vis_ms) id\n  INCRBY conc:{q} len(ids)\n  return [(id, HGETALL job:{id}) for id in ids]"
+   },
+   {
+    "name": "Retry with capped exponential backoff and full jitter",
+    "explain": "Full jitter spreads retries uniformly so that thousands of jobs failing at the same moment (downstream outage) do not come back in synchronized waves.",
+    "pseudocode": "nextDelay(attempt):\n  base = 2s; cap = 15min\n  exp = min(cap, base * 2^attempt)\n  return uniform(0, exp)\n\nnack(id, token, retryable, err):\n  if not tokenMatches(id, token): return LEASE_LOST\n  a = HGET job:{id} attempt\n  if not retryable or a >= max_attempts:\n     produce(DLQ, job + err); remove(id); return DEAD\n  ZREM inflight id; ZADD delay:{qs} now + nextDelay(a) id\n  DECR conc:{q}"
+   },
+   {
+    "name": "Reaper for expired leases",
+    "explain": "Runs every 1 s per shard with a leader lock; bounded batch so one scan never blocks Redis.",
+    "pseudocode": "loop every 1s:\n  ids = ZRANGEBYSCORE inflight:{qs} -inf now LIMIT 0 500\n  for id in ids:\n    ZREM inflight:{qs} id; DECR conc:{q}\n    if attempt(id) >= max: toDLQ(id, 'lease expired')\n    else ZADD ready:{qs} now id   -- redelivery\n  due = ZRANGEBYSCORE delay:{qs} -inf now LIMIT 0 500\n  move due -> ready"
+   }
+  ],
+  "sequence": "\nProducer   EnqueueAPI   Kafka    Relay     Redis(Lua)   Worker    StateStore\n   |  POST job  |          |         |            |           |           |\n   |----------->| SETNX dedup ------------------->|           |           |\n   |            | produce  |         |            |           |           |\n   |            |--------->| ack(ISR=2)          |           |           |\n   |  202 id    |<---------|         |            |           |           |\n   |<-----------| status=queued ---------------------------------------->|\n   |            |          | consume |            |           |           |\n   |            |          |-------->| ZADD ready |           |           |\n   |            |          |         |----------->|           |           |\n   |            |          | commit  |<-----------|           |           |\n   |            |          |<--------|            |  lease(n) |           |\n   |            |          |         |            |<----------|           |\n   |            |          |         |            | jobs+token|           |\n   |            |          |         |            |---------->| run       |\n   |            |          |         |            | heartbeat |           |\n   |            |          |         |            |<----------|           |\n   |            |          |         |            | ack(token)|           |\n   |            |          |         |            |<----------|           |\n   |            |          |         |            |           |succeeded->|\n"
+ },
+ "edge_cases": [
+  {
+   "case": "Worker finishes the side effect but crashes before ack.",
+   "handling": "Lease expires and the job is redelivered; this is why delivery is at-least-once. The handler must be idempotent (dedup table keyed by job_id or a business key like order_id)."
+  },
+  {
+   "case": "Zombie worker: a GC pause longer than the visibility timeout, then it resumes and acks after another worker took the job.",
+   "handling": "Each lease carries a random lease_token; ack and heartbeat compare tokens and return 409 for stale ones. Side effects still need a fencing check downstream."
+  },
+  {
+   "case": "Long job exceeds visibility timeout.",
+   "handling": "SDK heartbeats every visibility/3; jobs that need more than 15 minutes should be split into chunks with checkpoints."
+  },
+  {
+   "case": "Poison pill: a payload that always crashes the handler.",
+   "handling": "Attempts counter and max_attempts send it to the DLQ; crash loops counted via lease expiry so even a process crash is a counted attempt."
+  },
+  {
+   "case": "Retry storm when a downstream recovers from an outage.",
+   "handling": "Full jitter on backoff, per-queue rate limit, and a circuit breaker that pauses the queue when failure rate is high and resumes gradually."
+  },
+  {
+   "case": "Duplicate enqueue from a producer retrying after a timeout.",
+   "handling": "Optional dedup_key with 24 h SETNX window returns the original job_id; without a key, the handler-level idempotency covers it."
+  },
+  {
+   "case": "Hot queue: one team enqueues 5M jobs in a minute (bulk campaign).",
+   "handling": "Queue split into virtual shards, per-queue concurrency cap, relay rate limit and lower priority class; other queues keep their slots."
+  },
+  {
+   "case": "Clock skew between Relay and Reaper hosts makes delayed jobs fire early or late.",
+   "handling": "Use Redis server TIME inside Lua scripts as the single clock for scores and deadlines, not host clocks."
+  },
+  {
+   "case": "Redis shard failover loses the last second of writes (async replication).",
+   "handling": "Relay re-reads Kafka from the last committed offset for that shard; the state store and handler idempotency absorb duplicates."
+  },
+  {
+   "case": "Ordering key requires FIFO but a job fails and retries.",
+   "handling": "Per-key in-flight lock: the next job for the same key is held until the current one acks or goes to DLQ; operator decides whether to unblock."
+  },
+  {
+   "case": "Job cancelled while leased.",
+   "handling": "Cancel marks state cancelled; the next heartbeat returns cancelled and the SDK interrupts the handler; if already done, cancel is a no-op."
+  },
+  {
+   "case": "Payload contains PII and lands in the DLQ for weeks.",
+   "handling": "DLQ inherits the same encryption and 14-day TTL; redrive console masks fields tagged sensitive."
+  },
+  {
+   "case": "Enqueue during a Kafka partition leader election.",
+   "handling": "Producer retries with idempotence enabled (no duplicate appends); the API returns 503 with Retry-After if not acked within 2 s rather than acknowledging unsafely."
+  }
+ ],
+ "tech_stack": [
+  {
+   "name": "Apache Kafka",
+   "layer": "Durable buffer / log",
+   "overview": "A partitioned, replicated append-only log where consumers track offsets.",
+   "why": "Absorbs sale-day bursts at disk speed, gives replay after Ready Store loss, and RF=3 with minISR=2 gives RPO 0 for acked jobs. Slack added Kafka in front of Redis for exactly this reason.",
+   "alternatives": "Amazon SQS (managed, has visibility timeouts built in, but less control over replay and fairness); RabbitMQ (rich routing, but weaker at very large backlogs); Pulsar (separates storage via BookKeeper, more ops)."
+  },
+  {
+   "name": "Redis Cluster with Lua",
+   "layer": "Ready Store and leases",
+   "overview": "In-memory data structure server; sorted sets give O(log N) insert and range by score; Lua scripts run atomically.",
+   "why": "Sorted sets map naturally to run_at ordering, delay queues and lease deadlines; atomic scripts make lease and ack race-free at 100k ops/s per shard.",
+   "alternatives": "Postgres with SKIP LOCKED (simple, transactional, fine to a few thousand jobs/s); a custom broker with a timing wheel; DynamoDB with conditional writes (more latency)."
+  },
+  {
+   "name": "MySQL (sharded, Vitess) or DynamoDB",
+   "layer": "Job state store",
+   "overview": "OLTP store for per-job status and history.",
+   "why": "Point lookups by job_id for status and support tools, secondary index for operator queries, cheap daily partition drops for TTL.",
+   "alternatives": "Cassandra (great write rate, weaker ad hoc queries); keeping status only in Redis (loses history, costs memory)."
+  },
+  {
+   "name": "Go services",
+   "layer": "Enqueue API, Relay, Lease service",
+   "overview": "Compiled language with cheap goroutines and good Kafka/Redis clients.",
+   "why": "High concurrency with low memory; matches what Slack used for Kafkagate and JQRelay.",
+   "alternatives": "Java (mature Kafka client, heavier footprint); Rust (performance, slower team velocity)."
+  },
+  {
+   "name": "Kubernetes with HPA/KEDA",
+   "layer": "Worker autoscaling",
+   "overview": "Container orchestration with autoscaling on custom metrics.",
+   "why": "KEDA can scale worker deployments on queue lag or oldest-job age, which is the right signal (CPU is not).",
+   "alternatives": "EC2 autoscaling groups (coarser); serverless functions (cold starts, execution time limits)."
+  },
+  {
+   "name": "etcd / Consul",
+   "layer": "Control plane",
+   "overview": "Strongly consistent key-value store with watches and locks.",
+   "why": "Queue policies change rarely but must propagate quickly; leader locks for Reaper and Relay per shard.",
+   "alternatives": "A config table polled every 30 s (simpler, slower propagation); ZooKeeper (heavier)."
+  },
+  {
+   "name": "Prometheus and Grafana",
+   "layer": "Observability",
+   "overview": "Pull-based metrics with alerting.",
+   "why": "Per-queue depth, age, retry and DLQ metrics drive both alerts and autoscaling.",
+   "alternatives": "Datadog (managed, cost at high cardinality); OpenTelemetry pipeline to any backend."
+  }
+ ],
+ "concepts": [
+  {
+   "name": "At-least-once delivery and idempotent consumers",
+   "explain": "Any system that moves work between machines over a network must decide what happens when an acknowledgement is lost. There are three options. At-most-once removes the job before the work is done; if the worker crashes, the job is gone. At-least-once removes the job only after the worker confirms completion; if the confirmation is lost, the job is delivered again. Exactly-once delivery would need the sender to know whether the receiver both did the work and recorded it, which, because of the Two Generals problem, cannot be guaranteed when messages and nodes can fail. What production systems actually achieve is exactly-once effect: at-least-once delivery combined with an idempotent consumer, meaning applying the same job twice has the same result as applying it once. Idempotency is usually implemented by recording a processed key (the job_id or a natural business key such as order_id plus action) in the same transaction as the side effect, or by making the side effect itself conditional (an upsert, a compare-and-set on a version, or passing an idempotency key to the downstream API, which payment gateways support).",
+   "in_this_design": "The queue promises at-least-once: a job is deleted only on ack, and lease expiry redelivers it. The SDK provides an idempotency helper that writes job_id into a processed_jobs table in the same DB transaction as the handler's write, and payment queues must pass the order-level idempotency key to the gateway.",
+   "key_points": [
+    "Exactly-once delivery is impossible over unreliable networks; exactly-once effect is achievable.",
+    "Delete on ack, never on read.",
+    "Idempotency key plus side effect in one transaction is the standard pattern.",
+    "Duplicates are rare but certain at scale: at 100M jobs/day even 0.01 percent is 10k duplicates."
+   ],
+   "qa": [
+    {
+     "q": "Why not just make the queue exactly-once?",
+     "a": "Because the queue cannot see whether the worker's side effect committed before the ack was lost. Even Kafka's exactly-once only covers reads and writes inside Kafka. For external effects like sending an email, idempotency must live at the handler or downstream."
+    },
+    {
+     "q": "How would you make 'send email' idempotent?",
+     "a": "Record email_sent(job_id) in a table with a unique constraint before calling the provider with an idempotency key, or check-then-send under the same key; accept that a crash between provider call and record can still double-send unless the provider dedupes by key."
+    },
+    {
+     "q": "When would you pick at-most-once?",
+     "a": "For low-value, high-volume jobs where a duplicate is worse than a loss, such as a best-effort analytics ping or a cache warm. You delete on lease and never retry."
+    }
+   ]
+  },
+  {
+   "name": "Visibility timeouts, leases and fencing tokens",
+   "explain": "A lease is a time-bounded right to work on something. Instead of deleting a job when a worker takes it, the queue hides it for a visibility timeout, for example 30 seconds. If the worker acks in time, the job is deleted. If the worker dies, the timeout passes and the job becomes visible to others again. This is how Amazon SQS works and it removes the need for the queue to detect worker failure directly: time is the failure detector. Leases introduce two problems. First, picking the timeout: too short and slow but healthy workers get their jobs stolen, causing duplicates; too long and a crashed worker's job sits idle. The fix is a moderate default plus heartbeats that extend the lease while work progresses. Second, a paused process (a long GC, a network partition) can wake up after its lease expired and believe it still owns the job. To stop it from acting, each lease carries a monotonically increasing or random fencing token; the queue and ideally the downstream reject operations with an old token. Martin Kleppmann's argument about distributed locks applies here: a lease alone is not safety, a lease plus fencing is.",
+   "in_this_design": "Lease returns a lease_token and a deadline stored in the in-flight sorted set. Default visibility 30 s, SDK heartbeats every 10 s, maximum 15 minutes. Ack, nack and heartbeat compare the token in Lua, so a zombie gets 409 lease_lost and stops.",
+   "key_points": [
+    "Time is the failure detector: no ack before the deadline means redeliver.",
+    "Heartbeat at about one third of the visibility timeout.",
+    "Every lease has a token; stale tokens are rejected.",
+    "Visibility timeout tuning trades duplicate rate against recovery latency."
+   ],
+   "qa": [
+    {
+     "q": "A worker takes 45 s but visibility is 30 s. What happens without heartbeats?",
+     "a": "At 30 s the Reaper returns the job to ready, another worker picks it up, and both run it; whichever acks second gets a 409, but the side effect may already have run twice."
+    },
+    {
+     "q": "Why not detect worker death with a health check instead of timeouts?",
+     "a": "Health checks only tell you a process is alive, not that it is making progress on that job, and they add another distributed component. Lease expiry handles crashes, hangs and partitions uniformly."
+    },
+    {
+     "q": "How do fencing tokens help with downstream writes?",
+     "a": "If the downstream store accepts writes only with a token greater than or equal to the last one it saw, a zombie with an older token is rejected even after the queue has handed the job to someone else."
+    }
+   ]
+  },
+  {
+   "name": "Retries with exponential backoff, jitter and dead-letter queues",
+   "explain": "Most failures in distributed systems are transient: a timeout, a 503 during a deploy, a lock conflict. Retrying immediately often fails again and adds load to the struggling dependency. Exponential backoff waits base x 2^attempt between tries (2 s, 4 s, 8 s, 16 s...) capped at a maximum, so pressure on the dependency falls quickly. But if 50,000 jobs fail at the same instant, plain exponential backoff makes them all retry at the same instants too, producing synchronized waves. Jitter fixes that by randomizing the wait; AWS's analysis showed that full jitter, choosing uniformly between zero and the exponential value, gives the lowest total work and fastest completion under contention. Retries must stop somewhere. A job that fails every time (bad payload, bug, deleted entity) is a poison pill; retrying forever wastes capacity and can block ordered processing. After a maximum number of attempts, the job is moved to a dead-letter queue, where it is kept with its error history for humans to inspect, fix and redrive. Distinguishing retryable errors (timeouts, 5xx, 429) from non-retryable ones (validation errors, 4xx) avoids wasting attempts.",
+   "in_this_design": "Default policy: base 2 s, cap 15 minutes, full jitter, 5 attempts, DLQ per queue with 14-day retention. Nack carries retryable=false to skip straight to the DLQ. A 429 with Retry-After from a downstream overrides the computed delay.",
+   "key_points": [
+    "Backoff reduces load; jitter de-synchronizes it.",
+    "Full jitter: sleep = random(0, min(cap, base x 2^n)).",
+    "Cap attempts and dead-letter; never retry forever.",
+    "Classify errors: only retry transient ones.",
+    "Redrive slowly, with rate limits."
+   ],
+   "qa": [
+    {
+     "q": "Why is retrying inside the handler with a loop a bad idea?",
+     "a": "It holds the lease and a worker slot while sleeping, hides attempts from the platform's metrics, and is lost if the worker crashes. Nack with a delay frees the slot and survives crashes."
+    },
+    {
+     "q": "What does a sudden DLQ spike usually mean?",
+     "a": "A bad deploy or a schema change in payloads, since transient downstream failures are mostly absorbed by retries. Alert on DLQ rate per queue and correlate with deploys."
+    },
+    {
+     "q": "How do you redrive 2M dead jobs safely?",
+     "a": "In batches through a rate limiter, in the low-priority class, after confirming the fix on a sample of 100, and relying on idempotent handlers for any that partially succeeded before."
+    }
+   ]
+  },
+  {
+   "name": "Backpressure, rate limiting and load shedding",
+   "explain": "Backpressure is how a system tells upstream producers to slow down when downstream capacity is exhausted. Without it, queues grow without bound, memory runs out, and latency for every job rises until the system collapses. There are a few places to apply it. At the edge, a token bucket per producer limits enqueue rate and returns 429 with Retry-After. Inside, a durable buffer such as Kafka can hold a large backlog on disk cheaply, which converts a capacity problem into a latency problem rather than a crash. Between the buffer and the in-memory working set, a rate-limited relay moves only as much as workers can consume, keeping memory bounded. On the consumer side, concurrency limits cap how many jobs of a queue run at once so a downstream service is not overwhelmed. Load shedding is the last resort: when the system cannot keep up, it deliberately drops or delays the least valuable work so the most valuable still meets its SLO. Little's law (in-flight = arrival rate x time in system) is the tool for sizing all of these limits.",
+   "in_this_design": "Per-producer token buckets at the Enqueue API, Kafka as the disk buffer, a relay that keeps at most about 5 minutes of work in Redis per queue, per-queue concurrency caps enforced in the lease Lua script, and priority classes that let the control plane pause bulk queues first during sale peaks.",
+   "key_points": [
+    "Bounded queues everywhere; unbounded queues are outages waiting to happen.",
+    "Push the backlog to cheap durable storage, not RAM.",
+    "Concurrency limits protect downstreams better than rate limits for slow calls.",
+    "Little's law sizes worker pools and limits.",
+    "Shed by priority, explicitly."
+   ],
+   "qa": [
+    {
+     "q": "Slack's Redis job queue once locked up even after the cause was fixed. Why?",
+     "a": "Redis filled up because enqueue outpaced dequeue, and dequeue itself needed memory to move jobs, so the system could not drain. Putting Kafka in front as a durable buffer and rate-limiting the relay into Redis fixed it."
+    },
+    {
+     "q": "Rate limit or concurrency limit for a queue calling a slow partner API?",
+     "a": "Concurrency limit, because it adapts to the partner's latency: if the partner slows down, fewer requests start. A fixed rate limit keeps sending the same rate and piles up in-flight calls."
+    },
+    {
+     "q": "How do you decide what to shed?",
+     "a": "Assign priority classes at queue creation with business owners (payments p0, user-visible notifications p1, marketing p2) and shed from the lowest class, always by delaying rather than deleting when possible."
+    }
+   ]
+  },
+  {
+   "name": "Partitioning, sharding and fairness across queues",
+   "explain": "A single queue on a single node is limited by that node's CPU, memory and network. Partitioning splits data across nodes by a key so each node handles a fraction. In a job queue the natural key is the queue name, but queue sizes are wildly skewed: one bulk-email queue can be a thousand times bigger than a refunds queue, so partitioning only by queue creates hot shards. The usual fix is to split each queue into virtual shards (queue#0 to queue#N) and hash jobs across them, while workers lease from shards round-robin. Ordering then holds only within a shard, which is why per-key ordering hashes the ordering key to a fixed shard. Fairness is a related but different problem: even with enough shards, a single tenant can consume all worker capacity. Fair schedulers such as weighted round-robin or deficit round-robin give each queue a share proportional to its weight, and per-tenant concurrency caps bound the worst case. Kafka partitions provide the same partitioning on the durable side; the number of partitions bounds consumer parallelism, so it is chosen with headroom.",
+   "in_this_design": "Kafka topics are partitioned by queue#shard; Redis keys use hash tags {queue#shard} so all keys of one shard live in one slot for atomic Lua. Big queues get 16 virtual shards; workers rotate across them. The lease script enforces per-queue concurrency, giving tenant isolation.",
+   "key_points": [
+    "Partition for throughput; pick keys that avoid skew.",
+    "Virtual shards split hot queues without changing producers.",
+    "Ordering exists only within a partition.",
+    "Fairness needs explicit scheduling or caps, not just more shards."
+   ],
+   "qa": [
+    {
+     "q": "Why not one Redis key per queue?",
+     "a": "A big queue would sit on one Redis shard and saturate it; virtual shards spread one queue over many slots."
+    },
+    {
+     "q": "How does per-key FIFO survive sharding?",
+     "a": "Hash the ordering key to a fixed shard and allow only one in-flight job per key using a key lock in the lease script."
+    },
+    {
+     "q": "How many Kafka partitions would you create?",
+     "a": "Enough for peak consumer parallelism with 2-3x headroom, for example 64 per priority topic, because increasing partitions later reshuffles key-to-partition mapping and breaks per-key ordering."
+    }
+   ]
+  },
+  {
+   "name": "Replication and durability (ISR, acks, quorum)",
+   "explain": "Durability means an acknowledged write survives failures. A single disk can fail, a single machine can be lost, an entire availability zone can go dark. Replication keeps copies on several machines, ideally in different zones. The key question is when to tell the client 'done'. If you ack after only the leader has written, a leader crash before replication loses data. If you ack after all replicas have written, one slow replica stalls every write. Kafka's middle ground is the in-sync replica set: with replication factor 3 and min.insync.replicas=2, a producer using acks=all is acknowledged once the leader and at least one follower have the record; if fewer than two replicas are in sync, writes are rejected instead of being silently under-replicated. This is a quorum-style trade-off between durability, availability and latency. Placing replicas in different racks or AZs (rack awareness) ensures a zone loss leaves a full copy. Note that in-memory stores with asynchronous replication, like Redis with default settings, can lose the last few writes on failover, so they should not be the only copy of anything that must not be lost.",
+   "in_this_design": "Kafka is the system of record for accepted jobs: RF=3 across three AZs, minISR=2, producer acks=all and enable.idempotence=true. Redis is treated as a rebuildable cache of the ready window; after a failover the Relay replays its partitions from the last committed offset.",
+   "key_points": [
+    "Ack only after the data exists in at least two failure domains.",
+    "acks=all plus minISR=2 trades a little latency for RPO 0.",
+    "Async replicas can lose recent writes on failover.",
+    "Know which store is the source of truth and which is derived."
+   ],
+   "qa": [
+    {
+     "q": "Slack's Kafkagate wrote with leader-only acks. When is that acceptable?",
+     "a": "When availability and enqueue latency matter more than losing a small window of jobs on a broker failure. For payments jobs I would use acks=all; for analytics jobs leader-only is defensible."
+    },
+    {
+     "q": "What happens to enqueue when two of three Kafka replicas are down?",
+     "a": "With minISR=2, produce fails with NotEnoughReplicas, the API returns 503 and producers retry. We choose unavailability over silently accepting jobs we might lose."
+    },
+    {
+     "q": "Why not just enable Redis AOF fsync always?",
+     "a": "It costs a disk sync per write and slashes throughput, and it still does not protect against losing the node's disk. Using Kafka as the durable log keeps Redis fast."
+    }
+   ]
+  },
+  {
+   "name": "Delayed scheduling (sorted sets and timing wheels)",
+   "explain": "Many jobs should not run now: a retry after backoff, a reminder in 24 hours, a payment status check in 10 minutes. The scheduler needs to efficiently find jobs whose time has come among millions of future ones. A sorted set ordered by run_at timestamp does this: insertion is O(log N), and finding due jobs is a range query from minus infinity to now, which costs O(log N + K) for K due jobs. Redis ZSETs (skip lists) are a common implementation. A timing wheel, used in Kafka's purgatory and Netty, is an alternative: a circular array of buckets, each representing a tick (say 1 second); a job is placed in the bucket for its fire time modulo the wheel size, and hierarchical wheels handle long delays. Timing wheels give O(1) insert and expiry and are ideal for huge numbers of short timers held in memory. For very long delays (days), storing jobs in a durable table indexed by run_at and loading only the next hour into memory keeps memory small. Whichever structure is used, a single clock source avoids skew causing early or late firing.",
+   "in_this_design": "Retries and delays under 1 hour go into delay:{q#s} sorted sets scored by run_at in Redis server time. Delays over 1 hour stay in Kafka/state store and a loader moves the next hour's jobs into Redis every few minutes, keeping memory proportional to near-term work.",
+   "key_points": [
+    "Sorted set by run_at: due jobs are a range scan.",
+    "Timing wheels give O(1) timers for many short delays.",
+    "Tier long delays to durable storage, keep near-term in memory.",
+    "Use one clock (the store's) for scores."
+   ],
+   "qa": [
+    {
+     "q": "A team schedules 50M reminders for the same midnight. What breaks?",
+     "a": "All become due in the same second, causing a thundering herd. Add a spread window (scheduled_at plus random 0-10 min) for non-critical jobs and rate-limit promotion from delay to ready."
+    },
+    {
+     "q": "Why not just a cron that polls a SQL table every minute?",
+     "a": "It works at small scale but polling granularity is coarse, scans get expensive, and many pollers contend; it is the baseline we evolve from."
+    },
+    {
+     "q": "What is the complexity of popping due jobs from a ZSET?",
+     "a": "O(log N + K): one skip-list seek to the start, then K steps for the due items."
+    }
+   ]
+  }
+ ],
+ "tradeoffs": [
+  {
+   "decision": "Delivery guarantee",
+   "options": "At-most-once / at-least-once / attempt exactly-once with distributed transactions",
+   "choice": "At-least-once with idempotency tooling",
+   "why": "Exactly-once across external side effects is not achievable; at-least-once with idempotent handlers is simple, fast and correct."
+  },
+  {
+   "decision": "Broker architecture",
+   "options": "Postgres SKIP LOCKED / SQS / Kafka-only / Kafka + Redis ready store",
+   "choice": "Kafka + Redis",
+   "why": "Kafka gives durable burst absorption and replay; Redis gives per-job leases, delays and priorities that Kafka's offset model lacks. Postgres is the right answer below about 2k jobs/s."
+  },
+  {
+   "decision": "Push vs pull to workers",
+   "options": "Broker pushes to workers / workers pull (lease)",
+   "choice": "Pull with long polling",
+   "why": "Workers control their own concurrency and pull only what they can process, which is natural backpressure; push needs the broker to track worker capacity."
+  },
+  {
+   "decision": "Visibility timeout default",
+   "options": "5 s / 30 s / 5 min",
+   "choice": "30 s with heartbeats",
+   "why": "Short enough that crashed work is retried quickly, long enough that most jobs finish without heartbeats; heartbeats cover long jobs."
+  },
+  {
+   "decision": "Ordering",
+   "options": "Global FIFO / per-queue FIFO / per-key FIFO / none",
+   "choice": "Best effort per queue, strict per ordering key on request",
+   "why": "Global or strict per-queue FIFO kills parallelism and makes one failed job block all others; per-key ordering gives correctness where needed."
+  },
+  {
+   "decision": "Job state storage",
+   "options": "Only in Redis / separate sharded DB",
+   "choice": "Separate sharded DB",
+   "why": "Humans need history for days; keeping it in Redis wastes memory and is lost on failover."
+  }
+ ],
+ "failure_modes": [
+  {
+   "failure": "Worker pod crashes mid-job",
+   "behavior": "Lease expires within 30 s, Reaper returns the job to ready with attempt + 1, another worker processes it; idempotency absorbs any partial effect."
+  },
+  {
+   "failure": "Redis shard primary fails",
+   "behavior": "Replica promoted in about 10-20 s; leases on that shard pause; Relay replays Kafka from last committed offset to restore any lost ready entries; duplicates possible, no loss."
+  },
+  {
+   "failure": "Kafka broker loss",
+   "behavior": "Partitions elect new leaders from ISR in seconds; producers with idempotence retry without duplicates; enqueue p99 spikes briefly."
+  },
+  {
+   "failure": "Downstream dependency outage (payment gateway down)",
+   "behavior": "Handlers nack retryable; backoff with jitter spreads retries; circuit breaker pauses the queue after 50 percent failures over 1 minute; jobs wait safely; resume with ramp-up."
+  },
+  {
+   "failure": "Bad deploy makes all jobs of a queue fail",
+   "behavior": "Retries burn attempts, DLQ inflow alert fires to the owning team within minutes; rollback then redrive from DLQ."
+  },
+  {
+   "failure": "Full AZ loss",
+   "behavior": "Kafka still has 2 replicas and keeps accepting writes; Redis cluster promotes replicas in other AZs; workers rescheduled by Kubernetes; oldest-job age rises temporarily."
+  },
+  {
+   "failure": "Reaper leader dies",
+   "behavior": "Leader lock in etcd expires (TTL 10 s) and a standby takes over; expired leases are reclaimed a few seconds late."
+  }
+ ],
+ "metrics": [
+  "Age of oldest ready job per queue (primary SLO and autoscaling signal).",
+  "Queue depth: ready, delayed, in-flight counts per queue.",
+  "Enqueue rate, lease rate, ack rate, nack rate per queue.",
+  "Lease expiry rate (signals crashes or too-short visibility timeouts).",
+  "Retry rate and attempts histogram; DLQ inflow per queue with owner alert.",
+  "Handler duration p50/p99 and end-to-end latency from enqueue to ack.",
+  "Kafka consumer lag for the Relay per partition; Redis memory and ops per shard.",
+  "Duplicate execution rate measured via idempotency-table conflicts."
+ ],
+ "follow_ups": [
+  {
+   "q": "Why not just use SQS?",
+   "a": "For a single team on AWS, I would. At company scale we want replay, priority classes, cross-queue fairness, per-queue concurrency and on-prem portability. SQS also has a 15-minute max delay and 12-hour max visibility; our design adds a layer for longer delays."
+  },
+  {
+   "q": "Why not just Kafka with consumer groups as the queue?",
+   "a": "Kafka's unit of progress is an offset per partition, so one slow or failing job blocks everything behind it in that partition, there is no per-message retry or delay, and parallelism is capped by partition count. A job queue needs per-job acks, which is why we put a lease store in front of workers."
+  },
+  {
+   "q": "How do you guarantee a refund is not issued twice?",
+   "a": "Three layers: enqueue dedup key per order, the handler records refund(order_id) with a unique constraint in the same transaction, and it passes an idempotency key to the gateway so a retry after a lost response returns the original result."
+  },
+  {
+   "q": "How would you implement priorities?",
+   "a": "Separate Kafka topics per priority class so a p2 backlog never delays p0 ingestion, and within Redis a score of run_at minus priority weight. Workers lease from p0 first with weighted round-robin so lower classes are not starved."
+  },
+  {
+   "q": "How do you support cron schedules?",
+   "a": "A small cron service stores schedules in the DB and, using a leader lock, enqueues a job for each fire time with dedup_key = schedule_id + fire_time, so a leader failover cannot double-fire."
+  },
+  {
+   "q": "What if a job must run for 2 hours?",
+   "a": "Use heartbeats up to a max lease, but better to break it into checkpointed chunks, each a job, so a crash loses minutes not hours, and so deploys do not kill in-flight work."
+  },
+  {
+   "q": "How do you do zero-downtime deploys of workers?",
+   "a": "On SIGTERM the SDK stops leasing new jobs, finishes or nacks in-flight ones within a grace period (for example 60 s), and anything left is recovered by lease expiry."
+  },
+  {
+   "q": "How would you migrate teams off their home-grown cron tables?",
+   "a": "Shadow mode like Slack did: double-write to both systems, run the new path in dry-run, compare counts per stage, then cut over queue by queue with a rollback flag."
+  }
+ ],
+ "key_points": [
+  "Start with Postgres SKIP LOCKED as the baseline, then say why it stops scaling around a few thousand jobs per second.",
+  "At-least-once delivery plus idempotent handlers equals exactly-once effect; exactly-once delivery is a myth.",
+  "Leases (visibility timeouts) are the failure detector; heartbeats for long jobs; lease tokens stop zombies.",
+  "Kafka is the durable buffer and replay source; Redis holds only the bounded hot window; never let RAM be the backlog.",
+  "Retries use capped exponential backoff with full jitter, a max attempt count and a DLQ with redrive.",
+  "Per-queue concurrency caps, rate limits and priority classes give tenant isolation and a shedding order.",
+  "The SLO to alert and autoscale on is age of the oldest ready job, not CPU or queue length.",
+  "Split hot queues into virtual shards; ordering only per key, never global."
+ ],
+ "quiz": [
+  {
+   "q": "A worker completes the side effect and then crashes before acking. With a lease-based queue, what happens?",
+   "options": [
+    "The job is lost because it was already dequeued",
+    "The job is redelivered after the visibility timeout, so the handler must be idempotent",
+    "The queue detects the side effect and marks the job done",
+    "The job moves straight to the DLQ"
+   ],
+   "answer": 1,
+   "why": "Lease-based queues delete only on ack, so expiry redelivers it; that is at-least-once. 'Lost' would be at-most-once behaviour, which is the tempting wrong mental model of dequeue-as-delete."
+  },
+  {
+   "q": "Which retry delay formula best avoids synchronized retry waves after a shared outage?",
+   "options": [
+    "delay = base x 2^attempt",
+    "delay = constant 5 s",
+    "delay = random(0, min(cap, base x 2^attempt))",
+    "delay = base x attempt"
+   ],
+   "answer": 2,
+   "why": "Full jitter spreads retries uniformly. Plain exponential backoff is tempting but keeps every failed job retrying at the same instants, producing waves."
+  },
+  {
+   "q": "Your queue sees 12,000 jobs/s at peak and each job takes 0.5 s. Roughly how many concurrent worker slots do you need?",
+   "options": [
+    "600",
+    "24,000",
+    "1,200",
+    "6,000"
+   ],
+   "answer": 3,
+   "why": "Little's law: 12,000 x 0.5 = 6,000 in flight. 24,000 comes from multiplying by 2 instead of 0.5."
+  },
+  {
+   "q": "Why does the design put Kafka in front of the Redis ready store?",
+   "options": [
+    "To absorb bursts on disk and allow replay so Redis memory stays bounded",
+    "Because Redis cannot do sorted sets",
+    "To get exactly-once execution of handlers",
+    "To guarantee global FIFO ordering"
+   ],
+   "answer": 0,
+   "why": "Kafka turns overload into backlog on cheap disk and lets Redis be rebuilt. It does not give exactly-once handler execution; that is the tempting misconception."
+  },
+  {
+   "q": "A handler occasionally takes 50 s while the visibility timeout is 30 s. Duplicate executions spike. The best fix is:",
+   "options": [
+    "Set visibility timeout to 1 hour for all queues",
+    "Disable retries",
+    "Heartbeat to extend the lease while the handler runs",
+    "Run more workers"
+   ],
+   "answer": 2,
+   "why": "Heartbeats extend leases only for jobs that are still progressing. A 1-hour timeout also stops duplicates but means a crashed worker's job sits idle for an hour."
+  },
+  {
+   "q": "A paused worker wakes after its lease expired and tries to ack. What prevents it from corrupting state?",
+   "options": [
+    "The Reaper kills the process",
+    "Lease tokens checked on ack, and ideally fencing downstream",
+    "Kafka transactions",
+    "Clock synchronization via NTP"
+   ],
+   "answer": 1,
+   "why": "The stale token is rejected with 409. NTP is tempting but a paused process is not a clock problem, it is a stale ownership problem."
+  },
+  {
+   "q": "Which is the best primary SLO/alert signal for a background queue?",
+   "options": [
+    "CPU utilization of workers",
+    "Total jobs enqueued per day",
+    "Number of worker pods",
+    "Age of the oldest ready job"
+   ],
+   "answer": 3,
+   "why": "Age directly measures how late work is. Queue length is tempting but 1M fast jobs may be fine while 100 stuck slow jobs are not."
+  },
+  {
+   "q": "Why is Kafka with plain consumer groups a weak job queue for jobs that may fail individually?",
+   "options": [
+    "Kafka cannot store more than a day of data",
+    "Kafka has no replication",
+    "Progress is an offset per partition, so one failing job blocks those behind it and there is no per-message retry",
+    "Kafka consumers cannot run in parallel"
+   ],
+   "answer": 2,
+   "why": "Head-of-line blocking per partition is the issue. Parallelism exists but is bounded by partition count, which is a tempting partial answer."
+  },
+  {
+   "q": "A bulk marketing queue enqueues 5M jobs and refunds start missing their SLO. The most direct fix is:",
+   "options": [
+    "Per-queue concurrency caps and priority classes so refunds keep their share",
+    "Increase the visibility timeout",
+    "Add more Kafka partitions",
+    "Turn off retries for marketing"
+   ],
+   "answer": 0,
+   "why": "Isolation needs explicit caps and priority. More partitions add throughput but do not stop one tenant from taking all worker slots."
+  },
+  {
+   "q": "Kafka is configured RF=3, minISR=2, producer acks=all. Two brokers holding a partition go down. Enqueue to that partition:",
+   "options": [
+    "Succeeds with one replica",
+    "Fails with not-enough-replicas until replicas return",
+    "Silently drops messages",
+    "Switches to async replication"
+   ],
+   "answer": 1,
+   "why": "minISR=2 makes produce fail rather than accept under-replicated data. 'Succeeds' is tempting but would break the RPO 0 promise."
+  },
+  {
+   "q": "Which job is the best candidate for at-most-once semantics?",
+   "options": [
+    "Issuing a refund",
+    "Sending an order confirmation email",
+    "Recomputing a non-critical cache warm-up",
+    "Creating a shipment"
+   ],
+   "answer": 2,
+   "why": "Losing a cache warm is harmless, and a duplicate is wasted work. Email is tempting but users notice missing confirmations."
+  },
+  {
+   "q": "How should a job queue store delayed jobs so that finding due ones is cheap?",
+   "options": [
+    "A list scanned fully every second",
+    "A hash keyed by job_id",
+    "A sorted set or timing wheel keyed by run_at",
+    "A bloom filter"
+   ],
+   "answer": 2,
+   "why": "Sorted by time makes due jobs a range scan. A hash keyed by id is tempting because jobs are looked up by id, but it cannot find due ones without a full scan."
+  },
+  {
+   "q": "Why use Redis hash tags like {queue#3} in key names?",
+   "options": [
+    "To compress keys",
+    "To make all keys of one queue shard land in the same slot so a Lua script can update them atomically",
+    "To encrypt payloads",
+    "To enable TTL"
+   ],
+   "answer": 1,
+   "why": "Redis Cluster only runs multi-key scripts within one slot. Compression and TTL are unrelated."
+  },
+  {
+   "q": "A downstream recovers from a 10-minute outage and 300k queued retries hit it at once, knocking it over again. What prevents this?",
+   "options": [
+    "Bigger worker pods",
+    "Longer Kafka retention",
+    "Disabling the DLQ",
+    "Jittered backoff, per-queue rate/concurrency limits, and a circuit breaker with gradual ramp-up"
+   ],
+   "answer": 3,
+   "why": "Smoothing and limiting the retry wave is the fix. Bigger pods are tempting but increase the load on the downstream."
+  },
+  {
+   "q": "At roughly what scale does a single Postgres table with SKIP LOCKED usually become the bottleneck?",
+   "options": [
+    "About 50 jobs/s",
+    "Low thousands of jobs per second",
+    "About 1 million jobs/s",
+    "It never becomes a bottleneck"
+   ],
+   "answer": 1,
+   "why": "Row churn, vacuum and index contention typically bite in the low thousands per second. 50/s is too pessimistic; Postgres handles that trivially."
+  },
+  {
+   "q": "Producer times out on enqueue and retries. How do we avoid two jobs?",
+   "options": [
+    "Dedup key with a SETNX window at enqueue returning the original job_id",
+    "Increase API timeout to 60 s",
+    "Make Kafka partitions larger",
+    "Use at-most-once delivery"
+   ],
+   "answer": 0,
+   "why": "Dedup on a producer-supplied key closes the enqueue duplicate. A longer timeout reduces but never removes the race."
+  },
+  {
+   "q": "For a queue calling a partner API whose latency varies from 100 ms to 5 s, which limit protects the partner best?",
+   "options": [
+    "A fixed requests-per-second rate limit",
+    "A Kafka retention limit",
+    "A concurrency (in-flight) limit",
+    "A payload size limit"
+   ],
+   "answer": 2,
+   "why": "Concurrency limits shrink effective rate as latency rises. A fixed rate is tempting but keeps piling in-flight calls when the partner slows."
+  },
+  {
+   "q": "Strict per-key FIFO is needed for seller inventory updates. Which approach is correct?",
+   "options": [
+    "Global FIFO across the whole queue",
+    "Hash the ordering key to one shard and allow one in-flight job per key",
+    "Sort by enqueue timestamp at the worker",
+    "Use more workers"
+   ],
+   "answer": 1,
+   "why": "Per-key routing plus a per-key in-flight lock gives ordering where needed with parallelism across keys. Global FIFO is tempting but kills throughput and lets one failure block all keys."
+  },
+  {
+   "q": "Redis fails over with async replication and loses the last 500 ms of ready entries. How does the design recover?",
+   "options": [
+    "Those jobs are lost",
+    "Producers must resend",
+    "The DLQ replays them",
+    "The Relay replays Kafka from its last committed offset, re-adding them"
+   ],
+   "answer": 3,
+   "why": "Offsets commit only after Redis writes, so replay restores them (possibly duplicating some). The DLQ only holds failed jobs, a tempting but wrong source."
+  },
+  {
+   "q": "Approximately how much Kafka disk does 100M jobs/day of 2.3 KB, RF=3, 3-day retention need?",
+   "options": [
+    "About 70 GB",
+    "About 2 TB",
+    "About 20 TB",
+    "About 230 GB"
+   ],
+   "answer": 1,
+   "why": "230 GB/day x 3 replicas x 3 days is about 2.1 TB. 230 GB is the tempting answer that forgets replication and retention."
+  }
+ ],
+ "references": [
+  {
+   "title": "Scaling Slack's Job Queue (Slack Engineering)",
+   "url": "https://slack.engineering/scaling-slacks-job-queue/"
+  },
+  {
+   "title": "SQS Visibility Timeouts: Preventing Two Workers from Processing the Same Message (OneUptime)",
+   "url": "https://oneuptime.com/blog/post/2026-07-22-sqs-visibility-timeouts-concurrent-processing/view"
+  },
+  {
+   "title": "System Design Interview: Distributed Task Queue (techinterview.org)",
+   "url": "https://techinterview.org/system-design-task-queue/"
+  },
+  {
+   "title": "Retry Smarter, Not Harder: Designing Fault-Tolerant Queues with AWS SQS",
+   "url": "https://nerddevs.com/blog/retry-smarter-with-aws-sqs/"
+  },
+  {
+   "title": "Designing robust and predictable APIs with idempotency (Stripe)",
+   "url": "https://stripe.com/blog/idempotency"
+  }
+ ]
+}
