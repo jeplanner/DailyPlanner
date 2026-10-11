@@ -142,7 +142,7 @@
     $("th-view").innerHTML =
       '<div class="card th-ask">' +
       '<label for="th-q" class="th-ask-lbl">What\'s on your mind?</label>' +
-      '<textarea id="th-q" rows="3" maxlength="2000" placeholder="e.g. Why does Kafka only guarantee ordering within a partition? · What does a Director own that an EM doesn\'t? · When would I pick Cassandra over Postgres?"></textarea>' +
+      '<textarea id="th-q" rows="3" maxlength="2000" placeholder="e.g. What does a Director own that an EM doesn\'t? · When would I pick Cassandra over Postgres? · How does a CDN decide what to cache?"></textarea>' +
       '<div class="th-more" id="th-more" hidden>' +
       '<textarea id="th-ctx" rows="2" maxlength="4000" placeholder="What prompted it? (optional) — where you saw it, what confused you"></textarea>' +
       '<input id="th-tags" maxlength="120" placeholder="Tags, comma-separated (optional) — kafka, leadership"></div>' +

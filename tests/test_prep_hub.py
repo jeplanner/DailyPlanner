@@ -370,3 +370,15 @@ def test_thought_pdf_text_is_plain():
     from routes.interview_prep import _md_plain
     out = _md_plain("## How it works\n**Bold** and `code`\n- item\n```\nA -> B\n```")
     assert "HOW IT WORKS" in out and "**" not in out and "`" not in out and "* item" in out
+
+
+def test_every_shipped_thought_follows_the_answer_format():
+    from services import thoughts_service as ts
+    seeds = ts.seeds()
+    assert any("Kafka" in s["question"] for s in seeds)
+    for s in seeds:
+        for h in ("## The short answer", "## The intuition", "## How it actually works",
+                  "## A worked example", "## Common misconceptions",
+                  "## How to say it in an interview", "## Key takeaways", "## Check yourself"):
+            assert h in s["answer"], (s["question"], h)
+        assert s["answer"].count("Answer:") >= 3
