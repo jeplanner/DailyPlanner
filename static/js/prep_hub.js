@@ -156,7 +156,8 @@
 
   /* ── Tabs ────────────────────────────────────────────────────────── */
   var PATHS = { overview: "/interview-prep", cases: "/interview-prep/cases",
-                behavioral: "/interview-prep/behavioral", design: "/interview-prep/design" };
+                behavioral: "/interview-prep/behavioral", design: "/interview-prep/design",
+                thoughts: "/interview-prep/thoughts" };
   var loaders = {};          // tab -> function, run once on first open
   var loaded = {};
   var current = null;
@@ -812,6 +813,7 @@
   // The design tab opens on the deep dives; the 128-entry quick reference
   // loads only when its view is picked (prep_deep.js calls loadQuick).
   loaders.design = function () { if (window.PrepDeep) window.PrepDeep.load(); };
+  loaders.thoughts = function () { if (window.PrepThoughts) window.PrepThoughts.load(); };
   loaders.cases = function () { if (window.PrepCases) window.PrepCases.load(); };
 
   window.PrepHub = { api: api, esc: esc, reflow: reflow, say: say, hrs: hrs, makeProgress: makeProgress,

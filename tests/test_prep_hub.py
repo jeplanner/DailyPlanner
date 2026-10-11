@@ -263,3 +263,110 @@ def test_push_prune_removes_only_retired_rows(auth_client, monkeypatch):
     (table, params), = calls
     assert table == "push_subscriptions"
     assert params == {"user_id": "eq.test-user-id", "is_active": "eq.false"}
+
+
+# ── Random thoughts ────────────────────────────────────────────────────
+
+@pytest.fixture
+def thoughts(monkeypatch):
+    import routes.interview_prep as ip
+    from services import thoughts_service as ts
+    rows, started = [], []
+
+    def fake_get(table, params=None, **kw):
+        params = params or {}
+        out = [r for r in rows if params.get("user_id") in (None, f"eq.{r['user_id']}")]
+        if "question" in params:
+            out = [r for r in out if f"eq.{r['question']}" == params["question"]]
+        if "id" in params:
+            out = [r for r in out if f"eq.{r['id']}" == params["id"]]
+        if params.get("deleted_at") == "is.null":
+            out = [r for r in out if not r.get("deleted_at")]
+        return [dict(r) for r in out]
+
+    def fake_post(table, payload, **kw):
+        row = dict(payload, id=f"t{len(rows) + 1}")
+        rows.append(row)
+        return [dict(row)]
+
+    def fake_update(table, params=None, json=None, **kw):
+        for r in rows:
+            if all(f"eq.{r.get(k)}" == v for k, v in params.items()):
+                r.update(json)
+
+    for mod in (ip, ts):
+        monkeypatch.setattr(mod, "get", fake_get)
+        monkeypatch.setattr(mod, "update", fake_update)
+    monkeypatch.setattr(ip, "post", fake_post)
+    monkeypatch.setattr("supabase_client.post", fake_post)
+    monkeypatch.setattr(ts, "answer_in_background", lambda *a, **k: started.append(a))
+    ts._seeded.clear()
+    return {"rows": rows, "started": started}
+
+
+def test_thoughts_tab_has_its_own_path(auth_client):
+    html = auth_client.get("/interview-prep/thoughts").get_data(as_text=True)
+    assert 'data-initial-tab="thoughts"' in html and "prep_thoughts.js" in html
+
+
+def test_the_tail_inventory_question_is_added_once(auth_client, thoughts):
+    items = auth_client.get("/api/prep/thoughts").get_json()["items"]
+    assert any("tail inventory" in t["question"] for t in items)
+    seeded = [r for r in thoughts["rows"] if "tail inventory" in r["question"]]
+    assert len(seeded) == 1 and seeded[0]["status"] == "ready"
+    assert len(seeded[0]["answer"].split()) > 1500
+    for h in ("## The short answer", "## The intuition", "## How it actually works",
+              "## A worked example", "## Common misconceptions",
+              "## How to say it in an interview", "## Key takeaways", "## Check yourself"):
+        assert h in seeded[0]["answer"], h
+    # Deleting it must not bring it back on the next load or next process.
+    seeded[0]["deleted_at"] = "2026-10-11"
+    from services import thoughts_service as ts
+    ts._seeded.clear()
+    auth_client.get("/api/prep/thoughts")
+    assert len([r for r in thoughts["rows"] if "tail inventory" in r["question"]]) == 1
+
+
+def test_asking_saves_pending_and_starts_the_answer(auth_client, thoughts):
+    r = auth_client.post("/api/prep/thoughts", json={"question": "Why is Kafka ordered per partition?",
+                                                      "tags": ["Kafka", "  "]})
+    assert r.status_code == 201, r.get_data(as_text=True)
+    item = r.get_json()["item"]
+    assert item["status"] == "pending" and item["root_id"] == item["id"]
+    assert thoughts["started"] and thoughts["started"][-1][2] == "Why is Kafka ordered per partition?"
+    # A follow-up joins the same thread and carries the parent as context.
+    r2 = auth_client.post("/api/prep/thoughts", json={"question": "Simpler?", "parent_id": item["id"]})
+    child = r2.get_json()["item"]
+    assert child["root_id"] == item["id"] and child["parent_id"] == item["id"]
+    assert thoughts["started"][-1][4]["id"] == item["id"]
+    assert auth_client.post("/api/prep/thoughts", json={"question": "  "}).status_code == 400
+
+
+def test_thoughts_show_the_shipped_answer_before_the_migration(auth_client, monkeypatch):
+    import routes.interview_prep as ip
+    from services import thoughts_service as ts
+
+    def boom(*a, **k):
+        raise Exception('relation "prep_thoughts" does not exist')
+    monkeypatch.setattr(ip, "get", boom)
+    monkeypatch.setattr(ts, "get", boom)
+    ts._seeded.clear()
+    j = auth_client.get("/api/prep/thoughts").get_json()
+    assert j["available"] is False and j["migration"] == "MIGRATION_PREP_THOUGHTS.sql"
+    assert j["items"] and j["items"][0]["status"] == "ready"
+
+
+def test_generate_falls_through_providers(monkeypatch):
+    from services import thoughts_service as ts
+    calls = []
+    def a(p): calls.append("a"); return None, None
+    def b(p): calls.append("b"); raise RuntimeError("down")
+    def c(p): calls.append("c"); return "## The short answer\nYes.", "m3"
+    monkeypatch.setattr(ts, "PROVIDERS", (a, b, c))
+    assert ts.generate("q") == ("## The short answer\nYes.", "m3") and calls == ["a", "b", "c"]
+
+
+def test_thought_pdf_text_is_plain():
+    from routes.interview_prep import _md_plain
+    out = _md_plain("## How it works\n**Bold** and `code`\n- item\n```\nA -> B\n```")
+    assert "HOW IT WORKS" in out and "**" not in out and "`" not in out and "* item" in out

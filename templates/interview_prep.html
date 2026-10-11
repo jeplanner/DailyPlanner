@@ -34,6 +34,7 @@
     <a class="ip-tab" role="tab" href="/interview-prep/cases" data-tab="cases" aria-selected="false">Case rounds <span class="n" id="tn-cases"></span></a>
     <a class="ip-tab" role="tab" href="/interview-prep/behavioral" data-tab="behavioral" aria-selected="false">Behavioral <span class="n" id="tn-beh"></span></a>
     <a class="ip-tab" role="tab" href="/interview-prep/design" data-tab="design" aria-selected="false">System design <span class="n" id="tn-sd"></span></a>
+    <a class="ip-tab" role="tab" href="/interview-prep/thoughts" data-tab="thoughts" aria-selected="false">Random thoughts <span class="n" id="tn-th"></span></a>
   </nav>
 
   <!-- ═════════ OVERVIEW ═════════ -->
@@ -193,6 +194,10 @@
       <div class="more-row" id="sdbank-more"></div>
     </div>
   </section>
+  <!-- ═════════ RANDOM THOUGHTS ═════════ -->
+  <section class="ip-panel" data-panel="thoughts" role="tabpanel" hidden>
+    <div id="th-view"></div>
+  </section>
 </main>
 
 <!-- Mock interview: one case, a timer, one probe, then score yourself. -->
@@ -204,5 +209,6 @@
 <script src="{{ url_for('static', filename='js/prep_hub.js') }}"></script>
 <script src="{{ url_for('static', filename='js/prep_cases.js') }}"></script>
 <script src="{{ url_for('static', filename='js/prep_deep.js') }}"></script>
+<script src="{{ url_for('static', filename='js/prep_thoughts.js') }}"></script>
 </body>
 </html>
