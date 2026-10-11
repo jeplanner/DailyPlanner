@@ -49,6 +49,8 @@ interview_prep_bp = Blueprint("interview_prep", __name__)
 DEFAULT_ROLE = "Senior Director, Technical Program Management"
 DEFAULT_TARGET_DAYS = 42          # ~6 weeks out
 STORY_TARGET = 6                  # rehearsed stories that = "story ready"
+BEHAVIORAL_TARGET = 30             # practised behavioural questions that = "bank ready"
+SYSDESIGN_TARGET = 20              # studied designs that = "bank ready"
 _MAX_TITLE = 140
 _MAX_TEXT = 4000
 _MAX_MINUTES = 24 * 60
@@ -239,10 +241,34 @@ def _coach(readiness, days_left, expected, goal_met, minutes_today, goal, streak
             f"the offer. Same again tomorrow.", "cheer")
 
 
+#: The hub's tabs. One menu item, one page: the overview, the case rounds
+#: (formerly their own /tpm-rounds page), and the two big banks, each on its
+#: own path so a link or the Day Board can land on the right tab.
+PREP_TABS = ("overview", "cases", "behavioral", "design")
+
+
 @interview_prep_bp.route("/interview-prep", methods=["GET"])
 @login_required
 def page():
-    return render_template("interview_prep.html")
+    return render_template("interview_prep.html", initial_tab="overview")
+
+
+@interview_prep_bp.route("/interview-prep/cases", methods=["GET"])
+@login_required
+def page_cases():
+    return render_template("interview_prep.html", initial_tab="cases")
+
+
+@interview_prep_bp.route("/interview-prep/behavioral", methods=["GET"])
+@login_required
+def page_behavioral():
+    return render_template("interview_prep.html", initial_tab="behavioral")
+
+
+@interview_prep_bp.route("/interview-prep/design", methods=["GET"])
+@login_required
+def page_design():
+    return render_template("interview_prep.html", initial_tab="design")
 
 
 # Whitelisted markdown prep guides shipped in the repo, surfaced in-app.
@@ -571,6 +597,13 @@ PREP_BANKS = {
         "label": "Interview prep",
         "page": "/interview-prep",
     },
+    "tpm": {
+        "project": "CaseRoundsPrep",
+        "desc": "TPM / engineering-leadership case rounds. Cases scheduled "
+                "from /interview-prep/cases land here.",
+        "label": "Case rounds",
+        "page": "/interview-prep/cases",
+    },
 }
 
 #: bank key -> (entry list, the field holding the topic text, id prefix).
@@ -580,6 +613,7 @@ _BANK_SOURCES = {
     "java":       (lambda: java_bank.ENTRIES,  "title", "j"),
     "sql":        (lambda: sql_bank.ENTRIES,   "title", "sq"),
     "behavioral": (lambda: QUESTIONS,          "q",     "q"),
+    "tpm":        (lambda: TPM_ROUND_ENTRIES,  "title", "t"),
 }
 
 # Kept as the old names because MIGRATION_AISDEPREP.sql seeds this one by
@@ -893,16 +927,29 @@ def complete_prep_artifacts(user_id, bank, title, done, include_bucket=True):
             logger.warning("prep complete: bucket update failed for %r", title,
                            exc_info=True)
 
-    # The STUDY record, so the bank page's own checkbox agrees. Only
-    # /ai-sde keeps this on the server; /java and /sql hold it in
+    # The STUDY record, so the bank page's own checkbox agrees. /ai-sde,
+    # the case rounds and the behavioural bank keep this on the server;
+    # /java and /sql hold it in
     # localStorage, which nothing here can reach — the client reconciles
     # those from the task status instead.
     if bank == "ai_sde" and title in _AI_SDE_TITLES:
         try:
-            post("ai_sde_progress",
+            post("ai_sde_progress?on_conflict=user_id,entry_title",
                  {"user_id": user_id, "entry_title": title,
                   "studied": bool(done),
                   "studied_at": _iso_now() if done else None,
+                  "updated_at": _iso_now()},
+                 prefer="resolution=merge-duplicates,return=minimal")
+            touched["progress"] = 1
+        except Exception:
+            logger.warning("prep complete: progress update failed for %r", title,
+                           exc_info=True)
+    # The case rounds and the behavioural bank keep theirs in prep_progress.
+    elif bank in ("tpm", "behavioral") and title in _progress_maps(bank)[1]:
+        try:
+            post("prep_progress?on_conflict=user_id,bank,entry_title",
+                 {"user_id": user_id, "bank": bank, "entry_title": title,
+                  "done": bool(done), "done_at": _iso_now() if done else None,
                   "updated_at": _iso_now()},
                  prefer="resolution=merge-duplicates,return=minimal")
             touched["progress"] = 1
@@ -1616,7 +1663,10 @@ def ai_sde_progress_save():
     try:
         # Upsert on (user_id, entry_title) — the unique index in the
         # migration is what makes merge-duplicates the right resolution.
-        post("ai_sde_progress", payload,
+        # ?on_conflict= names the unique index. Without it PostgREST merges
+        # on the uuid primary key, which never collides, so the SECOND save
+        # of any topic failed with 409 - the same bug prep_notes once had.
+        post("ai_sde_progress?on_conflict=user_id,entry_title", payload,
              prefer="resolution=merge-duplicates,return=minimal")
     except Exception as exc:
         return _ai_sde_progress_schema_error(exc)
@@ -1927,7 +1977,44 @@ def dashboard():
     days_practiced_7 = sum(1 for d, m in by_day.items() if d and d >= week_ago and m > 0)
     consistency = min(days_practiced_7, 7) / 7.0
 
-    readiness = round((0.55 * topic_score + 0.25 * story_score + 0.20 * consistency) * 100)
+    # ── The banks: case rounds, behavioural, system design ──
+    # Read from prep_progress. Before it existed readiness was syllabus,
+    # stories and consistency only, so a week rehearsing case rounds - where
+    # a Director loop is usually decided - moved the number not at all.
+    case_score = bank_score = None
+    next_cases = []
+    try:
+        prog = _progress_rows(user_id, done_only=True)
+    except Exception:
+        prog = None
+    if prog is not None:
+        done_by_bank = defaultdict(set)
+        for r in prog:
+            done_by_bank[r.get("bank")].add(r.get("entry_title"))
+        tpm_done = done_by_bank["tpm"]
+        weights = {"P0": 3, "P1": 2, "P2": 1}
+        total_w = sum(weights[e["priority"]] for e in TPM_ROUND_ENTRIES) or 1
+        case_score = sum(weights[e["priority"]] for e in TPM_ROUND_ENTRIES
+                         if e["title"] in tpm_done) / float(total_w)
+        beh = len(done_by_bank["behavioral"] & {q["q"] for q in QUESTIONS})
+        sd = len(done_by_bank["sysdesign"] & {e["title"] for e in SD_ENTRIES})
+        bank_score = (min(beh, BEHAVIORAL_TARGET) / float(BEHAVIORAL_TARGET)
+                      + min(sd, SYSDESIGN_TARGET) / float(SYSDESIGN_TARGET)) / 2.0
+        next_cases = [
+            {"id": f"t{i}", "title": e["title"], "priority": e["priority"],
+             "round": TPM_ROUNDS.get(e["round"], e["round"])}
+            for i, e in sorted(enumerate(TPM_ROUND_ENTRIES),
+                               key=lambda ie: ie[1]["rank"])
+            if e["title"] not in tpm_done
+        ][:3]
+
+    if case_score is None:
+        readiness = round((0.55 * topic_score + 0.25 * story_score
+                           + 0.20 * consistency) * 100)
+    else:
+        readiness = round((0.35 * topic_score + 0.20 * story_score
+                           + 0.20 * case_score + 0.10 * bank_score
+                           + 0.15 * consistency) * 100)
     cur_streak, best_streak = _streaks(by_day, goal, today)
     minutes_today = by_day.get(today.isoformat(), 0)
     goal_met = goal > 0 and minutes_today >= goal
@@ -1980,6 +2067,9 @@ def dashboard():
             "topic_score": round(topic_score * 100),
             "story_score": round(story_score * 100),
             "consistency": round(consistency * 100),
+            "case_score": None if case_score is None else round(case_score * 100),
+            "bank_score": None if bank_score is None else round(bank_score * 100),
+            "next_cases": next_cases,
             "rehearsed": rehearsed,
             "story_target": STORY_TARGET,
             "topics_total": len(topics),
@@ -2019,10 +2109,15 @@ _OVERRIDE_MAP = {"q": "question", "s": "situation", "t": "task",
 @interview_prep_bp.route("/tpm-rounds", methods=["GET"])
 @login_required
 def tpm_rounds_page():
-    """The two CASE rounds of a TPM loop — product thinking and program
-    management. The behavioral round lives in the question bank and the
-    design round in the system-design bank; these two had no coverage."""
-    return render_template("tpm_rounds.html")
+    """The case rounds now live inside the Interview Prep hub. Kept as a
+    redirect so bookmarks, old Day Board links and the service worker's
+    cached nav all still land somewhere useful, with ?topic= intact."""
+    qs = request.query_string.decode("utf-8", "ignore")
+    return redirect("/interview-prep/cases" + ("?" + qs if qs else ""), code=301)
+
+
+def _tpm_items():
+    return [{"id": f"t{i}", **e} for i, e in enumerate(TPM_ROUND_ENTRIES)]
 
 
 @interview_prep_bp.route("/api/tpm-rounds", methods=["GET"])
@@ -2030,7 +2125,7 @@ def tpm_rounds_page():
 def tpm_rounds_api():
     """Case-round bank: framework, worked answer, strong-vs-weak contrast,
     interviewer probes and pitfalls per question. Static reference content."""
-    items = [{"id": f"t{i}", **e} for i, e in enumerate(TPM_ROUND_ENTRIES)]
+    items = _tpm_items()
     return jsonify({
         "rounds": [{"key": k, "label": v} for k, v in TPM_ROUNDS.items()],
         "briefs": TPM_ROUND_BRIEF,
@@ -2038,6 +2133,204 @@ def tpm_rounds_api():
         "total": len(items),
         "total_minutes": TPM_TOTAL_PREP_MINUTES,
     })
+
+
+@interview_prep_bp.route("/interview-prep/cases/pdf", methods=["GET"])
+@login_required
+def tpm_rounds_pdf():
+    """The case rounds as a phone-readable PDF. Filters: ?round= ?priority=
+    ?q= ?id=tN (any combination), the same ones the page offers."""
+    rnd = (request.args.get("round") or "").strip()
+    pri = (request.args.get("priority") or "").strip().upper()
+    q = (request.args.get("q") or "").strip().lower()
+    one = (request.args.get("id") or "").strip()
+    items = _tpm_items()
+    if one:
+        items = [e for e in items if e["id"] == one]
+    else:
+        items = [e for e in items
+                 if (not rnd or e["round"] == rnd)
+                 and (not pri or e["priority"] == pri)
+                 and (not q or q in (e["title"] + " " + e["framework"] + " "
+                                     + " ".join(e["tags"])).lower())]
+    items.sort(key=lambda e: e["rank"])
+    if not items:
+        return jsonify({"error": "No cases match that filter."}), 404
+    if one:
+        heading = items[0]["title"][:80]
+    else:
+        heading = TPM_ROUNDS.get(rnd) or "Case Rounds"
+        if pri:
+            heading += f" - {pri}"
+    mins = sum(e["prep_minutes"] for e in items)
+    subtitle = " | ".join(x for x in [
+        f"{len(items)} case{'' if len(items) == 1 else 's'}",
+        f"{mins // 60}h {mins % 60}m of rehearsal" if mins else "",
+        "DailyPlanner Interview Prep", _today().isoformat()] if x)
+    sections = [{
+        "title": e["title"],
+        "cat": f"{TPM_ROUNDS.get(e['round'], e['round'])} | {e['priority']} | "
+               f"{e['difficulty']} | {e['prep_label']}",
+        "fields": [("What they are testing", e["what_they_test"]),
+                   ("How often", e["frequency"]),
+                   ("Framework", e["framework"]),
+                   ("Worked answer", e["worked"]),
+                   ("Strong vs weak", e["strong_weak"]),
+                   ("They will push back",
+                    "\n".join(f"{n}. {p}" for n, p in enumerate(e["probes"], 1))),
+                   ("Pitfalls", e["pitfalls"])],
+        "arch": None, "tags": e["tags"],
+    } for e in items]
+    try:
+        pdf = _pdf_bytes(heading, subtitle, sections, body_pt=_pdf_body_pt())
+    except ImportError:
+        return jsonify({"error": "PDF export needs fpdf2 on the server."}), 503
+    fname = (items[0]["id"] + ".pdf") if one else "case-rounds.pdf"
+    return _pdf_response(pdf, fname)
+
+
+# ─────────── Rehearsal progress, saved server-side ──────────────────
+#
+# The banks used to keep "rehearsed" ticks in localStorage, keyed by each
+# entry's POSITION (t4, q19, sd7). Two problems: ticks on the phone never
+# reached the laptop, and inserting one entry shifted every position after
+# it, so the wrong cases showed as rehearsed. Rows here are keyed by the
+# entry's TITLE, and ids are worked out from the bank as it is now.
+
+#: bank -> (entries, field holding the title, id prefix)
+_PROGRESS_BANKS = {
+    "tpm":        (lambda: TPM_ROUND_ENTRIES, "title", "t"),
+    "behavioral": (lambda: QUESTIONS,         "q",     "q"),
+    "sysdesign":  (lambda: SD_ENTRIES,        "title", "sd"),
+}
+PROGRESS_MIGRATION = "MIGRATION_PREP_PROGRESS.sql"
+
+
+def _progress_maps(bank):
+    entries, field, prefix = _PROGRESS_BANKS[bank]
+    es = entries()
+    by_id = {f"{prefix}{i}": e[field] for i, e in enumerate(es)}
+    return by_id, {t: i for i, t in by_id.items()}
+
+
+def _progress_missing(exc):
+    text = str(exc)
+    return ("prep_progress" in text or "does not exist" in text
+            or "schema cache" in text)
+
+
+def _progress_rows(user_id, bank=None, done_only=False):
+    params = {"user_id": f"eq.{user_id}",
+              "select": "bank,entry_title,done,done_at,mock_attempts,"
+                        "mock_last_score,mock_best_score,mock_last_at",
+              "limit": "5000"}
+    if bank:
+        params["bank"] = _pg_eq(bank)
+    if done_only:
+        params["done"] = "eq.true"
+    return get("prep_progress", params=params) or []
+
+
+@interview_prep_bp.route("/api/prep/progress", methods=["GET"])
+@login_required
+def prep_progress_get():
+    """{done: [ids], mock: {id: {...}}} for one bank. ``?bank=tpm``"""
+    bank = (request.args.get("bank") or "").strip()
+    if bank not in _PROGRESS_BANKS:
+        return jsonify({"error": f"unknown bank {bank!r}"}), 400
+    try:
+        rows = _progress_rows(session["user_id"], bank)
+    except Exception as exc:
+        if _progress_missing(exc):
+            logger.warning("prep progress unavailable - run %s", PROGRESS_MIGRATION)
+            return jsonify({"bank": bank, "available": False, "done": [],
+                            "mock": {}, "migration": PROGRESS_MIGRATION})
+        raise
+    _, by_title = _progress_maps(bank)
+    done, mock = [], {}
+    for r in rows:
+        eid = by_title.get(r.get("entry_title"))
+        if not eid:
+            continue          # renamed or removed since it was recorded
+        if r.get("done"):
+            done.append(eid)
+        if r.get("mock_attempts"):
+            mock[eid] = {"attempts": r["mock_attempts"],
+                         "last": r.get("mock_last_score"),
+                         "best": r.get("mock_best_score"),
+                         "at": r.get("mock_last_at")}
+    return jsonify({"bank": bank, "available": True, "done": done, "mock": mock})
+
+
+@interview_prep_bp.route("/api/prep/progress", methods=["POST"])
+@login_required
+def prep_progress_save():
+    """Body: ``{bank, id, done}`` to tick or untick one entry;
+    ``{bank, ids: [...]}`` to import ticks in bulk (the one-off move from
+    localStorage); ``{bank, id, mock_score: 1-4}`` to record a mock run."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    bank = (data.get("bank") or "").strip()
+    if bank not in _PROGRESS_BANKS:
+        return jsonify({"error": f"unknown bank {bank!r}"}), 400
+    by_id, _ = _progress_maps(bank)
+    now = _iso_now()
+    target = "prep_progress?on_conflict=user_id,bank,entry_title"
+
+    def _row(title, **extra):
+        return {"user_id": user_id, "bank": bank, "entry_title": title,
+                "updated_at": now, **extra}
+
+    try:
+        if isinstance(data.get("ids"), list):
+            titles = [by_id[i] for i in data["ids"][:2000] if i in by_id]
+            if titles:
+                post(target, [_row(t, done=True, done_at=now) for t in titles],
+                     prefer="resolution=merge-duplicates,return=minimal")
+            return jsonify({"status": "ok", "imported": len(titles)})
+
+        title = by_id.get((data.get("id") or "").strip())
+        if not title:
+            return jsonify({"error": "unknown entry"}), 400
+
+        if "mock_score" in data:
+            try:
+                score = int(data["mock_score"])
+            except (TypeError, ValueError):
+                return jsonify({"error": "mock_score must be 1-4"}), 400
+            if not 1 <= score <= 4:
+                return jsonify({"error": "mock_score must be 1-4"}), 400
+            prev = (get("prep_progress", params={
+                "user_id": f"eq.{user_id}", "bank": _pg_eq(bank),
+                "entry_title": _pg_eq(title),
+                "select": "mock_attempts,mock_best_score,done", "limit": "1",
+            }) or [{}])[0]
+            row = _row(title,
+                       mock_attempts=int(prev.get("mock_attempts") or 0) + 1,
+                       mock_last_score=score,
+                       mock_best_score=max(score, int(prev.get("mock_best_score") or 0)),
+                       mock_last_at=now)
+            # A run scored 3+ out loud IS a rehearsal; a weak run does not
+            # untick one that was already done.
+            if score >= 3 and not prev.get("done"):
+                row.update(done=True, done_at=now)
+            post(target, row, prefer="resolution=merge-duplicates,return=minimal")
+            return jsonify({"status": "ok", "attempts": row["mock_attempts"],
+                            "best": row["mock_best_score"],
+                            "done": bool(row.get("done") or prev.get("done"))})
+
+        if "done" not in data:
+            return jsonify({"error": "nothing to save"}), 400
+        done = bool(data["done"])
+        post(target, _row(title, done=done, done_at=now if done else None),
+             prefer="resolution=merge-duplicates,return=minimal")
+        return jsonify({"status": "ok", "done": done})
+    except Exception as exc:
+        if _progress_missing(exc):
+            return jsonify({"error": f"Progress sync is not set up yet. Run "
+                                     f"{PROGRESS_MIGRATION} in Supabase.",
+                            "migration": PROGRESS_MIGRATION}), 503
+        raise
 
 
 @interview_prep_bp.route("/api/interview-prep/questions", methods=["GET"])

@@ -1,0 +1,193 @@
+"""The Interview Prep hub: case rounds merged in, server-side progress,
+readiness that counts the case rounds, the case-round PDF, and the bank's
+ranking."""
+import pytest
+
+
+@pytest.fixture
+def db(monkeypatch):
+    """A tiny in-memory prep_progress table behind get/post."""
+    import routes.interview_prep as ip
+    rows = {}
+    posts = []
+
+    def fake_get(table, params=None, **kw):
+        params = params or {}
+        if table != "prep_progress":
+            return []
+        out = []
+        for (u, b, t), r in rows.items():
+            if params.get("user_id") not in (None, f"eq.{u}"):
+                continue
+            if "bank" in params and params["bank"].split(".", 1)[1].strip('"') != b:
+                continue
+            if "entry_title" in params and params["entry_title"].split(".", 1)[1].strip('"') != t:
+                continue
+            if params.get("done") == "eq.true" and not r.get("done"):
+                continue
+            out.append(dict(r))
+        return out
+
+    def fake_post(path, payload, **kw):
+        posts.append((path, payload))
+        table = path.split("?")[0]
+        if table != "prep_progress":
+            return []
+        assert "on_conflict=user_id,bank,entry_title" in path, "second save would 409"
+        for row in payload if isinstance(payload, list) else [payload]:
+            key = (row["user_id"], row["bank"], row["entry_title"])
+            rows[key] = {**rows.get(key, {}), **row}
+        return []
+
+    monkeypatch.setattr(ip, "get", fake_get)
+    monkeypatch.setattr(ip, "post", fake_post)
+    return {"rows": rows, "posts": posts}
+
+
+def test_old_tpm_page_redirects_into_the_hub_keeping_the_topic(auth_client):
+    r = auth_client.get("/tpm-rounds?topic=Should%20we%20kill%20this%20program%3F")
+    assert r.status_code == 301
+    assert r.headers["Location"].startswith("/interview-prep/cases?topic=Should")
+
+
+@pytest.mark.parametrize("path,tab", [
+    ("/interview-prep", "overview"), ("/interview-prep/cases", "cases"),
+    ("/interview-prep/behavioral", "behavioral"), ("/interview-prep/design", "design"),
+])
+def test_each_tab_has_its_own_path(auth_client, path, tab):
+    r = auth_client.get(path)
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert f'data-initial-tab="{tab}"' in html
+    assert "prep_cases.js" in html and "prep_hub.js" in html
+
+
+def test_nav_has_one_interview_prep_item():
+    nav = open("templates/_top_nav.html", encoding="utf-8").read()
+    assert 'href="/tpm-rounds"' not in nav
+    assert nav.count('href="/interview-prep"') == 1
+    assert "tpm-rounds)" in nav, "the old path should still light the item"
+
+
+def test_progress_is_keyed_by_title_and_mapped_back_to_ids(auth_client, db):
+    import routes.interview_prep as ip
+    r = auth_client.post("/api/prep/progress", json={"bank": "tpm", "id": "t4", "done": True})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    (key, row), = db["rows"].items()
+    assert key[2] == ip.TPM_ROUND_ENTRIES[4]["title"]
+    assert "t4" not in str(row), "a positional id leaked into the row"
+    got = auth_client.get("/api/prep/progress?bank=tpm").get_json()
+    assert got["available"] and got["done"] == ["t4"]
+
+
+def test_bulk_import_of_old_local_ticks(auth_client, db):
+    r = auth_client.post("/api/prep/progress",
+                         json={"bank": "behavioral", "ids": ["q0", "q1", "nope"]})
+    assert r.get_json()["imported"] == 2
+    got = auth_client.get("/api/prep/progress?bank=behavioral").get_json()
+    assert sorted(got["done"]) == ["q0", "q1"]
+
+
+def test_unknown_bank_or_entry_is_refused(auth_client, db):
+    assert auth_client.post("/api/prep/progress", json={"bank": "x", "id": "t1", "done": True}).status_code == 400
+    assert auth_client.post("/api/prep/progress", json={"bank": "tpm", "id": "t9999", "done": True}).status_code == 400
+
+
+def test_mock_score_counts_attempts_and_rehearses_on_three(auth_client, db):
+    r = auth_client.post("/api/prep/progress", json={"bank": "tpm", "id": "t2", "mock_score": 2}).get_json()
+    assert r["attempts"] == 1 and r["best"] == 2 and not r["done"]
+    r = auth_client.post("/api/prep/progress", json={"bank": "tpm", "id": "t2", "mock_score": 3}).get_json()
+    assert r["attempts"] == 2 and r["best"] == 3 and r["done"]
+    r = auth_client.post("/api/prep/progress", json={"bank": "tpm", "id": "t2", "mock_score": 1}).get_json()
+    assert r["best"] == 3 and r["done"], "a weak run must not untick a rehearsed case"
+    assert auth_client.post("/api/prep/progress", json={"bank": "tpm", "id": "t2", "mock_score": 7}).status_code == 400
+    got = auth_client.get("/api/prep/progress?bank=tpm").get_json()
+    assert got["mock"]["t2"]["attempts"] == 3
+
+
+def test_progress_degrades_when_the_table_is_missing(auth_client, monkeypatch):
+    import routes.interview_prep as ip
+
+    def boom(*a, **k):
+        raise Exception('relation "prep_progress" does not exist')
+    monkeypatch.setattr(ip, "get", boom)
+    monkeypatch.setattr(ip, "post", boom)
+    got = auth_client.get("/api/prep/progress?bank=tpm").get_json()
+    assert got["available"] is False and got["migration"] == "MIGRATION_PREP_PROGRESS.sql"
+    r = auth_client.post("/api/prep/progress", json={"bank": "tpm", "id": "t1", "done": True})
+    assert r.status_code == 503
+
+
+def test_case_pdf_filters_and_renders(auth_client):
+    r = auth_client.get("/interview-prep/cases/pdf?round=engineering")
+    assert r.status_code == 200 and r.mimetype == "application/pdf"
+    assert r.data[:4] == b"%PDF"
+    assert auth_client.get("/interview-prep/cases/pdf?id=t9999").status_code == 404
+
+
+def test_tpm_bank_can_be_scheduled_and_noted():
+    import routes.interview_prep as ip
+    assert "tpm" in ip.PREP_BANKS and "tpm" in ip._BANK_SOURCES
+    title = ip.TPM_ROUND_ENTRIES[0]["title"]
+    assert ip._prep_lookup("tpm", "t0", title)[0] == title
+    # The page path is used as a plain prefix by the Day Board, so no query.
+    assert "?" not in ip.PREP_BANKS["tpm"]["page"]
+
+
+def test_ticking_a_case_elsewhere_updates_its_progress(monkeypatch):
+    import routes.interview_prep as ip
+    posted = []
+    monkeypatch.setattr(ip, "_find_prep_project", lambda u, b: None)
+    monkeypatch.setattr(ip, "get", lambda *a, **k: [])
+    monkeypatch.setattr(ip, "update", lambda *a, **k: None)
+    monkeypatch.setattr(ip, "post", lambda t, p, **k: posted.append((t, p)) or [{}])
+    title = ip.TPM_ROUND_ENTRIES[3]["title"]
+    ip.complete_prep_artifacts("u1", "tpm", title, True)
+    prog = [p for t, p in posted if t.startswith("prep_progress")]
+    assert prog and prog[0]["done"] is True and prog[0]["entry_title"] == title
+
+
+def test_readiness_counts_the_case_rounds(auth_client, monkeypatch):
+    import routes.interview_prep as ip
+    p0 = [e["title"] for e in ip.TPM_ROUND_ENTRIES if e["priority"] == "P0"]
+
+    def fake_get(table, params=None, **kw):
+        if table == "interview_prep":
+            return [{"id": "p", "role_title": "x", "daily_goal_minutes": 45,
+                     "target_date": None, "created_at": None}]
+        if table == "prep_progress":
+            return [{"bank": "tpm", "entry_title": t, "done": True} for t in p0]
+        return []
+    monkeypatch.setattr(ip, "get", fake_get)
+    s = auth_client.get("/api/interview-prep").get_json()["stats"]
+    assert s["case_score"] > 0
+    assert s["readiness"] == round(0.20 * s["case_score"]), "only the case rounds are done"
+    # Next up skips what is already rehearsed.
+    assert all(c["title"] not in p0 for c in s["next_cases"])
+
+
+def test_bank_ranking_and_priorities():
+    import tpm_round_bank as t
+    by = {e["title"]: e for e in t.ENTRIES}
+    assert len(t.ENTRIES) == 34 and len(by) == 34
+    # Every must-rehearse case is P0; P0s outrank everything else.
+    for title in t._MUST_REHEARSE:
+        assert by[title]["priority"] == "P0", title
+    ranked = sorted(t.ENTRIES, key=lambda e: e["rank"])
+    order = [e["priority"] for e in ranked]
+    assert order == sorted(order), "a lower priority ranked above a higher one"
+    # "Asked in most TPM loops" used to rank dead last.
+    pm = by["How do you work with a PM when you disagree about priority or scope?"]
+    assert pm["priority"] != "P2"
+    assert "engineering" in t.ROUNDS and "engineering" in t.ROUND_BRIEF
+    # New cases are appended, never inserted: older saved ids stay valid.
+    assert t.ENTRIES[21]["round"] == "close"
+
+
+def test_ai_sde_progress_upsert_names_its_conflict_target(auth_client, monkeypatch):
+    import routes.interview_prep as ip
+    saved = []
+    monkeypatch.setattr(ip, "post", lambda path, payload, **kw: saved.append(path))
+    ip_title = ip.AI_SDE_ENTRIES[0]["title"]
+    auth_client.post("/api/ai-sde/progress", json={"title": ip_title, "studied": True})
+    assert saved and saved[-1] == "ai_sde_progress?on_conflict=user_id,entry_title"

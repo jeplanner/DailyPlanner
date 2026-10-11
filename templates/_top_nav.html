@@ -940,7 +940,10 @@ button.nav-group-title:hover{background:var(--color-surface-secondary);color:var
     <div class="nav-group">
       <div class="nav-group-title">Interview prep</div>
 
-      <a href="/interview-prep" data-match="^/interview-prep(?!/guides)" title="Interview Prep Coach — readiness score, syllabus, STAR stories, system design bank, daily streak &amp; a coach that keeps you on track">
+      <!-- One item for the whole hub: overview, case rounds (formerly the
+           separate "TPM Case Rounds" item), behavioural and system design
+           are tabs on the same page. -->
+      <a href="/interview-prep" data-match="^/(interview-prep(?!/guides)|tpm-rounds)" title="Interview Prep — readiness and daily practice, case rounds (product, program, engineering leadership) with mock interviews, behavioural STAR bank and system design bank">
         <i data-feather="target"></i>
         Interview Prep
       </a>
@@ -948,11 +951,6 @@ button.nav-group-title:hover{background:var(--color-surface-secondary);color:var
       <a href="/ai-sde" data-match="^/(ai-sde|interview-prep/guides)" title="AI SDE Prep (Amazon/Google) — interactive bank: DSA, ML concepts, coding, ML system design &amp; behavioral, each explained in depth; plus the full 16-week plan">
         <i data-feather="cpu"></i>
         AI SDE Prep
-      </a>
-
-      <a href="/tpm-rounds" data-match="^/tpm-rounds" title="TPM Case Rounds — product thinking &amp; program management: the framework, a worked answer, strong-vs-weak, and the interviewer's follow-up probes for each case">
-        <i data-feather="layers"></i>
-        TPM Case Rounds
       </a>
 
       <!-- Sits with the other prep banks. Separate from AI SDE because it is

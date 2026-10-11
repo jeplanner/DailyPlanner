@@ -683,6 +683,9 @@ def test_countdown_hosts_degrade_without_the_script(auth_client):
         planner = fh.read()
     with open("templates/interview_prep.html", encoding="utf-8") as fh:
         prep = fh.read()
+    # The hub's page code lives in static/js/prep_hub.js.
+    with open("static/js/prep_hub.js", encoding="utf-8") as fh:
+        prep += fh.read()
     with open("static/goals.js", encoding="utf-8") as fh:
         goals_js = fh.read()
     for name, src in (("goal_planner.html", planner),
@@ -774,6 +777,9 @@ def test_flash_survives_reduced_motion_and_paused_animations():
     for name in ("templates/goal_planner.html", "templates/interview_prep.html"):
         with open(name, encoding="utf-8") as fh:
             css = fh.read()
+        # The hub keeps its styles in a linked stylesheet.
+        if name.endswith("interview_prep.html"):
+            css += open("static/interview_prep.css", encoding="utf-8").read()
         assert ".flash-on" in css, f"{name} has no styling for the JS flash state"
         # The old failure mode: an animation with a reduced-motion opt-out
         # that left nothing visible behind it.
@@ -1231,6 +1237,9 @@ def test_every_question_bank_shows_a_card_summary(auth_client):
     All four pack WHOLE SENTENCES under a cap, so none is cut mid-clause."""
     for path in ("/ai-sde", "/java", "/sql", "/interview-prep"):
         html = auth_client.get(path).get_data(as_text=True)
+        # The Interview Prep hub draws its cards from static/js/prep_*.js.
+        for src in __import__("re").findall(r'src="/static/(js/prep_[a-z_]+\.js)', html):
+            html += open("static/" + src, encoding="utf-8").read()
         assert 'class="q-sum"' in html, f"{path} has no card summary"
         # And no line-clamp anywhere: the length is bounded at the source,
         # so clamping would reintroduce the cut-off the report was about.
@@ -1362,7 +1371,8 @@ def test_ai_sde_clocked_minutes_reach_the_server(auth_client, monkeypatch):
     assert r.status_code == 200, r.get_data(as_text=True)
     assert saved, "nothing was written"
     table, payload = saved[-1]
-    assert table == "ai_sde_progress"
+    assert table.split("?")[0] == "ai_sde_progress"
+    assert "on_conflict=user_id,entry_title" in table, "second save would 409"
     assert payload["entry_title"] == title, "keyed on something other than the title"
     assert payload["minutes_focused"] == 42
     assert "ai0" not in str(payload), "a positional id leaked into the row"
@@ -3033,18 +3043,18 @@ def test_ai_sde_study_record_follows_a_tick_made_elsewhere(auth_client, monkeypa
 
     title = ip.AI_SDE_ENTRIES[0]["title"]
     ip.complete_prep_artifacts("u1", "ai_sde", title, True)
-    prog = [p for t, p in posted if t == "ai_sde_progress"]
+    prog = [p for t, p in posted if t.split("?")[0] == "ai_sde_progress"]
     assert prog and prog[0]["studied"] is True and prog[0]["entry_title"] == title
 
     posted.clear()
     ip.complete_prep_artifacts("u1", "ai_sde", title, False)
-    prog = [p for t, p in posted if t == "ai_sde_progress"]
+    prog = [p for t, p in posted if t.split("?")[0] == "ai_sde_progress"]
     assert prog and prog[0]["studied"] is False and prog[0]["studied_at"] is None
 
     # A bank with no server-side study record must not invent one.
     posted.clear()
     ip.complete_prep_artifacts("u1", "sql", "ORDER BY, and where NULL sorts", True)
-    assert not [p for t, p in posted if t == "ai_sde_progress"]
+    assert not [p for t, p in posted if t.split("?")[0] == "ai_sde_progress"]
 
 
 def test_the_checkbox_is_reconciled_without_echoing_back():

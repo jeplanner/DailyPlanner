@@ -455,10 +455,16 @@ def test_every_bank_page_offers_the_plan_button(auth_client):
 
     Each page has to do three things and this checks all of them, because
     missing any one leaves a button that renders and does nothing."""
+    import re
     for path, bank in (("/ai-sde", "ai_sde"),
                        ("/java", "java"),
-                       ("/interview-prep", "behavioral")):
+                       ("/interview-prep", "behavioral"),
+                       ("/interview-prep/cases", "tpm")):
         html = auth_client.get(path).get_data(as_text=True)
+        # The hub keeps its page code in static/js/prep_*.js rather than
+        # inline, so read those alongside the HTML.
+        for src in re.findall(r'src="/static/(js/prep_[a-z_]+\.js)', html):
+            html += open("static/" + src, encoding="utf-8").read()
         assert "js/prep-scheduler.js" in html, f"{path} does not load the module"
         assert f'PrepScheduler.button("{bank}"' in html, f"{path} renders no Plan button"
         assert "PrepScheduler.attach(" in html, f"{path} never wires the module"

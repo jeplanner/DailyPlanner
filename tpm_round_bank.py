@@ -6,13 +6,17 @@ A TPM loop at this level is normally four rounds:
   1. PRODUCT THINKING  - can you reason about users, value and metrics, or do
                          you only reason about dates? Covered here.
   2. DESIGN            - system/architecture depth. Covered by
-                         `system_design_bank.py` (42 detailed classic designs).
+                         `system_design_bank.py` (128 designs).
   3. PROGRAM MANAGEMENT - the craft round: planning, dependencies, risk,
                          governance, recovery. Covered here.
   4. BEHAVIORAL        - STAR at exec altitude. Covered by
                          `interview_question_bank.py` (134 questions).
 
-These two rounds are CASE rounds, not STAR rounds. The interviewer gives you a
+A Director of Engineering loop swaps much of round 3 for an ENGINEERING
+LEADERSHIP round (tech debt, reliability, managing managers, hiring bar),
+covered in tpm_round_bank_more.py along with more program cases.
+
+These are CASE rounds, not STAR rounds. The interviewer gives you a
 scenario and watches how you think out loud. So every entry carries a
 FRAMEWORK (the structure to impose on any question of that shape), a full
 WORKED answer at the right altitude, the STRONG-versus-WEAK contrast that is
@@ -2667,6 +2671,17 @@ which is exactly what a company hiring a Head of TPM is worried about.""",
 
 ENTRIES.extend(_B3)
 
+# Twelve more: peak-event readiness, migration, exec status, budget cuts,
+# killing programs, annual planning, shipping an LLM feature, a slipping
+# vendor - and the Director of Engineering leadership round. APPENDED, never
+# inserted: positions are what older saved progress used as ids.
+from tpm_round_bank_more import (build as _build_more,  # noqa: E402
+                                 EXTRA_ROUNDS as _XR, EXTRA_BRIEFS as _XB)
+ENTRIES.extend(_build_more(E))
+ROUNDS = {**{k: v for k, v in ROUNDS.items() if k != "close"}, **_XR,
+          "close": ROUNDS["close"]}
+ROUND_BRIEF.update(_XB)
+
 
 # ══ Tags, rounds and the planning layer ═══════════════════════════════════
 # Same planning fields as the other banks so the whole prep has one currency:
@@ -2689,12 +2704,20 @@ for _e in ENTRIES:
 
 
 def _freq_tier(e):
+    """Read how often a case comes up from its frequency sentence.
+
+    "Asked in most TPM loops" used to fall through every keyword and rank
+    LAST of the whole bank - the PM-disagreement case, which really is
+    asked almost everywhere. "Most" and "every"/"guaranteed" now count.
+    """
     f = (e.get("frequency") or "").lower()
-    if "most likely" in f or "single most" in f or "large majority" in f:
+    if ("single most" in f or "most likely" in f or "large majority" in f
+            or "guaranteed" in f or f.startswith("every")):
         return 3.0
-    if "extremely common" in f or "very common" in f or "very likely" in f:
+    if ("extremely common" in f or "very common" in f or "very likely" in f
+            or "asked in most" in f or "in most" in f):
         return 2.5
-    if "common" in f:
+    if "common" in f or "likely" in f:
         return 2.0
     return 1.4
 
@@ -2717,6 +2740,10 @@ _MUST_REHEARSE = {
     # Guaranteed in every round and frequently scored, so it cannot sit in the
     # long tail no matter what the frequency wording says.
     "What questions should YOU ask them - and what do they signal?",
+    # The candidate's own home turf: a peak-sale readiness question is the
+    # case most likely to come up for an e-commerce leader, and the one where
+    # a weak answer is least forgivable.
+    "Run readiness for the biggest sale event of the year.",
 }
 
 
@@ -2724,12 +2751,22 @@ def _rank_score(e):
     return _freq_tier(e) + (1.5 if e["title"] in _MUST_REHEARSE else 0.0)
 
 
-_ordered = sorted(ENTRIES, key=lambda e: (-_rank_score(e), e["round"], e["title"]))
-_total = max(1, len(_ordered))
+def _priority(e):
+    # Priority is a STATEMENT about the case, not a percentile. It used to be
+    # "top 35% by rank", which pushed two must-rehearse cases into P1 simply
+    # because there were more must-rehearse cases than the cut allowed.
+    if e["title"] in _MUST_REHEARSE:
+        return "P0"
+    return "P1" if _freq_tier(e) >= 2.5 else "P2"
+
+
+for _e in ENTRIES:
+    _e["priority"] = _priority(_e)
+# Rank within priority, so the stack rank never shows a P1 above a P0.
+_ordered = sorted(ENTRIES, key=lambda e: (e["priority"], -_rank_score(e),
+                                          e["round"], e["title"]))
 for _i, _e in enumerate(_ordered, 1):
     _e["rank"] = _i
-    _pct = _i / _total
-    _e["priority"] = ("P0" if _pct <= 0.35 else "P1" if _pct <= 0.70 else "P2")
 
 _PRIORITY_NOTE = {
     "P0": "P0 - rehearse this one out loud before the round.",

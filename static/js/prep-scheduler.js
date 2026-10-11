@@ -843,17 +843,21 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
         if (!j || !j.scheduled) return;
+        /* Kept PER BANK: /interview-prep hosts two banks on one page
+           (behavioural and the case rounds), and a single shared cache let
+           whichever loaded last repaint the other list with its pills. */
+        schedByBank[bank] = j.scheduled;
         schedCache = j.scheduled;
-        paintScheduled(root, schedCache);
-        reconcileChecked(root, schedCache);
+        paintScheduled(root, schedByBank[bank]);
+        reconcileChecked(root, schedByBank[bank]);
         /* The pages rebuild their list on every filter change, which wipes
            the pills. Repaint from the cache rather than refetching — the
            answer cannot have changed because a filter moved. */
         if (window.MutationObserver && !root.dataset.prepWhenBound) {
           root.dataset.prepWhenBound = "1";
           new MutationObserver(function () {
-            paintScheduled(root, schedCache);
-            reconcileChecked(root, schedCache);
+            paintScheduled(root, schedByBank[bank] || {});
+            reconcileChecked(root, schedByBank[bank] || {});
           }).observe(root, { childList: true });
         }
       })
@@ -861,6 +865,7 @@
   }
 
   var schedCache = {};
+  var schedByBank = {};
 
   /* ══════════════════════════════════════════════════════════════════
      TICKING A TOPIC AS STUDIED COMPLETES WHAT IT SCHEDULED
@@ -943,10 +948,12 @@
     }).then(function () {
       // The pill's wording depends on it ("Studied 22 Aug" rather than
       // "Planned"), so refresh what we know rather than leaving it stale.
-      var info = schedCache[title];
+      var cache = schedByBank[bank] || schedCache;
+      var info = cache[title];
       if (info) {
         info.status = isDone ? "done" : "open";
-        paintScheduled(bulk.root || card.closest("#list") || document, schedCache);
+        var host = card.closest("[data-prep-scheduler-bound]") || bulk.root || document;
+        paintScheduled(host, cache);
       }
     }).catch(function () { /* the study record is still right */ });
   }
@@ -970,8 +977,10 @@
      debounce has not fired yet when you close the card or the tab.
      ══════════════════════════════════════════════════════════════════ */
 
+  /* Per bank, for the same reason as schedByBank: two banks can share a
+     page, and their notes must not overwrite each other's cache. */
   var notesCache = {};
-  var notesReady = false;
+  var notesReady = {};
   var NOTE_DEBOUNCE = 900;
 
   function loadNotes(root) {
@@ -988,8 +997,8 @@
           inert("notes table missing — run " + (j.migration || "the migration"));
           return;
         }
-        notesCache = j.notes || {};
-        notesReady = true;
+        notesCache[bank] = j.notes || {};
+        notesReady[bank] = true;
         // Any card already open gets its note filled in now.
         Array.prototype.forEach.call(
           root.querySelectorAll(".q-card.open"), function (c) { ensureNote(c); });
@@ -1002,17 +1011,17 @@
   }
 
   function ensureNote(card) {
-    if (!notesReady) return;
     var btn = card.querySelector("[data-prep-plan]");
     if (!btn) return;                       // not a bank entry
     var bank = btn.getAttribute("data-bank");
     var title = btn.getAttribute("data-title");
-    if (!bank || !title) return;
+    if (!bank || !title || !notesReady[bank]) return;
+    var bankNotes = notesCache[bank] || (notesCache[bank] = {});
 
     var host = noteHostFor(card);
     if (!host || host.querySelector(".prep-note")) return;
 
-    var existing = notesCache[title];
+    var existing = bankNotes[title];
     var wrap = document.createElement("div");
     wrap.className = "prep-note";
     wrap.innerHTML =
@@ -1035,7 +1044,7 @@
       if (timer) { clearTimeout(timer); timer = null; }
       var text = box.value;
       // Nothing changed since the last save — do not spend a request on it.
-      if ((notesCache[title] && notesCache[title].note) === text) return;
+      if ((bankNotes[title] && bankNotes[title].note) === text) return;
       state.textContent = "saving…";
       state.className = "prep-note-state";
       fetch("/api/prep/notes", {
@@ -1045,7 +1054,7 @@
         body: JSON.stringify({ bank: bank, title: title, note: text }),
       }).then(function (r) {
         if (!r.ok) throw new Error("save failed");
-        notesCache[title] = { note: text };
+        bankNotes[title] = { note: text };
         state.textContent = text ? "saved" : "cleared";
         state.className = "prep-note-state ok";
         setTimeout(function () { if (state) state.textContent = ""; }, 2200);
@@ -1241,7 +1250,10 @@
     _deadlineOf: deadlineOf,
     _paintScheduled: paintScheduled,
     _ensureNote: ensureNote,
-    _notes: function (n) { notesCache = n || {}; notesReady = true; },
+    _notes: function (n, bank) {
+      bank = bank || "_test";
+      notesCache[bank] = n || {}; notesReady[bank] = true;
+    },
   };
 
   window.PrepScheduler = PrepScheduler;
