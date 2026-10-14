@@ -282,6 +282,8 @@ def thoughts(monkeypatch):
             out = [r for r in out if f"eq.{r['id']}" == params["id"]]
         if params.get("deleted_at") == "is.null":
             out = [r for r in out if not r.get("deleted_at")]
+        if "shelf" in params:
+            out = [r for r in out if f"eq.{r.get('shelf', 'tpm')}" == params["shelf"]]
         return [dict(r) for r in out]
 
     def fake_post(table, payload, **kw):
@@ -432,3 +434,38 @@ def test_shipped_answers_have_diagrams_and_refresh_only_when_untouched(thoughts)
     ts.ensure_seeds("u9")
     assert next(r for r in rows if r["id"] == "old")["answer"] == seeds[0]["answer"]
     assert next(r for r in rows if r["id"] == "mine")["answer"] == "my edit"
+
+
+# ── Random thoughts on AI SDE Prep (a second shelf) ────────────────────
+
+def test_ai_sde_has_its_own_random_thoughts(auth_client, thoughts):
+    html = auth_client.get("/ai-sde/thoughts").get_data(as_text=True)
+    assert 'data-shelf="aisde"' in html and "prep_thoughts.js" in html
+    assert 'href="/ai-sde/thoughts"' in auth_client.get("/ai-sde").get_data(as_text=True)
+    items = auth_client.get("/api/prep/thoughts?shelf=aisde").get_json()["items"]
+    qs = [t["question"] for t in items]
+    # Only the answers shipped for this shelf - not the Director-level set.
+    assert any("real-time chat" in q for q in qs) and any("Maggi" in q for q in qs)
+    assert not any("tail inventory" in q for q in qs)
+    assert all(r.get("shelf") == "aisde" for r in thoughts["rows"])
+    # The Interview Prep shelf still gets everything, as its own rows.
+    tpm = auth_client.get("/api/prep/thoughts").get_json()["items"]
+    assert any("tail inventory" in t["question"] for t in tpm)
+    assert sum("real-time chat" in r["question"] for r in thoughts["rows"]) == 2
+
+
+def test_a_question_asked_on_ai_sde_stays_there(auth_client, thoughts):
+    r = auth_client.post("/api/prep/thoughts?shelf=aisde", json={"question": "What is a heap?",
+                                                               "shelf": "aisde"})
+    assert r.status_code == 201
+    row = next(x for x in thoughts["rows"] if x["question"] == "What is a heap?")
+    assert row["shelf"] == "aisde"
+    tpm = auth_client.get("/api/prep/thoughts").get_json()["items"]
+    assert not any(t["question"] == "What is a heap?" for t in tpm)
+
+
+def test_ai_sde_answers_are_written_for_a_new_grad():
+    from services import thoughts_service as ts
+    s = ts.system_for("aisde")
+    assert "new-grad" in s and "Director" not in s and s != ts.system_for("tpm")
+    assert ts.system_for("anything-else") == ts.SYSTEM

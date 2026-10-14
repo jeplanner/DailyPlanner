@@ -89,6 +89,60 @@ Be accurate. If something is uncertain, debated or depends on context, say \
 so plainly. Prefer clarity over jargon. Use **bold** for the few phrases that \
 matter most. Do not add any preamble before the first section."""
 
+# The AI SDE Prep page has its own Random thoughts shelf, for a final-year
+# CS/AI student preparing for new-grad AI/ML SDE interviews. Same answer
+# format; a different reader and level.
+SYSTEM_STUDENT = (SYSTEM
+    .replace("a senior engineering leader \
+(a Senior Engineering Manager at a large Indian e-commerce company, preparing \
+for Director of Engineering and Director/VP of Technical Program Management \
+interviews). He writes down questions that come to mind while preparing. Your \
+job is to make him genuinely UNDERSTAND", "a final-year computer science / AI \
+student preparing for new-grad AI/ML Software Engineer interviews (Amazon, \
+Google and Indian product companies). She writes down questions that come to \
+mind while preparing. Your job is to make her genuinely UNDERSTAND")
+    .replace("Assume he is", "Assume she is")
+    .replace("at Director level", "at the level expected of a strong new-grad SDE")
+    .replace("(his whiteboard", "(her whiteboard"))
+
+SHELVES = ("tpm", "aisde")      # Interview Prep, AI SDE Prep
+DEFAULT_SHELF = "tpm"
+
+
+def clean_shelf(value):
+    v = str(value or "").strip().lower()
+    return v if v in SHELVES else DEFAULT_SHELF
+
+
+def system_for(shelf):
+    return SYSTEM_STUDENT if clean_shelf(shelf) == "aisde" else SYSTEM
+
+
+def shelf_missing(exc):
+    """True when the database predates the `shelf` column."""
+    t = str(exc)
+    return "shelf" in t and ("does not exist" in t or "schema cache" in t or "column" in t)
+
+
+def get_shelved(params, shelf):
+    """get() limited to one shelf. Before MIGRATION_PREP_THOUGHTS.sql adds the
+    shelf column, the Interview Prep shelf still works (every row is on it);
+    the AI SDE shelf raises ShelfNotReady."""
+    shelf = clean_shelf(shelf)
+    try:
+        return get(TABLE, dict(params, shelf=f"eq.{shelf}")) or []
+    except Exception as exc:
+        if not shelf_missing(exc):
+            raise
+        if shelf != DEFAULT_SHELF:
+            raise ShelfNotReady() from exc
+        return get(TABLE, params) or []
+
+
+class ShelfNotReady(Exception):
+    pass
+
+
 FOLLOW_UP_HINT = """This is a FOLLOW-UP to an earlier question. The earlier \
 question and answer are given for context. Answer the follow-up itself, \
 building on what was already explained rather than repeating it. Use the same \
@@ -173,12 +227,13 @@ def _prompt(question, context, parent):
         parts.append("EARLIER QUESTION:\n" + (parent.get("question") or ""))
         parts.append("EARLIER ANSWER:\n" + (parent.get("answer") or "")[:12000])
     if context:
-        parts.append("WHAT PROMPTED THE QUESTION (his own note):\n" + context)
+        parts.append("WHAT PROMPTED THE QUESTION (their own note):\n" + context)
     parts.append("THE QUESTION:\n" + question)
     return "\n\n".join(parts)
 
 
-def _anthropic(prompt, images=()):
+def _anthropic(prompt, images=(), system=None):
+    system = system or SYSTEM
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         return None, None
@@ -187,7 +242,7 @@ def _anthropic(prompt, images=()):
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                  "content-type": "application/json"},
-        json={"model": model, "max_tokens": 8000, "system": SYSTEM,
+        json={"model": model, "max_tokens": 8000, "system": system,
               "messages": [{"role": "user", "content": [
                   {"type": "image", "source": {"type": "base64", "media_type": m, "data": b}}
                   for m, b in images] + [{"type": "text", "text": prompt}]}]},
@@ -201,7 +256,8 @@ def _anthropic(prompt, images=()):
     return (text or None), model
 
 
-def _gemini(prompt, images=()):
+def _gemini(prompt, images=(), system=None):
+    system = system or SYSTEM
     key = os.getenv("GOOGLE_API_KEY")
     if not key:
         return None, None
@@ -209,7 +265,7 @@ def _gemini(prompt, images=()):
     r = requests.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         params={"key": key},
-        json={"systemInstruction": {"parts": [{"text": SYSTEM}]},
+        json={"systemInstruction": {"parts": [{"text": system}]},
               "contents": [{"parts": [{"inline_data": {"mime_type": m, "data": b}}
                                       for m, b in images] + [{"text": prompt}]}],
               "generationConfig": {"maxOutputTokens": 8192, "temperature": 0.4}},
@@ -225,7 +281,8 @@ def _gemini(prompt, images=()):
         return None, None
 
 
-def _groq(prompt, images=()):
+def _groq(prompt, images=(), system=None):
+    system = system or SYSTEM
     key = os.getenv("GROQ_API_KEY")
     if not key:
         return None, None
@@ -239,7 +296,7 @@ def _groq(prompt, images=()):
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         json={"model": model, "temperature": 0.4, "max_tokens": 6000,
-              "messages": [{"role": "system", "content": SYSTEM},
+              "messages": [{"role": "system", "content": system},
                            {"role": "user", "content": prompt}]},
         timeout=120,
     )
@@ -259,13 +316,16 @@ def any_provider():
     return any(os.getenv(k) for k in ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY"))
 
 
-def generate(question, context="", parent=None, images=()):
+def generate(question, context="", parent=None, images=(), shelf=None):
     """(answer, model) from the first provider that answers, else (None, None).
     `images` is [(mime, base64)] - shown to providers that can see them."""
     prompt = _prompt(question, context, parent)
     for fn in PROVIDERS:
         try:
-            text, model = fn(prompt, images) if images else fn(prompt)
+            if shelf and clean_shelf(shelf) != DEFAULT_SHELF:
+                text, model = fn(prompt, images, system=system_for(shelf))
+            else:
+                text, model = fn(prompt, images) if images else fn(prompt)
         except Exception:
             logger.warning("thoughts: %s failed", fn.__name__, exc_info=True)
             continue
@@ -274,13 +334,14 @@ def generate(question, context="", parent=None, images=()):
     return None, None
 
 
-def answer_in_background(row_id, user_id, question, context="", parent=None, images=None):
+def answer_in_background(row_id, user_id, question, context="", parent=None, images=None,
+                         shelf=None):
     """Answer one saved question and write the result back to its row.
     `images` is the row's image list ([{key, mime}]); loaded in the thread."""
     def run():
         try:
             loaded = _load_images(images) if images else []
-            text, model = generate(question, context, parent, loaded)
+            text, model = generate(question, context, parent, loaded, shelf=shelf)
             patch = ({"answer": text, "model": model, "status": "ready", "error": None}
                      if text else
                      {"status": "failed",
@@ -319,16 +380,24 @@ def seeds():
         return []
 
 
-def ensure_seeds(user_id):
-    """Add any shipped question this user has never had - checked once per
-    process. Looks at deleted rows too, so deleting one keeps it deleted."""
-    if user_id in _seeded:
+def seed_shelves(sd):
+    """Which shelves a shipped answer goes on (default: Interview Prep only)."""
+    return [x for x in (sd.get("shelves") or [DEFAULT_SHELF]) if x in SHELVES]
+
+
+def ensure_seeds(user_id, shelf=DEFAULT_SHELF):
+    """Add any shipped question this user has never had on this shelf - checked
+    once per process. Looks at deleted rows too, so deleting one keeps it deleted."""
+    shelf = clean_shelf(shelf)
+    if (user_id, shelf) in _seeded:
         return 0
     added = 0
     from supabase_client import post
     for sd in seeds():
-        have = get(TABLE, {"user_id": f"eq.{user_id}", "question": f"eq.{sd['question']}",
-                           "select": "id,answer,model,deleted_at", "limit": "1"}) or []
+        if shelf not in seed_shelves(sd):
+            continue
+        have = get_shelved({"user_id": f"eq.{user_id}", "question": f"eq.{sd['question']}",
+                            "select": "id,answer,model,deleted_at", "limit": "1"}, shelf)
         if have:
             # Refresh a shipped answer that was improved later (diagrams were
             # added after the first version) - but only while it is still
@@ -339,14 +408,17 @@ def ensure_seeds(user_id):
                 update(TABLE, params={"id": f"eq.{h['id']}", "user_id": f"eq.{user_id}"},
                        json={"answer": sd["answer"], "updated_at": _now()})
             continue
-        rows = post(TABLE, {"user_id": user_id, "question": sd["question"],
-                            "answer": sd["answer"], "status": "ready",
-                            "model": SEED_MODEL, "tags": sd.get("tags") or []})
+        row = {"user_id": user_id, "question": sd["question"],
+               "answer": sd["answer"], "status": "ready",
+               "model": SEED_MODEL, "tags": sd.get("tags") or []}
+        if shelf != DEFAULT_SHELF:
+            row["shelf"] = shelf
+        rows = post(TABLE, row)
         if rows and rows[0].get("id"):
             update(TABLE, params={"id": f"eq.{rows[0]['id']}", "user_id": f"eq.{user_id}"},
                    json={"root_id": rows[0]["id"]})
             added += 1
-    _seeded.add(user_id)
+    _seeded.add((user_id, shelf))
     return added
 
 

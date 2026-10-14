@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Random thoughts · AI SDE Prep — DailyPlanner</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='interview_prep.css') }}">
+<script src="/static/js/vendor/feather-4.29.2.min.js"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+{% include "_pwa_head.html" %}
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<!-- Random thoughts for AI SDE Prep. Same feature as the Interview Prep tab,
+     but its own shelf of questions, answered for a new-grad AI/ML SDE loop. -->
+<main class="ip-wrap" id="ip">
+  <header class="ip-head">
+    <h1>Random thoughts</h1>
+  </header>
+  <nav class="ip-tabs" aria-label="AI SDE Prep">
+    <a class="ip-tab" href="/ai-sde">← AI SDE Prep</a>
+    <a class="ip-tab" href="/ai-sde/thoughts" aria-current="page" aria-selected="true">Random thoughts</a>
+  </nav>
+  <section class="ip-panel" data-panel="thoughts">
+    <div id="th-view" data-shelf="aisde"></div>
+  </section>
+</main>
+
+<script>
+  // prep_thoughts.js expects the Interview Prep hub's helpers; this page
+  // needs only escaping and toasts.
+  window.PrepHub = window.PrepHub || {
+    esc: function (s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    },
+    say: function (msg, kind) { if (window.toast) window.toast(msg, kind || "info"); }
+  };
+</script>
+<script src="{{ url_for('static', filename='js/prep_thoughts.js') }}"></script>
+<script>window.PrepThoughts && window.PrepThoughts.load();</script>
+</body>
+</html>

@@ -16,6 +16,11 @@
   var H = function () { return window.PrepHub; };
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) { return H().esc(s); };
+  // Two shelves share this code: Interview Prep ("tpm") and AI SDE Prep
+  // ("aisde"). The page says which one via data-shelf on #th-view.
+  var SHELF = (function () { var v = document.getElementById("th-view"); return (v && v.dataset.shelf) || "tpm"; })();
+  var STUDENT = SHELF === "aisde";
+  var Q = "?shelf=" + SHELF;
   // interview_prep_bp is not CSRF-exempt: every write carries the token.
   var CSRF = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
   function api(path, opts) {
@@ -234,7 +239,7 @@
   /* ── Data ────────────────────────────────────────────────────────── */
   function load() {
     if (!started) { started = true; shell(); }
-    return api("/api/prep/thoughts").then(function (j) {
+    return api("/api/prep/thoughts" + Q).then(function (j) {
       available = j.available !== false;
       provider = j.provider !== false;
       ITEMS = j.items || [];
@@ -272,10 +277,10 @@
     $("th-view").innerHTML =
       '<div class="card th-ask">' +
       '<label for="th-q" class="th-ask-lbl">What\'s on your mind?</label>' +
-      '<textarea id="th-q" rows="3" maxlength="2000" placeholder="e.g. What does a Director own that an EM doesn\'t? · When would I pick Cassandra over Postgres? · How does a CDN decide what to cache?"></textarea>' +
+      '<textarea id="th-q" rows="3" maxlength="2000" placeholder="' + (STUDENT ? "e.g. How does attention work in a transformer? · When would I use a heap over a sorted array? · How does a chat app catch up after going offline?" : "e.g. What does a Director own that an EM doesn\'t? · When would I pick Cassandra over Postgres? · How does a CDN decide what to cache?") + '"></textarea>' +
       '<div class="th-more" id="th-more" hidden>' +
       '<textarea id="th-ctx" rows="2" maxlength="4000" placeholder="What prompted it? (optional) — where you saw it, what confused you"></textarea>' +
-      '<input id="th-tags" maxlength="120" placeholder="Tags, comma-separated (optional) — kafka, leadership"></div>' +
+      '<input id="th-tags" maxlength="120" placeholder="Tags, comma-separated (optional) — ' + (STUDENT ? "dsa, ml" : "kafka, leadership") + '"></div>' +
       '<div class="th-files" id="th-files" hidden></div>' +
       '<input type="file" id="th-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>' +
       '<div class="th-ask-row"><button class="btn sm ghost" id="th-more-btn" type="button">+ Context &amp; tags</button>' +
@@ -295,7 +300,7 @@
 
   function render() {
     var note = $("th-note");
-    if (!available) { note.hidden = false; note.textContent = "Random thoughts need MIGRATION_PREP_THOUGHTS.sql run in Supabase before questions can be saved."; }
+    if (!available) { note.hidden = false; note.textContent = "Random thoughts need MIGRATION_PREP_THOUGHTS.sql run in Supabase before questions can be saved" + (STUDENT ? " (re-run it if it was run before — it now adds the AI SDE shelf)." : "."); }
     else if (!provider) { note.hidden = false; note.textContent = "No AI provider is configured on the server, so questions will be saved but not answered. Set ANTHROPIC_API_KEY, GOOGLE_API_KEY or GROQ_API_KEY."; }
     else note.hidden = true;
 
@@ -304,7 +309,7 @@
     var unclear = rs.filter(function (r) { return !r.understood; }).length;
     var pinned = rs.filter(function (r) { return r.pinned; }).length;
     $("thn-all").textContent = rs.length; $("thn-todo").textContent = unclear; $("thn-pin").textContent = pinned;
-    $("tn-th").textContent = rs.length || "";
+    if ($("tn-th")) $("tn-th").textContent = rs.length || "";
     var list = rs.filter(function (r) {
       if (view.filter === "todo" && r.understood) return false;
       if (view.filter === "pinned" && !r.pinned) return false;
@@ -316,7 +321,7 @@
 
     $("th-list").innerHTML = list.map(thread).join("") ||
       '<div class="card"><div class="empty">' + (rs.length ? "Nothing matches." :
-        "No questions yet. The next time something doesn't quite make sense — a concept, a design choice, a leadership situation — write it above.") + "</div></div>";
+        (STUDENT ? "No questions yet. The next time something doesn't quite make sense — a concept, an algorithm, a design choice — write it above." : "No questions yet. The next time something doesn't quite make sense — a concept, a design choice, a leadership situation — write it above.")) + "</div></div>";
     drawDiagrams($("th-list"));
     if (window.feather) window.feather.replace();
   }
@@ -399,13 +404,13 @@
     var body = Object.assign({ question: question }, extra || {});
     var r;
     if (files && files.length) {
-      r = await upload("/api/prep/thoughts", {
-        question: question, context: body.context || "", parent_id: body.parent_id || null,
+      r = await upload("/api/prep/thoughts" + Q, {
+        question: question, context: body.context || "", parent_id: body.parent_id || null, shelf: SHELF,
         tags: (body.tags || []).join(","),
       }, files);
       if (r && r.item && r.item.image_error) H().say(r.item.image_error, "error");
     } else {
-      r = await api("/api/prep/thoughts", { method: "POST", body: JSON.stringify(body) });
+      r = await api("/api/prep/thoughts" + Q, { method: "POST", body: JSON.stringify(Object.assign({ shelf: SHELF }, body)) });
     }
     if (r && r.item) {
       ITEMS.unshift(r.item);
@@ -474,7 +479,7 @@
         }
         case "retry":
           if (t.status === "ready" && !confirm("Write a fresh answer? The current one will be replaced.")) break;
-          await api("/api/prep/thoughts/" + id + "/retry", { method: "POST" });
+          await api("/api/prep/thoughts/" + id + "/retry" + Q, { method: "POST" });
           t.status = "pending"; t.error = null; render(); schedulePoll(); break;
         case "edit": editing = id; render(); break;
         case "insert-flow": case "insert-seq": {

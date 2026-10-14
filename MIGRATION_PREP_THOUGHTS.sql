@@ -50,3 +50,18 @@ alter table prep_thoughts add column if not exists images jsonb not null default
 -- under a "thoughts/<your user id>/" folder. No new bucket is needed.
 -- The app reads them with the service key and serves each image only to
 -- its owner. That bucket's limit is 5 MB per image.
+
+-- ── Shelves (added later; safe to re-run) ───────────────────────────
+-- Random thoughts live on two pages: Interview Prep ('tpm') and AI SDE
+-- Prep ('aisde', answered for a new-grad AI/ML SDE loop). Every existing
+-- row stays on Interview Prep.
+alter table prep_thoughts add column if not exists shelf text not null default 'tpm';
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'prep_thoughts_shelf_check') then
+    alter table prep_thoughts add constraint prep_thoughts_shelf_check
+      check (shelf in ('tpm', 'aisde'));
+  end if;
+end $$;
+create index if not exists prep_thoughts_user_shelf
+  on prep_thoughts (user_id, shelf, created_at desc) where deleted_at is null;

@@ -281,6 +281,14 @@ def page_thoughts():
     return render_template("interview_prep.html", initial_tab="thoughts")
 
 
+@interview_prep_bp.route("/ai-sde/thoughts", methods=["GET"])
+@login_required
+def ai_sde_thoughts_page():
+    """Random thoughts for AI SDE Prep: its own shelf of questions, answered
+    for a new-grad AI/ML SDE candidate rather than a Director loop."""
+    return render_template("ai_sde_thoughts.html")
+
+
 @interview_prep_bp.route("/interview-prep/design/<slug>", methods=["GET"])
 @login_required
 def page_design_deep(slug):
@@ -2228,16 +2236,34 @@ _THOUGHT_COLS = ("id,parent_id,root_id,question,context,answer,status,model,erro
                  "understood,pinned,tags,images,created_at,updated_at")
 
 
-def _thought_get(params):
+def _thought_get(params, shelf=None):
     """get() on prep_thoughts that tolerates a table created before the
-    images column existed (the first version of the migration)."""
+    images column existed (the first version of the migration). With a
+    shelf, only that shelf's rows (Interview Prep or AI SDE Prep)."""
+    def run(p):
+        if shelf is None:
+            return get(thoughts_service.TABLE, p) or []
+        return thoughts_service.get_shelved(p, shelf)
     try:
-        return get(thoughts_service.TABLE, params) or []
+        return run(params)
     except Exception as exc:
         if "images" not in str(exc) or "select" not in params:
             raise
         params = dict(params, select=params["select"].replace(",images", ""))
-        return get(thoughts_service.TABLE, params) or []
+        return run(params)
+
+
+def _shelf_arg(data=None):
+    """Which Random thoughts shelf a request is for: ?shelf= or a body field."""
+    raw = request.args.get("shelf") or (data or {}).get("shelf")
+    return thoughts_service.clean_shelf(raw)
+
+
+def _shelf_not_ready_resp():
+    return jsonify({"error": f"Random thoughts on AI SDE Prep need the latest "
+                             f"{thoughts_service.MIGRATION} run in Supabase (it adds "
+                             f"the shelf column; safe to re-run).",
+                    "migration": thoughts_service.MIGRATION}), 503
 
 
 def _read_images(files):
@@ -2291,25 +2317,27 @@ def _clean_tags(raw):
 @interview_prep_bp.route("/api/prep/thoughts", methods=["GET"])
 @login_required
 def thoughts_list():
+    shelf = _shelf_arg()
     try:
         try:
-            thoughts_service.ensure_seeds(session["user_id"])
+            thoughts_service.ensure_seeds(session["user_id"], shelf)
         except Exception as exc:
-            if _thoughts_missing(exc):
+            if _thoughts_missing(exc) or isinstance(exc, thoughts_service.ShelfNotReady):
                 raise
             logger.warning("thoughts: could not add the starter questions", exc_info=True)
         rows = _thought_get({
             "user_id": f"eq.{session['user_id']}", "deleted_at": "is.null",
             "select": _THOUGHT_COLS, "order": "created_at.desc", "limit": "500",
-        })
+        }, shelf)
     except Exception as exc:
-        if _thoughts_missing(exc):
+        if _thoughts_missing(exc) or isinstance(exc, thoughts_service.ShelfNotReady):
             # Show the shipped answers read-only until the table exists.
             items = [{"id": f"seed-{i}", "root_id": f"seed-{i}", "parent_id": None,
                       "question": sd["question"], "answer": sd["answer"], "status": "ready",
                       "tags": sd.get("tags") or [], "understood": False, "pinned": False,
                       "created_at": None, "seed": True}
-                     for i, sd in enumerate(thoughts_service.seeds())]
+                     for i, sd in enumerate(thoughts_service.seeds())
+                     if shelf in thoughts_service.seed_shelves(sd)]
             return jsonify({"available": False, "items": items,
                             "migration": thoughts_service.MIGRATION})
         raise
@@ -2336,6 +2364,7 @@ def thoughts_ask():
         files = []
     question = (data.get("question") or "").strip()[:thoughts_service.MAX_QUESTION]
     context = (data.get("context") or "").strip()[:thoughts_service.MAX_CONTEXT]
+    shelf = _shelf_arg(data if not request.files else {"shelf": request.form.get("shelf")})
     if not question:
         return jsonify({"error": "Write the question first."}), 400
     parent = None
@@ -2349,8 +2378,12 @@ def thoughts_ask():
         if parent:
             row["parent_id"] = parent["id"]
             row["root_id"] = parent.get("root_id") or parent["id"]
+        if shelf != thoughts_service.DEFAULT_SHELF:
+            row["shelf"] = shelf
         created = post(thoughts_service.TABLE, row)
     except Exception as exc:
+        if thoughts_service.shelf_missing(exc):
+            return _shelf_not_ready_resp()
         if _thoughts_missing(exc):
             return _thought_missing_resp()
         raise
@@ -2377,7 +2410,7 @@ def thoughts_ask():
                                    "stored. Check that the user-photos storage bucket exists "
                                    "(see MIGRATION_USER_PHOTOS.sql) and attach them again.")
     thoughts_service.answer_in_background(item["id"], user_id, question, context, parent,
-                                          item.get("images") or None)
+                                          item.get("images") or None, shelf=shelf)
     return jsonify({"item": item}), 201
 
 
@@ -2438,7 +2471,7 @@ def thoughts_retry(tid):
             return _thought_missing_resp()
         raise
     thoughts_service.answer_in_background(tid, user_id, t["question"], t.get("context") or "",
-                                          parent, t.get("images") or None)
+                                          parent, t.get("images") or None, shelf=_shelf_arg())
     return jsonify({"status": "pending"})
 
 
