@@ -444,9 +444,9 @@ def test_ai_sde_has_its_own_random_thoughts(auth_client, thoughts):
     assert 'href="/ai-sde/thoughts"' in auth_client.get("/ai-sde").get_data(as_text=True)
     items = auth_client.get("/api/prep/thoughts?shelf=aisde").get_json()["items"]
     qs = [t["question"] for t in items]
-    # Only the answers shipped for this shelf - not the Director-level set.
+    # Every shipped answer is on both shelves now, each in its own rows.
     assert any("real-time chat" in q for q in qs) and any("Maggi" in q for q in qs)
-    assert not any("tail inventory" in q for q in qs)
+    assert any("tail inventory" in q for q in qs)
     assert all(r.get("shelf") == "aisde" for r in thoughts["rows"])
     # The Interview Prep shelf still gets everything, as its own rows.
     tpm = auth_client.get("/api/prep/thoughts").get_json()["items"]
@@ -469,3 +469,21 @@ def test_ai_sde_answers_are_written_for_a_new_grad():
     s = ts.system_for("aisde")
     assert "new-grad" in s and "Director" not in s and s != ts.system_for("tpm")
     assert ts.system_for("anything-else") == ts.SYSTEM
+
+
+def test_shipped_answers_carry_topic_step_campus_and_related(auth_client, thoughts):
+    from services import thoughts_service as ts
+    seeds = ts.seeds()
+    steps = [s["step"] for s in seeds]
+    assert steps == list(range(1, len(seeds) + 1))          # file is in study order
+    cats = [c for c, _ in ts.CATEGORIES]
+    assert all(s["category"] in cats for s in seeds)
+    assert all(isinstance(s["campus"], bool) and s.get("title") for s in seeds)
+    qs = {s["question"] for s in seeds}
+    assert all(s["related"] and set(s["related"]) <= qs and s["question"] not in s["related"] for s in seeds)
+    j = auth_client.get("/api/prep/thoughts").get_json()
+    assert [c[0] for c in j["categories"]] == cats
+    first = next(t for t in j["items"] if t.get("step") == 1)
+    assert first["category"] == "cs" and first["related"][0]["title"]
+    js = open("static/js/prep_thoughts.js", encoding="utf-8").read()
+    assert 'data-thf="campus"' in js and '"goto"' in js and "th-guide" in js

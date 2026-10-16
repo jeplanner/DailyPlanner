@@ -521,3 +521,21 @@ a.focus-item:hover { border-color: var(--color-border-strong); }
   .th-svg { text-align: left; -webkit-overflow-scrolling: touch; }
   .th-svg svg { max-width: none !important; width: auto !important; min-width: 520px; }
 }
+
+/* Random thoughts: topics, study order, campus tag, related questions */
+.th-group { margin: 22px 2px 8px; font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--color-text-secondary); }
+.th-step { display: inline-block; min-width: 2.2em; margin-right: 8px; padding: 1px 6px; border-radius: 6px; text-align: center;
+  font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; background: var(--color-surface-secondary); color: var(--color-text-secondary); }
+.badge.th-campus { background: var(--color-success-light); color: var(--color-success-on-tint); }
+.badge.th-exp { background: var(--color-surface-secondary); color: var(--color-text-secondary); }
+.th-related { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 14px 0 4px; padding-top: 12px; border-top: 1px dashed var(--color-border); }
+.th-related b { font-size: 12px; margin-right: 4px; }
+.th-related .rchip { font-size: 12.5px; }
+.th-order { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
+.th-order select { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-primary); }
+.th-guide { margin-top: 12px; }
+.th-guide > summary { cursor: pointer; font-weight: 700; }
+.th-guide-list { margin: 8px 0 0; padding-left: 22px; }
+.th-guide-list li { margin: 4px 0; }
+.th-guide-list a { color: var(--color-text-primary); font-weight: 700; text-decoration: none; }
+.th-guide-list a:hover { text-decoration: underline; }

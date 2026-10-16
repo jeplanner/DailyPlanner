@@ -21,6 +21,7 @@
   var SHELF = (function () { var v = document.getElementById("th-view"); return (v && v.dataset.shelf) || "tpm"; })();
   var STUDENT = SHELF === "aisde";
   var Q = "?shelf=" + SHELF;
+  var CATS = [];           // [[slug, name], ...] in study order, from the server
   // interview_prep_bp is not CSRF-exempt: every write carries the token.
   var CSRF = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
   function api(path, opts) {
@@ -36,7 +37,7 @@
   }
 
   var ITEMS = [], available = true, provider = true, started = false;
-  var view = { q: "", filter: "all" };
+  var view = { q: "", filter: "all", order: "study" };
   var open = {};            // root id -> expanded
   var editing = null;       // id whose answer is being edited
   var asking = null;        // root id with the follow-up box open
@@ -243,6 +244,7 @@
       available = j.available !== false;
       provider = j.provider !== false;
       ITEMS = j.items || [];
+      CATS = j.categories || CATS;
       if (!Object.keys(open).length) {
         var newest = roots()[0];
         if (newest) open[newest.id] = true;
@@ -294,7 +296,10 @@
       '<div class="round-chips th-filter" role="group" aria-label="Filter">' +
       '<button class="rchip" type="button" data-thf="all" aria-pressed="true">All <span class="n" id="thn-all"></span></button>' +
       '<button class="rchip" type="button" data-thf="todo" aria-pressed="false">Still unclear <span class="n" id="thn-todo"></span></button>' +
-      '<button class="rchip" type="button" data-thf="pinned" aria-pressed="false">Pinned <span class="n" id="thn-pin"></span></button></div></div>' +
+      '<button class="rchip" type="button" data-thf="pinned" aria-pressed="false">Pinned <span class="n" id="thn-pin"></span></button>' +
+      '<button class="rchip" type="button" data-thf="campus" aria-pressed="false">Campus interview <span class="n" id="thn-campus"></span></button></div>' +
+      '<label class="th-order mini-lbl">Order <select id="th-order" aria-label="Order of questions"><option value="study">Study order, by topic</option><option value="new">Newest first</option></select></label></div>' +
+      '<details class="card th-guide" id="th-guide"><summary>Suggested study order</summary><div id="th-guide-body"></div></details>' +
       '<div id="th-list"><div class="card"><div class="empty">Loading…</div></div></div>';
   }
 
@@ -309,17 +314,40 @@
     var unclear = rs.filter(function (r) { return !r.understood; }).length;
     var pinned = rs.filter(function (r) { return r.pinned; }).length;
     $("thn-all").textContent = rs.length; $("thn-todo").textContent = unclear; $("thn-pin").textContent = pinned;
+    if ($("thn-campus")) $("thn-campus").textContent = rs.filter(function (r) { return r.campus; }).length;
+    paintGuide(rs);
     if ($("tn-th")) $("tn-th").textContent = rs.length || "";
     var list = rs.filter(function (r) {
       if (view.filter === "todo" && r.understood) return false;
       if (view.filter === "pinned" && !r.pinned) return false;
+      if (view.filter === "campus" && !r.campus) return false;
       if (!q) return true;
       return [r].concat(children(r)).some(function (t) {
         return ((t.question || "") + " " + (t.answer || "") + " " + (t.tags || []).join(" ")).toLowerCase().indexOf(q) >= 0;
       });
-    }).sort(function (a, b) { return (b.pinned - a.pinned) || (b.created_at || "").localeCompare(a.created_at || ""); });
+    }).sort(function (a, b) {
+      if (view.order === "study") {
+        // Your own questions first (newest first), then the shipped ones in study order.
+        var sa = a.step || 0, sb = b.step || 0;
+        if (!sa || !sb) return (!sa && sb) ? -1 : (sa && !sb) ? 1 : (b.created_at || "").localeCompare(a.created_at || "");
+        return sa - sb;
+      }
+      return (b.pinned - a.pinned) || (b.created_at || "").localeCompare(a.created_at || "");
+    });
 
-    $("th-list").innerHTML = list.map(thread).join("") ||
+    var names = {}; CATS.forEach(function (c) { names[c[0]] = c[1]; });
+    var lastCat = null, html = list.map(function (r) {
+      var head = "";
+      if (view.order === "study") {
+        var cat = r.category || "_mine";
+        if (cat !== lastCat) {
+          lastCat = cat;
+          head = '<h3 class="th-group" id="th-cat-' + esc(cat) + '">' + esc(cat === "_mine" ? "Your questions" : (names[cat] || cat)) + "</h3>";
+        }
+      }
+      return head + thread(r);
+    }).join("");
+    $("th-list").innerHTML = html ||
       '<div class="card"><div class="empty">' + (rs.length ? "Nothing matches." :
         (STUDENT ? "No questions yet. The next time something doesn't quite make sense — a concept, an algorithm, a design choice — write it above." : "No questions yet. The next time something doesn't quite make sense — a concept, a design choice, a leadership situation — write it above.")) + "</div></div>";
     drawDiagrams($("th-list"));
@@ -352,13 +380,34 @@
     return '<div class="th-answer">' + md(t.answer) + "</div>";
   }
 
+  function relatedBlock(r) {
+    if (!r.related || !r.related.length) return "";
+    return '<div class="th-related"><b>Related questions</b>' + r.related.map(function (x) {
+      return '<button type="button" class="rchip" data-th="goto" data-q="' + esc(x.question) + '">' + esc(x.title) + "</button>";
+    }).join("") + "</div>";
+  }
+
+  function paintGuide(rs) {
+    var body = $("th-guide-body");
+    if (!body || !CATS.length) return;
+    var counts = {}, campus = {};
+    rs.forEach(function (r) { if (!r.category) return; counts[r.category] = (counts[r.category] || 0) + 1; if (r.campus) campus[r.category] = (campus[r.category] || 0) + 1; });
+    body.innerHTML = '<p class="mini-lbl">Work through the topics top to bottom; the numbers on each question are the order to read them in. ' +
+      '<b>Campus interviews:</b> turn on the "Campus interview" filter and skip the Experienced-level ones. ' +
+      '<b>Experienced roles:</b> do everything, and spend most time on system design, reliability and AI engineering.</p><ol class="th-guide-list">' +
+      CATS.filter(function (c) { return counts[c[0]]; }).map(function (c) {
+        return '<li><a href="#th-cat-' + esc(c[0]) + '" data-th-cat="' + esc(c[0]) + '">' + esc(c[1]) + "</a> <span class=\"mini-lbl\">" +
+          counts[c[0]] + " questions, " + (campus[c[0]] || 0) + " for campus</span></li>";
+      }).join("") + "</ol>";
+  }
+
   function thread(r) {
     var kids = children(r);
     var isOpen = !!open[r.id];
     var pending = [r].concat(kids).some(function (t) { return t.status === "pending"; });
     var head = '<div class="q-head th-head" data-th="toggle">' +
-      '<span class="q-text">' + esc(r.question) + "</span>" +
-      '<span class="q-meta">' + (r.pinned ? '<span class="badge P1">pinned</span>' : "") +
+      '<span class="q-text">' + (r.step ? '<span class="th-step">' + r.step + "</span>" : "") + esc(r.question) + "</span>" +
+      '<span class="q-meta">' + (r.step ? (r.campus ? '<span class="badge th-campus">Campus interview</span>' : '<span class="badge th-exp">Experienced-level</span>') : "") + (r.pinned ? '<span class="badge P1">pinned</span>' : "") +
       (pending ? '<span class="badge P2">writing…</span>' : r.status === "failed" ? '<span class="badge P0">failed</span>' :
         r.understood ? '<span class="badge mock">understood</span>' : "") +
       (kids.length ? '<span class="badge">' + kids.length + " follow-up" + (kids.length === 1 ? "" : "s") + "</span>" : "") +
@@ -369,6 +418,7 @@
     var body = (r.context ? '<div class="th-ctx"><b>What prompted it</b>' + esc(r.context) + "</div>" : "") +
       imagesBlock(r) +
       answerBlock(r) +
+      relatedBlock(r) +
       kids.map(function (k) {
         return '<div class="th-follow" data-id="' + k.id + '"><div class="th-fq"><span class="th-fq-k">Follow-up</span>' + esc(k.question) + "</div>" +
           imagesBlock(k) +
@@ -464,11 +514,23 @@
     try {
       switch (a.dataset.th) {
         case "toggle": open[rootId] = !open[rootId]; render(); break;
+        case "goto": {
+          var target = roots().filter(function (x) { return x.question === a.dataset.q; })[0];
+          if (!target) { H().say("That question isn't in this list", "info"); break; }
+          if (view.filter !== "all" || view.q) {
+            view.filter = "all"; view.q = ""; if ($("th-search")) $("th-search").value = "";
+            document.querySelectorAll("[data-thf]").forEach(function (b) { b.setAttribute("aria-pressed", b.dataset.thf === "all" ? "true" : "false"); });
+          }
+          open[target.id] = true; render();
+          var el = document.querySelector('.th-card[data-id="' + target.id + '"]');
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          break;
+        }
         case "understood": await patch(rootId, { understood: !root.understood });
           if (root.understood) H().say("Nice — marked as understood", "success"); render(); break;
         case "pin": await patch(rootId, { pinned: !root.pinned }); render(); break;
         case "simpler": await ask("Explain this again more simply, as if to someone new to the topic, with a different analogy: " + root.question, { parent_id: lastOf(root).id }); break;
-        case "deeper": await ask("Go one level deeper on this - the internals, edge cases, numbers and trade-offs a Director-level interviewer would probe: " + root.question, { parent_id: lastOf(root).id }); break;
+        case "deeper": await ask((STUDENT ? "Go one level deeper on this - the internals, edge cases and trade-offs a strong new-grad SDE interviewer would probe: " : "Go one level deeper on this - the internals, edge cases, numbers and trade-offs a Director-level interviewer would probe: ") + root.question, { parent_id: lastOf(root).id }); break;
         case "follow": asking = rootId; render(); setTimeout(function () { var x = document.querySelector("[data-th-follow]"); if (x) x.focus(); }, 30); break;
         case "cancel-follow": asking = null; render(); break;
         case "send-follow": {
@@ -558,6 +620,9 @@
     H().say("Image attached", "success");
   });
 
+  document.addEventListener("change", function (e) {
+    if (e.target.id === "th-order") { view.order = e.target.value; render(); }
+  });
   document.addEventListener("input", function (e) {
     if (e.target.id === "th-search") { view.q = e.target.value; render(); }
     if (e.target.id === "th-q" || (e.target.matches && e.target.matches("[data-th-follow],[data-th-edit]"))) {

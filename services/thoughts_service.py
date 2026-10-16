@@ -380,6 +380,59 @@ def seeds():
         return []
 
 
+# Topics for the shipped answers, in the order they are best studied.
+CATEGORIES = [
+    ("cs", "CS fundamentals"),
+    ("code", "Coding principles and tools"),
+    ("db", "Databases and consistency"),
+    ("cache", "Caching and performance"),
+    ("msg", "Kafka, queues and streaming"),
+    ("arch", "Architecture and infrastructure"),
+    ("rel", "Reliability and operations"),
+    ("sec", "Security and login"),
+    ("sd", "System design: classic problems"),
+    ("ecom", "System design: e-commerce and payments"),
+    ("ml", "AI and ML fundamentals"),
+    ("llm", "AI engineering: LLM apps and agents"),
+]
+_META = None
+
+
+def seed_meta():
+    """question -> {title, category, campus, step, related:[{question, title}]}
+    for the shipped answers. Read from prep_thoughts_seed.json once."""
+    global _META
+    if _META is None:
+        all_seeds = seeds()
+        titles = {sd["question"]: sd.get("title") or sd["question"] for sd in all_seeds}
+        _META = {}
+        for sd in all_seeds:
+            if "step" not in sd:
+                continue
+            _META[sd["question"]] = {
+                "title": sd.get("title") or sd["question"],
+                "category": sd.get("category"),
+                "campus": bool(sd.get("campus")),
+                "step": sd["step"],
+                "related": [{"question": q, "title": titles.get(q, q)}
+                            for q in (sd.get("related") or []) if q in titles],
+            }
+    return _META
+
+
+def annotate(rows):
+    """Add a shipped answer's topic, study step, campus flag and related
+    questions to its row (in place). Your own questions are left as they are."""
+    meta = seed_meta()
+    for r in rows:
+        if r.get("parent_id"):
+            continue
+        m = meta.get(r.get("question") or "")
+        if m:
+            r.update(m)
+    return rows
+
+
 def seed_shelves(sd):
     """Which shelves a shipped answer goes on (default: Interview Prep only)."""
     return [x for x in (sd.get("shelves") or [DEFAULT_SHELF]) if x in SHELVES]

@@ -2338,10 +2338,12 @@ def thoughts_list():
                       "created_at": None, "seed": True}
                      for i, sd in enumerate(thoughts_service.seeds())
                      if shelf in thoughts_service.seed_shelves(sd)]
-            return jsonify({"available": False, "items": items,
+            return jsonify({"available": False, "items": thoughts_service.annotate(items),
+                            "categories": thoughts_service.CATEGORIES,
                             "migration": thoughts_service.MIGRATION})
         raise
-    return jsonify({"available": True, "items": rows,
+    return jsonify({"available": True, "items": thoughts_service.annotate(rows),
+                    "categories": thoughts_service.CATEGORIES,
                     "provider": thoughts_service.any_provider()})
 
 
