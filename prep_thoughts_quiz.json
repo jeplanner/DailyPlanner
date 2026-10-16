@@ -4117,9 +4117,9 @@
    "level": "Easy"
   },
   {
-   "q": "WHERE LOWER(email) = 'priya@example.com' is slow even though email is indexed. Which pair of fixes does the answer suggest?",
+   "q": "WHERE LOWER(email) = 'sethu@example.com' is slow even though email is indexed. Which pair of fixes does the answer suggest?",
    "options": [
-    "Rewrite as WHERE email LIKE '%priya@example.com' or add a hash index on email",
+    "Rewrite as WHERE email LIKE '%sethu@example.com' or add a hash index on email",
     "Run ANALYZE to refresh statistics, or increase the buffer pool size",
     "Store emails already lowercased and compare directly, or create an expression index on LOWER(email)",
     "Switch to a covering index on email, or add an index on the id column"
@@ -5427,7 +5427,7 @@
  ],
  "You update your address, refresh, and the old address shows up. What is eventual consistency, and how do apps hide it from users?": [
   {
-   "q": "Priya updates her pincode, the app says 'saved', she refreshes and sees the old pincode. The write went to the primary. What most likely happened?",
+   "q": "Sethu updates his pincode, the app says 'saved', he refreshes and sees the old pincode. The write went to the primary. What most likely happened?",
    "options": [
     "The write was lost because the primary replied before saving it",
     "Optimistic UI rolled the change back because the server rejected it",
@@ -6495,7 +6495,7 @@
    "level": "Medium"
   },
   {
-   "q": "Rahul has 100 coins. DC1 credits +50 and DC2 approves a spend of 80 before seeing the credit. With last-write-wins on a balance field, what can the result be?",
+   "q": "Shreya has 100 coins. DC1 credits +50 and DC2 approves a spend of 80 before seeing the credit. With last-write-wins on a balance field, what can the result be?",
    "options": [
     "Always 70, since LWW applies both changes in time order",
     "Always 20, because spends carry later timestamps than credits",
@@ -6531,7 +6531,7 @@
    "level": "Medium"
   },
   {
-   "q": "Rahul has 100 coins. DC1 writes a coin-expiry entry of -60 while DC2, unaware, approves an 80-coin spend. Both ledgers are unioned. What is the result and what does it show?",
+   "q": "Shreya has 100 coins. DC1 writes a coin-expiry entry of -60 while DC2, unaware, approves an 80-coin spend. Both ledgers are unioned. What is the result and what does it show?",
    "options": [
     "40: the union discards the later of the two debit entries",
     "20: expiry entries are ignored when ledgers are merged",
@@ -6567,9 +6567,9 @@
    "level": "Medium"
   },
   {
-   "q": "While moving Rahul from DC1 to DC2, why does the protocol bump an ownership epoch from 7 to 8 instead of only updating the directory?",
+   "q": "While moving Shreya from DC1 to DC2, why does the protocol bump an ownership epoch from 7 to 8 instead of only updating the directory?",
    "options": [
-    "So DC2 knows how many coins Rahul held at the time of the move",
+    "So DC2 knows how many coins Shreya held at the time of the move",
     "So replication speeds up and DC2 catches up with DC1 faster",
     "Only for the audit log; the epoch plays no part in writes",
     "So DC1 can reject late writes still tagged with the old epoch"
@@ -7477,7 +7477,7 @@
  ],
  "How can a system answer \"is this username taken?\" for crores of names using very little memory? What is a Bloom filter?": [
   {
-   "q": "A signup page checks a Bloom filter of taken usernames. For 'priya_k' the filter answers 'definitely not'. How reliable is that answer?",
+   "q": "A signup page checks a Bloom filter of taken usernames. For 'sethu_k' the filter answers 'definitely not'. How reliable is that answer?",
    "options": [
     "About 99% correct, since the false positive rate is 1%",
     "Reliable only if the filter was rebuilt in the last 24 hours",
@@ -7597,7 +7597,7 @@
    "level": "Medium"
   },
   {
-   "q": "Two users both see 'priya_k' as available and click Sign Up at the same moment. What ensures only one gets it?",
+   "q": "Two users both see 'sethu_k' as available and click Sign Up at the same moment. What ensures only one gets it?",
    "options": [
     "The Bloom filter's add() is atomic, so the second check fails",
     "The second user's filter lookup now returns 'definitely not'",
@@ -14343,7 +14343,7 @@
    "level": "Medium"
   },
   {
-   "q": "Ravi and Priya both use the password Mango@2024. With proper per-user salts, what do their stored hashes look like?",
+   "q": "Ravi and Sethu both use the password Mango@2024. With proper per-user salts, what do their stored hashes look like?",
    "options": [
     "Different, because each has a unique random salt mixed in",
     "Identical, since the password and algorithm are the same",
@@ -14621,7 +14621,7 @@
    "level": "Medium"
   },
   {
-   "q": "Priya logs in on café Wi-Fi to a site whose session cookie lacks the Secure flag. What is the risk?",
+   "q": "Sethu logs in on café Wi-Fi to a site whose session cookie lacks the Secure flag. What is the risk?",
    "options": [
     "It can travel over plain HTTP and be read by others on the network",
     "JavaScript running on the page can read the cookie value",
@@ -14825,7 +14825,7 @@
    "level": "Medium"
   },
   {
-   "q": "Priya's remember-me cookie logs her back in. She then tries to add a new UPI ID. What should happen?",
+   "q": "Sethu's remember-me cookie logs him back in. He then tries to add a new UPI ID. What should happen?",
    "options": [
     "Allow it, since remember-me already proves her identity",
     "Ask for an OTP again (step-up authentication)",
@@ -15127,7 +15127,7 @@
    "level": "Easy"
   },
   {
-   "q": "The app shows 'Hi, Priya' after login. Which token should it read that from, and which token goes to the API?",
+   "q": "The app shows 'Hi, Sethu' after login. Which token should it read that from, and which token goes to the API?",
    "options": [
     "Access token in the client; ID token to the API",
     "ID token in the client; access token to the API",
@@ -15321,7 +15321,7 @@
    "level": "Medium"
   },
   {
-   "q": "A fraudster gets a mobile store to issue a new SIM for Priya's number. Which login method is NOT exposed to this attack?",
+   "q": "A fraudster gets a mobile store to issue a new SIM for Sethu's number. Which login method is NOT exposed to this attack?",
    "options": [
     "SMS OTP",
     "SMS OTP with a 2-minute expiry",
@@ -15429,7 +15429,7 @@
    "level": "Medium"
   },
   {
-   "q": "Priya logs in on a new phone with a correct OTP. What extra protection does the answer describe?",
+   "q": "Sethu logs in on a new phone with a correct OTP. What extra protection does the answer describe?",
    "options": [
     "Device binding: extra checks for risky actions on a new device",
     "Block the login entirely until she calls customer support",
@@ -16169,7 +16169,7 @@
    "level": "Medium"
   },
   {
-   "q": "Priya taps send, the network drops before the server replies, and her app retries. How do you stop the server from saving two copies?",
+   "q": "Sethu taps send, the network drops before the server replies, and his app retries. How do you stop the server from saving two copies?",
    "options": [
     "The server compares message text and drops any identical message sent within a minute",
     "Her phone creates the message ID (for example a UUID) before the first try; the server has a unique constraint on it",
@@ -16241,7 +16241,7 @@
    "level": "Hard"
   },
   {
-   "q": "Priya sees a tick for \"delivered\" and later another for \"read\". How are these two driven?",
+   "q": "Sethu sees a tick for \"delivered\" and later another for \"read\". How are these two driven?",
    "options": [
     "By one cursor that moves from delivered to read when the phone acks twice",
     "By the push notification provider reporting when the alert was opened",
@@ -16691,7 +16691,7 @@
    "level": "Easy"
   },
   {
-   "q": "Priya has your app on her phone and her tablet. How many device tokens should your backend hold for her?",
+   "q": "Sethu has your app on his phone and his tablet. How many device tokens should your backend hold for him?",
    "options": [
     "None, because tablets cannot receive push notifications",
     "Two, because a token identifies one app install on one device, not the person",
@@ -16727,7 +16727,7 @@
    "level": "Easy"
   },
   {
-   "q": "Three ETA updates for order OD4471 are sent while Priya's phone has no signal. You used a collapse key per order. What does she see when she reconnects?",
+   "q": "Three ETA updates for order OD4471 are sent while Sethu's phone has no signal. You used a collapse key per order. What does he see when he reconnects?",
    "options": [
     "All three updates, in the order they were sent",
     "None of them, because offline messages are always discarded",
@@ -16799,11 +16799,11 @@
    "level": "Medium"
   },
   {
-   "q": "Your API call to FCM returns success for Priya's out-for-delivery push. What does that tell you?",
+   "q": "Your API call to FCM returns success for Sethu's out-for-delivery push. What does that tell you?",
    "options": [
     "That the app has updated the order status locally",
     "That delivery is guaranteed within the TTL",
-    "That Priya saw the notification on her screen",
+    "That Sethu saw the notification on his screen",
     "Only that FCM accepted it; the phone may be off, notifications muted or the message expired"
    ],
    "answer": 3,
@@ -20535,7 +20535,7 @@
    "level": "Medium"
   },
   {
-   "q": "Priya accepts a quote of Rs 396 (1.8x). One minute later the zone drops to 1.3x before the driver arrives. What does she pay?",
+   "q": "Sethu accepts a quote of Rs 396 (1.8x). One minute later the zone drops to 1.3x before the driver arrives. What does he pay?",
    "options": [
     "Rs 396, because the quote was shown upfront and locked for a few minutes",
     "Whatever the multiplier is when the trip ends, since surge applies per minute",
