@@ -65,3 +65,11 @@ begin
 end $$;
 create index if not exists prep_thoughts_user_shelf
   on prep_thoughts (user_id, shelf, created_at desc) where deleted_at is null;
+
+-- ── Your notes (added 2026-10-16; safe to re-run) ───────────────────
+-- Your own notes against a question or follow-up, newest last:
+--   [{id, text, created_at, updated_at, deleted_at}]
+-- Deleting a note sets its deleted_at; the note itself is kept (soft
+-- delete, like every other row in the app). A refreshed shipped answer
+-- or a rewrite only touches `answer`, so notes survive both.
+alter table prep_thoughts add column if not exists notes jsonb not null default '[]'::jsonb;

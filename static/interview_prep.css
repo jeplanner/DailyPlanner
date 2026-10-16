@@ -484,11 +484,24 @@ a.focus-item:hover { border-color: var(--color-border-strong); }
 .th-actions { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--color-border-light); }
 .th-sep { flex: 1 1 auto; }
 .th-small { margin-top: 4px; }
+/* Your notes under a question or follow-up */
+.th-notes { margin-top: 14px; }
+.th-notes-k { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-warning-on-tint); margin-bottom: 6px; }
+.th-note { background: var(--color-warning-light); border-left: 3px solid var(--color-warning-border); border-radius: 0 10px 10px 0; padding: 8px 12px; margin-bottom: 8px; }
+.th-note-text { font-size: 14.5px; line-height: 1.55; color: var(--color-warning-on-tint); white-space: pre-wrap; overflow-wrap: anywhere; }
+.th-note-meta { display: flex; align-items: center; gap: 12px; margin-top: 4px; font-size: 12px; color: var(--color-warning-on-tint); }
+.th-note-meta span { margin-right: auto; }
+.th-note-btn { background: none; border: 0; padding: 4px 2px; font: inherit; font-weight: 700; color: var(--color-warning-on-tint); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.th-note-btn:hover { text-decoration-thickness: 2px; }
+.th-nbox { margin-bottom: 8px; }
+.th-nbox textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 15px; line-height: 1.5; resize: vertical; }
+.th-nbox .th-hint { margin-left: auto; }
+.th-note-add { margin-top: 2px; }
 @media (max-width: 640px) {
   .th-body { padding: 0 12px 14px !important; }
   .th-answer { font-size: 14.5px; }
   .th-sep { display: none; }
-  .th-ask-row .th-hint { display: none; }
+  .th-ask-row .th-hint, .th-nbox .th-hint { display: none; }
   .th-ask-row #th-go { margin-left: auto; }
 }
 

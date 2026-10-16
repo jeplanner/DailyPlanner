@@ -3,7 +3,7 @@
 --
 --  Run this whole file once in the Supabase SQL editor.
 --
---  It is two migrations concatenated in dependency-free order.
+--  It is three migrations concatenated in dependency-free order.
 --  EVERY STATEMENT IS IDEMPOTENT — running it twice changes nothing,
 --  so it is safe even if you have already run some of them.
 --
@@ -12,6 +12,9 @@
 --                                        the last column is missing)
 --    2. MIGRATION_TASK_COMPLETED_AT.sql  project_tasks.completed_at,
 --                                        its trigger, backfill and index
+--    3. MIGRATION_PREP_THOUGHTS.sql      prep_thoughts.notes - your notes
+--                                        against each Random thoughts
+--                                        question (only the new column)
 --
 --  NOTE: Supabase's SQL editor runs a file as ONE transaction, so if
 --  any statement fails NOTHING in the file takes effect. If you get an
@@ -21,7 +24,7 @@
 
 
 -- ################################################################
--- ##  1 of 2  —  PREP PROGRESS (quiz scores on the deep dives)
+-- ##  1 of 3  —  PREP PROGRESS (quiz scores on the deep dives)
 -- ################################################################
 -- ============================================================
 --  PREP PROGRESS — "rehearsed" ticks and mock-interview scores for the
@@ -71,7 +74,7 @@ alter table prep_progress add column if not exists quiz_best_pct smallint
 
 
 -- ################################################################
--- ##  2 of 2  —  WHEN WAS A TASK FINISHED (sprint burndown)
+-- ##  2 of 3  —  WHEN WAS A TASK FINISHED (sprint burndown)
 -- ################################################################
 -- ============================================================
 --  DailyPlanner — WHEN WAS A TASK FINISHED?
@@ -125,3 +128,15 @@ update project_tasks
 create index if not exists ix_project_tasks_sprint_completed
     on project_tasks (sprint_id, completed_at)
     where sprint_id is not null;
+
+
+-- ################################################################
+-- ##  3 of 3  —  RANDOM THOUGHTS: YOUR NOTES ON EACH QUESTION
+-- ################################################################
+-- ── Your notes (added 2026-10-16; safe to re-run) ───────────────────
+-- Your own notes against a question or follow-up, newest last:
+--   [{id, text, created_at, updated_at, deleted_at}]
+-- Deleting a note sets its deleted_at; the note itself is kept (soft
+-- delete, like every other row in the app). A refreshed shipped answer
+-- or a rewrite only touches `answer`, so notes survive both.
+alter table prep_thoughts add column if not exists notes jsonb not null default '[]'::jsonb;
