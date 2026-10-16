@@ -522,3 +522,32 @@ def test_every_shipped_answer_has_a_choose_the_best_answer_quiz(auth_client, tho
     assert auth_client.get("/api/prep/thoughts/quiz/9999").status_code == 404
     items = auth_client.get("/api/prep/thoughts").get_json()["items"]
     assert next(t for t in items if t.get("step") == 1)["quiz_count"] >= 8
+
+
+def test_every_shipped_answer_has_a_working_animated_diagram():
+    import json, re
+    from services import thoughts_service as ts
+    kinds = {"user", "service", "broker", "db", "queue", "cache", "log", "note"}
+    for s in ts.seeds():
+        blocks = re.findall(r"```anim\n(.*?)\n```", s["answer"], re.S)
+        assert blocks, s["title"]
+        for b in blocks:
+            spec = json.loads(b)
+            ids = {n["id"] for n in spec["nodes"]}
+            assert 2 <= len(spec["nodes"]) <= 14 and 4 <= len(spec["steps"]) <= 16
+            assert all(n.get("kind", "service") in kinds for n in spec["nodes"])
+            for st in spec["steps"]:
+                assert st.get("say")
+                for m in st.get("send", []):
+                    assert m["from"] in ids and m["to"] in ids
+
+
+def test_thought_pages_load_the_animation_player():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    assert (root / "static/js/flow_anim.js").exists()
+    for page in ("templates/interview_prep.html", "templates/ai_sde_thoughts.html"):
+        html = (root / page).read_text()
+        assert html.index("js/flow_anim.js") < html.index("js/prep_thoughts.js")
+    js = (root / "static/js/prep_thoughts.js").read_text()
+    assert "fa-anim" in js and "FlowAnim.init" in js

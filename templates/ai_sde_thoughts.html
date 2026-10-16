@@ -43,6 +43,7 @@
     say: function (msg, kind) { if (window.toast) window.toast(msg, kind || "info"); }
   };
 </script>
+<script src="{{ url_for('static', filename='js/flow_anim.js') }}"></script>
 <script src="{{ url_for('static', filename='js/prep_thoughts.js') }}"></script>
 <script>window.PrepThoughts && window.PrepThoughts.load();</script>
 </body>

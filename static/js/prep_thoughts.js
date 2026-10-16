@@ -64,11 +64,16 @@
       if (/^\s*```/.test(l)) {
         para(buf); buf = [];
         var isMermaid = /^\s*```\s*mermaid\b/i.test(l);
+        var isAnim = /^\s*```\s*anim\b/i.test(l);
         var code = []; i++;
         while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; }
         // A ```mermaid block is drawn as a diagram after render (drawDiagrams);
         // the source stays inside as the fallback if it can't be drawn.
-        out.push(isMermaid
+        // A ```anim block (JSON, already escaped) becomes a step-by-step
+        // animated diagram via flow_anim.js.
+        out.push(isAnim
+          ? '<div class="fa-anim" data-spec="' + code.join("\n") + '"><p class="mini-lbl">Loading animation…</p></div>'
+          : isMermaid
           ? '<div class="th-mermaid"><pre class="th-code">' + code.join("\n") + "</pre></div>"
           : '<pre class="th-code">' + code.join("\n") + "</pre>");
         i++; continue;
@@ -364,6 +369,7 @@
       '<div class="card"><div class="empty">' + (rs.length ? "Nothing matches." :
         (STUDENT ? "No questions yet. The next time something doesn't quite make sense — a concept, an algorithm, a design choice — write it above." : "No questions yet. The next time something doesn't quite make sense — a concept, a design choice, a leadership situation — write it above.")) + "</div></div>";
     drawDiagrams($("th-list"));
+    if (window.FlowAnim) window.FlowAnim.init($("th-list"));
     if (window.feather) window.feather.replace();
   }
 
