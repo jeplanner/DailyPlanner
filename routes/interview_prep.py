@@ -41,6 +41,8 @@ import sql_bank
 import ai_sde_recall
 import ai_sde_summary
 from services import loud
+from services import thoughts_service
+from extensions import limiter
 from supabase_client import get, post, update
 from utils.user_tz import user_today
 
@@ -271,6 +273,20 @@ def page_behavioral():
 @login_required
 def page_design():
     return render_template("interview_prep.html", initial_tab="design")
+
+
+@interview_prep_bp.route("/interview-prep/thoughts", methods=["GET"])
+@login_required
+def page_thoughts():
+    return render_template("interview_prep.html", initial_tab="thoughts")
+
+
+@interview_prep_bp.route("/ai-sde/thoughts", methods=["GET"])
+@login_required
+def ai_sde_thoughts_page():
+    """Random thoughts for AI SDE Prep: its own shelf of questions, answered
+    for a new-grad AI/ML SDE candidate rather than a Director loop."""
+    return render_template("ai_sde_thoughts.html")
 
 
 @interview_prep_bp.route("/interview-prep/design/<slug>", methods=["GET"])
@@ -2208,6 +2224,391 @@ def tpm_rounds_pdf():
         return jsonify({"error": "PDF export needs fpdf2 on the server."}), 503
     fname = (items[0]["id"] + ".pdf") if one else "case-rounds.pdf"
     return _pdf_response(pdf, fname)
+
+
+# ─────────── Random thoughts ───────────────────────────────────────
+#
+# Questions that come to mind while preparing, answered in depth by the
+# app so they can be understood, kept, and revisited. The answer is written
+# in a background thread (services/thoughts_service.py) and the page polls.
+
+_THOUGHT_COLS = ("id,parent_id,root_id,question,context,answer,status,model,error,"
+                 "understood,pinned,tags,images,created_at,updated_at")
+
+
+def _thought_get(params, shelf=None):
+    """get() on prep_thoughts that tolerates a table created before the
+    images column existed (the first version of the migration). With a
+    shelf, only that shelf's rows (Interview Prep or AI SDE Prep)."""
+    def run(p):
+        if shelf is None:
+            return get(thoughts_service.TABLE, p) or []
+        return thoughts_service.get_shelved(p, shelf)
+    try:
+        return run(params)
+    except Exception as exc:
+        if "images" not in str(exc) or "select" not in params:
+            raise
+        params = dict(params, select=params["select"].replace(",images", ""))
+        return run(params)
+
+
+def _shelf_arg(data=None):
+    """Which Random thoughts shelf a request is for: ?shelf= or a body field."""
+    raw = request.args.get("shelf") or (data or {}).get("shelf")
+    return thoughts_service.clean_shelf(raw)
+
+
+def _shelf_not_ready_resp():
+    return jsonify({"error": f"Random thoughts on AI SDE Prep need the latest "
+                             f"{thoughts_service.MIGRATION} run in Supabase (it adds "
+                             f"the shelf column; safe to re-run).",
+                    "migration": thoughts_service.MIGRATION}), 503
+
+
+def _read_images(files):
+    """Validate uploaded images -> [(bytes, mime, name)] or raise ValueError."""
+    out = []
+    for f in files[:thoughts_service.MAX_IMAGES]:
+        if not f or not f.filename:
+            continue
+        mime = (f.mimetype or "").lower()
+        if mime not in thoughts_service.IMAGE_MIMES:
+            raise ValueError("Only PNG, JPG, WebP or GIF images can be attached.")
+        data = f.read()
+        if not data:
+            continue
+        if len(data) > thoughts_service.MAX_IMAGE:
+            raise ValueError("Each image must be 5 MB or smaller.")
+        out.append((data, "image/jpeg" if mime == "image/jpg" else mime, f.filename[:120]))
+    return out
+
+
+def _store_images(user_id, files):
+    stored = []
+    for data, mime, name in files:
+        key = thoughts_service.store_image(user_id, data, mime)
+        stored.append({"key": key, "mime": mime, "name": name, "size": len(data)})
+    return stored
+
+
+def _thoughts_missing(exc):
+    t = str(exc)
+    return "prep_thoughts" in t or "does not exist" in t or "schema cache" in t
+
+
+def _thought_missing_resp():
+    return jsonify({"error": f"Random thoughts are not set up yet. Run "
+                             f"{thoughts_service.MIGRATION} in Supabase.",
+                    "migration": thoughts_service.MIGRATION}), 503
+
+
+def _clean_tags(raw):
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for t in raw[:8]:
+        t = re.sub(r"[^a-z0-9 +#.-]", "", str(t).lower()).strip()[:30]
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
+@interview_prep_bp.route("/api/prep/thoughts", methods=["GET"])
+@login_required
+def thoughts_list():
+    shelf = _shelf_arg()
+    try:
+        try:
+            thoughts_service.ensure_seeds(session["user_id"], shelf)
+        except Exception as exc:
+            if _thoughts_missing(exc) or isinstance(exc, thoughts_service.ShelfNotReady):
+                raise
+            logger.warning("thoughts: could not add the starter questions", exc_info=True)
+        rows = _thought_get({
+            "user_id": f"eq.{session['user_id']}", "deleted_at": "is.null",
+            "select": _THOUGHT_COLS, "order": "created_at.desc", "limit": "500",
+        }, shelf)
+    except Exception as exc:
+        if _thoughts_missing(exc) or isinstance(exc, thoughts_service.ShelfNotReady):
+            # Show the shipped answers read-only until the table exists.
+            items = [{"id": f"seed-{i}", "root_id": f"seed-{i}", "parent_id": None,
+                      "question": sd["question"], "answer": sd["answer"], "status": "ready",
+                      "tags": sd.get("tags") or [], "understood": False, "pinned": False,
+                      "created_at": None, "seed": True}
+                     for i, sd in enumerate(thoughts_service.seeds())
+                     if shelf in thoughts_service.seed_shelves(sd)]
+            return jsonify({"available": False, "items": items,
+                            "migration": thoughts_service.MIGRATION})
+        raise
+    return jsonify({"available": True, "items": rows,
+                    "provider": thoughts_service.any_provider()})
+
+
+@interview_prep_bp.route("/api/prep/thoughts", methods=["POST"])
+@login_required
+@limiter.limit("30 per hour")
+def thoughts_ask():
+    """Body: {question, context?, parent_id?}. Saves it and starts the answer."""
+    user_id = session["user_id"]
+    # JSON, or multipart when images are attached (fields + files "images").
+    if request.files:
+        data = {k: request.form.get(k) for k in ("question", "context", "parent_id")}
+        data["tags"] = [t for t in (request.form.get("tags") or "").split(",") if t.strip()]
+        try:
+            files = _read_images(request.files.getlist("images"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+    else:
+        data = request.get_json(silent=True) or {}
+        files = []
+    question = (data.get("question") or "").strip()[:thoughts_service.MAX_QUESTION]
+    context = (data.get("context") or "").strip()[:thoughts_service.MAX_CONTEXT]
+    shelf = _shelf_arg(data if not request.files else {"shelf": request.form.get("shelf")})
+    if not question:
+        return jsonify({"error": "Write the question first."}), 400
+    parent = None
+    try:
+        if data.get("parent_id"):
+            parent = thoughts_service.parent_of(user_id, str(data["parent_id"]))
+            if not parent:
+                return jsonify({"error": "That thread no longer exists."}), 404
+        row = {"user_id": user_id, "question": question, "context": context or None,
+               "status": "pending", "tags": _clean_tags(data.get("tags"))}
+        if parent:
+            row["parent_id"] = parent["id"]
+            row["root_id"] = parent.get("root_id") or parent["id"]
+        if shelf != thoughts_service.DEFAULT_SHELF:
+            row["shelf"] = shelf
+        created = post(thoughts_service.TABLE, row)
+    except Exception as exc:
+        if thoughts_service.shelf_missing(exc):
+            return _shelf_not_ready_resp()
+        if _thoughts_missing(exc):
+            return _thought_missing_resp()
+        raise
+    item = (created or [{}])[0]
+    if not item.get("id"):
+        return jsonify({"error": "Could not save the question."}), 502
+    if not parent:
+        # A thread's root points at itself, so one query fetches a thread.
+        try:
+            update(thoughts_service.TABLE, params={"id": f"eq.{item['id']}", "user_id": f"eq.{user_id}"},
+                   json={"root_id": item["id"]})
+            item["root_id"] = item["id"]
+        except Exception:
+            pass
+    if files:
+        try:
+            item["images"] = _store_images(user_id, files)
+            update(thoughts_service.TABLE, params={"id": f"eq.{item['id']}", "user_id": f"eq.{user_id}"},
+                   json={"images": item["images"]})
+        except Exception:
+            logger.warning("thoughts: image upload failed", exc_info=True)
+            item["images"] = []
+            item["image_error"] = ("The question was saved, but the images could not be "
+                                   "stored. Check that the user-photos storage bucket exists "
+                                   "(see MIGRATION_USER_PHOTOS.sql) and attach them again.")
+    thoughts_service.answer_in_background(item["id"], user_id, question, context, parent,
+                                          item.get("images") or None, shelf=shelf)
+    return jsonify({"item": item}), 201
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>", methods=["POST"])
+@login_required
+def thoughts_edit(tid):
+    """Body: any of {understood, pinned, question, answer, tags, context}."""
+    data = request.get_json(silent=True) or {}
+    patch = {}
+    for k in ("understood", "pinned"):
+        if k in data:
+            patch[k] = bool(data[k])
+    if "question" in data:
+        q = (data.get("question") or "").strip()[:thoughts_service.MAX_QUESTION]
+        if not q:
+            return jsonify({"error": "The question can't be empty."}), 400
+        patch["question"] = q
+    if "answer" in data:
+        patch["answer"] = (data.get("answer") or "")[:60000]
+        patch["status"] = "ready"
+        # Marks it as yours, so a later improvement to a shipped answer
+        # never overwrites your edit.
+        patch["model"] = "edited by you"
+    if "context" in data:
+        patch["context"] = (data.get("context") or "").strip()[:thoughts_service.MAX_CONTEXT] or None
+    if "tags" in data:
+        patch["tags"] = _clean_tags(data.get("tags"))
+    if not patch:
+        return jsonify({"error": "nothing to save"}), 400
+    patch["updated_at"] = _now_iso()
+    try:
+        update(thoughts_service.TABLE,
+               params={"id": f"eq.{tid}", "user_id": f"eq.{session['user_id']}"}, json=patch)
+    except Exception as exc:
+        if _thoughts_missing(exc):
+            return _thought_missing_resp()
+        raise
+    return jsonify({"status": "ok"})
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/retry", methods=["POST"])
+@login_required
+@limiter.limit("30 per hour")
+def thoughts_retry(tid):
+    """Write the answer again (after a failure, or to get a fresh take)."""
+    user_id = session["user_id"]
+    try:
+        rows = _thought_get({"id": f"eq.{tid}", "user_id": f"eq.{user_id}",
+                             "deleted_at": "is.null", "select": _THOUGHT_COLS, "limit": "1"})
+        if not rows:
+            return jsonify({"error": "Not found."}), 404
+        t = rows[0]
+        parent = thoughts_service.parent_of(user_id, t["parent_id"]) if t.get("parent_id") else None
+        update(thoughts_service.TABLE, params={"id": f"eq.{tid}", "user_id": f"eq.{user_id}"},
+               json={"status": "pending", "error": None, "updated_at": _now_iso()})
+    except Exception as exc:
+        if _thoughts_missing(exc):
+            return _thought_missing_resp()
+        raise
+    thoughts_service.answer_in_background(tid, user_id, t["question"], t.get("context") or "",
+                                          parent, t.get("images") or None, shelf=_shelf_arg())
+    return jsonify({"status": "pending"})
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/images", methods=["POST"])
+@login_required
+@limiter.limit("60 per hour")
+def thoughts_add_images(tid):
+    """Attach images (multipart "images") to an existing question."""
+    user_id = session["user_id"]
+    try:
+        files = _read_images(request.files.getlist("images"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not files:
+        return jsonify({"error": "Choose an image first."}), 400
+    rows = _thought_get({"id": f"eq.{tid}", "user_id": f"eq.{user_id}",
+                         "deleted_at": "is.null", "select": "id,images", "limit": "1"})
+    if not rows:
+        return jsonify({"error": "Not found."}), 404
+    have = rows[0].get("images") or []
+    if len(have) + len(files) > thoughts_service.MAX_IMAGES:
+        return jsonify({"error": f"Up to {thoughts_service.MAX_IMAGES} images per question."}), 400
+    try:
+        images = have + _store_images(user_id, files)
+        update(thoughts_service.TABLE, params={"id": f"eq.{tid}", "user_id": f"eq.{user_id}"},
+               json={"images": images, "updated_at": _now_iso()})
+    except Exception:
+        logger.warning("thoughts: image upload failed", exc_info=True)
+        return jsonify({"error": "Could not store the image. Check that the user-photos "
+                                 "storage bucket exists (see MIGRATION_USER_PHOTOS.sql)."}), 502
+    return jsonify({"images": images})
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/images/delete", methods=["POST"])
+@login_required
+def thoughts_remove_image(tid):
+    """Body: {key}. Removes one attached image."""
+    user_id = session["user_id"]
+    key = ((request.get_json(silent=True) or {}).get("key") or "").strip()
+    rows = _thought_get({"id": f"eq.{tid}", "user_id": f"eq.{user_id}",
+                         "select": "id,images", "limit": "1"})
+    if not rows:
+        return jsonify({"error": "Not found."}), 404
+    images = [im for im in (rows[0].get("images") or []) if im.get("key") != key]
+    update(thoughts_service.TABLE, params={"id": f"eq.{tid}", "user_id": f"eq.{user_id}"},
+           json={"images": images, "updated_at": _now_iso()})
+    if key.startswith(thoughts_service.owner_prefix(user_id)):
+        thoughts_service.remove_image(key)
+    return jsonify({"images": images})
+
+
+@interview_prep_bp.route("/interview-prep/thoughts/img/<path:key>", methods=["GET"])
+@login_required
+def thoughts_image(key):
+    """Serve an attached image to its owner only (the bucket is private)."""
+    if not key.startswith(thoughts_service.owner_prefix(session["user_id"])) or ".." in key:
+        return jsonify({"error": "Not found."}), 404
+    data, ctype = thoughts_service.fetch_image(key)
+    if data is None:
+        return jsonify({"error": "Not found."}), 404
+    return Response(data, mimetype=ctype, headers={
+        # Keys embed a random id and never change, so the browser can keep them.
+        "Cache-Control": "private, max-age=31536000, immutable"})
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/delete", methods=["POST"])
+@login_required
+def thoughts_delete(tid):
+    """Soft delete; deleting a thread's first question removes the thread."""
+    user_id = session["user_id"]
+    now = _now_iso()
+    try:
+        update(thoughts_service.TABLE, params={"id": f"eq.{tid}", "user_id": f"eq.{user_id}"},
+               json={"deleted_at": now})
+        update(thoughts_service.TABLE, params={"root_id": f"eq.{tid}", "user_id": f"eq.{user_id}"},
+               json={"deleted_at": now})
+    except Exception as exc:
+        if _thoughts_missing(exc):
+            return _thought_missing_resp()
+        raise
+    return jsonify({"status": "ok"})
+
+
+@interview_prep_bp.route("/interview-prep/thoughts/<tid>/pdf", methods=["GET"])
+@login_required
+def thoughts_pdf(tid):
+    """One thread (the question and its follow-ups) as a phone-readable PDF."""
+    user_id = session["user_id"]
+    rows = _thought_get({"root_id": f"eq.{tid}", "user_id": f"eq.{user_id}",
+                         "deleted_at": "is.null", "select": _THOUGHT_COLS,
+                         "order": "created_at.asc", "limit": "50"})
+    if not rows:
+        return jsonify({"error": "Not found."}), 404
+    sections = [{
+        "title": ("Follow-up: " if r.get("parent_id") else "") + r["question"],
+        "cat": (r.get("created_at") or "")[:10],
+        "fields": [("What prompted it", r.get("context")),
+                   ("Images", (f"{len(r['images'])} image(s) attached - view them in the app"
+                               if r.get("images") else None)),
+                   ("Answer", _md_plain(r.get("answer") or r.get("error") or "Not answered yet."))],
+        "arch": None, "tags": r.get("tags") or None,
+    } for r in rows]
+    try:
+        pdf = _pdf_bytes("Random thoughts", rows[0]["question"][:90], sections, body_pt=_pdf_body_pt())
+    except ImportError:
+        return jsonify({"error": "PDF export needs fpdf2 on the server."}), 503
+    return _pdf_response(pdf, "random-thought.pdf")
+
+
+def _md_plain(text):
+    """Markdown answer -> plain text for the PDF: headings in capitals,
+    emphasis markers and code fences dropped, lists kept."""
+    out = []
+    in_mermaid = False
+    for line in (text or "").split("\n"):
+        st = line.strip()
+        if st.startswith("```mermaid"):
+            in_mermaid = True
+            out.append("[Diagram - open this question in the app to see it]")
+            continue
+        if in_mermaid:
+            if st.startswith("```"):
+                in_mermaid = False
+            continue
+        if st.startswith("```"):
+            continue
+        m = re.match(r"^\s*#{1,6}\s+(.*)$", line)
+        if m:
+            out.append("")
+            out.append(m.group(1).upper())
+            continue
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+        line = re.sub(r"(?<!\*)\*(?!\s)(.+?)(?<!\s)\*(?!\*)", r"\1", line)
+        line = re.sub(r"`([^`]+)`", r"\1", line)
+        line = re.sub(r"^\s*[-*]\s+", "* ", line)
+        out.append(line)
+    return "\n".join(out).strip()
 
 
 # ─────────── System design deep dives ───────────────────────────────

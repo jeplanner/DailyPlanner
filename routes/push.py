@@ -17,7 +17,7 @@ from flask import Blueprint, jsonify, request, session
 
 from auth import login_required
 from services import push_service
-from supabase_client import get, post, update
+from supabase_client import delete, get, post, update
 
 push_bp = Blueprint("push", __name__)
 
@@ -97,6 +97,29 @@ def diagnose():
     so nothing secret has to be copied anywhere to answer the question.
     """
     return jsonify(push_service.diagnose(session["user_id"]))
+
+
+@push_bp.route("/api/push/prune", methods=["POST"])
+@login_required
+def prune():
+    """Delete this user's RETIRED registrations (is_active = false).
+
+    A browser that replaces its push subscription leaves the old row behind,
+    already switched off after its first 404/410. Nothing is ever sent to
+    them, but a phone that has been reinstalled a few times piles them up
+    and the diagnosis listed every one in red. Active rows are untouched.
+    """
+    user_id = session["user_id"]
+    try:
+        rows = get("push_subscriptions", {
+            "user_id": f"eq.{user_id}", "is_active": "eq.false",
+            "select": "endpoint", "limit": "500",
+        }) or []
+        if rows:
+            delete("push_subscriptions", {"user_id": f"eq.{user_id}", "is_active": "eq.false"})
+    except Exception:
+        return jsonify({"ok": False, "error": "Could not remove them."}), 502
+    return jsonify({"ok": True, "removed": len(rows)})
 
 
 @push_bp.route("/api/push/status", methods=["POST"])

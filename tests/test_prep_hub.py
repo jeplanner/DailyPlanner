@@ -251,3 +251,221 @@ def test_deep_dives_can_be_scheduled():
     import sd_deep_bank as b
     assert "?" not in ip.PREP_BANKS["sddeep"]["page"]
     assert ip._prep_lookup("sddeep", "dd0", b.DESIGNS[0]["title"])[0] == b.DESIGNS[0]["title"]
+
+
+def test_push_prune_removes_only_retired_rows(auth_client, monkeypatch):
+    import routes.push as rp
+    calls = []
+    monkeypatch.setattr(rp, "get", lambda t, p=None, **k: [{"endpoint": "a"}, {"endpoint": "b"}])
+    monkeypatch.setattr(rp, "delete", lambda t, p: calls.append((t, p)))
+    j = auth_client.post("/api/push/prune").get_json()
+    assert j["removed"] == 2
+    (table, params), = calls
+    assert table == "push_subscriptions"
+    assert params == {"user_id": "eq.test-user-id", "is_active": "eq.false"}
+
+
+# ── Random thoughts ────────────────────────────────────────────────────
+
+@pytest.fixture
+def thoughts(monkeypatch):
+    import routes.interview_prep as ip
+    from services import thoughts_service as ts
+    rows, started = [], []
+
+    def fake_get(table, params=None, **kw):
+        params = params or {}
+        out = [r for r in rows if params.get("user_id") in (None, f"eq.{r['user_id']}")]
+        if "question" in params:
+            out = [r for r in out if f"eq.{r['question']}" == params["question"]]
+        if "id" in params:
+            out = [r for r in out if f"eq.{r['id']}" == params["id"]]
+        if params.get("deleted_at") == "is.null":
+            out = [r for r in out if not r.get("deleted_at")]
+        if "shelf" in params:
+            out = [r for r in out if f"eq.{r.get('shelf', 'tpm')}" == params["shelf"]]
+        return [dict(r) for r in out]
+
+    def fake_post(table, payload, **kw):
+        row = dict(payload, id=f"t{len(rows) + 1}")
+        rows.append(row)
+        return [dict(row)]
+
+    def fake_update(table, params=None, json=None, **kw):
+        for r in rows:
+            if all(f"eq.{r.get(k)}" == v for k, v in params.items()):
+                r.update(json)
+
+    for mod in (ip, ts):
+        monkeypatch.setattr(mod, "get", fake_get)
+        monkeypatch.setattr(mod, "update", fake_update)
+    monkeypatch.setattr(ip, "post", fake_post)
+    monkeypatch.setattr("supabase_client.post", fake_post)
+    monkeypatch.setattr(ts, "answer_in_background", lambda *a, **k: started.append(a))
+    ts._seeded.clear()
+    return {"rows": rows, "started": started}
+
+
+def test_thoughts_tab_has_its_own_path(auth_client):
+    html = auth_client.get("/interview-prep/thoughts").get_data(as_text=True)
+    assert 'data-initial-tab="thoughts"' in html and "prep_thoughts.js" in html
+
+
+def test_the_tail_inventory_question_is_added_once(auth_client, thoughts):
+    items = auth_client.get("/api/prep/thoughts").get_json()["items"]
+    assert any("tail inventory" in t["question"] for t in items)
+    seeded = [r for r in thoughts["rows"] if "tail inventory" in r["question"]]
+    assert len(seeded) == 1 and seeded[0]["status"] == "ready"
+    assert len(seeded[0]["answer"].split()) > 1500
+    for h in ("## The short answer", "## The intuition", "## How it actually works",
+              "## A worked example", "## Common misconceptions",
+              "## How to say it in an interview", "## Key takeaways", "## Check yourself"):
+        assert h in seeded[0]["answer"], h
+    # Deleting it must not bring it back on the next load or next process.
+    seeded[0]["deleted_at"] = "2026-10-11"
+    from services import thoughts_service as ts
+    ts._seeded.clear()
+    auth_client.get("/api/prep/thoughts")
+    assert len([r for r in thoughts["rows"] if "tail inventory" in r["question"]]) == 1
+
+
+def test_asking_saves_pending_and_starts_the_answer(auth_client, thoughts):
+    r = auth_client.post("/api/prep/thoughts", json={"question": "Why is Kafka ordered per partition?",
+                                                      "tags": ["Kafka", "  "]})
+    assert r.status_code == 201, r.get_data(as_text=True)
+    item = r.get_json()["item"]
+    assert item["status"] == "pending" and item["root_id"] == item["id"]
+    assert thoughts["started"] and thoughts["started"][-1][2] == "Why is Kafka ordered per partition?"
+    # A follow-up joins the same thread and carries the parent as context.
+    r2 = auth_client.post("/api/prep/thoughts", json={"question": "Simpler?", "parent_id": item["id"]})
+    child = r2.get_json()["item"]
+    assert child["root_id"] == item["id"] and child["parent_id"] == item["id"]
+    assert thoughts["started"][-1][4]["id"] == item["id"]
+    assert auth_client.post("/api/prep/thoughts", json={"question": "  "}).status_code == 400
+
+
+def test_thoughts_show_the_shipped_answer_before_the_migration(auth_client, monkeypatch):
+    import routes.interview_prep as ip
+    from services import thoughts_service as ts
+
+    def boom(*a, **k):
+        raise Exception('relation "prep_thoughts" does not exist')
+    monkeypatch.setattr(ip, "get", boom)
+    monkeypatch.setattr(ts, "get", boom)
+    ts._seeded.clear()
+    j = auth_client.get("/api/prep/thoughts").get_json()
+    assert j["available"] is False and j["migration"] == "MIGRATION_PREP_THOUGHTS.sql"
+    assert j["items"] and j["items"][0]["status"] == "ready"
+
+
+def test_generate_falls_through_providers(monkeypatch):
+    from services import thoughts_service as ts
+    calls = []
+    def a(p): calls.append("a"); return None, None
+    def b(p): calls.append("b"); raise RuntimeError("down")
+    def c(p): calls.append("c"); return "## The short answer\nYes.", "m3"
+    monkeypatch.setattr(ts, "PROVIDERS", (a, b, c))
+    assert ts.generate("q") == ("## The short answer\nYes.", "m3") and calls == ["a", "b", "c"]
+
+
+def test_thought_pdf_text_is_plain():
+    from routes.interview_prep import _md_plain
+    out = _md_plain("## How it works\n**Bold** and `code`\n- item\n```\nA -> B\n```")
+    assert "HOW IT WORKS" in out and "**" not in out and "`" not in out and "* item" in out
+
+
+def test_every_shipped_thought_follows_the_answer_format():
+    from services import thoughts_service as ts
+    seeds = ts.seeds()
+    assert any("Kafka" in s["question"] for s in seeds)
+    for s in seeds:
+        for h in ("## The short answer", "## The intuition", "## How it actually works",
+                  "## A worked example", "## Common misconceptions",
+                  "## How to say it in an interview", "## Key takeaways", "## Check yourself"):
+            assert h in s["answer"], (s["question"], h)
+        assert s["answer"].count("Answer:") >= 3
+
+
+def test_asking_with_an_image_stores_it_and_hands_it_to_the_answer(auth_client, thoughts, monkeypatch):
+    import io
+    from services import thoughts_service as ts
+    stored = []
+    monkeypatch.setattr(ts, "store_image", lambda u, data, mime: stored.append((u, mime)) or f"thoughts/{u}/k1.png")
+    r = auth_client.post("/api/prep/thoughts", data={
+        "question": "Explain my whiteboard", "tags": "kafka",
+        "images": (io.BytesIO(b"\x89PNG fake"), "wb.png", "image/png")},
+        content_type="multipart/form-data")
+    assert r.status_code == 201, r.get_data(as_text=True)
+    item = r.get_json()["item"]
+    assert item["images"][0]["key"] == "thoughts/test-user-id/k1.png" and stored == [("test-user-id", "image/png")]
+    assert thoughts["started"][-1][5][0]["key"] == "thoughts/test-user-id/k1.png", "the answer must see the image"
+    bad = auth_client.post("/api/prep/thoughts", data={
+        "question": "x", "images": (io.BytesIO(b"%PDF"), "a.pdf", "application/pdf")},
+        content_type="multipart/form-data")
+    assert bad.status_code == 400
+
+
+def test_images_are_served_only_to_their_owner(auth_client, monkeypatch):
+    from services import thoughts_service as ts
+    monkeypatch.setattr(ts, "fetch_image", lambda key: (b"img", "image/png"))
+    ok = auth_client.get("/interview-prep/thoughts/img/thoughts/test-user-id/abc.png")
+    assert ok.status_code == 200 and ok.data == b"img" and "private" in ok.headers["Cache-Control"]
+    assert auth_client.get("/interview-prep/thoughts/img/thoughts/someone-else/abc.png").status_code == 404
+    # A Photos-page file in the same bucket is not reachable through this route.
+    assert auth_client.get("/interview-prep/thoughts/img/test-user-id/photo.png").status_code == 404
+
+
+def test_pdf_replaces_diagrams_with_a_note():
+    from routes.interview_prep import _md_plain
+    out = _md_plain("Before\n```mermaid\nflowchart LR\n  A --> B\n```\nAfter")
+    assert "flowchart" not in out and "[Diagram" in out and "Before" in out and "After" in out
+
+
+def test_shipped_answers_have_diagrams_and_refresh_only_when_untouched(thoughts):
+    from services import thoughts_service as ts
+    seeds = ts.seeds()
+    assert all("```mermaid" in s["answer"] for s in seeds)
+    rows = thoughts["rows"]
+    rows.append({"id": "old", "user_id": "u9", "question": seeds[0]["question"],
+                 "answer": "old text", "model": ts.SEED_MODEL})
+    rows.append({"id": "mine", "user_id": "u9", "question": seeds[1]["question"],
+                 "answer": "my edit", "model": "edited by you"})
+    ts._seeded.clear()
+    ts.ensure_seeds("u9")
+    assert next(r for r in rows if r["id"] == "old")["answer"] == seeds[0]["answer"]
+    assert next(r for r in rows if r["id"] == "mine")["answer"] == "my edit"
+
+
+# ── Random thoughts on AI SDE Prep (a second shelf) ────────────────────
+
+def test_ai_sde_has_its_own_random_thoughts(auth_client, thoughts):
+    html = auth_client.get("/ai-sde/thoughts").get_data(as_text=True)
+    assert 'data-shelf="aisde"' in html and "prep_thoughts.js" in html
+    assert 'href="/ai-sde/thoughts"' in auth_client.get("/ai-sde").get_data(as_text=True)
+    items = auth_client.get("/api/prep/thoughts?shelf=aisde").get_json()["items"]
+    qs = [t["question"] for t in items]
+    # Only the answers shipped for this shelf - not the Director-level set.
+    assert any("real-time chat" in q for q in qs) and any("Maggi" in q for q in qs)
+    assert not any("tail inventory" in q for q in qs)
+    assert all(r.get("shelf") == "aisde" for r in thoughts["rows"])
+    # The Interview Prep shelf still gets everything, as its own rows.
+    tpm = auth_client.get("/api/prep/thoughts").get_json()["items"]
+    assert any("tail inventory" in t["question"] for t in tpm)
+    assert sum("real-time chat" in r["question"] for r in thoughts["rows"]) == 2
+
+
+def test_a_question_asked_on_ai_sde_stays_there(auth_client, thoughts):
+    r = auth_client.post("/api/prep/thoughts?shelf=aisde", json={"question": "What is a heap?",
+                                                               "shelf": "aisde"})
+    assert r.status_code == 201
+    row = next(x for x in thoughts["rows"] if x["question"] == "What is a heap?")
+    assert row["shelf"] == "aisde"
+    tpm = auth_client.get("/api/prep/thoughts").get_json()["items"]
+    assert not any(t["question"] == "What is a heap?" for t in tpm)
+
+
+def test_ai_sde_answers_are_written_for_a_new_grad():
+    from services import thoughts_service as ts
+    s = ts.system_for("aisde")
+    assert "new-grad" in s and "Director" not in s and s != ts.system_for("tpm")
+    assert ts.system_for("anything-else") == ts.SYSTEM

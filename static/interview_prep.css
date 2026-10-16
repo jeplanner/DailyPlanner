@@ -439,3 +439,85 @@ a.focus-item:hover { border-color: var(--color-border-strong); }
   .dd-doc .sd-arch { font-size: 9.5px; }
   .dd-text, .dd-ul, .dd-row, .quiz-opt { font-size: 14px; }
 }
+
+/* ── Random thoughts ── */
+.th-ask { padding: 14px 16px; }
+.th-ask-lbl { display: block; font-size: 15px; font-weight: 800; margin-bottom: 8px; }
+.th-ask textarea, .th-more input, .th-fbox textarea, .th-edit textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 15px; line-height: 1.5; resize: vertical; }
+.th-more { display: grid; gap: 8px; margin-top: 8px; }
+.th-more[hidden] { display: none; }
+.th-ask-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.th-ask-row .th-hint { margin-left: auto; }
+.th-how { margin: 10px 0 0; line-height: 1.5; }
+.th-filter { margin: 0; }
+.th-card .q-head { cursor: pointer; }
+.th-card .q-text { font-size: 15px; }
+.th-body { padding: 0 18px 16px !important; }
+.th-ctx { font-size: 13.5px; color: var(--color-text-secondary); background: var(--color-surface-secondary); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; white-space: pre-line; }
+.th-ctx b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px; }
+.th-answer { font-size: 15px; line-height: 1.7; overflow-wrap: anywhere; }
+.th-answer h3, .th-answer h4 { font-size: 17px; font-weight: 800; letter-spacing: -.01em; margin: 22px 0 6px; padding-top: 14px; border-top: 1px solid var(--color-border-light); }
+.th-answer > h3:first-child, .th-answer > h4:first-child { margin-top: 4px; padding-top: 0; border-top: 0; }
+.th-answer h5 { font-size: 15px; font-weight: 800; margin: 14px 0 4px; }
+.th-answer p { margin: 8px 0; }
+.th-answer ul, .th-answer ol { margin: 6px 0; padding-left: 22px; }
+.th-answer li { margin: 4px 0; }
+.th-answer strong { font-weight: 800; background: var(--color-primary-light); color: var(--color-primary-on-tint); padding: 0 3px; border-radius: 4px; }
+.th-answer code { font-family: var(--font-family-mono); font-size: 13px; background: var(--color-surface-sunken); padding: 1px 5px; border-radius: 5px; }
+.th-code { font-family: var(--font-family-mono); font-size: 12.5px; line-height: 1.45; background: var(--color-surface-sunken); border-radius: 10px; padding: 10px 12px; overflow-x: auto; white-space: pre; margin: 10px 0; }
+.th-tablewrap { overflow-x: auto; margin: 10px 0; }
+.th-table { border-collapse: collapse; font-size: 14px; min-width: 100%; }
+.th-table th, .th-table td { border: 1px solid var(--color-border-light); padding: 6px 9px; text-align: left; vertical-align: top; }
+.th-table th { background: var(--color-surface-secondary); font-weight: 800; }
+.th-reveal { margin: 4px 0 10px; }
+.th-reveal > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--color-primary-ink); }
+.th-reveal > div { margin-top: 4px; background: var(--color-success-light); color: var(--color-success-on-tint); border-radius: 8px; padding: 7px 10px; }
+.th-writing { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--color-text-secondary); background: var(--color-surface-secondary); border-radius: 12px; padding: 12px 14px; }
+.th-spin { width: 16px; height: 16px; flex: none; border-radius: 50%; border: 2px solid var(--color-border-strong); border-top-color: var(--color-primary-ink); animation: th-spin .9s linear infinite; }
+@keyframes th-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .th-spin { animation-duration: 3s; } }
+.th-failed { font-size: 14px; color: var(--color-danger-on-tint); background: var(--color-danger-light); border-radius: 12px; padding: 10px 14px; }
+.th-follow { margin-top: 18px; border-left: 3px solid var(--color-primary-ink); padding-left: 14px; }
+.th-fq { font-weight: 800; font-size: 15px; margin-bottom: 8px; }
+.th-fq-k { display: inline-block; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-on-primary); background: var(--color-primary); border-radius: 999px; padding: 2px 8px; margin-right: 8px; vertical-align: 2px; }
+.th-fbox { margin-top: 14px; }
+.th-actions { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--color-border-light); }
+.th-sep { flex: 1 1 auto; }
+.th-small { margin-top: 4px; }
+@media (max-width: 640px) {
+  .th-body { padding: 0 12px 14px !important; }
+  .th-answer { font-size: 14.5px; }
+  .th-sep { display: none; }
+  .th-ask-row .th-hint { display: none; }
+  .th-ask-row #th-go { margin-left: auto; }
+}
+
+/* Random thoughts: diagrams and images */
+.th-mermaid { margin: 12px 0; }
+.th-svg { background: var(--color-surface-secondary); border: 1px solid var(--color-border-light); border-radius: 12px; padding: 12px; overflow-x: auto; text-align: center; }
+.th-svg svg { max-width: 100%; height: auto; }
+.th-src { margin-top: 4px; }
+.th-src > summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--color-text-secondary); }
+.th-mermaid.bad .th-code { border: 1px dashed var(--color-warning-border); }
+.th-mm-note { font-size: 12.5px; color: var(--color-warning-on-tint); margin-top: 4px; }
+.th-imgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr)); gap: 8px; margin: 4px 0 12px; }
+.th-img { position: relative; margin: 0; border-radius: 10px; overflow: hidden; border: 1px solid var(--color-border-light); background: var(--color-surface-sunken); aspect-ratio: 4 / 3; }
+.th-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.th-img-x { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border-radius: 999px; border: 0; cursor: pointer;
+            background: rgba(0,0,0,.55); color: #fff; font-size: 16px; line-height: 26px; padding: 0; opacity: 0; transition: opacity .15s; }
+.th-img:hover .th-img-x, .th-img-x:focus-visible { opacity: 1; }
+@media (hover: none) { .th-img-x { opacity: 1; } }
+.th-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.th-files[hidden] { display: none; }
+.th-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; background: var(--color-surface-secondary);
+           border: 1px solid var(--color-border-light); border-radius: 999px; padding: 3px 4px 3px 3px; max-width: 220px; }
+.th-chip img { width: 26px; height: 26px; border-radius: 999px; object-fit: cover; flex: none; }
+.th-chip button { border: 0; background: transparent; color: var(--color-text-secondary); cursor: pointer; font-size: 15px; padding: 0 6px; }
+.th-mm-bar { display: flex; align-items: flex-start; gap: 12px; margin-top: 4px; }
+.th-mm-full { font: inherit; font-size: 12px; font-weight: 700; color: var(--color-primary-ink); background: none; border: 0; padding: 0; cursor: pointer; }
+/* On a phone, keep the diagram at its natural size and let it scroll
+   sideways; shrunk to fit, its labels became unreadable. */
+@media (max-width: 640px) {
+  .th-svg { text-align: left; -webkit-overflow-scrolling: touch; }
+  .th-svg svg { max-width: none !important; width: auto !important; min-width: 520px; }
+}
