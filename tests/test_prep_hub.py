@@ -551,3 +551,10 @@ def test_thought_pages_load_the_animation_player():
         assert html.index("js/flow_anim.js") < html.index("js/prep_thoughts.js")
     js = (root / "static/js/prep_thoughts.js").read_text()
     assert "fa-anim" in js and "FlowAnim.init" in js
+
+
+def test_animation_player_has_speed_and_full_screen():
+    import pathlib
+    js = (pathlib.Path(__file__).resolve().parent.parent / "static/js/flow_anim.js").read_text()
+    assert 'data-fa="full"' in js and "requestFullscreen" in js and "fa-full" in js
+    assert "fa-speed" in js and "faSpeed" in js and "/ (this.speed || 1)" in js

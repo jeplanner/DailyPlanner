@@ -608,3 +608,26 @@ a.focus-item:hover { border-color: var(--color-border-strong); }
 .fa-bad { color: var(--color-text-secondary); font-size: 13px; }
 .fa-swipe { font-size: 12px; color: var(--color-text-secondary); margin: 4px 2px 0; }
 .fa-swipe[hidden] { display: none; }
+.fa-speed { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--color-text-secondary); }
+.fa-speed select { font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 999px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); }
+.fa-anim:focus { outline: none; }
+.fa-anim.fa-full { position: fixed; inset: 0; z-index: 2147483000; margin: 0; border-radius: 0; border: none; display: flex; flex-direction: column;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  background: var(--color-surface); overflow: hidden; }
+.fa-anim.fa-full .fa-title { font-size: 17px; }
+.fa-anim.fa-full .fa-stage { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; align-items: center; justify-content: center; }
+.fa-anim.fa-full .fa-stage svg { width: 100%; height: 100%; max-height: 100%; min-width: 0 !important; }
+.fa-anim.fa-full .fa-swipe { display: none; }
+.fa-anim.fa-full .fa-cap { font-size: 17px; min-height: 3.2em; }
+html.fa-noscroll, html.fa-noscroll body { overflow: hidden; }
+.fa-turn { display: none; }
+@media (orientation: portrait) and (max-width: 600px) {
+  .fa-anim.fa-full .fa-stage svg { height: auto; }
+  .fa-anim.fa-full .fa-turn { display: block; text-align: center; font-size: 13px; color: var(--color-text-secondary); margin: 4px 0; }
+}
+@media (max-height: 500px) {
+  .fa-anim.fa-full { padding-top: max(6px, env(safe-area-inset-top)); padding-bottom: max(6px, env(safe-area-inset-bottom)); }
+  .fa-anim.fa-full .fa-title { font-size: 14px; margin-bottom: 2px; }
+  .fa-anim.fa-full .fa-cap { font-size: 14px; min-height: 2.6em; margin: 4px 2px; }
+  .fa-anim.fa-full .fa-btn, .fa-anim.fa-full .fa-speed select { padding: 4px 10px; font-size: 12px; }
+}

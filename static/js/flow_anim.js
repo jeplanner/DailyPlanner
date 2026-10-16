@@ -22,6 +22,11 @@
   var NS = "http://www.w3.org/2000/svg";
   var COLORS = ["a", "b", "c", "d", "e", "f"];
   var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var SPEEDS = [0.5, 0.75, 1, 1.5, 2];
+  function savedSpeed() {
+    try { var v = parseFloat(localStorage.getItem("faSpeed")); if (SPEEDS.indexOf(v) >= 0) return v; } catch (e) {}
+    return 1;
+  }
 
   function el(tag, attrs, parent) {
     var n = document.createElementNS(NS, tag);
@@ -40,6 +45,7 @@
 
   function Player(host, spec) {
     this.host = host; this.spec = spec; this.i = 0; this.playing = false; this.busy = false;
+    this.speed = savedSpeed();
     this.byId = {};
     for (var k = 0; k < spec.nodes.length; k++) this.byId[spec.nodes[k].id] = spec.nodes[k];
     this.build();
@@ -55,6 +61,7 @@
     this.svg = el("svg", { viewBox: "0 0 " + (s.w || 640) + " " + (s.h || 340), role: "img", "aria-label": s.title || "Animated diagram" });
     this.svg.style.minWidth = Math.min(s.w || 640, 460) + "px";
     wrap.appendChild(this.svg);
+    var tip = document.createElement("div"); tip.className = "fa-turn"; tip.textContent = "Tip: turn your phone sideways for a bigger diagram."; this.host.appendChild(tip);
     var hint = document.createElement("div"); hint.className = "fa-swipe"; hint.hidden = true;
     hint.textContent = "Swipe the diagram sideways to see all of it."; this.host.appendChild(hint);
     function fit() { hint.hidden = !(wrap.scrollWidth > wrap.clientWidth + 4); }
@@ -84,9 +91,26 @@
       '<button type="button" class="fa-btn fa-main" data-fa="play">▶ Play</button>' +
       '<button type="button" class="fa-btn" data-fa="next" aria-label="Next step">Next ▶</button>' +
       '<button type="button" class="fa-btn" data-fa="restart">↺ Restart</button>' +
+      '<label class="fa-speed">Speed <select aria-label="Play speed">' +
+      SPEEDS.map(function (v) { return '<option value="' + v + '">' + v + '×</option>'; }).join("") + '</select></label>' +
+      '<button type="button" class="fa-btn" data-fa="full" aria-label="Full screen">⛶ Full screen</button>' +
       '<span class="fa-count"></span>';
     this.host.appendChild(bar);
     this.count = bar.querySelector(".fa-count"); this.playBtn = bar.querySelector('[data-fa="play"]');
+    this.fullBtn = bar.querySelector('[data-fa="full"]');
+    var sel = bar.querySelector(".fa-speed select"); sel.value = String(this.speed);
+    sel.addEventListener("change", function () {
+      self.speed = parseFloat(sel.value) || 1;
+      try { localStorage.setItem("faSpeed", String(self.speed)); } catch (e) {}
+    });
+    this.host.addEventListener("keydown", function (e) {
+      if (e.target.tagName === "SELECT") return;
+      if (e.key === "Escape" && self.host.classList.contains("fa-full")) { self.full(false); }
+      else if (e.key === "ArrowRight") { self.stop(); self.next(); e.preventDefault(); }
+      else if (e.key === "ArrowLeft") { self.stop(); self.goto(self.i - 1); e.preventDefault(); }
+      else if (e.key === " " && e.target === self.host) { self.toggle(); e.preventDefault(); }
+    });
+    if (!this.host.hasAttribute("tabindex")) this.host.setAttribute("tabindex", "-1");
     bar.addEventListener("click", function (e) {
       var b = e.target.closest("[data-fa]"); if (!b) return;
       var a = b.dataset.fa;
@@ -94,6 +118,7 @@
       else if (a === "next") { self.stop(); self.next(); }
       else if (a === "back") { self.stop(); self.goto(self.i - 1); }
       else if (a === "restart") { self.stop(); self.reset(); }
+      else if (a === "full") { self.full(!self.host.classList.contains("fa-full")); }
     });
   };
 
@@ -149,7 +174,7 @@
   Player.prototype.run = function (st, done) {
     var self = this, sends = st.send || [];
     if (!sends.length || reduce) { this.apply(st); done(); return; }
-    var left = sends.length, dur = 900;
+    var left = sends.length, dur = 900 / (this.speed || 1);
     sends.forEach(function (m, k) {
       var a = self.byId[m.from], b = self.byId[m.to];
       if (!a || !b) { if (--left === 0) { self.apply(st); done(); } return; }
@@ -159,7 +184,7 @@
       var lw = Math.max(46, Math.min(150, String(m.label || "").length * 6.4 + 16));
       el("rect", { x: -lw / 2, y: -11, width: lw, height: 22, rx: 11 }, g);
       txt(g, 0, 4, clip(m.label, 24), "fa-mt");
-      var t0 = null, delay = k * 220;
+      var t0 = null, delay = k * 220 / (self.speed || 1);
       function frame(ts) {
         if (t0 === null) t0 = ts;
         var t = Math.min(1, Math.max(0, (ts - t0 - delay) / dur));
@@ -197,11 +222,41 @@
       if (!self.playing) return;
       self.next(function (moved) {
         if (!moved || !self.playing) { self.stop(); return; }
-        self.timer = setTimeout(loop, 1700);
+        self.timer = setTimeout(loop, 1700 / (self.speed || 1));
       });
     })();
   };
   Player.prototype.stop = function () { this.playing = false; clearTimeout(this.timer); if (this.playBtn) this.playBtn.textContent = this.i >= this.spec.steps.length ? "▶ Replay" : "▶ Play"; };
+
+  // Full screen: the real Fullscreen API where the browser allows it on an
+  // element (desktop, Android); otherwise (iPhone Safari) the player fills the
+  // window with fixed positioning. Either way the diagram is scaled to fit.
+  Player.prototype.full = function (on) {
+    var h = this.host, self = this;
+    var req = h.requestFullscreen || h.webkitRequestFullscreen;
+    var fsEl = function () { return document.fullscreenElement || document.webkitFullscreenElement; };
+    if (on) {
+      h.classList.add("fa-full"); document.documentElement.classList.add("fa-noscroll");
+      this.fullBtn.textContent = "✕ Exit full screen"; this.fullBtn.setAttribute("aria-label", "Exit full screen");
+      var lockLand = function () {
+        // Android Chrome can turn the screen sideways once in full screen.
+        try { if (screen.orientation && screen.orientation.lock && window.innerWidth < 700) screen.orientation.lock("landscape").catch(function () {}); } catch (e) {}
+      };
+      if (req) { try { var r = req.call(h); if (r && r.then) r.then(lockLand, function () {}); else lockLand(); } catch (e) {} }
+      if (!this._fsWatch) {
+        this._fsWatch = function () { if (!fsEl() && self.host.classList.contains("fa-full") && self._wasNative) self.full(false); self._wasNative = !!fsEl(); };
+        document.addEventListener("fullscreenchange", this._fsWatch); document.addEventListener("webkitfullscreenchange", this._fsWatch);
+      }
+      h.focus({ preventScroll: true });
+    } else {
+      h.classList.remove("fa-full"); document.documentElement.classList.remove("fa-noscroll");
+      this.fullBtn.textContent = "⛶ Full screen"; this.fullBtn.setAttribute("aria-label", "Full screen");
+      try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+      if (fsEl() === h) { var x = document.exitFullscreen || document.webkitExitFullscreen; if (x) { try { var p = x.call(document); if (p && p.catch) p.catch(function () {}); } catch (e) {} } }
+      this._wasNative = false;
+    }
+    window.dispatchEvent(new Event("resize"));
+  };
 
   function init(root) {
     (root || document).querySelectorAll(".fa-anim:not(.fa-ready)").forEach(function (host) {
