@@ -32,6 +32,10 @@ logger = logging.getLogger("daily_plan")
 
 java_prep_bp = Blueprint("java_prep", __name__)
 
+# Only the accounts in utils/prep_access.py may use these pages and APIs.
+from utils.prep_access import guard_blueprint as _prep_guard  # noqa: E402
+_prep_guard(java_prep_bp)
+
 
 #: What the collapsed card header and the filters actually read. Everything
 #: else arrives per-card from /api/java/entry/<id>.

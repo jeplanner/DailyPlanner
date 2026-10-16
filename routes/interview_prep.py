@@ -50,6 +50,10 @@ from utils.user_tz import user_today
 logger = logging.getLogger("daily_plan")
 interview_prep_bp = Blueprint("interview_prep", __name__)
 
+# Only the accounts in utils/prep_access.py may use these pages and APIs.
+from utils.prep_access import guard_blueprint as _prep_guard  # noqa: E402
+_prep_guard(interview_prep_bp)
+
 DEFAULT_ROLE = "Senior Director, Technical Program Management"
 DEFAULT_TARGET_DAYS = 42          # ~6 weeks out
 STORY_TARGET = 6                  # rehearsed stories that = "story ready"
@@ -2234,7 +2238,8 @@ def tpm_rounds_pdf():
 # in a background thread (services/thoughts_service.py) and the page polls.
 
 _THOUGHT_COLS = ("id,parent_id,root_id,question,context,answer,status,model,error,"
-                 "understood,pinned,tags,images,notes,created_at,updated_at")
+                 "understood,pinned,tags,images,notes,created_at,updated_at,"
+                 "review_stage,next_review_at,last_reviewed_at,review_count")
 
 # Columns added by later sections of the migration. A table that predates
 # one still loads; the column is just left out of the select.
@@ -2250,17 +2255,27 @@ def _thought_get(params, shelf=None, dropped=None):
         if shelf is None:
             return get(thoughts_service.TABLE, p) or []
         return thoughts_service.get_shelved(p, shelf)
-    while True:
+    # Older tables may lack the images or notes column or the spaced-
+    # repetition columns (added by later runs of MIGRATION_PREP_THOUGHTS.sql):
+    # drop them from the select and retry.
+    for _ in range(4):
         try:
             return run(params)
         except Exception as exc:
-            cols = (params.get("select") or "").split(",")
-            late = [c for c in _THOUGHT_LATE_COLS if c in cols and c in str(exc)]
-            if not late:
+            if "select" not in params:
                 raise
-            params = dict(params, select=",".join(c for c in cols if c != late[0]))
-            if dropped is not None:
-                dropped.append(late[0])
+            cols = params["select"].split(",")
+            if thoughts_service.review_missing(exc):
+                keep = [c for c in cols if c not in thoughts_service.REVIEW_COLS]
+            else:
+                late = [c for c in _THOUGHT_LATE_COLS if c in cols and c in str(exc)][:1]
+                keep = [c for c in cols if c not in late]
+                if late and dropped is not None:
+                    dropped.append(late[0])
+            if keep == cols:
+                raise
+            params = dict(params, select=",".join(keep))
+    return run(params)
 
 
 def _shelf_arg(data=None):
@@ -2349,12 +2364,14 @@ def thoughts_list():
                       "created_at": None, "seed": True}
                      for i, sd in enumerate(thoughts_service.seeds())
                      if shelf in thoughts_service.seed_shelves(sd)]
-            return jsonify({"available": False, "items": items,
+            return jsonify({"available": False, "items": thoughts_service.annotate(items),
+                            "categories": thoughts_service.CATEGORIES,
                             "migration": thoughts_service.MIGRATION})
         raise
     for r in rows:
         r["notes"] = _live_notes(r.get("notes"))
-    return jsonify({"available": True, "items": rows,
+    return jsonify({"available": True, "items": thoughts_service.annotate(rows),
+                    "categories": thoughts_service.CATEGORIES,
                     "notes_available": "notes" not in dropped,
                     "provider": thoughts_service.any_provider()})
 
@@ -2455,14 +2472,71 @@ def thoughts_edit(tid):
     if not patch:
         return jsonify({"error": "nothing to save"}), 400
     patch["updated_at"] = _now_iso()
+    where = {"id": f"eq.{tid}", "user_id": f"eq.{session['user_id']}"}
     try:
-        update(thoughts_service.TABLE,
-               params={"id": f"eq.{tid}", "user_id": f"eq.{session['user_id']}"}, json=patch)
+        update(thoughts_service.TABLE, params=where, json=patch)
     except Exception as exc:
         if _thoughts_missing(exc):
             return _thought_missing_resp()
         raise
-    return jsonify({"status": "ok"})
+    out = {"status": "ok"}
+    if "understood" in patch:
+        # Studied -> first review tomorrow. Unmarked -> out of the review cycle.
+        if patch["understood"]:
+            _, nxt = thoughts_service.next_review(0, "hard")
+            sched = {"review_stage": 0, "next_review_at": nxt.isoformat()}
+        else:
+            sched = {"review_stage": 0, "next_review_at": None}
+        try:
+            update(thoughts_service.TABLE, params=where, json=sched)
+            out.update(sched)
+        except Exception as exc:
+            if not thoughts_service.review_missing(exc):
+                raise
+            out["review_unavailable"] = True
+    return jsonify(out)
+
+
+@interview_prep_bp.route("/api/prep/thoughts/quiz/<int:step>", methods=["GET"])
+@login_required
+def thoughts_quiz(step):
+    """The "choose the best answer" questions for one shipped answer, by its
+    study step. Loaded when the quiz is opened, so the list stays light."""
+    question, items = thoughts_service.quiz_for_step(step)
+    if not question:
+        return jsonify({"error": "Not found."}), 404
+    resp = jsonify({"step": step, "question": question, "items": items})
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/review", methods=["POST"])
+@login_required
+def thoughts_review(tid):
+    """Body: {rating: again|hard|good|easy}. Records a spaced-repetition review
+    and schedules the next one."""
+    data = request.get_json(silent=True) or {}
+    rating = data.get("rating")
+    if rating not in ("again", "hard", "good", "easy"):
+        return jsonify({"error": "rating must be again, hard, good or easy"}), 400
+    where = {"id": f"eq.{tid}", "user_id": f"eq.{session['user_id']}"}
+    try:
+        rows = get(thoughts_service.TABLE, dict(where, select="id,review_stage,review_count", limit="1")) or []
+    except Exception as exc:
+        if thoughts_service.review_missing(exc):
+            return jsonify({"error": "Spaced reviews need the latest MIGRATION_PREP_THOUGHTS.sql run in Supabase (safe to re-run).",
+                            "migration": thoughts_service.MIGRATION}), 503
+        if _thoughts_missing(exc):
+            return _thought_missing_resp()
+        raise
+    if not rows:
+        return jsonify({"error": "Not found."}), 404
+    stage, nxt = thoughts_service.next_review(rows[0].get("review_stage"), rating)
+    now = _now_iso()
+    sched = {"review_stage": stage, "next_review_at": nxt.isoformat(), "last_reviewed_at": now,
+             "review_count": int(rows[0].get("review_count") or 0) + 1, "understood": True, "updated_at": now}
+    update(thoughts_service.TABLE, params=where, json=sched)
+    return jsonify({"status": "ok", **sched})
 
 
 @interview_prep_bp.route("/api/prep/thoughts/<tid>/retry", methods=["POST"])

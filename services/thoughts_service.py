@@ -380,6 +380,119 @@ def seeds():
         return []
 
 
+# Topics for the shipped answers, in the order they are best studied.
+CATEGORIES = [
+    ("cs", "CS fundamentals"),
+    ("code", "Coding principles and tools"),
+    ("db", "Databases and consistency"),
+    ("cache", "Caching and performance"),
+    ("msg", "Kafka, queues and streaming"),
+    ("arch", "Architecture and infrastructure"),
+    ("rel", "Reliability and operations"),
+    ("sec", "Security and login"),
+    ("sd", "System design: classic problems"),
+    ("ecom", "System design: e-commerce and payments"),
+    ("ml", "AI and ML fundamentals"),
+    ("llm", "AI engineering: LLM apps and agents"),
+]
+_META = None
+
+
+def seed_meta():
+    """question -> {title, category, campus, step, related:[{question, title}]}
+    for the shipped answers. Read from prep_thoughts_seed.json once."""
+    global _META
+    if _META is None:
+        all_seeds = seeds()
+        titles = {sd["question"]: sd.get("title") or sd["question"] for sd in all_seeds}
+        _META = {}
+        for sd in all_seeds:
+            if "step" not in sd:
+                continue
+            _META[sd["question"]] = {
+                "title": sd.get("title") or sd["question"],
+                "category": sd.get("category"),
+                "campus": bool(sd.get("campus")),
+                "step": sd["step"],
+                "related": [{"question": q, "title": titles.get(q, q)}
+                            for q in (sd.get("related") or []) if q in titles],
+            }
+    return _META
+
+
+QUIZ_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "prep_thoughts_quiz.json")
+_QUIZ = None
+
+
+def quizzes():
+    """question -> [{q, options[4], answer, why, level}] for the shipped answers
+    ("choose the best answer" scenario questions)."""
+    global _QUIZ
+    if _QUIZ is None:
+        try:
+            import json
+            with open(QUIZ_FILE, encoding="utf-8") as fh:
+                _QUIZ = json.load(fh)
+        except Exception:
+            _QUIZ = {}
+    return _QUIZ
+
+
+def quiz_for_step(step):
+    meta = seed_meta()
+    for q, m in meta.items():
+        if m["step"] == step:
+            return q, quizzes().get(q, [])
+    return None, []
+
+
+def annotate(rows):
+    """Add a shipped answer's topic, study step, campus flag and related
+    questions to its row (in place). Your own questions are left as they are."""
+    meta = seed_meta()
+    for r in rows:
+        if r.get("parent_id"):
+            continue
+        m = meta.get(r.get("question") or "")
+        if m:
+            r.update(m)
+            r["quiz_count"] = len(quizzes().get(r["question"], []))
+    return rows
+
+
+# ---- Spaced repetition -------------------------------------------------
+# Leitner-style boxes: after each successful recall the next review is further
+# away. Marking a question "studied" puts it in box 0 (review tomorrow).
+REVIEW_DAYS = (1, 3, 7, 14, 30, 60, 120)
+REVIEW_COLS = ("review_stage", "next_review_at", "last_reviewed_at", "review_count")
+
+
+def next_review(stage, rating, now=None):
+    """(new_stage, next_review_at datetime) for a self-rating:
+    again = forgot (back to box 0, see it tomorrow), hard = same box again,
+    good = next box, easy = skip a box."""
+    from datetime import datetime, timedelta, timezone
+    now = now or datetime.now(timezone.utc)
+    stage = max(0, int(stage or 0))
+    if rating == "again":
+        stage = 0
+    elif rating == "good":
+        stage += 1
+    elif rating == "easy":
+        stage += 2
+    elif rating != "hard":
+        raise ValueError("rating must be again, hard, good or easy")
+    stage = min(stage, len(REVIEW_DAYS) - 1)
+    return stage, now + timedelta(days=REVIEW_DAYS[stage])
+
+
+def review_missing(exc):
+    """True when the database predates the spaced-repetition columns."""
+    t = str(exc)
+    return any(c in t for c in REVIEW_COLS) and ("does not exist" in t or "schema cache" in t or "column" in t)
+
+
 def seed_shelves(sd):
     """Which shelves a shipped answer goes on (default: Interview Prep only)."""
     return [x for x in (sd.get("shelves") or [DEFAULT_SHELF]) if x in SHELVES]

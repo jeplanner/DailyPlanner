@@ -937,6 +937,7 @@ button.nav-group-title:hover{background:var(--color-surface-secondary);color:var
          Its own group, not a corner of Knowledge. Five banks that share one
          study loop — notes, timers and scheduling all work the same way
          across them, and they are the thing being worked on daily. -->
+    {% if prep_enabled %}
     <div class="nav-group">
       <div class="nav-group-title">Interview prep</div>
 
@@ -971,6 +972,7 @@ button.nav-group-title:hover{background:var(--color-surface-secondary);color:var
       </a>
 
     </div>
+    {% endif %}
 
     <!-- ══ LEARN & READ ═══════════════════════════════════
          Reference material, not practice. The distinction that matters:

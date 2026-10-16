@@ -12,9 +12,11 @@
 --                                        the last column is missing)
 --    2. MIGRATION_TASK_COMPLETED_AT.sql  project_tasks.completed_at,
 --                                        its trigger, backfill and index
---    3. MIGRATION_PREP_THOUGHTS.sql      prep_thoughts.notes - your notes
---                                        against each Random thoughts
---                                        question (only the new column)
+--    3. MIGRATION_PREP_THOUGHTS.sql      Random thoughts: the spaced-
+--                                        repetition review columns and
+--                                        prep_thoughts.notes (your notes
+--                                        on each question) - only the two
+--                                        newest sections of that file
 --
 --  NOTE: Supabase's SQL editor runs a file as ONE transaction, so if
 --  any statement fails NOTHING in the file takes effect. If you get an
@@ -131,8 +133,21 @@ create index if not exists ix_project_tasks_sprint_completed
 
 
 -- ################################################################
--- ##  3 of 3  —  RANDOM THOUGHTS: YOUR NOTES ON EACH QUESTION
+-- ##  3 of 3  —  RANDOM THOUGHTS: REVIEW SCHEDULE + YOUR NOTES
 -- ################################################################
+-- ── Spaced repetition (added later; safe to re-run) ─────────────────
+-- Marking a question "studied" schedules a review tomorrow; each review
+-- (Forgot / Hard / Got it / Easy) moves it 1, 3, 7, 14, 30, 60 or 120 days out.
+alter table prep_thoughts add column if not exists review_stage     integer not null default 0;
+alter table prep_thoughts add column if not exists next_review_at   timestamptz;
+alter table prep_thoughts add column if not exists last_reviewed_at timestamptz;
+alter table prep_thoughts add column if not exists review_count     integer not null default 0;
+create index if not exists prep_thoughts_due
+  on prep_thoughts (user_id, next_review_at) where deleted_at is null and next_review_at is not null;
+-- Questions you had already marked understood join the cycle: first review tomorrow.
+update prep_thoughts set next_review_at = now() + interval '1 day'
+  where understood and next_review_at is null and deleted_at is null and parent_id is null;
+
 -- ── Your notes (added 2026-10-16; safe to re-run) ───────────────────
 -- Your own notes against a question or follow-up, newest last:
 --   [{id, text, created_at, updated_at, deleted_at}]

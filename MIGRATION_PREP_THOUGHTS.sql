@@ -66,6 +66,19 @@ end $$;
 create index if not exists prep_thoughts_user_shelf
   on prep_thoughts (user_id, shelf, created_at desc) where deleted_at is null;
 
+-- ── Spaced repetition (added later; safe to re-run) ─────────────────
+-- Marking a question "studied" schedules a review tomorrow; each review
+-- (Forgot / Hard / Got it / Easy) moves it 1, 3, 7, 14, 30, 60 or 120 days out.
+alter table prep_thoughts add column if not exists review_stage     integer not null default 0;
+alter table prep_thoughts add column if not exists next_review_at   timestamptz;
+alter table prep_thoughts add column if not exists last_reviewed_at timestamptz;
+alter table prep_thoughts add column if not exists review_count     integer not null default 0;
+create index if not exists prep_thoughts_due
+  on prep_thoughts (user_id, next_review_at) where deleted_at is null and next_review_at is not null;
+-- Questions you had already marked understood join the cycle: first review tomorrow.
+update prep_thoughts set next_review_at = now() + interval '1 day'
+  where understood and next_review_at is null and deleted_at is null and parent_id is null;
+
 -- ── Your notes (added 2026-10-16; safe to re-run) ───────────────────
 -- Your own notes against a question or follow-up, newest last:
 --   [{id, text, created_at, updated_at, deleted_at}]

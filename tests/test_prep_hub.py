@@ -444,9 +444,9 @@ def test_ai_sde_has_its_own_random_thoughts(auth_client, thoughts):
     assert 'href="/ai-sde/thoughts"' in auth_client.get("/ai-sde").get_data(as_text=True)
     items = auth_client.get("/api/prep/thoughts?shelf=aisde").get_json()["items"]
     qs = [t["question"] for t in items]
-    # Only the answers shipped for this shelf - not the Director-level set.
+    # Every shipped answer is on both shelves now, each in its own rows.
     assert any("real-time chat" in q for q in qs) and any("Maggi" in q for q in qs)
-    assert not any("tail inventory" in q for q in qs)
+    assert any("tail inventory" in q for q in qs)
     assert all(r.get("shelf") == "aisde" for r in thoughts["rows"])
     # The Interview Prep shelf still gets everything, as its own rows.
     tpm = auth_client.get("/api/prep/thoughts").get_json()["items"]
@@ -469,6 +469,95 @@ def test_ai_sde_answers_are_written_for_a_new_grad():
     s = ts.system_for("aisde")
     assert "new-grad" in s and "Director" not in s and s != ts.system_for("tpm")
     assert ts.system_for("anything-else") == ts.SYSTEM
+
+
+def test_shipped_answers_carry_topic_step_campus_and_related(auth_client, thoughts):
+    from services import thoughts_service as ts
+    seeds = ts.seeds()
+    steps = [s["step"] for s in seeds]
+    assert steps == list(range(1, len(seeds) + 1))          # file is in study order
+    cats = [c for c, _ in ts.CATEGORIES]
+    assert all(s["category"] in cats for s in seeds)
+    assert all(isinstance(s["campus"], bool) and s.get("title") for s in seeds)
+    qs = {s["question"] for s in seeds}
+    assert all(s["related"] and set(s["related"]) <= qs and s["question"] not in s["related"] for s in seeds)
+    j = auth_client.get("/api/prep/thoughts").get_json()
+    assert [c[0] for c in j["categories"]] == cats
+    first = next(t for t in j["items"] if t.get("step") == 1)
+    assert first["category"] == "cs" and first["related"][0]["title"]
+    js = open("static/js/prep_thoughts.js", encoding="utf-8").read()
+    assert 'data-thf="campus"' in js and '"goto"' in js and "th-guide" in js
+
+
+def test_marking_studied_schedules_a_review_and_reviews_move_it_out(auth_client, thoughts):
+    from services import thoughts_service as ts
+    from datetime import datetime, timezone
+    items = auth_client.get("/api/prep/thoughts").get_json()["items"]
+    root = next(t for t in items if t.get("step") == 1)
+    r = auth_client.post(f"/api/prep/thoughts/{root['id']}", json={"understood": True}).get_json()
+    assert r["status"] == "ok" and r["review_stage"] == 0 and r["next_review_at"]
+    row = next(x for x in thoughts["rows"] if x["id"] == root["id"])
+    assert row["understood"] is True and row["next_review_at"]
+    days = (datetime.fromisoformat(r["next_review_at"]) - datetime.now(timezone.utc)).days
+    assert days in (0, 1)
+    j = auth_client.post(f"/api/prep/thoughts/{root['id']}/review", json={"rating": "good"}).get_json()
+    assert j["review_stage"] == 1 and j["review_count"] == 1
+    j = auth_client.post(f"/api/prep/thoughts/{root['id']}/review", json={"rating": "easy"}).get_json()
+    assert j["review_stage"] == 3
+    j = auth_client.post(f"/api/prep/thoughts/{root['id']}/review", json={"rating": "again"}).get_json()
+    assert j["review_stage"] == 0
+    assert auth_client.post(f"/api/prep/thoughts/{root['id']}/review", json={"rating": "meh"}).status_code == 400
+    assert ts.next_review(6, "easy")[0] == len(ts.REVIEW_DAYS) - 1
+
+
+def test_every_shipped_answer_has_a_choose_the_best_answer_quiz(auth_client, thoughts):
+    from services import thoughts_service as ts
+    seeds = ts.seeds(); quiz = ts.quizzes()
+    assert all(len(quiz.get(s["question"], [])) >= 8 for s in seeds)
+    for items in quiz.values():
+        for m in items:
+            assert len(m["options"]) == 4 and len(set(m["options"])) == 4 and m["answer"] in (0, 1, 2, 3) and m["why"]
+    j = auth_client.get("/api/prep/thoughts/quiz/1").get_json()
+    assert j["items"] and j["question"] == seeds[0]["question"]
+    assert auth_client.get("/api/prep/thoughts/quiz/9999").status_code == 404
+    items = auth_client.get("/api/prep/thoughts").get_json()["items"]
+    assert next(t for t in items if t.get("step") == 1)["quiz_count"] >= 8
+
+
+def test_every_shipped_answer_has_a_working_animated_diagram():
+    import json, re
+    from services import thoughts_service as ts
+    kinds = {"user", "service", "broker", "db", "queue", "cache", "log", "note"}
+    for s in ts.seeds():
+        blocks = re.findall(r"```anim\n(.*?)\n```", s["answer"], re.S)
+        assert blocks, s["title"]
+        for b in blocks:
+            spec = json.loads(b)
+            ids = {n["id"] for n in spec["nodes"]}
+            assert 2 <= len(spec["nodes"]) <= 14 and 4 <= len(spec["steps"]) <= 16
+            assert all(n.get("kind", "service") in kinds for n in spec["nodes"])
+            for st in spec["steps"]:
+                assert st.get("say")
+                for m in st.get("send", []):
+                    assert m["from"] in ids and m["to"] in ids
+
+
+def test_thought_pages_load_the_animation_player():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    assert (root / "static/js/flow_anim.js").exists()
+    for page in ("templates/interview_prep.html", "templates/ai_sde_thoughts.html"):
+        html = (root / page).read_text()
+        assert html.index("js/flow_anim.js") < html.index("js/prep_thoughts.js")
+    js = (root / "static/js/prep_thoughts.js").read_text()
+    assert "fa-anim" in js and "FlowAnim.init" in js
+
+
+def test_animation_player_has_speed_and_full_screen():
+    import pathlib
+    js = (pathlib.Path(__file__).resolve().parent.parent / "static/js/flow_anim.js").read_text()
+    assert 'data-fa="full"' in js and "requestFullscreen" in js and "fa-full" in js
+    assert "fa-speed" in js and "faSpeed" in js and "/ (this.speed || 1)" in js
 
 
 # ── Your notes on a Random thoughts question ──────────────────────────

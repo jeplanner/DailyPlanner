@@ -138,6 +138,9 @@ def create_app():
     app.register_blueprint(day_board_bp)
     app.register_blueprint(backlog_bp)
     app.register_blueprint(day_bp)
+    # Interview Prep (all its pages and APIs, plus Java and SQL) is only for
+    # the accounts in utils/prep_access.py; each blueprint guards itself.
+    from utils.prep_access import prep_allowed as _prep_allowed
     app.register_blueprint(java_prep_bp)
     app.register_blueprint(sql_prep_bp)
     app.register_blueprint(bedtime_stories_bp)
@@ -176,6 +179,14 @@ def create_app():
             return {"chat_enabled": _chat_allowed()}
         except Exception:
             return {"chat_enabled": False}
+
+    # Interview Prep flag — hides the whole prep group from other users.
+    @app.context_processor
+    def _inject_prep_flag():
+        try:
+            return {"prep_enabled": _prep_allowed()}
+        except Exception:
+            return {"prep_enabled": False}
 
     # Admin flag — shows the "Usage & Backup" nav link only to admins.
     @app.context_processor
