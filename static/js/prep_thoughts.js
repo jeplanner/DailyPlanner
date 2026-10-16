@@ -42,6 +42,9 @@
   var editing = null;       // id whose answer is being edited
   var asking = null;        // root id with the follow-up box open
   var pollTimer = null;
+  var quizCache = {};      // step -> [mcq]
+  var quizOpen = {};       // root id -> quiz shown
+  var REVIEW_DAYS = [1, 3, 7, 14, 30, 60, 120];   // mirrors thoughts_service.REVIEW_DAYS
 
   /* ── A small, safe Markdown renderer ─────────────────────────────────
      Escapes everything first, then recognises: ## headings, ``` code
@@ -251,6 +254,7 @@
       }
       render();
       schedulePoll();
+      maybeReview();
     }).catch(function () {
       $("th-list").innerHTML = '<div class="card"><div class="empty">Couldn\'t load your thoughts.</div></div>';
     });
@@ -297,7 +301,10 @@
       '<button class="rchip" type="button" data-thf="all" aria-pressed="true">All <span class="n" id="thn-all"></span></button>' +
       '<button class="rchip" type="button" data-thf="todo" aria-pressed="false">Still unclear <span class="n" id="thn-todo"></span></button>' +
       '<button class="rchip" type="button" data-thf="pinned" aria-pressed="false">Pinned <span class="n" id="thn-pin"></span></button>' +
-      '<button class="rchip" type="button" data-thf="campus" aria-pressed="false">Campus interview <span class="n" id="thn-campus"></span></button></div>' +
+      '<button class="rchip" type="button" data-thf="campus" aria-pressed="false">Campus interview <span class="n" id="thn-campus"></span></button>' +
+      '<button class="rchip" type="button" data-thf="studied" aria-pressed="false">Studied <span class="n" id="thn-studied"></span></button>' +
+      '<button class="rchip" type="button" data-thf="due" aria-pressed="false">Due for review <span class="n" id="thn-due"></span></button></div>' +
+      '<button class="btn sm" type="button" id="th-review-now" hidden>Review now</button>' +
       '<label class="th-order mini-lbl">Order <select id="th-order" aria-label="Order of questions"><option value="study">Study order, by topic</option><option value="new">Newest first</option></select></label></div>' +
       '<details class="card th-guide" id="th-guide"><summary>Suggested study order</summary><div id="th-guide-body"></div></details>' +
       '<div id="th-list"><div class="card"><div class="empty">Loading…</div></div></div>';
@@ -315,12 +322,18 @@
     var pinned = rs.filter(function (r) { return r.pinned; }).length;
     $("thn-all").textContent = rs.length; $("thn-todo").textContent = unclear; $("thn-pin").textContent = pinned;
     if ($("thn-campus")) $("thn-campus").textContent = rs.filter(function (r) { return r.campus; }).length;
+    var dueN = dueList().length;
+    if ($("thn-studied")) $("thn-studied").textContent = rs.filter(function (r) { return r.understood; }).length;
+    if ($("thn-due")) $("thn-due").textContent = dueN || "";
+    if ($("th-review-now")) { $("th-review-now").hidden = !dueN; $("th-review-now").textContent = "Review now (" + dueN + ")"; }
     paintGuide(rs);
     if ($("tn-th")) $("tn-th").textContent = rs.length || "";
     var list = rs.filter(function (r) {
       if (view.filter === "todo" && r.understood) return false;
       if (view.filter === "pinned" && !r.pinned) return false;
       if (view.filter === "campus" && !r.campus) return false;
+      if (view.filter === "studied" && !r.understood) return false;
+      if (view.filter === "due" && !isDue(r)) return false;
       if (!q) return true;
       return [r].concat(children(r)).some(function (t) {
         return ((t.question || "") + " " + (t.answer || "") + " " + (t.tags || []).join(" ")).toLowerCase().indexOf(q) >= 0;
@@ -407,9 +420,11 @@
     var pending = [r].concat(kids).some(function (t) { return t.status === "pending"; });
     var head = '<div class="q-head th-head" data-th="toggle">' +
       '<span class="q-text">' + (r.step ? '<span class="th-step">' + r.step + "</span>" : "") + esc(r.question) + "</span>" +
-      '<span class="q-meta">' + (r.step ? (r.campus ? '<span class="badge th-campus">Campus interview</span>' : '<span class="badge th-exp">Experienced-level</span>') : "") + (r.pinned ? '<span class="badge P1">pinned</span>' : "") +
+      '<span class="q-meta">' + (r.status === "ready" ? '<button type="button" class="th-studied' + (r.understood ? " on" : "") + '" data-th="understood" aria-pressed="' + (r.understood ? "true" : "false") + '" title="' + (r.understood ? "Studied - tap to unmark" : "Mark as studied") + '">' + (r.understood ? "✓ Studied" : "Mark studied") + "</button>" : "") +
+      reviewBadge(r) +
+      (r.step ? (r.campus ? '<span class="badge th-campus">Campus interview</span>' : '<span class="badge th-exp">Experienced-level</span>') : "") + (r.pinned ? '<span class="badge P1">pinned</span>' : "") +
       (pending ? '<span class="badge P2">writing…</span>' : r.status === "failed" ? '<span class="badge P0">failed</span>' :
-        r.understood ? '<span class="badge mock">understood</span>' : "") +
+        "") +
       (kids.length ? '<span class="badge">' + kids.length + " follow-up" + (kids.length === 1 ? "" : "s") + "</span>" : "") +
       (r.tags || []).map(function (g) { return '<span class="badge">#' + esc(g) + "</span>"; }).join("") +
       '<span class="badge">' + when(r.created_at) + "</span></span></div>";
@@ -418,6 +433,7 @@
     var body = (r.context ? '<div class="th-ctx"><b>What prompted it</b>' + esc(r.context) + "</div>" : "") +
       imagesBlock(r) +
       answerBlock(r) +
+      quizBlock(r) +
       relatedBlock(r) +
       kids.map(function (k) {
         return '<div class="th-follow" data-id="' + k.id + '"><div class="th-fq"><span class="th-fq-k">Follow-up</span>' + esc(k.question) + "</div>" +
@@ -433,7 +449,7 @@
         : "") +
       (r.status === "ready" && editing !== r.id
         ? '<div class="q-actions th-actions">' +
-          '<button class="btn sm ' + (r.understood ? "" : "primary") + '" data-th="understood" type="button">' + (r.understood ? "✓ Understood" : "I understand this now") + "</button>" +
+          '<button class="btn sm ' + (r.understood ? "" : "primary") + '" data-th="understood" type="button">' + (r.understood ? "✓ Studied" : "Mark as studied") + "</button>" +
           '<button class="btn sm" data-th="simpler" type="button">Explain simpler</button>' +
           '<button class="btn sm" data-th="deeper" type="button">Go deeper</button>' +
           '<button class="btn sm" data-th="follow" type="button">Ask a follow-up</button>' +
@@ -494,6 +510,8 @@
   }
 
   document.addEventListener("click", async function (e) {
+    if (e.target.id === "th-review-now") { openReview(dueList(), true); return; }
+    if (e.target.closest("#th-rev")) { reviewClick(e); return; }
     var panel = e.target.closest("[data-panel=thoughts]");
     if (!panel) return;
     if (e.target.id === "th-go") { submitMain(); return; }
@@ -526,8 +544,39 @@
           if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
           break;
         }
-        case "understood": await patch(rootId, { understood: !root.understood });
-          if (root.understood) H().say("Nice — marked as understood", "success"); render(); break;
+        case "understood": {
+          var res = await api("/api/prep/thoughts/" + rootId, { method: "POST", body: JSON.stringify({ understood: !root.understood }) });
+          root.understood = !root.understood;
+          if ("next_review_at" in res) { root.next_review_at = res.next_review_at; root.review_stage = res.review_stage; }
+          if (root.understood) H().say(res.review_unavailable ? "Marked as studied" : "Marked as studied — first review tomorrow", "success");
+          render(); break;
+        }
+        case "quiz": {
+          quizOpen[rootId] = !quizOpen[rootId];
+          if (quizOpen[rootId] && root.step && !quizCache[root.step]) {
+            a.disabled = true;
+            var qj = await api("/api/prep/thoughts/quiz/" + root.step);
+            quizCache[root.step] = qj.items || [];
+          }
+          var box = card.querySelector(".th-quiz");
+          if (box) box.outerHTML = quizBlock(root); else render();
+          break;
+        }
+        case "qopt": {
+          var qbox = a.closest(".th-mcq");
+          if (!qbox || qbox.dataset.done) break;
+          qbox.dataset.done = "1";
+          var right = +a.dataset.o === +qbox.dataset.answer;
+          qbox.classList.add(right ? "got" : "miss");
+          qbox.querySelectorAll("[data-th=qopt]").forEach(function (o) {
+            o.disabled = true;
+            if (+o.dataset.o === +qbox.dataset.answer) o.classList.add("right");
+            else if (o === a) o.classList.add("wrong");
+          });
+          qbox.querySelector(".th-why").hidden = false;
+          var wrap = a.closest(".th-quiz"); if (wrap) quizScore(wrap);
+          break;
+        }
         case "pin": await patch(rootId, { pinned: !root.pinned }); render(); break;
         case "simpler": await ask("Explain this again more simply, as if to someone new to the topic, with a different analogy: " + root.question, { parent_id: lastOf(root).id }); break;
         case "deeper": await ask((STUDENT ? "Go one level deeper on this - the internals, edge cases and trade-offs a strong new-grad SDE interviewer would probe: " : "Go one level deeper on this - the internals, edge cases, numbers and trade-offs a Director-level interviewer would probe: ") + root.question, { parent_id: lastOf(root).id }); break;
@@ -629,6 +678,137 @@
       e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight + 2, 520) + "px";
     }
   });
+
+  /* ── "Choose the best answer" quiz ───────────────────────────────── */
+  function mcqHtml(m, i, prefix) {
+    return '<div class="th-mcq" data-answer="' + m.answer + '"><div class="th-mq"><span class="th-mn">' + (prefix || "") + (i + 1) + "</span>" +
+      esc(m.q) + ' <span class="badge">' + esc(m.level || "") + "</span></div>" +
+      m.options.map(function (o, k) {
+        return '<button type="button" class="th-opt" data-th="qopt" data-o="' + k + '"><b>' + "ABCD"[k] + "</b> " + esc(o) + "</button>";
+      }).join("") + '<div class="th-why" hidden>' + esc(m.why) + "</div></div>";
+  }
+  function quizBlock(r) {
+    if (!r.step || !r.quiz_count) return "";
+    var shown = !!quizOpen[r.id], items = quizCache[r.step];
+    return '<div class="th-quiz"><div class="th-quiz-head"><b>Choose the best answer</b> <span class="mini-lbl">' + r.quiz_count +
+      " scenario questions to lock this in</span> <span class=\"th-score mini-lbl\"></span>" +
+      '<button type="button" class="btn sm' + (shown ? "" : " primary") + '" data-th="quiz">' + (shown ? "Hide quiz" : "Quiz me") + "</button></div>" +
+      (shown && items ? '<div class="th-mcqs">' + items.map(function (m, i) { return mcqHtml(m, i); }).join("") + "</div>" : "") + "</div>";
+  }
+  function quizScore(wrap) {
+    var done = wrap.querySelectorAll(".th-mcq[data-done]").length, got = wrap.querySelectorAll(".th-mcq.got").length;
+    var el = wrap.querySelector(".th-score"); if (el) el.textContent = got + " / " + done + " right";
+  }
+
+  /* ── Spaced repetition: reviews pop up when they are due ─────────── */
+  function isDue(r) {
+    return !!(r.understood && r.next_review_at && new Date(r.next_review_at) <= new Date());
+  }
+  function dueList() {
+    return roots().filter(isDue).sort(function (a, b) { return (a.next_review_at || "").localeCompare(b.next_review_at || ""); });
+  }
+  function reviewBadge(r) {
+    if (!r.understood || !r.next_review_at) return "";
+    var days = Math.ceil((new Date(r.next_review_at) - new Date()) / 864e5);
+    return days <= 0 ? '<span class="badge P1">review due</span>' : '<span class="badge th-next">review in ' + days + "d</span>";
+  }
+  function nextDays(stage, rating) {
+    stage = stage || 0;
+    if (rating === "again") stage = 0; else if (rating === "good") stage += 1; else if (rating === "easy") stage += 2;
+    return REVIEW_DAYS[Math.min(stage, REVIEW_DAYS.length - 1)];
+  }
+  function inDays(d) { return d === 1 ? "tomorrow" : "in " + d + " days"; }
+  var REV = null;   // {list, i, picks, answered, got}
+  function todayKey() { var d = new Date(); return "thReviewSeen-" + SHELF + "-" + d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
+  function maybeReview() {
+    var due = dueList();
+    if (!due.length) return;
+    var seen = false; try { seen = localStorage.getItem(todayKey()) === "1"; } catch (e) {}
+    if (!seen) openReview(due, false);
+  }
+  function openReview(list, manual) {
+    if (!list.length) return;
+    try { localStorage.setItem(todayKey(), "1"); } catch (e) {}
+    REV = { list: list.slice(0, 20), i: 0 };
+    var back = $("th-rev");
+    if (!back) {
+      back = document.createElement("div"); back.id = "th-rev"; back.className = "th-rev-back";
+      back.setAttribute("role", "dialog"); back.setAttribute("aria-modal", "true"); back.setAttribute("aria-label", "Spaced review");
+      document.body.appendChild(back);
+    }
+    back.hidden = false;
+    reviewStep();
+  }
+  function closeReview() { var b = $("th-rev"); if (b) b.hidden = true; REV = null; render(); }
+  async function reviewStep() {
+    var back = $("th-rev"); if (!back || !REV) return;
+    if (REV.i >= REV.list.length) {
+      back.innerHTML = '<div class="th-rev"><h3>All caught up</h3><p>You reviewed ' + REV.list.length + " question" + (REV.list.length === 1 ? "" : "s") +
+        ". Each one will come back just before you are likely to forget it.</p>" +
+        '<div class="q-actions"><button class="btn primary" type="button" data-rv="close">Done</button></div></div>';
+      return;
+    }
+    var r = REV.list[REV.i];
+    REV.picks = null; REV.answered = 0; REV.got = 0;
+    if (r.step && r.quiz_count) {
+      if (!quizCache[r.step]) {
+        back.innerHTML = '<div class="th-rev"><p class="mini-lbl">Loading…</p></div>';
+        try { quizCache[r.step] = (await api("/api/prep/thoughts/quiz/" + r.step)).items || []; } catch (e) { quizCache[r.step] = []; }
+      }
+      var pool = quizCache[r.step].slice();
+      for (var k = pool.length - 1; k > 0; k--) { var j = Math.floor(Math.random() * (k + 1)); var t = pool[k]; pool[k] = pool[j]; pool[j] = t; }
+      REV.picks = pool.slice(0, 3);
+    }
+    var st = r.review_stage || 0;
+    back.innerHTML = '<div class="th-rev"><div class="th-rev-top"><span class="mini-lbl">Spaced review · ' + (REV.i + 1) + " of " + REV.list.length + "</span>" +
+      '<button type="button" class="btn sm ghost" data-rv="later">Later</button></div>' +
+      "<h3>" + (r.step ? '<span class="th-step">' + r.step + "</span>" : "") + esc(r.title || r.question) + "</h3>" +
+      (REV.picks && REV.picks.length
+        ? '<p class="mini-lbl">Answer these from memory, then rate how well you remembered.</p><div class="th-quiz">' +
+          REV.picks.map(function (m, i) { return mcqHtml(m, i, "Q"); }).join("") + "</div>"
+        : '<p class="th-rev-q">' + esc(r.question) + '</p><p class="mini-lbl">Say the answer out loud first, then rate yourself.</p>') +
+      '<div class="th-rev-rate"><span class="mini-lbl" id="th-rev-hint">How well did you remember it?</span><div class="q-actions">' +
+      '<button class="btn sm" type="button" data-rv="again">Forgot <small>' + inDays(nextDays(st, "again")) + "</small></button>" +
+      '<button class="btn sm" type="button" data-rv="hard">Hard <small>' + inDays(nextDays(st, "hard")) + "</small></button>" +
+      '<button class="btn sm primary" type="button" data-rv="good">Got it <small>' + inDays(nextDays(st, "good")) + "</small></button>" +
+      '<button class="btn sm" type="button" data-rv="easy">Easy <small>' + inDays(nextDays(st, "easy")) + "</small></button></div>" +
+      '<button type="button" class="btn sm ghost" data-rv="open">Open the full answer</button></div></div>';
+  }
+  async function reviewClick(e) {
+    var back = $("th-rev");
+    if (e.target === back) { closeReview(); return; }
+    var opt = e.target.closest("[data-th=qopt]");
+    if (opt) {
+      var qbox = opt.closest(".th-mcq");
+      if (qbox.dataset.done) return;
+      qbox.dataset.done = "1";
+      var right = +opt.dataset.o === +qbox.dataset.answer;
+      qbox.classList.add(right ? "got" : "miss");
+      qbox.querySelectorAll("[data-th=qopt]").forEach(function (o) { o.disabled = true; if (+o.dataset.o === +qbox.dataset.answer) o.classList.add("right"); else if (o === opt) o.classList.add("wrong"); });
+      qbox.querySelector(".th-why").hidden = false;
+      REV.answered++; if (right) REV.got++;
+      if (REV.picks && REV.answered === REV.picks.length) {
+        var sug = REV.got === REV.answered ? "good" : REV.got === 0 ? "again" : "hard";
+        var hint = $("th-rev-hint");
+        if (hint) hint.textContent = REV.got + " of " + REV.answered + " right. Suggested: " + ({ good: "Got it", hard: "Hard", again: "Forgot" })[sug] + ".";
+        back.querySelectorAll("[data-rv]").forEach(function (b) { b.classList.toggle("primary", b.dataset.rv === sug); });
+      }
+      return;
+    }
+    var b = e.target.closest("[data-rv]");
+    if (!b || !REV) { if (b && b.dataset.rv === "close") closeReview(); return; }
+    var act = b.dataset.rv, r = REV.list[REV.i];
+    if (act === "close" || act === "later") { closeReview(); return; }
+    if (act === "open") { open[r.id] = true; view.filter = "all"; closeReview();
+      var el = document.querySelector('.th-card[data-id="' + r.id + '"]'); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    b.disabled = true;
+    try {
+      var res = await api("/api/prep/thoughts/" + r.id + "/review" + Q, { method: "POST", body: JSON.stringify({ rating: act }) });
+      Object.assign(r, { review_stage: res.review_stage, next_review_at: res.next_review_at, last_reviewed_at: res.last_reviewed_at, review_count: res.review_count, understood: true });
+    } catch (err) { H().say(err.message, "error"); b.disabled = false; return; }
+    REV.i++; reviewStep();
+  }
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && REV) closeReview(); });
 
   window.PrepThoughts = { load: load, _md: md, _draw: drawDiagrams };
 })();

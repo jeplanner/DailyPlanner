@@ -487,3 +487,38 @@ def test_shipped_answers_carry_topic_step_campus_and_related(auth_client, though
     assert first["category"] == "cs" and first["related"][0]["title"]
     js = open("static/js/prep_thoughts.js", encoding="utf-8").read()
     assert 'data-thf="campus"' in js and '"goto"' in js and "th-guide" in js
+
+
+def test_marking_studied_schedules_a_review_and_reviews_move_it_out(auth_client, thoughts):
+    from services import thoughts_service as ts
+    from datetime import datetime, timezone
+    items = auth_client.get("/api/prep/thoughts").get_json()["items"]
+    root = next(t for t in items if t.get("step") == 1)
+    r = auth_client.post(f"/api/prep/thoughts/{root['id']}", json={"understood": True}).get_json()
+    assert r["status"] == "ok" and r["review_stage"] == 0 and r["next_review_at"]
+    row = next(x for x in thoughts["rows"] if x["id"] == root["id"])
+    assert row["understood"] is True and row["next_review_at"]
+    days = (datetime.fromisoformat(r["next_review_at"]) - datetime.now(timezone.utc)).days
+    assert days in (0, 1)
+    j = auth_client.post(f"/api/prep/thoughts/{root['id']}/review", json={"rating": "good"}).get_json()
+    assert j["review_stage"] == 1 and j["review_count"] == 1
+    j = auth_client.post(f"/api/prep/thoughts/{root['id']}/review", json={"rating": "easy"}).get_json()
+    assert j["review_stage"] == 3
+    j = auth_client.post(f"/api/prep/thoughts/{root['id']}/review", json={"rating": "again"}).get_json()
+    assert j["review_stage"] == 0
+    assert auth_client.post(f"/api/prep/thoughts/{root['id']}/review", json={"rating": "meh"}).status_code == 400
+    assert ts.next_review(6, "easy")[0] == len(ts.REVIEW_DAYS) - 1
+
+
+def test_every_shipped_answer_has_a_choose_the_best_answer_quiz(auth_client, thoughts):
+    from services import thoughts_service as ts
+    seeds = ts.seeds(); quiz = ts.quizzes()
+    assert all(len(quiz.get(s["question"], [])) >= 8 for s in seeds)
+    for items in quiz.values():
+        for m in items:
+            assert len(m["options"]) == 4 and len(set(m["options"])) == 4 and m["answer"] in (0, 1, 2, 3) and m["why"]
+    j = auth_client.get("/api/prep/thoughts/quiz/1").get_json()
+    assert j["items"] and j["question"] == seeds[0]["question"]
+    assert auth_client.get("/api/prep/thoughts/quiz/9999").status_code == 404
+    items = auth_client.get("/api/prep/thoughts").get_json()["items"]
+    assert next(t for t in items if t.get("step") == 1)["quiz_count"] >= 8
