@@ -93,6 +93,9 @@ def auth_client(client, app):
 
     class _TestUser(UserMixin):
         id = "test-user-id"
+        # On the Interview Prep list (utils/prep_access.py) so the prep
+        # tests reach their pages; tests that need someone else patch it.
+        email = "venghatesh@gmail.com"
         def get_id(self):
             return "test-user-id"
 

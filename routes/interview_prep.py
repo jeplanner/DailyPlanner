@@ -49,6 +49,10 @@ from utils.user_tz import user_today
 logger = logging.getLogger("daily_plan")
 interview_prep_bp = Blueprint("interview_prep", __name__)
 
+# Only the accounts in utils/prep_access.py may use these pages and APIs.
+from utils.prep_access import guard_blueprint as _prep_guard  # noqa: E402
+_prep_guard(interview_prep_bp)
+
 DEFAULT_ROLE = "Senior Director, Technical Program Management"
 DEFAULT_TARGET_DAYS = 42          # ~6 weeks out
 STORY_TARGET = 6                  # rehearsed stories that = "story ready"
