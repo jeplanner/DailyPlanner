@@ -595,7 +595,7 @@
    "You update your address, refresh, and the old address shows up. What is eventual consistency, and how do apps hide it from users?",
    "Why can't you run \"total sales by city for the last year\" on the same database that takes orders? OLTP vs OLAP, data warehouses and data lakes explained.",
    "How do hundreds of servers each create order IDs at the same time without ever producing the same ID twice?",
-   "Why does page 1 of your order history load instantly but page 5,000 takes forever, and why do items sometimes repeat or vanish while you scroll? Offset vs cursor pagination."
+   "What is multi-master replication? If an e-commerce company runs two data centres with users pinned to a home data centre (but movable between them), can a coins wallet like SuperCoins diverge between the two? How do you prevent it?"
   ]
  },
  {
@@ -619,7 +619,7 @@
    "What does the CAP theorem really say, in plain words, and how does it change real design choices like a bank balance versus a like count?",
    "How do hundreds of servers each create order IDs at the same time without ever producing the same ID twice?",
    "If the power goes off right after a database says \"order saved\", how does the order survive? What is a write-ahead log?",
-   "Why can't you run \"total sales by city for the last year\" on the same database that takes orders? OLTP vs OLAP, data warehouses and data lakes explained."
+   "What is multi-master replication? If an e-commerce company runs two data centres with users pinned to a home data centre (but movable between them), can a coins wallet like SuperCoins diverge between the two? How do you prevent it?"
   ]
  },
  {
@@ -743,6 +743,30 @@
   ]
  },
  {
+  "question": "What is multi-master replication? If an e-commerce company runs two data centres with users pinned to a home data centre (but movable between them), can a coins wallet like SuperCoins diverge between the two? How do you prevent it?",
+  "tags": [
+   "random-thoughts",
+   "replication",
+   "distributed-systems",
+   "payments"
+  ],
+  "answer": "## The short answer\n\n**Multi-master replication** (also called **multi-leader** or **active-active**) means two or more copies of a database **all accept writes**, and each copy sends its changes to the others in the background. In **single-leader** replication, only one copy accepts writes.\n\n**Yes, a coins wallet can diverge** between two data centres (DCs), even when every user is pinned to a home DC. Pinning gives each user **one writer at a time**, which is exactly the right idea. But divergence creeps in wherever that rule **leaks**:\n\n- while a user is being **moved** from one DC to the other and replication is still catching up,\n- when **batch jobs** (cashback, refunds, expiry) or **Kafka consumers** write a user's wallet from the wrong DC, or from both,\n- during a **DC failover and fail-back**, when some writes never replicated,\n- when **retries** apply the same credit twice, and when **clock skew** makes \"latest write wins\" pick the wrong write.\n\n**How to prevent it:** enforce **one writer per user everywhere** (APIs, jobs and consumers) through a routing directory; store the wallet as an **append-only ledger** of entries with **unique idempotency keys**, so merging two copies is a simple union and the balance is the sum; move users with a **fenced migration protocol** (freeze, drain, flip with an **ownership epoch**, unfreeze); make spends **conditional writes** in the owner DC; decide your **failover policy** in advance; and run **continuous reconciliation**. If the wallet must never be wrong, put it in a **synchronously replicated consensus store** and pay the latency. On **TiDB**: one cluster stretched across both DCs cannot diverge; two clusters linked by TiCDC are async multi-master and need every rule above.\n\nThis answer uses a **Flipkart-like setup as described**: two DCs, users pinned to a home DC but movable, coins credited (cashback, rewards) and spent (at checkout). It is not a description of any company's real internals.\n\n## The intuition\n\nPicture a sweet shop with **two branches**, Branch A and Branch B. Each branch keeps a **notebook** of customer credit. Every evening a runner copies new lines from each notebook into the other.\n\n- **Single-leader:** only Branch A may write in its notebook. Branch B can read its copy but must phone A to change anything. Never conflicts, but every change costs a phone call.\n- **Multi-master:** both branches write freely, and the runner syncs later. Fast, but the notebooks disagree until the runner arrives. If each branch wrote **\"Rahul's balance is now X\"** instead of **\"Rahul +50\"**, the runner cannot tell which number is right.\n\n**Pinning** is a house rule: \"Rahul's page lives at Branch A. Only A writes it.\" That removes conflicts, **as long as everybody obeys it**. The trouble starts when Rahul moves to Branch B before the runner has delivered A's last lines, or when a head-office clerk writes cashback into whichever notebook is nearest.\n\nTerms:\n- **Replica**: one copy of the data.\n- **Asynchronous replication**: a write is confirmed to the user **before** it reaches the other copies. The delay is the **replication lag**.\n- **Conflict**: two copies changed the same thing without seeing each other's change.\n- **Divergence**: two copies disagree, and nothing guarantees they will agree later.\n- **Idempotency key**: a unique ID for an operation, so applying it twice has the same effect as once.\n- **Epoch**: a number that goes up every time ownership changes, used to reject writes from an old owner. This is called **fencing**.\n\n## How it actually works\n\n### 1. Single-leader vs multi-master\n\n| | Single-leader | Multi-master |\n|---|---|---|\n| Who accepts writes | One leader | Every DC |\n| Write latency for far users | Cross-DC round trip | Local |\n| DC loss | Promote a follower, maybe lose recent writes | Other DC keeps writing |\n| Conflicts | None | Possible, must be resolved |\n\nMost multi-master setups replicate **asynchronously**: DC1 commits locally, tells the user \"done\", and ships the change to DC2 milliseconds later, or seconds to minutes later under load. The price is that, for a while, **DC1 and DC2 disagree**. That is **eventual consistency** (see the app's answer), and the **CAP** answer explains why you cannot have both \"always writable in both DCs\" and \"always consistent\" during a network split.\n\n### 2. Conflict resolution options\n\nWhen both copies changed the same row, something must decide the outcome.\n\n- **Last-write-wins (LWW):** keep the write with the latest timestamp, drop the other. Simple, but it **silently throws data away**, and \"latest\" comes from **server clocks**, which can be tens of milliseconds apart even with NTP, and far more during a fault. For money, LWW on a balance field is **dangerous**.\n- **Application-level merge:** the app combines both versions with a business rule, for example \"union the two shopping carts\".\n- **CRDTs (conflict-free replicated data types):** data structures designed so that copies **always merge to the same answer**, whatever order changes arrive in. A **PN-counter** keeps two counters per DC, one for increments (P) and one for decrements (N); the value is total P minus total N. Merging just takes the maximum of each per-DC counter, so no increment or decrement is ever lost.\n\nThe catch with CRDTs for wallets: a PN-counter guarantees **no lost updates**, but it **cannot enforce \"balance never goes below zero\"**. If Rahul has 100 coins and spends 80 in DC1 while an 80-coin spend is also accepted in DC2, both are valid locally, the merge is correct arithmetic, and the result is **minus 60**. Any rule of the form \"only allow this if enough is left\" needs **coordination**: one place that sees all spends before approving one.\n\n### 3. Pinning = single writer per user\n\nPinning turns multi-master into **single-leader per user**: DC1 owns Rahul, DC2 owns Priya, and replication carries copies across for reads and disaster recovery. No user has two writers, so no conflicts. Divergence only happens where that **rule leaks**. Six common leaks:\n\n1. **Migration with replication lag.** Rahul is moved from DC1 to DC2 (load rebalancing, or he relocated). A write made in DC1 just before the move has not reached DC2 yet, and DC2 starts writing on a stale balance.\n2. **Global batch jobs.** A cashback, refund or coin-expiry job runs in one DC and writes every user's wallet, including users owned by the other DC.\n3. **Mirrored Kafka topics.** A `CashbackEarned` topic is mirrored to both DCs, and consumers in **both** DCs credit the wallet, giving a **double credit**. The app's answer on **Kafka DC failover** covers mirroring in depth.\n4. **Failover and fail-back.** DC1 dies, its users are served from DC2, but DC1's last few seconds of writes never replicated. When DC1 returns, both DCs hold writes the other has never seen.\n5. **Retries after timeouts.** The credit call timed out but actually succeeded. The caller retries, perhaps landing in the other DC, and the credit is applied twice (see the app's **idempotency** answer).\n6. **Clock skew.** Any rule that compares timestamps across DCs, such as LWW or \"ignore events older than X\", picks wrongly when clocks disagree.\n\n### 4. Prevention, layer by layer\n\n**a. One writer per user, enforced everywhere.** A **directory (routing) service** maps `user -> owner DC, epoch`. The API gateway routes by it, and so must **every async writer**: batch jobs send each credit to the owner DC, and Kafka consumers run only in the owner DC or forward there.\n\n**b. Append-only ledger, not a balance field.** Store each change as an **entry** (`+50 cashback order 123`, `-80 checkout order 456`) with a **unique idempotency key**. The balance is the **sum of entries**, usually cached in a balance row updated in the same transaction. Merging two copies becomes a **set union by key**: nothing is lost, duplicates collapse, and order of arrival does not matter. This is the **double-entry ledger** idea from the app's answer on that topic.\n\n**c. Spends are conditional writes in the owner DC.**\n\n```sql\n-- in the owner DC only, one transaction\nINSERT INTO coin_ledger (entry_key, user_id, amount, epoch)\nVALUES ('spend:order456', 'rahul', -80, 8);      -- unique key blocks repeats\nUPDATE coin_balance\n   SET balance = balance - 80, version = version + 1\n WHERE user_id = 'rahul' AND balance >= 80\n   AND version = 42 AND owner_epoch = 8;         -- 0 rows = reject and roll back\n```\n\nCredits are safe to accept (the key blocks duplicates), but **debits must be checked against the full balance**, which only the owner has.\n\n**d. Safe migration with an ownership epoch.** Moving a user is a small, careful protocol:\n\n```mermaid\nflowchart TD\n  A[Start move DC1 to DC2] --> B[Freeze spends briefly]\n  B --> C[Queue incoming credits]\n  C --> D[Drain replication by seq]\n  D --> E{DC2 caught up}\n  E -- no --> D\n  E -- yes --> F[Flip directory and bump epoch]\n  F --> G[DC1 rejects stale epoch]\n  G --> H[Unfreeze and replay credits]\n```\n\n- **Freeze:** spends wait a second or two; credits are queued, not dropped.\n- **Drain:** entries carry a **per-user sequence number**; wait until DC2 has applied DC1's latest one.\n- **Flip:** directory owner becomes DC2, epoch goes from 7 to 8.\n- **Fence:** every write carries its epoch; DC1 rejects epoch 7, so slow jobs cannot write to the old owner.\n- **Unfreeze:** release spends to DC2 and replay queued credits, deduplicated by key.\n\nThe freeze affects one user for a moment. The app's **distributed locks** answer explains why a fencing token (here, the epoch) is needed on top of any lock.\n\n**e. Failover policy decided in advance.** When DC1 dies suddenly, its unreplicated writes are temporarily invisible. Pick a policy before the outage, not during it:\n- **Pause spends** for DC1's users until DC1 is back or the gap is reconciled (safe, but customers cannot use coins at checkout), or\n- **Bounded-risk spending:** allow spends in DC2 up to a cap, for example 200 coins per user, accepting a small, known worst-case loss.\n\nCredits can still be queued safely. On fail-back, **merge the ledgers by union**, not by copying one DC over the other.\n\n**f. Continuous reconciliation.** A job compares per-user entries and sums across DCs. Mismatches are fixed with **compensating entries** (a new correcting entry), never by editing history, so the audit trail stays complete.\n\n**g. Or avoid the problem: a consensus store.** Put wallets in a store that replicates **synchronously using consensus** (Raft or Paxos), like Spanner, CockroachDB or a stretched TiDB cluster. Each write waits for a majority, so there is never a second version. The trade-off is **latency**: every spend pays a cross-DC round trip, and you need a third location to keep a majority when one DC fails. For money, many teams accept that.\n\n### 5. If the wallet runs on TiDB\n\nThe reader says the coin wallet uses **TiDB**. TiDB is a distributed, **MySQL-compatible** SQL database. It splits data into small ranges called **regions**; each region is copied to several stores and replicated with **Raft**, so a write commits only when a **majority** of copies have it. A component called **PD** (Placement Driver) hands out the timestamps that order transactions. Transactions are full **ACID**, and **pessimistic** locking is the publicly documented default for new clusters. Inside **one** cluster there is exactly one committed version of each row, so there is **no multi-master conflict**. What matters is how the two DCs are wired.\n\n**Setup 1: one cluster stretched across both DCs.** Either the publicly documented **DR Auto-Sync** mode for two DCs, or replicas spread over three sites (or two DCs plus a small witness site). The database itself **cannot diverge**. The cost is latency: writes, and fetching timestamps from PD, may cross DCs. **Placement Rules in SQL** can keep region leaders for a user's data near that user's DC. The remaining risks are in the **application**:\n- **Duplicate credits** from retries: give every ledger entry an idempotency key with a **UNIQUE constraint**.\n- **Stale reads for spend decisions:** follower or stale reads (`AS OF TIMESTAMP`) are fine for showing a balance, never for approving a spend.\n- **Read-modify-write in app code** (read 100, compute 20, write 20): use a conditional update, or lock the row first.\n\n```sql\nUPDATE coin_balance SET balance = balance - 80, version = version + 1\n WHERE user_id = ? AND balance >= 80 AND version = ?;   -- 0 rows = reject\n-- or: SELECT balance FROM coin_balance WHERE user_id = ? FOR UPDATE;\n```\n\n- **Per-DC caches** holding old balances: never authorise from a cache.\n- **Failover while degraded:** DR Auto-Sync gives **RPO 0** (no lost commits) while in sync mode, but if the DC link breaks it degrades to async, and a DC loss then can lose the tail of writes. Decide in advance whether spending pauses in that state.\n\n**Setup 2: two separate clusters linked by TiCDC** in both directions. **TiCDC** streams committed changes from one cluster to the other. This is **asynchronous, true multi-master**: if both sides write the same row, the later-applied change simply **overwrites**; there is no semantic merge. Everything earlier in this answer applies:\n- **Single writer per user**, enforced by the directory.\n- **Insert-only ledger with unique keys**, so replicated entries union cleanly.\n- **Gate user moves on the changefeed checkpoint**: flip ownership only once the changefeed's **checkpoint ts** has passed the user's last commit ts in the source. TiCDC's **syncpoint** feature records consistent upstream/downstream timestamp markers that help with this.\n- **Fence with an epoch** so the old cluster rejects late writes.\n- **Avoid AUTO_INCREMENT clashes**: use `AUTO_RANDOM` or disjoint ID ranges per cluster.\n- **Reconcile** per-user ledger totals across clusters.\n\n| | Setup 1: one stretched cluster | Setup 2: two clusters plus TiCDC |\n|---|---|---|\n| Divergence possible | No, Raft majority commit | Yes, async multi-master |\n| Write latency | Higher, may cross DCs | Local |\n| RPO on DC loss | 0 in sync mode, tail risk if degraded | Seconds of changefeed lag |\n| App must still do | Idempotency keys, conditional spends, no stale or cached reads for spends | All of that plus single writer, ledger union, checkpoint-gated moves, fencing, reconciliation |\n\n## A worked example\n\nRahul has **100 SuperCoins** and is owned by **DC1**. At 10:00:00 an operator starts moving him to DC2. Replication lag is **2 seconds**.\n\n**Broken version (no protocol, balance field, LWW).**\n- 10:00:00.2 - the cashback job, running in DC1, credits **+50**. DC1 writes `balance = 150`.\n- 10:00:00.5 - the directory flips Rahul to DC2 immediately.\n- 10:00:01 - Rahul checks out in DC2 and spends **80**. DC2 still sees 100, approves, writes `balance = 20`.\n- 10:00:02.2 - DC1's `150` arrives at DC2. Conflict.\n\n```mermaid\nflowchart TD\n  A[Balance 100 in both DCs] --> B[DC1 credit plus 50]\n  A --> C[DC2 spend 80]\n  B --> D[DC1 says 150]\n  C --> E[DC2 says 20]\n  D --> F{Merge how}\n  E --> F\n  F -- LWW --> G[150 or 20 wrong]\n  F -- ledger union --> H[100 plus 50 minus 80 is 70]\n```\n\nLast-write-wins keeps either **20** (Rahul loses his cashback) or, if DC2's clock runs behind, **150** (the spend vanishes and the company gave goods away). The correct answer is **70**.\n\nSwitching to a ledger alone fixes this case:\n\n| Entry key | Amount | Written in |\n|---|---|---|\n| open:rahul | +100 | DC1 |\n| cashback:order123 | +50 | DC1 |\n| spend:order456 | -80 | DC2 |\n\nUnion of both DCs gives three entries, sum **70**. But a ledger alone does not stop overdrafts. If the DC1 entry had been **coin expiry -60** instead of a credit, the union would give 100 - 60 - 80 = **-40**: DC2 approved a spend against coins that had already expired. That is why we also need single ownership.\n\n**Safe version (fenced migration).**\n- 10:00:00.0 - Rahul marked as moving. Spends are held; the directory still says DC1, epoch 7.\n- 10:00:00.2 - cashback +50 is written in DC1 as sequence 42 (DC1 is still the owner).\n- 10:00:00.3 - drain: DC1's latest sequence for Rahul is 42. Wait.\n- 10:00:01 - Rahul taps \"Pay\". His spend is held with a short spinner.\n- 10:00:02.2 - DC2 has applied sequence 42. Flip: owner DC2, **epoch 8**.\n- 10:00:02.3 - a late retry of some job hits DC1 tagged epoch 7 and is **rejected**; it re-routes to DC2, where its idempotency key shows it is already applied.\n- 10:00:02.4 - unfreeze. The held spend runs as a conditional write in DC2: balance 150, version 42, so it succeeds. New balance **70**, version 43.\n\n| Seq | Entry key | Amount | Epoch | Balance after |\n|---|---|---|---|---|\n| 41 | open:rahul | +100 | 7 | 100 |\n| 42 | cashback:order123 | +50 | 7 | 150 |\n| 43 | spend:order456 | -80 | 8 | 70 |\n\nRahul waited about 1.5 seconds once. Nobody lost money. On **one stretched TiDB cluster** the broken race cannot happen in the database; on **two TiCDC-linked clusters**, \"drain\" means waiting for the changefeed checkpoint to pass Rahul's last commit.\n\n## Common misconceptions\n\n- **\"Pinning users means no conflicts.\"** Pinning removes conflicts only for writes that respect it. Migrations, batch jobs, mirrored consumers, failovers and retries all bypass it unless they are deliberately routed and fenced.\n- **\"Last-write-wins is fine for balances.\"** LWW discards one of two real changes, and it relies on clocks that can be wrong. On a balance field it loses credits or spends silently.\n- **\"CRDT counters solve wallets.\"** A PN-counter guarantees every increment and decrement is kept, but it cannot enforce a minimum balance. \"Spend only if enough coins\" needs coordination at one owner.\n- **\"Replication lag is milliseconds, so it doesn't matter.\"** Normally it is, but during peak sales or network trouble it can reach seconds or minutes, exactly when rebalancing is most likely. Measure catch-up with sequence numbers, not hope.\n- **\"Idempotency keys are enough.\"** They stop repeats of the **same** operation, not two **different** spends overdrawing a wallet in two DCs.\n\n## How to say it in an interview\n\n*\"Multi-master replication means more than one copy of the database accepts writes and they sync asynchronously, so two copies can change the same data before seeing each other, which is a conflict. Pinning each user to a home DC makes it single-writer per user, which is the right design, but a wallet can still diverge wherever that rule leaks: moving a user while replication lags, batch jobs or mirrored Kafka consumers writing from the wrong DC, failover with unreplicated writes, retries, and clock skew. Last-write-wins on a balance field is dangerous because it drops real credits or spends. I'd prevent it in layers: a directory that every API, job and consumer must use to find the owner DC; an append-only ledger with idempotency keys so merging is a union; spends as conditional writes in the owner DC; a migration protocol that freezes briefly, drains by sequence number, flips the owner and bumps an epoch so the old DC rejects stale writes; a failover policy decided in advance; and continuous reconciliation. If the business needs zero risk, I'd put wallets in a consensus-replicated store and accept the latency. On TiDB I'd confirm the setup: one stretched cluster means Raft majority commits, so the database can't diverge and the work is app safety; two clusters with TiCDC is async multi-master, needing single-writer, a ledger, checkpoint-gated moves and reconciliation.\"*\n\n**Likely follow-ups:**\n- *Why not just use a CRDT counter?* It never loses updates, but it cannot block a spend that would take the balance negative, because each DC decides alone. Overdraft checks need one owner or consensus.\n- *What do you do during a sudden DC outage?* Follow the pre-agreed policy: pause spends for affected users, or allow capped spends with a known worst-case loss. Queue credits. On fail-back, union the ledgers and reconcile.\n- *How do you know the destination DC has caught up?* Each user's entries have a per-user sequence number. Wait until the destination has applied the source's latest number before flipping ownership.\n\n## Key takeaways\n\n- **Multi-master** = every DC accepts writes and syncs later; conflicts are possible by design.\n- **Pinning makes each user single-writer**; divergence happens only where that rule leaks.\n- Leaks: **migration with lag, global jobs, mirrored consumers, failover, retries, clock skew**.\n- **Never use last-write-wins on a balance**; clocks lie and LWW drops real changes.\n- Store wallets as an **append-only ledger with idempotency keys**; merge = union, balance = sum.\n- A **counter CRDT cannot enforce \"never negative\"**; spends need a single owner doing **conditional writes**.\n- Move users with **freeze, drain by sequence, flip plus epoch, fence, unfreeze**.\n- Decide the **failover policy** beforehand, **reconcile continuously**, and consider a **consensus store** for money.\n\n## Check yourself\n\n1. Rahul has 100 coins. DC1 credits +50 and DC2 approves a spend of 80 before seeing the credit. What does last-write-wins on a balance field produce, and what is correct?\n   Answer: Either 20 (the credit is lost) or 150 (the spend is lost), depending on timestamps and clock skew. The correct balance is 70, which a ledger union gives: 100 + 50 - 80.\n2. A `CashbackEarned` Kafka topic is mirrored to both DCs and a consumer in each DC credits wallets. What goes wrong and how do you fix it?\n   Answer: Each event is applied twice, so users get double cashback. Have only the owner DC apply credits, routing via the directory, and give each ledger entry a unique key such as the cashback ID so a second apply is rejected.\n3. Why does the migration protocol bump an epoch instead of just updating the directory?\n   Answer: Slow jobs, retries or cached routes may still send writes to the old DC after the flip. Tagging writes with the epoch lets the old DC reject anything carrying the stale epoch, which fences it off.\n4. Why can't a PN-counter CRDT alone keep a wallet from going negative?\n   Answer: Each DC approves spends using only what it has seen, and the merge just adds everything up. Two spends approved separately can together exceed the balance. Preventing that needs coordination: one owner checking the full balance, or a consensus store.\n",
+  "title": "Multi-master replication and wallet divergence",
+  "category": "db",
+  "campus": false,
+  "related": [
+   "You update your address, refresh, and the old address shows up. What is eventual consistency, and how do apps hide it from users?",
+   "How do wallets and payment apps keep money balances correct to the paisa? What is a double-entry ledger, explained for engineers?",
+   "What does the CAP theorem really say, in plain words, and how does it change real design choices like a bank balance versus a like count?",
+   "How do you make sure Kafka messages stay in order, and how do you keep that ordering when you fail over from one data centre to another?"
+  ],
+  "shelves": [
+   "tpm",
+   "aisde"
+  ],
+  "step": 32
+ },
+ {
   "question": "What are the main caching strategies, and how do you choose between them?",
   "tags": [
    "caching",
@@ -754,7 +778,7 @@
   "title": "Caching strategies",
   "category": "cache",
   "campus": true,
-  "step": 32,
+  "step": 33,
   "related": [
    "How does a CDN decide what to keep close to you, and how does it know when a cached file is out of date?",
    "Why is Redis so fast even though it mostly uses a single thread, and what are its limits?",
@@ -782,7 +806,7 @@
   "title": "How CDN caching works",
   "category": "cache",
   "campus": true,
-  "step": 33,
+  "step": 34,
   "related": [
    "How does a URL shortener turn a long link into a short code like bit.ly/3xYz9 that is unique and works instantly for millions of people?",
    "What are the main caching strategies, and how do you choose between them?",
@@ -806,7 +830,7 @@
   "title": "Why Redis is fast",
   "category": "cache",
   "campus": true,
-  "step": 34,
+  "step": 35,
   "related": [
    "How does a CDN decide what to keep close to you, and how does it know when a cached file is out of date?",
    "If you have 4 cache servers and add a 5th, why does simple hashing (key % N) suddenly move almost all the data, and how does consistent hashing fix it?",
@@ -830,7 +854,7 @@
   "title": "Consistent hashing",
   "category": "cache",
   "campus": true,
-  "step": 35,
+  "step": 36,
   "related": [
    "Why is Redis so fast even though it mostly uses a single thread, and what are its limits?",
    "How can a system answer \"is this username taken?\" for crores of names using very little memory? What is a Bloom filter?",
@@ -854,7 +878,7 @@
   "title": "Bloom filters",
   "category": "cache",
   "campus": true,
-  "step": 36,
+  "step": 37,
   "related": [
    "What are L1, L2 and L3 caches, what problem do they solve, and when should I use each? Explain with an e-commerce example.",
    "If you have 4 cache servers and add a 5th, why does simple hashing (key % N) suddenly move almost all the data, and how does consistent hashing fix it?",
@@ -874,7 +898,7 @@
   "title": "L1, L2 and L3 cache tiers",
   "category": "cache",
   "campus": false,
-  "step": 37,
+  "step": 38,
   "related": [
    "How can a system answer \"is this username taken?\" for crores of names using very little memory? What is a Bloom filter?",
    "If you have 4 cache servers and add a 5th, why does simple hashing (key % N) suddenly move almost all the data, and how does consistent hashing fix it?",
@@ -898,7 +922,7 @@
   "title": "Redis Lua scripts",
   "category": "cache",
   "campus": false,
-  "step": 38,
+  "step": 39,
   "related": [
    "How do you make sure only one server runs a job at a time, like sending the daily invoice email once? How do distributed locks work, and why are they tricky?",
    "Two people book the last train seat at the same moment. What is a database transaction, what does ACID really mean, and how do locks and isolation levels stop both of them getting the seat?",
@@ -922,7 +946,7 @@
   "title": "What Kafka is",
   "category": "msg",
   "campus": true,
-  "step": 39,
+  "step": 40,
   "related": [
    "What are the different terminologies in Kafka, with real-life e-commerce examples of how each is useful?",
    "What is the difference between a queue and a topic?",
@@ -946,7 +970,7 @@
   "title": "Kafka terminology",
   "category": "msg",
   "campus": true,
-  "step": 40,
+  "step": 41,
   "related": [
    "What is Kafka, what problem does it solve, and what are the competing technologies? Explain with a real-life example.",
    "What is the difference between a queue and a topic?",
@@ -970,7 +994,7 @@
   "title": "Queue vs topic",
   "category": "msg",
   "campus": true,
-  "step": 41,
+  "step": 42,
   "related": [
    "What are the different terminologies in Kafka, with real-life e-commerce examples of how each is useful?",
    "What is the difference between streaming and message queues, and when do you use each?",
@@ -994,7 +1018,7 @@
   "title": "Streaming vs message queues",
   "category": "msg",
   "campus": true,
-  "step": 42,
+  "step": 43,
   "related": [
    "Why does Kafka guarantee ordering only within a partition?",
    "What is the difference between a queue and a topic?",
@@ -1018,7 +1042,7 @@
   "title": "Kafka ordering per partition",
   "category": "msg",
   "campus": true,
-  "step": 43,
+  "step": 44,
   "related": [
    "A Kafka consumer reads a message, processes it successfully and moves on, but the message is still in Kafka. Another consumer can read it too, even days later. Why doesn't Kafka delete a message after it's consumed, and what advantage does this design provide?",
    "What is the difference between streaming and message queues, and when do you use each?",
@@ -1043,7 +1067,7 @@
   "title": "Why Kafka keeps consumed messages",
   "category": "msg",
   "campus": true,
-  "step": 44,
+  "step": 45,
   "related": [
    "Why does Kafka guarantee ordering only within a partition?",
    "What is the transactional outbox pattern (message outbox), and how does it work?",
@@ -1067,7 +1091,7 @@
   "title": "Transactional outbox",
   "category": "msg",
   "campus": false,
-  "step": 45,
+  "step": 46,
   "related": [
    "A Kafka consumer reads a message, processes it successfully and moves on, but the message is still in Kafka. Another consumer can read it too, even days later. Why doesn't Kafka delete a message after it's consumed, and what advantage does this design provide?",
    "A sales dashboard can update once a night or every few seconds. What is the difference between batch and stream processing, and how do data pipelines (ETL) work?",
@@ -1095,7 +1119,7 @@
   "title": "Batch vs stream processing",
   "category": "msg",
   "campus": false,
-  "step": 46,
+  "step": 47,
   "related": [
    "What is the transactional outbox pattern (message outbox), and how does it work?",
    "What happens when one part of a system produces work faster than the next part can handle it? What is backpressure, and how do good systems deal with it?",
@@ -1119,7 +1143,7 @@
   "title": "Backpressure and overload",
   "category": "msg",
   "campus": false,
-  "step": 47,
+  "step": 48,
   "related": [
    "How do you make sure Kafka messages stay in order, and how do you keep that ordering when you fail over from one data centre to another?",
    "A sales dashboard can update once a night or every few seconds. What is the difference between batch and stream processing, and how do data pipelines (ETL) work?",
@@ -1139,12 +1163,12 @@
   "title": "Kafka ordering across DC failover",
   "category": "msg",
   "campus": false,
-  "step": 48,
+  "step": 49,
   "related": [
    "What happens when one part of a system produces work faster than the next part can handle it? What is backpressure, and how do good systems deal with it?",
    "A sales dashboard can update once a night or every few seconds. What is the difference between batch and stream processing, and how do data pipelines (ETL) work?",
    "What is the transactional outbox pattern (message outbox), and how does it work?",
-   "A Kafka consumer reads a message, processes it successfully and moves on, but the message is still in Kafka. Another consumer can read it too, even days later. Why doesn't Kafka delete a message after it's consumed, and what advantage does this design provide?"
+   "What is multi-master replication? If an e-commerce company runs two data centres with users pinned to a home data centre (but movable between them), can a coins wallet like SuperCoins diverge between the two? How do you prevent it?"
   ],
   "shelves": [
    "tpm",
@@ -1167,7 +1191,7 @@
   "title": "Monolith vs microservices",
   "category": "arch",
   "campus": true,
-  "step": 49,
+  "step": 50,
   "related": [
    "REST, GraphQL or gRPC: what is the difference, and how do you choose one for an API?",
    "How does a load balancer decide which server gets your request, and what happens when one of those servers dies mid-traffic?",
@@ -1191,7 +1215,7 @@
   "title": "REST vs GraphQL vs gRPC",
   "category": "arch",
   "campus": true,
-  "step": 50,
+  "step": 51,
   "related": [
    "Monolith or microservices: when is splitting an app into many services a good idea, and when does it make things worse?",
    "How does a load balancer decide which server gets your request, and what happens when one of those servers dies mid-traffic?",
@@ -1215,7 +1239,7 @@
   "title": "Load balancers",
   "category": "arch",
   "campus": true,
-  "step": 51,
+  "step": 52,
   "related": [
    "In a microservices app, how does one service find another when servers keep changing, and what does an API gateway do?",
    "What is a Docker container really, how is it different from a virtual machine, and why did it fix \"works on my machine\"?",
@@ -1239,7 +1263,7 @@
   "title": "Docker vs virtual machines",
   "category": "arch",
   "campus": true,
-  "step": 52,
+  "step": 53,
   "related": [
    "What does Kubernetes actually do? How does it keep an app running when containers crash or traffic suddenly doubles?",
    "How does a load balancer decide which server gets your request, and what happens when one of those servers dies mid-traffic?",
@@ -1263,7 +1287,7 @@
   "title": "What Kubernetes does",
   "category": "arch",
   "campus": true,
-  "step": 53,
+  "step": 54,
   "related": [
    "What is a Docker container really, how is it different from a virtual machine, and why did it fix \"works on my machine\"?",
    "In a microservices app, how does one service find another when servers keep changing, and what does an API gateway do?",
@@ -1287,7 +1311,7 @@
   "title": "Real-time updates on the web",
   "category": "arch",
   "campus": true,
-  "step": 54,
+  "step": 55,
   "related": [
    "Your app has real-time chat. A user loses internet for 45 seconds, and 7 messages are sent to them during that time. When they reconnect, how do you guarantee they receive those 7 messages, and how do you make sure they don't receive them twice?",
    "When you open Instagram, how is your feed built so fast? What are fan-out on write and fan-out on read, and what happens when a celebrity with crores of followers posts?",
@@ -1311,7 +1335,7 @@
   "title": "Service discovery and API gateways",
   "category": "arch",
   "campus": false,
-  "step": 55,
+  "step": 56,
   "related": [
    "How does a load balancer decide which server gets your request, and what happens when one of those servers dies mid-traffic?",
    "What is Istio? What problem does it solve, why is it popular, and what are its disadvantages?",
@@ -1331,7 +1355,7 @@
   "title": "Istio and service meshes",
   "category": "arch",
   "campus": false,
-  "step": 56,
+  "step": 57,
   "related": [
    "In a microservices app, how does one service find another when servers keep changing, and what does an API gateway do?",
    "What does Kubernetes actually do? How does it keep an app running when containers crash or traffic suddenly doubles?",
@@ -1355,7 +1379,7 @@
   "title": "Circuit breakers",
   "category": "rel",
   "campus": true,
-  "step": 57,
+  "step": 58,
   "related": [
    "Why can automatic retries turn a small slowdown into a full outage, and how do exponential backoff and jitter prevent it?",
    "Your API depends on 5 microservices. Each works fine independently, but together the API randomly times out under load. How would you identify the bottleneck and prevent cascading failures?",
@@ -1383,7 +1407,7 @@
   "title": "Retries, backoff and jitter",
   "category": "rel",
   "campus": false,
-  "step": 58,
+  "step": 59,
   "related": [
    "Your API depends on 5 microservices. Each works fine independently, but together the API randomly times out under load. How would you identify the bottleneck and prevent cascading failures?",
    "What is a circuit breaker, and how does it work?",
@@ -1403,7 +1427,7 @@
   "title": "Finding the bottleneck across 5 services",
   "category": "rel",
   "campus": false,
-  "step": 59,
+  "step": 60,
   "related": [
    "Why can automatic retries turn a small slowdown into a full outage, and how do exponential backoff and jitter prevent it?",
    "What is a circuit breaker, and how does it work?",
@@ -1431,7 +1455,7 @@
   "title": "Safe rollouts",
   "category": "rel",
   "campus": false,
-  "step": 60,
+  "step": 61,
   "related": [
    "Your API depends on 5 microservices. Each works fine independently, but together the API randomly times out under load. How would you identify the bottleneck and prevent cascading failures?",
    "Customers say checkout is slow, but every dashboard looks green. How do logs, metrics and traces help you find out what's actually wrong?",
@@ -1455,7 +1479,7 @@
   "title": "Logs, metrics and traces",
   "category": "rel",
   "campus": false,
-  "step": 61,
+  "step": 62,
   "related": [
    "What do 99.9% uptime, SLIs, SLOs and error budgets really mean, and how do teams use them to decide between shipping features and fixing reliability?",
    "How do big apps release a change to crores of users without breaking everything? What are feature flags, canary releases and blue-green deployments?",
@@ -1479,7 +1503,7 @@
   "title": "SLOs and error budgets",
   "category": "rel",
   "campus": false,
-  "step": 62,
+  "step": 63,
   "related": [
    "Customers say checkout is slow, but every dashboard looks green. How do logs, metrics and traces help you find out what's actually wrong?",
    "It's 2 AM and payments are failing. What does a good incident response look like, and what happens in a blameless postmortem afterwards?",
@@ -1503,7 +1527,7 @@
   "title": "Incident response and postmortems",
   "category": "rel",
   "campus": false,
-  "step": 63,
+  "step": 64,
   "related": [
    "What do 99.9% uptime, SLIs, SLOs and error budgets really mean, and how do teams use them to decide between shipping features and fixing reliability?",
    "Customers say checkout is slow, but every dashboard looks green. How do logs, metrics and traces help you find out what's actually wrong?",
@@ -1527,7 +1551,7 @@
   "title": "Job schedulers at scale",
   "category": "rel",
   "campus": false,
-  "step": 64,
+  "step": 65,
   "related": [
    "Why can automatic retries turn a small slowdown into a full outage, and how do exponential backoff and jitter prevent it?",
    "How does a \"Your order is out for delivery\" notification reach your phone even when the app is closed?",
@@ -1550,7 +1574,7 @@
   "title": "Saga pattern for distributed undo",
   "category": "rel",
   "campus": false,
-  "step": 65,
+  "step": 66,
   "related": [
    "What are event sourcing and CQRS, in plain words, and when are they worth the extra complexity?",
    "What is Istio? What problem does it solve, why is it popular, and what are its disadvantages?",
@@ -1574,7 +1598,7 @@
   "title": "Event sourcing and CQRS",
   "category": "rel",
   "campus": false,
-  "step": 66,
+  "step": 67,
   "related": [
    "Placing an order touches payment, inventory and delivery services, each with its own database. If delivery booking fails after payment succeeded, how do you undo things? What is the Saga pattern?",
    "What is Istio? What problem does it solve, why is it popular, and what are its disadvantages?",
@@ -1598,7 +1622,7 @@
   "title": "Storing passwords",
   "category": "sec",
   "campus": true,
-  "step": 67,
+  "step": 68,
   "related": [
    "How does a website remember that you're logged in as you move from page to page? Sessions, cookies and tokens explained.",
    "How do SSL/TLS, JWT and OAuth 2.0 work, and how do they fit together?",
@@ -1622,7 +1646,7 @@
   "title": "Sessions, cookies and tokens",
   "category": "sec",
   "campus": true,
-  "step": 68,
+  "step": 69,
   "related": [
    "How do SSL/TLS, JWT and OAuth 2.0 work, and how do they fit together?",
    "How does a website store your password so that even its own engineers cannot read it, yet it can still check your login?",
@@ -1642,7 +1666,7 @@
   "title": "TLS, JWT and OAuth",
   "category": "sec",
   "campus": true,
-  "step": 69,
+  "step": 70,
   "related": [
    "How does OTP login work, and how is it different from the codes an authenticator app shows? How do apps keep OTPs safe?",
    "How does a website remember that you're logged in as you move from page to page? Sessions, cookies and tokens explained.",
@@ -1670,7 +1694,7 @@
   "title": "OTP and authenticator codes",
   "category": "sec",
   "campus": true,
-  "step": 70,
+  "step": 71,
   "related": [
    "How do SSL/TLS, JWT and OAuth 2.0 work, and how do they fit together?",
    "What are SQL injection and cross-site scripting (XSS), and how do apps stop them?",
@@ -1694,7 +1718,7 @@
   "title": "SQL injection and XSS",
   "category": "sec",
   "campus": true,
-  "step": 71,
+  "step": 72,
   "related": [
    "How does OTP login work, and how is it different from the codes an authenticator app shows? How do apps keep OTPs safe?",
    "How do SSL/TLS, JWT and OAuth 2.0 work, and how do they fit together?",
@@ -1718,7 +1742,7 @@
   "title": "URL shortener",
   "category": "sd",
   "campus": true,
-  "step": 72,
+  "step": 73,
   "related": [
    "How does a CDN decide what to keep close to you, and how does it know when a cached file is out of date?",
    "How do hundreds of servers each create order IDs at the same time without ever producing the same ID twice?",
@@ -1742,7 +1766,7 @@
   "title": "Rate limiting",
   "category": "sd",
   "campus": true,
-  "step": 73,
+  "step": 74,
   "related": [
    "How does a URL shortener turn a long link into a short code like bit.ly/3xYz9 that is unique and works instantly for millions of people?",
    "When you open Instagram, how is your feed built so fast? What are fan-out on write and fan-out on read, and what happens when a celebrity with crores of followers posts?",
@@ -1767,7 +1791,7 @@
   "title": "Chat: catching up after going offline",
   "category": "sd",
   "campus": true,
-  "step": 74,
+  "step": 75,
   "related": [
    "When you open Instagram, how is your feed built so fast? What are fan-out on write and fan-out on read, and what happens when a celebrity with crores of followers posts?",
    "How does a \"Your order is out for delivery\" notification reach your phone even when the app is closed?",
@@ -1791,7 +1815,7 @@
   "title": "Search autocomplete",
   "category": "sd",
   "campus": true,
-  "step": 75,
+  "step": 76,
   "related": [
    "How can a search engine look through crores of documents and answer in milliseconds? What is an inverted index?",
    "How does a web search engine like Google actually work, end to end? Explain with definitions, examples and an overall architecture diagram.",
@@ -1815,7 +1839,7 @@
   "title": "News feeds and fan-out",
   "category": "sd",
   "campus": true,
-  "step": 76,
+  "step": 77,
   "related": [
    "How does a \"Your order is out for delivery\" notification reach your phone even when the app is closed?",
    "Your app has real-time chat. A user loses internet for 45 seconds, and 7 messages are sent to them during that time. When they reconnect, how do you guarantee they receive those 7 messages, and how do you make sure they don't receive them twice?",
@@ -1839,7 +1863,7 @@
   "title": "Push notifications",
   "category": "sd",
   "campus": true,
-  "step": 77,
+  "step": 78,
   "related": [
    "When you open Instagram, how is your feed built so fast? What are fan-out on write and fan-out on read, and what happens when a celebrity with crores of followers posts?",
    "When you open Ola or Rapido, how does the app find the drivers near you in milliseconds out of lakhs of drivers moving around the city?",
@@ -1863,7 +1887,7 @@
   "title": "Finding nearby drivers",
   "category": "sd",
   "campus": true,
-  "step": 78,
+  "step": 79,
   "related": [
    "How can a streaming app show an IPL final live to crores of people at once without buffering, even on weak mobile networks?",
    "How does a \"Your order is out for delivery\" notification reach your phone even when the app is closed?",
@@ -1887,7 +1911,7 @@
   "title": "Live streaming the IPL final",
   "category": "sd",
   "campus": true,
-  "step": 79,
+  "step": 80,
   "related": [
    "When you open Ola or Rapido, how does the app find the drivers near you in milliseconds out of lakhs of drivers moving around the city?",
    "How does a \"Your order is out for delivery\" notification reach your phone even when the app is closed?",
@@ -1911,7 +1935,7 @@
   "title": "Inverted index",
   "category": "sd",
   "campus": true,
-  "step": 80,
+  "step": 81,
   "related": [
    "How does a web search engine like Google actually work, end to end? Explain with definitions, examples and an overall architecture diagram.",
    "You type \"samsng chargr\" and the app still shows Samsung chargers. How does search handle typos?",
@@ -1931,7 +1955,7 @@
   "title": "How a search engine works",
   "category": "sd",
   "campus": true,
-  "step": 81,
+  "step": 82,
   "related": [
    "How can a search engine look through crores of documents and answer in milliseconds? What is an inverted index?",
    "You type \"samsng chargr\" and the app still shows Samsung chargers. How does search handle typos?",
@@ -1959,7 +1983,7 @@
   "title": "Fuzzy search and typos",
   "category": "sd",
   "campus": true,
-  "step": 82,
+  "step": 83,
   "related": [
    "How does a web search engine like Google actually work, end to end? Explain with definitions, examples and an overall architecture diagram.",
    "How can a search engine look through crores of documents and answer in milliseconds? What is an inverted index?",
@@ -1983,7 +2007,7 @@
   "title": "Recommendations",
   "category": "sd",
   "campus": true,
-  "step": 83,
+  "step": 84,
   "related": [
    "You search \"running shoes\" on a shopping app. Out of thousands of matches, how does it decide which ones to show first?",
    "A new \"Buy now\" button colour gets 3% more clicks in a week. How do you know it really worked and wasn't luck? A/B testing explained.",
@@ -2007,7 +2031,7 @@
   "title": "Image upload pipelines",
   "category": "sd",
   "campus": false,
-  "step": 84,
+  "step": 85,
   "related": [
    "How does a URL shortener turn a long link into a short code like bit.ly/3xYz9 that is unique and works instantly for millions of people?",
    "What is a Docker container really, how is it different from a virtual machine, and why did it fix \"works on my machine\"?",
@@ -2030,7 +2054,7 @@
   "title": "Offline save and sync",
   "category": "sd",
   "campus": false,
-  "step": 85,
+  "step": 86,
   "related": [
    "How can five people type in the same Google Doc at the same time without overwriting each other's words?",
    "How does a \"Your order is out for delivery\" notification reach your phone even when the app is closed?",
@@ -2054,7 +2078,7 @@
   "title": "Real-time collaborative editing",
   "category": "sd",
   "campus": false,
-  "step": 86,
+  "step": 87,
   "related": [
    "A delivery agent marks orders as delivered while in a basement with no network. How does the app save that and sync it later without losing or mixing up data?",
    "How does a \"Your order is out for delivery\" notification reach your phone even when the app is closed?",
@@ -2075,7 +2099,7 @@
   "title": "Google Maps arrival times",
   "category": "sd",
   "campus": false,
-  "step": 87,
+  "step": 88,
   "related": [
    "When you open Ola or Rapido, how does the app find the drivers near you in milliseconds out of lakhs of drivers moving around the city?",
    "Why does a cab ride cost 1.8x when it rains? How does surge pricing work behind the scenes?",
@@ -2099,7 +2123,7 @@
   "title": "Tail inventory at peak load",
   "category": "ecom",
   "campus": true,
-  "step": 88,
+  "step": 89,
   "related": [
    "What is Redis Lua scripting, and when should I use it?",
    "How do you make sure only one server runs a job at a time, like sending the daily invoice email once? How do distributed locks work, and why are they tricky?",
@@ -2124,7 +2148,7 @@
   "title": "BBD: 10k buyers, 50 units, 30 s payment",
   "category": "ecom",
   "campus": false,
-  "step": 89,
+  "step": 90,
   "related": [
    "How does an e-commerce website make sure that tail inventory is not allocated to more than one person during high peak load?",
    "Quick commerce at 9 PM: 2 lakh people add Maggi to their cart at the same time and the app tells every one of them \"In stock\". The dark store has 340 packets. You can't lock stock for 2 lakh carts, and if you don't, 1.6 lakh people find out at checkout. How do you show stock you can actually promise, without making the cart slow?",
@@ -2153,7 +2177,7 @@
   "title": "Quick commerce: stock you can promise",
   "category": "ecom",
   "campus": false,
-  "step": 90,
+  "step": 91,
   "related": [
    "Big Billion Days interview: 50 units left. My answer was Redis atomic decrement + reservation with a short TTL, order created only after payment success, a background job releases reservations on failure/timeout, DB as source of truth with periodic reconciliation. Follow-up: what if 10,000 people hit Buy in the same second and payment takes 30 seconds? How should I respond?",
    "Swiggy SDE-3 system design: A restaurant marks Butter Chicken \"out of stock\" on its tablet. For the next 90 seconds, 2,000 people still order it. Your cache TTL is 60 seconds and your search index refreshes every 30. Where do the 90 seconds come from, and how do you get them under 5 without hammering your database?",
@@ -2175,7 +2199,7 @@
   "title": "Swiggy: out of stock in under 5 s",
   "category": "ecom",
   "campus": false,
-  "step": 91,
+  "step": 92,
   "related": [
    "Quick commerce at 9 PM: 2 lakh people add Maggi to their cart at the same time and the app tells every one of them \"In stock\". The dark store has 340 packets. You can't lock stock for 2 lakh carts, and if you don't, 1.6 lakh people find out at checkout. How do you show stock you can actually promise, without making the cart slow?",
    "Big Billion Days interview: 50 units left. My answer was Redis atomic decrement + reservation with a short TTL, order created only after payment success, a background job releases reservations on failure/timeout, DB as source of truth with periodic reconciliation. Follow-up: what if 10,000 people hit Buy in the same second and payment takes 30 seconds? How should I respond?",
@@ -2203,7 +2227,7 @@
   "title": "UPI: the pending payment",
   "category": "ecom",
   "campus": false,
-  "step": 92,
+  "step": 93,
   "related": [
    "How do wallets and payment apps keep money balances correct to the paisa? What is a double-entry ledger, explained for engineers?",
    "How does a payment or shopping app spot a fraudulent order in the few hundred milliseconds before it is approved?",
@@ -2227,12 +2251,12 @@
   "title": "Double-entry ledgers",
   "category": "ecom",
   "campus": false,
-  "step": 93,
+  "step": 94,
   "related": [
    "You pay ₹500 by UPI, the app spins and says \"payment pending\", but the money has left your bank. How does the system find out what really happened, and how does it make sure you are never charged twice?",
    "How does a payment or shopping app spot a fraudulent order in the few hundred milliseconds before it is approved?",
    "Placing an order touches payment, inventory and delivery services, each with its own database. If delivery booking fails after payment succeeded, how do you undo things? What is the Saga pattern?",
-   "Two people book the last train seat at the same moment. What is a database transaction, what does ACID really mean, and how do locks and isolation levels stop both of them getting the seat?"
+   "What is multi-master replication? If an e-commerce company runs two data centres with users pinned to a home data centre (but movable between them), can a coins wallet like SuperCoins diverge between the two? How do you prevent it?"
   ]
  },
  {
@@ -2251,7 +2275,7 @@
   "title": "How search ranking works",
   "category": "ecom",
   "campus": false,
-  "step": 94,
+  "step": 95,
   "related": [
    "A new \"Buy now\" button colour gets 3% more clicks in a week. How do you know it really worked and wasn't luck? A/B testing explained.",
    "How does a payment or shopping app spot a fraudulent order in the few hundred milliseconds before it is approved?",
@@ -2275,7 +2299,7 @@
   "title": "A/B testing explained",
   "category": "ecom",
   "campus": true,
-  "step": 95,
+  "step": 96,
   "related": [
    "You search \"running shoes\" on a shopping app. Out of thousands of matches, how does it decide which ones to show first?",
    "How does a payment or shopping app spot a fraudulent order in the few hundred milliseconds before it is approved?",
@@ -2299,7 +2323,7 @@
   "title": "Real-time fraud detection",
   "category": "ecom",
   "campus": false,
-  "step": 96,
+  "step": 97,
   "related": [
    "A new \"Buy now\" button colour gets 3% more clicks in a week. How do you know it really worked and wasn't luck? A/B testing explained.",
    "Why does a cab ride cost 1.8x when it rains? How does surge pricing work behind the scenes?",
@@ -2323,7 +2347,7 @@
   "title": "How surge pricing works",
   "category": "ecom",
   "campus": false,
-  "step": 97,
+  "step": 98,
   "related": [
    "When you order food, how does the app decide which delivery partner gets your order, and when to send them to the restaurant?",
    "How does a payment or shopping app spot a fraudulent order in the few hundred milliseconds before it is approved?",
@@ -2347,7 +2371,7 @@
   "title": "Food delivery rider assignment",
   "category": "ecom",
   "campus": false,
-  "step": 98,
+  "step": 99,
   "related": [
    "Why does a cab ride cost 1.8x when it rains? How does surge pricing work behind the scenes?",
    "How does Google Maps calculate arrival time? Does it show the same for all users? People travel at different speeds, so how does it actually calculate arrival time, and how does it adjust for real-time traffic conditions?",
@@ -2367,7 +2391,7 @@
   "title": "How offers are configured",
   "category": "ecom",
   "campus": false,
-  "step": 99,
+  "step": 100,
   "related": [
    "How do ads work on e-commerce sites like Amazon and Flipkart? Explain the entire context: business, ad types, auctions, technology and measurement.",
    "Why does a cab ride cost 1.8x when it rains? How does surge pricing work behind the scenes?",
@@ -2391,7 +2415,7 @@
   "title": "How e-commerce ads work",
   "category": "ecom",
   "campus": false,
-  "step": 100,
+  "step": 101,
   "related": [
    "How are offers configured in an e-commerce system?",
    "Why does a cab ride cost 1.8x when it rains? How does surge pricing work behind the scenes?",
@@ -2419,7 +2443,7 @@
   "title": "How neural networks learn",
   "category": "ml",
   "campus": true,
-  "step": 101,
+  "step": 102,
   "related": [
    "A model scores 99% in testing but fails in the real world. What are overfitting and underfitting, and how do train, validation and test sets prevent it?",
    "A fraud model is 99% accurate but useless. Why? Precision, recall, F1 and ROC-AUC explained with one example.",
@@ -2443,7 +2467,7 @@
   "title": "Overfitting and data splits",
   "category": "ml",
   "campus": true,
-  "step": 102,
+  "step": 103,
   "related": [
    "How does a neural network actually learn? Gradient descent and backpropagation explained without heavy maths.",
    "A fraud model is 99% accurate but useless. Why? Precision, recall, F1 and ROC-AUC explained with one example.",
@@ -2467,7 +2491,7 @@
   "title": "Classification metrics beyond accuracy",
   "category": "ml",
   "campus": true,
-  "step": 103,
+  "step": 104,
   "related": [
    "A model scores 99% in testing but fails in the real world. What are overfitting and underfitting, and how do train, validation and test sets prevent it?",
    "How does a neural network actually learn? Gradient descent and backpropagation explained without heavy maths.",
@@ -2491,7 +2515,7 @@
   "title": "Why transformers replaced RNNs",
   "category": "ml",
   "campus": true,
-  "step": 104,
+  "step": 105,
   "related": [
    "How does reinforcement learning work, and how is it used to train LLMs?",
    "How does a neural network actually learn? Gradient descent and backpropagation explained without heavy maths.",
@@ -2511,7 +2535,7 @@
   "title": "Reinforcement learning",
   "category": "ml",
   "campus": true,
-  "step": 105,
+  "step": 106,
   "related": [
    "Why did transformers replace older models like RNNs and LSTMs? What changed with \"Attention Is All You Need\"?",
    "How can an AI model end up treating some groups of people unfairly even if nobody programmed it to, and how do teams detect and reduce that bias?",
@@ -2539,7 +2563,7 @@
   "title": "Training data and labelling",
   "category": "ml",
   "campus": true,
-  "step": 106,
+  "step": 107,
   "related": [
    "How does a machine learning model go from a Jupyter notebook to serving lakhs of users, and why does a good model slowly get worse after launch? MLOps and drift explained.",
    "How can an AI model end up treating some groups of people unfairly even if nobody programmed it to, and how do teams detect and reduce that bias?",
@@ -2563,7 +2587,7 @@
   "title": "MLOps and model drift",
   "category": "ml",
   "campus": true,
-  "step": 107,
+  "step": 108,
   "related": [
    "Where does training data for an AI model come from, and why is good labelled data harder to get than a good algorithm?",
    "How can an AI model end up treating some groups of people unfairly even if nobody programmed it to, and how do teams detect and reduce that bias?",
@@ -2587,7 +2611,7 @@
   "title": "AI bias and fairness",
   "category": "ml",
   "campus": true,
-  "step": 108,
+  "step": 109,
   "related": [
    "How does a machine learning model go from a Jupyter notebook to serving lakhs of users, and why does a good model slowly get worse after launch? MLOps and drift explained.",
    "A model blocked a seller's account. How do you explain why the model made that decision? Explainable AI, feature importance and SHAP in plain words.",
@@ -2611,7 +2635,7 @@
   "title": "Explainable AI and SHAP",
   "category": "ml",
   "campus": true,
-  "step": 109,
+  "step": 110,
   "related": [
    "How can an AI model end up treating some groups of people unfairly even if nobody programmed it to, and how do teams detect and reduce that bias?",
    "How does a machine learning model go from a Jupyter notebook to serving lakhs of users, and why does a good model slowly get worse after launch? MLOps and drift explained.",
@@ -2635,7 +2659,7 @@
   "title": "Computer vision and visual search",
   "category": "ml",
   "campus": true,
-  "step": 110,
+  "step": 111,
   "related": [
    "How does an AI image generator turn a sentence like \"red kurta on a model in a garden\" into a picture? Diffusion models explained simply.",
    "How can one AI model look at a photo of a damaged parcel and also read your complaint text? What are multimodal models?",
@@ -2658,7 +2682,7 @@
   "title": "Diffusion image generators",
   "category": "ml",
   "campus": true,
-  "step": 111,
+  "step": 112,
   "related": [
    "How can one AI model look at a photo of a damaged parcel and also read your complaint text? What are multimodal models?",
    "You take a photo of a friend's sneakers and the app finds similar ones to buy. How does computer vision recognise images, and how does visual search work?",
@@ -2681,7 +2705,7 @@
   "title": "Multimodal AI models",
   "category": "ml",
   "campus": true,
-  "step": 112,
+  "step": 113,
   "related": [
    "How does an AI image generator turn a sentence like \"red kurta on a model in a garden\" into a picture? Diffusion models explained simply.",
    "How does a voice assistant understand \"Hey, where is my order?\" and speak back? Speech-to-text and text-to-speech explained.",
@@ -2704,7 +2728,7 @@
   "title": "How voice assistants work",
   "category": "ml",
   "campus": false,
-  "step": 113,
+  "step": 114,
   "related": [
    "How can one AI model look at a photo of a damaged parcel and also read your complaint text? What are multimodal models?",
    "How does an AI image generator turn a sentence like \"red kurta on a model in a garden\" into a picture? Diffusion models explained simply.",
@@ -2727,7 +2751,7 @@
   "title": "Feature stores and skew",
   "category": "ml",
   "campus": false,
-  "step": 114,
+  "step": 115,
   "related": [
    "A model blocked a seller's account. How do you explain why the model made that decision? Explainable AI, feature importance and SHAP in plain words.",
    "How can an AI model end up treating some groups of people unfairly even if nobody programmed it to, and how do teams detect and reduce that bias?",
@@ -2751,7 +2775,7 @@
   "title": "AI alignment and safety",
   "category": "ml",
   "campus": false,
-  "step": 115,
+  "step": 116,
   "related": [
    "How can an AI model end up treating some groups of people unfairly even if nobody programmed it to, and how do teams detect and reduce that bias?",
    "How does reinforcement learning work, and how is it used to train LLMs?",
@@ -2771,7 +2795,7 @@
   "title": "AI engineering: the 19 concepts",
   "category": "llm",
   "campus": true,
-  "step": 116,
+  "step": 117,
   "related": [
    "How do AI agents work?",
    "What are the main agentic design patterns (reflection, tool use, planning, ReAct and more)?",
@@ -2795,7 +2819,7 @@
   "title": "LLM concepts: tokens to attention",
   "category": "llm",
   "campus": true,
-  "step": 117,
+  "step": 118,
   "related": [
    "Why does an AI chatbot give a different answer each time you ask the same question? Temperature, top-p and randomness explained.",
    "Why do AI models confidently make things up, and how do you stop a customer-facing AI from inventing a refund policy?",
@@ -2823,7 +2847,7 @@
   "title": "LLM temperature and sampling",
   "category": "llm",
   "campus": true,
-  "step": 118,
+  "step": 119,
   "related": [
    "LLM concepts deep dive: what are tokens, embeddings, attention and context windows, and how does an LLM generate text?",
    "Why are \"thinking\" or reasoning AI models better at maths and planning? What are chain-of-thought and test-time compute?",
@@ -2847,7 +2871,7 @@
   "title": "AI hallucinations",
   "category": "llm",
   "campus": true,
-  "step": 119,
+  "step": 120,
   "related": [
    "How does RAG (Retrieval-Augmented Generation) work?",
    "How do vector databases work?",
@@ -2867,7 +2891,7 @@
   "title": "How RAG works",
   "category": "llm",
   "campus": true,
-  "step": 120,
+  "step": 121,
   "related": [
    "How do vector databases work?",
    "Why do AI models confidently make things up, and how do you stop a customer-facing AI from inventing a refund policy?",
@@ -2891,7 +2915,7 @@
   "title": "Vector databases",
   "category": "llm",
   "campus": true,
-  "step": 121,
+  "step": 122,
   "related": [
    "How does HNSW (Hierarchical Navigable Small World) find nearest vectors without scanning everything?",
    "How does RAG (Retrieval-Augmented Generation) work?",
@@ -2915,7 +2939,7 @@
   "title": "How AI agents work",
   "category": "llm",
   "campus": true,
-  "step": 122,
+  "step": 123,
   "related": [
    "What are the main agentic design patterns (reflection, tool use, planning, ReAct and more)?",
    "AI engineering: what are the 19 core concepts (from Neo Kim's list) and how do they fit together?",
@@ -2939,7 +2963,7 @@
   "title": "Agentic design patterns",
   "category": "llm",
   "campus": true,
-  "step": 123,
+  "step": 124,
   "related": [
    "How do AI agents work?",
    "How does MCP (Model Context Protocol) work?",
@@ -2963,7 +2987,7 @@
   "title": "Fine-tuning",
   "category": "llm",
   "campus": true,
-  "step": 124,
+  "step": 125,
   "related": [
    "How do LLM evals work - measuring output quality with test sets, rubrics and LLM-as-judge?",
    "How do you get an AI model to return clean, valid JSON every time so your code can use it? Structured outputs and function calling explained.",
@@ -2987,7 +3011,7 @@
   "title": "LLM evals",
   "category": "llm",
   "campus": true,
-  "step": 125,
+  "step": 126,
   "related": [
    "How do you get an AI model to return clean, valid JSON every time so your code can use it? Structured outputs and function calling explained.",
    "How does fine-tuning work, and when should you fine-tune a model?",
@@ -3015,7 +3039,7 @@
   "title": "Structured outputs and JSON",
   "category": "llm",
   "campus": true,
-  "step": 126,
+  "step": 127,
   "related": [
    "What is prompt injection, and how do you protect an AI assistant that reads emails, web pages or product reviews from being tricked?",
    "How do LLM evals work - measuring output quality with test sets, rubrics and LLM-as-judge?",
@@ -3039,7 +3063,7 @@
   "title": "Prompt injection defences",
   "category": "llm",
   "campus": true,
-  "step": 127,
+  "step": 128,
   "related": [
    "What are AI guardrails? How does a company stop its shopping assistant from giving rude, unsafe, off-topic or legally risky answers?",
    "How do you get an AI model to return clean, valid JSON every time so your code can use it? Structured outputs and function calling explained.",
@@ -3059,7 +3083,7 @@
   "title": "How MCP works",
   "category": "llm",
   "campus": true,
-  "step": 128,
+  "step": 129,
   "related": [
    "What is context engineering, and how do you decide what goes into the context window?",
    "What are the main agentic design patterns (reflection, tool use, planning, ReAct and more)?",
@@ -3083,7 +3107,7 @@
   "title": "Context engineering",
   "category": "llm",
   "campus": true,
-  "step": 129,
+  "step": 130,
   "related": [
    "How does MCP (Model Context Protocol) work?",
    "How does HNSW (Hierarchical Navigable Small World) find nearest vectors without scanning everything?",
@@ -3111,7 +3135,7 @@
   "title": "Reasoning models and thinking",
   "category": "llm",
   "campus": false,
-  "step": 130,
+  "step": 131,
   "related": [
    "How can a model have hundreds of billions of parameters but still answer cheaply? What is a Mixture of Experts model?",
    "Why does an AI answer start after a pause and then stream word by word, and why do long prompts cost more? Prefill, decode and tokens explained.",
@@ -3131,7 +3155,7 @@
   "title": "HNSW",
   "category": "llm",
   "campus": false,
-  "step": 131,
+  "step": 132,
   "related": [
    "How do vector databases work?",
    "What is context engineering, and how do you decide what goes into the context window?",
@@ -3159,7 +3183,7 @@
   "title": "Mixture of Experts models",
   "category": "llm",
   "campus": false,
-  "step": 132,
+  "step": 133,
   "related": [
    "Why does an AI answer start after a pause and then stream word by word, and why do long prompts cost more? Prefill, decode and tokens explained.",
    "Why are \"thinking\" or reasoning AI models better at maths and planning? What are chain-of-thought and test-time compute?",
@@ -3183,7 +3207,7 @@
   "title": "LLM latency and token cost",
   "category": "llm",
   "campus": false,
-  "step": 133,
+  "step": 134,
   "related": [
    "How can a model have hundreds of billions of parameters but still answer cheaply? What is a Mixture of Experts model?",
    "Why are \"thinking\" or reasoning AI models better at maths and planning? What are chain-of-thought and test-time compute?",
@@ -3207,7 +3231,7 @@
   "title": "On-device AI on phones",
   "category": "llm",
   "campus": false,
-  "step": 134,
+  "step": 135,
   "related": [
    "How do vertical small LLMs work - small models tuned for one narrow task?",
    "Should a company use a hosted AI model through an API or run an open-weight model on its own servers? How do you decide?",
@@ -3227,7 +3251,7 @@
   "title": "Vertical small LLMs",
   "category": "llm",
   "campus": false,
-  "step": 135,
+  "step": 136,
   "related": [
    "Should a company use a hosted AI model through an API or run an open-weight model on its own servers? How do you decide?",
    "How can an AI model run directly on a phone without the internet? What does on-device AI need, and when is it worth it?",
@@ -3255,7 +3279,7 @@
   "title": "Hosted API vs open-weight models",
   "category": "llm",
   "campus": false,
-  "step": 136,
+  "step": 137,
   "related": [
    "What are AI guardrails? How does a company stop its shopping assistant from giving rude, unsafe, off-topic or legally risky answers?",
    "How do vertical small LLMs work - small models tuned for one narrow task?",
@@ -3279,7 +3303,7 @@
   "title": "AI guardrails",
   "category": "llm",
   "campus": false,
-  "step": 137,
+  "step": 138,
   "related": [
    "What is prompt injection, and how do you protect an AI assistant that reads emails, web pages or product reviews from being tricked?",
    "Should a company use a hosted AI model through an API or run an open-weight model on its own servers? How do you decide?",
@@ -3299,7 +3323,7 @@
   "title": "Scaling an AI app to 1M users",
   "category": "llm",
   "campus": false,
-  "step": 138,
+  "step": 139,
   "related": [
    "What are AI guardrails? How does a company stop its shopping assistant from giving rude, unsafe, off-topic or legally risky answers?",
    "Should a company use a hosted AI model through an API or run an open-weight model on its own servers? How do you decide?",
@@ -3323,7 +3347,7 @@
   "title": "Designing an AI agent",
   "category": "llm",
   "campus": false,
-  "step": 139,
+  "step": 140,
   "related": [
    "What is multi-agent architecture, and when should you split work across several agents?",
    "How do AI agents handle memory, state and consistency?",
@@ -3347,7 +3371,7 @@
   "title": "Multi-agent architecture",
   "category": "llm",
   "campus": false,
-  "step": 140,
+  "step": 141,
   "related": [
    "How do you design an AI agent - choosing tools, planning strategy, memory and guardrails?",
    "How do AI agents handle memory, state and consistency?",
@@ -3371,7 +3395,7 @@
   "title": "Agent memory and state",
   "category": "llm",
   "campus": false,
-  "step": 141,
+  "step": 142,
   "related": [
    "What is multi-agent architecture, and when should you split work across several agents?",
    "How does A2A (Agent2Agent protocol) let agents from different vendors talk to each other?",
@@ -3395,7 +3419,7 @@
   "title": "A2A protocol",
   "category": "llm",
   "campus": false,
-  "step": 142,
+  "step": 143,
   "related": [
    "How do AI agents handle memory, state and consistency?",
    "How does an AI research agent work - planning a research question, searching sources and synthesising findings?",
@@ -3419,7 +3443,7 @@
   "title": "AI research agents",
   "category": "llm",
   "campus": false,
-  "step": 143,
+  "step": 144,
   "related": [
    "How does A2A (Agent2Agent protocol) let agents from different vendors talk to each other?",
    "How do AI agents handle memory, state and consistency?",
@@ -3443,7 +3467,7 @@
   "title": "Designing a chat assistant",
   "category": "llm",
   "campus": false,
-  "step": 144,
+  "step": 145,
   "related": [
    "How do you scale an AI app to 1 million users while cutting inference cost and latency?",
    "What are AI guardrails? How does a company stop its shopping assistant from giving rude, unsafe, off-topic or legally risky answers?",
@@ -3471,7 +3495,7 @@
   "title": "AI coding assistants",
   "category": "llm",
   "campus": false,
-  "step": 145,
+  "step": 146,
   "related": [
    "How does an AI research agent work - planning a research question, searching sources and synthesising findings?",
    "How does A2A (Agent2Agent protocol) let agents from different vendors talk to each other?",
