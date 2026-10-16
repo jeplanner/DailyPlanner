@@ -1,0 +1,127 @@
+-- ================================================================
+--  DailyPlanner — PENDING MIGRATIONS, consolidated 2026-10-16
+--
+--  Run this whole file once in the Supabase SQL editor.
+--
+--  It is two migrations concatenated in dependency-free order.
+--  EVERY STATEMENT IS IDEMPOTENT — running it twice changes nothing,
+--  so it is safe even if you have already run some of them.
+--
+--    1. MIGRATION_PREP_PROGRESS.sql      prep_progress.quiz_best_pct
+--                                        (the table already exists; only
+--                                        the last column is missing)
+--    2. MIGRATION_TASK_COMPLETED_AT.sql  project_tasks.completed_at,
+--                                        its trigger, backfill and index
+--
+--  NOTE: Supabase's SQL editor runs a file as ONE transaction, so if
+--  any statement fails NOTHING in the file takes effect. If you get an
+--  error, fix that statement and re-run the whole file — you will not
+--  have half-applied it.
+-- ================================================================
+
+
+-- ################################################################
+-- ##  1 of 2  —  PREP PROGRESS (quiz scores on the deep dives)
+-- ################################################################
+-- ============================================================
+--  PREP PROGRESS — "rehearsed" ticks and mock-interview scores for the
+--  Interview Prep hub (case rounds, behavioural bank, system design).
+--
+--  Until now those ticks lived in each browser's localStorage, keyed by
+--  the entry's POSITION in the bank. So ticks on the phone never reached
+--  the laptop, and adding one case shifted every position after it.
+--  Rows here are keyed by TITLE; the page migrates its old ticks across
+--  automatically the first time it loads after this runs.
+--
+--  Safe to run more than once. Run in the Supabase SQL editor.
+-- ============================================================
+
+create extension if not exists pgcrypto;
+
+create table if not exists prep_progress (
+  id               uuid primary key default gen_random_uuid(),
+  user_id          uuid not null,
+  bank             text not null,          -- 'tpm' | 'behavioral' | 'sysdesign' | 'sddeep'
+  entry_title      text not null,
+  done             boolean not null default false,
+  done_at          timestamptz,
+  mock_attempts    int not null default 0,
+  mock_last_score  smallint check (mock_last_score between 1 and 4),
+  mock_best_score  smallint check (mock_best_score between 1 and 4),
+  mock_last_at     timestamptz,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now()
+);
+
+-- The upsert target: the app posts with ?on_conflict=user_id,bank,entry_title.
+create unique index if not exists prep_progress_user_bank_title
+  on prep_progress (user_id, bank, entry_title);
+
+create index if not exists prep_progress_user_done
+  on prep_progress (user_id, bank) where done;
+
+-- The app talks to Supabase with the service key, which bypasses RLS; with
+-- RLS on and no policies, the public anon key can read nothing here.
+alter table prep_progress enable row level security;
+
+-- Best quiz score (0-100) for the system design deep dives; 80%+ marks the
+-- design as studied.
+alter table prep_progress add column if not exists quiz_best_pct smallint
+  check (quiz_best_pct between 0 and 100);
+
+
+-- ################################################################
+-- ##  2 of 2  —  WHEN WAS A TASK FINISHED (sprint burndown)
+-- ################################################################
+-- ============================================================
+--  DailyPlanner — WHEN WAS A TASK FINISHED?
+--
+--  Added 2026-10-11 for the per-sprint burndown. project_tasks had no
+--  completion time; the sprint chart used updated_at as a stand-in, which
+--  moves whenever a finished task is edited (a note, a date), so a task
+--  done on Monday could show up as done on Friday.
+--
+--  completed_at is maintained by a trigger rather than by the app, because
+--  a task becomes "done" from at least six places (the task sheet, the
+--  matrix, autosave, bulk update, the v2 complete button, status chips).
+--  One trigger covers all of them, including any added later:
+--    - status changes TO 'done'   → completed_at = now()
+--    - status changes AWAY from it → completed_at = null
+--    - anything else              → left alone
+--
+--  The app works before this runs: the burndown falls back to updated_at.
+--
+--  Safe to re-run.
+-- ============================================================
+
+alter table if exists project_tasks
+    add column if not exists completed_at timestamptz;
+
+create or replace function project_tasks_stamp_completed_at()
+returns trigger
+language plpgsql
+as $$
+begin
+    if new.status = 'done' and (tg_op = 'INSERT' or old.status is distinct from 'done') then
+        new.completed_at := coalesce(new.completed_at, now());
+    elsif new.status is distinct from 'done' then
+        new.completed_at := null;
+    end if;
+    return new;
+end;
+$$;
+
+drop trigger if exists trg_project_tasks_completed_at on project_tasks;
+create trigger trg_project_tasks_completed_at
+    before insert or update of status on project_tasks
+    for each row execute function project_tasks_stamp_completed_at();
+
+-- Backfill: tasks already done get their last-updated time — the best
+-- record there is of when they were finished.
+update project_tasks
+   set completed_at = coalesce(updated_at, created_at)
+ where status = 'done' and completed_at is null;
+
+create index if not exists ix_project_tasks_sprint_completed
+    on project_tasks (sprint_id, completed_at)
+    where sprint_id is not null;
