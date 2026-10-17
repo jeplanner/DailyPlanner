@@ -37,7 +37,7 @@
       });
   }
 
-  var ITEMS = [], available = true, provider = true, started = false;
+  var ITEMS = [], available = true, provider = true, started = false, emptyReason = "";
   var view = { q: "", filter: "all", order: "study" };
   var open = {};            // root id -> expanded
   var editing = null;       // id whose answer is being edited
@@ -258,6 +258,7 @@
       provider = j.provider !== false;
       notesOk = available && j.notes_available !== false;
       ITEMS = j.items || [];
+      emptyReason = j.empty_reason || "";
       CATS = j.categories || CATS;
       if (!Object.keys(open).length) {
         var newest = roots()[0];
@@ -381,7 +382,7 @@
       return head + thread(r);
     }).join("");
     $("th-list").innerHTML = html ||
-      '<div class="card"><div class="empty">' + (rs.length ? "Nothing matches." :
+      '<div class="card"><div class="empty">' + (rs.length ? "Nothing matches." : emptyReason ? "⚠ " + esc(emptyReason) :
         (STUDENT ? "No questions yet. The next time something doesn't quite make sense — a concept, an algorithm, a design choice — write it above." : "No questions yet. The next time something doesn't quite make sense — a concept, a design choice, a leadership situation — write it above.")) + "</div></div>";
     drawDiagrams($("th-list"));
     if (window.FlowAnim) window.FlowAnim.init($("th-list"));

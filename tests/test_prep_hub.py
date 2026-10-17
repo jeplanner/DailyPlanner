@@ -819,3 +819,51 @@ def test_marking_studied_queues_its_audio_and_a_plain_open_does_not(auth_client,
     assert ("audio", "s1") not in thoughts["started"]
     r = auth_client.post("/api/prep/thoughts/s1", json={"understood": True}).get_json()
     assert r["audio"] == {"status": "pending"} and ("audio", "s1") in thoughts["started"]
+
+
+def test_audio_rows_render_in_the_real_page(auth_client):
+    """Runs tests/js/prep_thoughts_audio.test.js: real row shapes (audio
+    null/pending/ready, studied and due) through the real script."""
+    import shutil
+    import subprocess
+    import tempfile
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
+                           capture_output=True, text=True, cwd="tests/js")
+    if probe.returncode != 0:
+        pytest.skip("jsdom not installed")
+    html = auth_client.get("/ai-sde/thoughts").get_data(as_text=True)
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as fh:
+        fh.write(html)
+        path = fh.name
+    r = subprocess.run(["node", "tests/js/prep_thoughts_audio.test.js", path],
+                       capture_output=True, text=True, timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_an_empty_list_says_why(auth_client, thoughts, monkeypatch):
+    # Every user has the shipped questions, so an empty list is a fault: with
+    # the PUBLIC key, row-level security hides every row and refuses inserts.
+    import routes.interview_prep as ip
+    from services import thoughts_service as ts
+    monkeypatch.setattr(ts, "seeds", lambda: [])
+    monkeypatch.setattr(ts, "key_kind", lambda key=None: "public")
+    ts._seeded.clear()
+    j = auth_client.get("/api/prep/thoughts").get_json()
+    assert j["items"] == [] and "SECRET key" in j["empty_reason"]
+    monkeypatch.setattr(ts, "key_kind", lambda key=None: "secret")
+    def refuse(*a, **k):
+        raise RuntimeError("new row violates row-level security policy")
+    monkeypatch.setattr(ts, "ensure_seeds", refuse)
+    j = auth_client.get("/api/prep/thoughts").get_json()
+    assert "row-level security" in j["empty_reason"]
+
+
+def test_key_kind_reads_new_and_legacy_keys():
+    import base64, json
+    from services import thoughts_service as ts
+    jwt = lambda role: "h." + base64.urlsafe_b64encode(json.dumps({"role": role}).encode()).decode().rstrip("=") + ".s"
+    assert ts.key_kind("sb_secret_x") == "secret" and ts.key_kind("sb_publishable_x") == "public"
+    assert ts.key_kind(jwt("service_role")) == "secret" and ts.key_kind(jwt("anon")) == "public"
+    assert ts.key_kind("garbage") == "unknown"

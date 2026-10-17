@@ -2347,6 +2347,7 @@ def _clean_tags(raw):
 @login_required
 def thoughts_list():
     shelf = _shelf_arg()
+    seed_error = None
     try:
         try:
             thoughts_service.ensure_seeds(session["user_id"], shelf)
@@ -2354,6 +2355,7 @@ def thoughts_list():
             if _thoughts_missing(exc) or isinstance(exc, thoughts_service.ShelfNotReady):
                 raise
             logger.warning("thoughts: could not add the starter questions", exc_info=True)
+            seed_error = thoughts_service.err_text(exc)[:300]
         dropped = []
         rows = _thought_get({
             "user_id": f"eq.{session['user_id']}", "deleted_at": "is.null",
@@ -2374,7 +2376,18 @@ def thoughts_list():
         raise
     for r in rows:
         r["notes"] = _live_notes(r.get("notes"))
+    # AN EMPTY LIST MUST SAY WHY. Every user has the shipped questions, so
+    # none at all means the reads or the inserts are failing quietly.
+    empty_reason = None
+    if not rows:
+        if thoughts_service.key_kind() == "public":
+            empty_reason = thoughts_service.PUBLIC_KEY_MSG
+        elif seed_error:
+            empty_reason = "The starter questions could not be added: " + seed_error
+        if empty_reason:
+            loud.bailed("Random thoughts", "empty list", reason=empty_reason[:120])
     return jsonify({"available": True, "items": thoughts_service.annotate(rows),
+                    "empty_reason": empty_reason,
                     "categories": thoughts_service.CATEGORIES,
                     "notes_available": "notes" not in dropped,
                     "highlights_available": "highlight" not in dropped,

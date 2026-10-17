@@ -168,6 +168,31 @@ def err_text(exc):
     return (getattr(resp, "text", "") or "") or str(exc)
 
 
+def key_kind(key=None):
+    """"secret", "public" or "unknown" for the server's Supabase key.
+    prep_thoughts has row-level security on with no policies, so with a
+    PUBLIC key every read comes back empty and every write is refused -
+    the page just says "No questions yet". New-style keys say which they
+    are in their prefix; legacy JWT keys carry a role claim."""
+    key = SUPABASE_KEY if key is None else key
+    if key.startswith("sb_secret_"):
+        return "secret"
+    if key.startswith("sb_publishable_"):
+        return "public"
+    try:
+        import json
+        part = key.split(".")[1]
+        role = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))).get("role")
+    except Exception:
+        return "unknown"
+    return {"service_role": "secret", "anon": "public"}.get(role, "unknown")
+
+
+PUBLIC_KEY_MSG = ("The server is using Supabase's PUBLIC key, which row-level security hides "
+                  "these questions from. On Render, set SUPABASE_KEY to the project's SECRET key "
+                  "(Supabase → Project Settings → API Keys → secret), then redeploy.")
+
+
 def shelf_missing(exc):
     """True when the database predates the `shelf` column."""
     t = err_text(exc)
