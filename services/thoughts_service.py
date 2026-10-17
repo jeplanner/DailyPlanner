@@ -159,9 +159,18 @@ def clean_highlight(raw):
     return {"quote": quote, "prefix": prefix}
 
 
+def err_text(exc):
+    """Supabase's error body, else str(exc). str() of an HTTPError is only the
+    status and the URL - which names the table and every selected column - so
+    matching on it calls every failure "missing table" and never sees the
+    real "column ... does not exist"."""
+    resp = getattr(exc, "response", None)
+    return (getattr(resp, "text", "") or "") or str(exc)
+
+
 def shelf_missing(exc):
     """True when the database predates the `shelf` column."""
-    t = str(exc)
+    t = err_text(exc)
     return "shelf" in t and ("does not exist" in t or "schema cache" in t or "column" in t)
 
 
@@ -539,7 +548,7 @@ def next_review(stage, rating, now=None):
 
 def review_missing(exc):
     """True when the database predates the spaced-repetition columns."""
-    t = str(exc)
+    t = err_text(exc)
     return any(c in t for c in REVIEW_COLS) and ("does not exist" in t or "schema cache" in t or "column" in t)
 
 
@@ -556,18 +565,27 @@ def ensure_seeds(user_id, shelf=DEFAULT_SHELF):
         return 0
     added = 0
     from supabase_client import post
+    # One read of the shelf's top-level questions, not one per shipped answer:
+    # 146 sequential requests after every deploy were slow enough that one
+    # timeout among them dropped the whole page into its read-only fallback.
+    existing = {}
+    for r in get_shelved({"user_id": f"eq.{user_id}", "select": "id,question,model,deleted_at",
+                          "order": "created_at.asc", "limit": "5000"}, shelf):
+        existing.setdefault(r.get("question"), r)
+    # Answers only for the untouched shipped rows - the ones a refresh may rewrite.
+    shipped = {r["id"]: r.get("answer") for r in get_shelved(
+        {"user_id": f"eq.{user_id}", "model": f"eq.{SEED_MODEL}", "deleted_at": "is.null",
+         "select": "id,answer", "limit": "5000"}, shelf)}
     for sd in seeds():
         if shelf not in seed_shelves(sd):
             continue
-        have = get_shelved({"user_id": f"eq.{user_id}", "question": f"eq.{sd['question']}",
-                            "select": "id,answer,model,deleted_at", "limit": "1"}, shelf)
-        if have:
+        h = existing.get(sd["question"])
+        if h:
             # Refresh a shipped answer that was improved later (diagrams were
             # added after the first version) - but only while it is still
             # untouched: an edit sets model to "edited by you".
-            h = have[0]
             if (not h.get("deleted_at") and h.get("model") == SEED_MODEL
-                    and (h.get("answer") or "") != sd["answer"]):
+                    and (shipped.get(h["id"]) or "") != sd["answer"]):
                 update(TABLE, params={"id": f"eq.{h['id']}", "user_id": f"eq.{user_id}"},
                        json={"answer": sd["answer"], "updated_at": _now()})
             continue

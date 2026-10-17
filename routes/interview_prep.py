@@ -2268,7 +2268,7 @@ def _thought_get(params, shelf=None, dropped=None):
             if thoughts_service.review_missing(exc):
                 keep = [c for c in cols if c not in thoughts_service.REVIEW_COLS]
             else:
-                late = [c for c in _THOUGHT_LATE_COLS if c in cols and c in str(exc)][:1]
+                late = [c for c in _THOUGHT_LATE_COLS if c in cols and c in thoughts_service.err_text(exc)][:1]
                 keep = [c for c in cols if c not in late]
                 if late and dropped is not None:
                     dropped.append(late[0])
@@ -2318,8 +2318,10 @@ def _store_images(user_id, files):
 
 
 def _thoughts_missing(exc):
-    t = str(exc)
-    return "prep_thoughts" in t or "does not exist" in t or "schema cache" in t
+    # The body, not str(exc): the URL in str(exc) names prep_thoughts on every
+    # failure, which sent any error to the read-only "seed-N" list.
+    t = thoughts_service.err_text(exc)
+    return "PGRST205" in t or "42P01" in t or ("prep_thoughts" in t and "does not exist" in t)
 
 
 def _thought_missing_resp():

@@ -284,6 +284,8 @@ def thoughts(monkeypatch):
             out = [r for r in out if not r.get("deleted_at")]
         if "shelf" in params:
             out = [r for r in out if f"eq.{r.get('shelf', 'tpm')}" == params["shelf"]]
+        if "model" in params:
+            out = [r for r in out if f"eq.{r.get('model')}" == params["model"]]
         return [dict(r) for r in out]
 
     def fake_post(table, payload, **kw):
@@ -745,3 +747,34 @@ def test_random_thoughts_leave_highlighting_to_page_hints():
     js = (root / "static/js/prep_thoughts.js").read_text()
     assert "Highlight & ask" not in js and "!t.highlight" in js
     assert 'data-tid="' in js  # answers carry their id, which page_hints uses as the anchor
+
+
+def test_a_failed_read_is_an_error_not_the_read_only_seed_list(auth_client, thoughts, monkeypatch):
+    # str(HTTPError) carries the URL, which names prep_thoughts; that used to
+    # make every failure look like a missing table, so the page fell back to
+    # "seed-N" items and every Mark studied on them was a 400.
+    import requests
+    import routes.interview_prep as ip
+    from services import thoughts_service as ts
+
+    def http_error(status, body):
+        resp = requests.Response()
+        resp.status_code, resp._content = status, body.encode()
+        return requests.HTTPError(f"{status} for url: https://x.supabase.co/rest/v1/prep_thoughts?select=id",
+                                  response=resp)
+
+    def timeout(*a, **k):
+        raise http_error(504, '{"message":"upstream timeout"}')
+    monkeypatch.setattr(ts, "get", timeout)
+    monkeypatch.setattr(ip, "get", timeout)
+    ts._seeded.clear()
+    r = auth_client.get("/api/prep/thoughts")
+    assert r.status_code == 500 or not any(str(i["id"]).startswith("seed-") for i in (r.get_json() or {}).get("items", []))
+
+    def gone(*a, **k):
+        raise http_error(404, '{"code":"PGRST205","message":"Could not find the table \'public.prep_thoughts\'"}')
+    monkeypatch.setattr(ts, "get", gone)
+    monkeypatch.setattr(ip, "get", gone)
+    ts._seeded.clear()
+    j = auth_client.get("/api/prep/thoughts").get_json()
+    assert j["available"] is False and j["items"][0]["id"].startswith("seed-")
