@@ -52,7 +52,7 @@
   //: PWA can serve a cached script for a long time, and every diagnosis
   //: after that is worthless if the answer is "no".
   //: Kept equal to CACHE_VERSION's leading token by a test.
-  var BUILD = "v326";
+  var BUILD = "v327";
 
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
@@ -2785,10 +2785,7 @@
       save(); paint(); savedFlash();
       closeForm();
       pushItems([updated]);
-      atEl.value = ""; uEl.value = ""; mEl.value = ""; tEl.value = "";
-      newDays = [];
-      newMer = { at: "am", until: "am" };
-      paint();
+      cancelEdit();       // the one full reset - see below
       return;
     }
 
@@ -2799,12 +2796,15 @@
         start: start, end: end, text: text, on: true,
       });
     });
-    atEl.value = ""; uEl.value = ""; mEl.value = ""; tEl.value = "";
-    newMer = { at: "am", until: "am" };
     state.lastSlot = null;
     save(); paint(); savedFlash();
     closeForm();
     pushItems(state.items.slice(-times.length));
+    // A FULL reset, not just the time and text: the end date, start date,
+    // repeat and chosen days used to stay behind, so one announcement with
+    // "until 30 Sep" made every later one inherit it - and, once that date
+    // passed, refuse to save at all ("the end date is before the start").
+    cancelEdit();
     atEl.focus();
   }
 

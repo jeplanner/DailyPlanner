@@ -381,6 +381,10 @@ ok("refuses an end before the start", doc.querySelectorAll(".ta-item").length ==
 q("[data-ta-new-end]").value = "2026-09-30";
 click(q("[data-ta-add]"));
 ok("accepts a valid window", doc.querySelectorAll(".ta-item").length === 2);
+// The form resets fully: an end date left behind made every later
+// announcement inherit it, and refuse to save once that date had passed.
+ok("the end date does not stick to the next one",
+   q("[data-ta-new-end]").value === "" && q("[data-ta-new-repeat]").value === "daily");
 ok("row states the window",
    /until 30 Sep 2026/.test(doc.querySelectorAll(".ta-when i")[1].textContent) ||
    /until 30 Sep 2026/.test(doc.querySelectorAll(".ta-when i")[0].textContent));
@@ -637,8 +641,10 @@ click(q("[data-ta-close]"));
      !/Could not run the check/.test(out.textContent));
   ok("...naming the device", /Android/.test(out.textContent));
   ok("...and the status it got back", /403/.test(out.textContent));
+  // fc4c124 folded retired registrations into one "old registration" line
+  // (already switched off, nothing is sent) instead of alarming red lines.
   ok("...and marking a retired registration",
-     /retired/.test(out.textContent));
+     /1 old registration/.test(out.textContent) && /already switched off/.test(out.textContent));
   click(q("[data-ta-close]"));
   window.fetch = realFetch;
 }
