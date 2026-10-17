@@ -558,3 +558,18 @@ def test_animation_player_has_speed_and_full_screen():
     js = (pathlib.Path(__file__).resolve().parent.parent / "static/js/flow_anim.js").read_text()
     assert 'data-fa="full"' in js and "requestFullscreen" in js and "fa-full" in js
     assert "fa-speed" in js and "faSpeed" in js and "/ (this.speed || 1)" in js
+
+
+def test_thoughts_have_interview_version_and_ask_about_a_sentence():
+    import pathlib
+    js = (pathlib.Path(__file__).resolve().parent.parent / "static/js/prep_thoughts.js").read_text()
+    assert 'data-th="interview"' in js and 'case "interview"' in js
+    assert "th-selchip" in js and "selectionchange" in js and "About this part: \\u201c" in js
+    assert "function followHead" in js
+
+
+def test_a_follow_up_about_a_sentence_is_saved_on_that_thread(auth_client, thoughts):
+    seed = auth_client.get("/api/prep/thoughts").get_json()["items"][0]
+    q = "About this part: “Kafka keeps order only inside one partition.” Why?"
+    j = auth_client.post("/api/prep/thoughts", json={"question": q, "parent_id": seed["id"]}).get_json()
+    assert j["item"]["question"] == q and j["item"]["parent_id"] == seed["id"]

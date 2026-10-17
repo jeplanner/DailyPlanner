@@ -41,6 +41,7 @@
   var open = {};            // root id -> expanded
   var editing = null;       // id whose answer is being edited
   var asking = null;        // root id with the follow-up box open
+  var askQuote = null;      // {text, parentId} when the follow-up is about a selected sentence
   var pollTimer = null;
   var quizCache = {};      // step -> [mcq]
   var quizOpen = {};       // root id -> quiz shown
@@ -442,7 +443,7 @@
       quizBlock(r) +
       relatedBlock(r) +
       kids.map(function (k) {
-        return '<div class="th-follow" data-id="' + k.id + '"><div class="th-fq"><span class="th-fq-k">Follow-up</span>' + esc(k.question) + "</div>" +
+        return '<div class="th-follow" data-id="' + k.id + '">' + followHead(k.question) +
           imagesBlock(k) +
           answerBlock(k) +
           (k.status !== "pending" && editing !== k.id ? '<div class="q-actions th-small"><button class="btn sm ghost" data-th="retry" type="button">Rewrite</button>' +
@@ -450,7 +451,8 @@
           "</div>";
       }).join("") +
       (asking === r.id
-        ? '<div class="th-fbox"><textarea data-th-follow rows="2" maxlength="2000" placeholder="Ask a follow-up — what is still unclear?"></textarea>' +
+        ? '<div class="th-fbox">' + (askQuote ? '<blockquote class="th-quote"><span>About this part</span>' + esc(askQuote.text) + "</blockquote>" : "") +
+          '<textarea data-th-follow rows="2" maxlength="2000" placeholder="' + (askQuote ? "What is unclear about it? (or just press Ask to have it explained)" : "Ask a follow-up — what is still unclear?") + '"></textarea>' +
           '<div class="q-actions"><button class="btn sm primary" data-th="send-follow" type="button">Ask</button><button class="btn sm" data-th="cancel-follow" type="button">Cancel</button></div></div>'
         : "") +
       (r.status === "ready" && editing !== r.id
@@ -458,6 +460,7 @@
           '<button class="btn sm ' + (r.understood ? "" : "primary") + '" data-th="understood" type="button">' + (r.understood ? "✓ Studied" : "Mark as studied") + "</button>" +
           '<button class="btn sm" data-th="simpler" type="button">Explain simpler</button>' +
           '<button class="btn sm" data-th="deeper" type="button">Go deeper</button>' +
+          '<button class="btn sm" data-th="interview" type="button">Interview version</button>' +
           '<button class="btn sm" data-th="follow" type="button">Ask a follow-up</button>' +
           '<span class="th-sep"></span>' +
           '<button class="btn sm ghost" data-th="pin" type="button">' + (r.pinned ? "Unpin" : "Pin") + "</button>" +
@@ -586,12 +589,20 @@
         case "pin": await patch(rootId, { pinned: !root.pinned }); render(); break;
         case "simpler": await ask("Explain this again more simply, as if to someone new to the topic, with a different analogy: " + root.question, { parent_id: lastOf(root).id }); break;
         case "deeper": await ask((STUDENT ? "Go one level deeper on this - the internals, edge cases and trade-offs a strong new-grad SDE interviewer would probe: " : "Go one level deeper on this - the internals, edge cases, numbers and trade-offs a Director-level interviewer would probe: ") + root.question, { parent_id: lastOf(root).id }); break;
-        case "follow": asking = rootId; render(); setTimeout(function () { var x = document.querySelector("[data-th-follow]"); if (x) x.focus(); }, 30); break;
-        case "cancel-follow": asking = null; render(); break;
+        case "interview": await ask((STUDENT
+            ? "Interview version: how should I explain this in a campus interview in about 60 seconds? Use simple words and one small example, in the order I would say it out loud. Then give 2 follow-up questions the interviewer is likely to ask next, each with a short answer. Topic: "
+            : "Interview version: how should I answer this in a Director-level interview in about 60-90 seconds? Lead with the decision, then scale and numbers, the key trade-offs, and how I would lead the team through it, in the order I would say it out loud. Then give 2 follow-up questions the interviewer is likely to ask next, each with a short answer. Topic: ") + root.question, { parent_id: lastOf(root).id }); break;
+        case "follow": askQuote = null; asking = rootId; render(); setTimeout(function () { var x = document.querySelector("[data-th-follow]"); if (x) x.focus(); }, 30); break;
+        case "cancel-follow": asking = null; askQuote = null; render(); break;
         case "send-follow": {
           var box = document.querySelector("[data-th-follow]"), v = box && box.value.trim();
-          if (!v) { box && box.focus(); break; }
-          a.disabled = true; asking = null;
+          var quote = askQuote;
+          if (!v && !quote) { box && box.focus(); break; }
+          a.disabled = true; asking = null; askQuote = null;
+          if (quote) {
+            await ask('About this part: \u201c' + quote.text + '\u201d ' + (v.slice(0, 1300) || "Explain this part in simple words, with a small example."),
+                      { parent_id: quote.parentId }); break;
+          }
           await ask(v, { parent_id: lastOf(root).id }); break;
         }
         case "retry":
@@ -641,6 +652,61 @@
       }
     } catch (err) { H().say(err.message, "error"); }
   });
+
+  // A follow-up asked about a selected sentence is stored as
+  // 'About this part: “…” <doubt>' and shown with the sentence quoted.
+  function followHead(q) {
+    var m = /^About this part: \u201c([\s\S]*?)\u201d\s*([\s\S]*)$/.exec(q || "");
+    if (!m) return '<div class="th-fq"><span class="th-fq-k">Follow-up</span>' + esc(q) + "</div>";
+    return '<div class="th-fq"><span class="th-fq-k">Follow-up</span>' + esc(m[2]) + "</div>" +
+      '<blockquote class="th-quote"><span>About this part</span>' + esc(m[1]) + "</blockquote>";
+  }
+
+  // "Ask about this": select a sentence in any answer (long-press on a
+  // phone) and a chip offers to ask a follow-up about exactly that part.
+  // The follow-up chains from the answer the sentence came from.
+  var selChip = null, selInfo = null;
+  function hideChip() { if (selChip) selChip.hidden = true; selInfo = null; }
+  function checkSelection() {
+    var sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) { hideChip(); return; }
+    var text = String(sel).replace(/\s+/g, " ").trim();
+    var node = sel.anchorNode && (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement);
+    var ans = node && node.closest && node.closest(".th-answer");
+    var card = ans && ans.closest(".th-card");
+    if (!ans || !card || text.length < 3 || !ans.contains(sel.focusNode)) { hideChip(); return; }
+    var sub = ans.closest(".th-follow");
+    selInfo = { rootId: card.dataset.id, parentId: sub ? sub.dataset.id : card.dataset.id, text: text.slice(0, 500) };
+    if (!selChip) {
+      selChip = document.createElement("button");
+      selChip.type = "button"; selChip.className = "th-selchip"; selChip.textContent = "Ask about this";
+      selChip.addEventListener("mousedown", function (e) { e.preventDefault(); });
+      selChip.addEventListener("click", function () {
+        if (!selInfo) return;
+        askQuote = { text: selInfo.text, parentId: selInfo.parentId };
+        asking = selInfo.rootId; open[selInfo.rootId] = true;
+        var sel2 = window.getSelection && window.getSelection(); if (sel2) sel2.removeAllRanges();
+        hideChip(); render();
+        setTimeout(function () {
+          var x = document.querySelector("[data-th-follow]");
+          if (x) { x.scrollIntoView({ behavior: "smooth", block: "center" }); x.focus({ preventScroll: true }); }
+        }, 30);
+      });
+      document.body.appendChild(selChip);
+    }
+    var rect = sel.getRangeAt(0).getBoundingClientRect();
+    selChip.hidden = false;
+    var w = selChip.offsetWidth || 120;
+    var x = Math.min(Math.max(8, rect.left + rect.width / 2 - w / 2), window.innerWidth - w - 8);
+    // Below the selection: phones put their own copy/select menu above it.
+    var y = rect.bottom + 10;
+    if (y + 44 > window.innerHeight) y = Math.max(8, rect.top - 52);
+    selChip.style.left = (x + window.scrollX) + "px";
+    selChip.style.top = (y + window.scrollY) + "px";
+  }
+  var selTimer = null;
+  document.addEventListener("selectionchange", function () { clearTimeout(selTimer); selTimer = setTimeout(checkSelection, 250); });
+  window.addEventListener("scroll", function () { if (selInfo) checkSelection(); }, { passive: true });
 
   // Follow-ups chain from the latest answer in the thread, so "go deeper"
   // after "explain simpler" builds on what was just said.
