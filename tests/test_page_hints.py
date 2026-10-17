@@ -87,3 +87,30 @@ def test_page_hints_script_is_on_every_page():
     js = (root / "static/js/page_hints.js").read_text()
     for needle in ("/api/hints", "MutationObserver", "Highlight & ask", "Ask a follow-up"):
         assert needle in js, needle
+
+
+def _http_error(status, body):
+    import requests
+    resp = requests.Response()
+    resp.status_code, resp._content = status, body.encode()
+    resp.url = "https://x.supabase.co/rest/v1/page_hints"
+    return requests.HTTPError(f"{status} Client Error for url: {resp.url}", response=resp)
+
+
+@pytest.mark.parametrize("status,body,expect", [
+    (404, '{"code":"PGRST205","message":"Could not find the table \'public.page_hints\'"}', "MIGRATION_PAGE_HINTS.sql"),
+    (401, '{"code":"42501","message":"new row violates row-level security policy for table \\"page_hints\\""}', "row-level security"),
+    (400, '{"code":"22P02","message":"invalid input syntax for type uuid"}', "invalid input syntax"),
+])
+def test_only_a_missing_table_blames_the_migration(auth_client, hints, monkeypatch, status, body, expect):
+    # The URL in str(exc) names page_hints on every failure; it used to make
+    # every error read "run MIGRATION_PAGE_HINTS.sql".
+    import routes.page_hints as ph
+    def boom(*a, **k):
+        raise _http_error(status, body)
+    monkeypatch.setattr(ph, "post", boom)
+    r = auth_client.post("/api/hints", json={"page": "/notes", "question": "x"})
+    msg = r.get_json()["error"]
+    assert expect in msg
+    if expect != "MIGRATION_PAGE_HINTS.sql":
+        assert "MIGRATION" not in msg and r.status_code == 502

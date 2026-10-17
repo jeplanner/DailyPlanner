@@ -24,14 +24,32 @@ page_hints_bp = Blueprint("page_hints", __name__)
 COLS = "id,page,anchor,quote,prefix,thread,created_at,updated_at"
 
 
+def _detail(exc):
+    """Supabase's own error body. str(exc) is just "401 ... for url: .../page_hints",
+    which names the table on EVERY failure, so it can't tell a missing table apart."""
+    resp = getattr(exc, "response", None)
+    return (getattr(resp, "text", "") or "") or str(exc)
+
+
 def _missing(exc):
-    t = str(exc)
-    return "page_hints" in t or "does not exist" in t or "schema cache" in t
+    t = _detail(exc)
+    return "PGRST205" in t or "42P01" in t or ("page_hints" in t and "does not exist" in t)
 
 
 def _missing_resp():
     return jsonify({"error": f"Highlights need {svc.MIGRATION} run in Supabase (safe to re-run).",
                     "migration": svc.MIGRATION, "available": False}), 503
+
+
+def _failed_resp(exc):
+    logger.exception("page hints: write failed")
+    t = _detail(exc)
+    if "42501" in t or "row-level security" in t:
+        msg = ("Supabase refused the write (row-level security). The server's SUPABASE_KEY "
+               "must be the secret/service key for page_hints.")
+    else:
+        msg = "Could not save the hint: " + t[:300]
+    return jsonify({"error": msg}), 502
 
 
 def _page(raw):
@@ -88,7 +106,7 @@ def hints_create():
     except Exception as exc:
         if _missing(exc):
             return _missing_resp()
-        raise
+        return _failed_resp(exc)
     item = created[0] if created else None
     if not item or not item.get("id"):
         return jsonify({"error": "Could not save the highlight."}), 502
@@ -109,7 +127,7 @@ def hints_ask(hid):
     except Exception as exc:
         if _missing(exc):
             return _missing_resp()
-        raise
+        return _failed_resp(exc)
     if not h:
         return jsonify({"error": "Not found."}), 404
     thread = list(h.get("thread") or [])
@@ -135,7 +153,7 @@ def hints_retry(hid):
     except Exception as exc:
         if _missing(exc):
             return _missing_resp()
-        raise
+        return _failed_resp(exc)
     if not h or not h.get("thread"):
         return jsonify({"error": "Not found."}), 404
     thread = list(h["thread"])
@@ -158,5 +176,5 @@ def hints_delete(hid):
     except Exception as exc:
         if _missing(exc):
             return _missing_resp()
-        raise
+        return _failed_resp(exc)
     return jsonify({"status": "ok"})
