@@ -428,7 +428,10 @@
   function start() {
     ui();
     load().catch(function () { available = false; });
-    mo.observe(document.body, { childList: true, subtree: true, characterData: true });
+    // Elements added or removed only. Text-only changes (a ticking timer, a
+    // clock) can't bring a highlighted passage back, and with a hint that is
+    // not on screen each one cost a full-page text scan.
+    mo.observe(document.body, { childList: true, subtree: true });
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 })();

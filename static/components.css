@@ -438,17 +438,22 @@
 }
 
 /* ── Dialog / sheet / drawer utilities ────────── */
+/* Closed costs nothing: an invisible full-screen backdrop-filter is still
+   composited and re-blurs the page on every scrolled frame (blank patches
+   on phones). The blur exists only while open. */
 .scrim {
     position: fixed;
     inset: 0;
     background: var(--color-backdrop);
-    backdrop-filter: blur(3px);
     z-index: var(--z-overlay);
     opacity: 0;
     pointer-events: none;
-    transition: opacity var(--motion-duration-base) var(--motion-easing-standard);
+    visibility: hidden;
+    transition: opacity var(--motion-duration-base) var(--motion-easing-standard),
+                visibility 0s linear var(--motion-duration-base);
 }
-.scrim.is-open { opacity: 1; pointer-events: auto; }
+.scrim.is-open { opacity: 1; pointer-events: auto; visibility: visible; backdrop-filter: blur(3px);
+    transition: opacity var(--motion-duration-base) var(--motion-easing-standard); }
 
 .dialog {
     position: fixed;

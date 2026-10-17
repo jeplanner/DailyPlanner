@@ -314,7 +314,7 @@
     quizIntro(d, meta);
     spy();
     var hash = location.hash;
-    if (hash && document.querySelector(hash)) document.querySelector(hash).scrollIntoView();
+    if (hash && document.querySelector(hash)) jumpTo(document.querySelector(hash), false);
   }
 
   $("dd-view").addEventListener("click", function (e) {
@@ -323,10 +323,19 @@
     var nav = e.target.closest(".dd-nav a[data-sec]");
     if (nav) {
       e.preventDefault();
-      var el = $("dd-" + nav.dataset.sec);
-      if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 110, behavior: "smooth" });
+      jumpTo($("dd-" + nav.dataset.sec), true);
     }
   }, true);
+
+  /* Sections far from view are skipped (content-visibility in the CSS), so
+     their heights are estimates until drawn: aim, let the target render,
+     then land exactly. */
+  function jumpTo(el, smooth) {
+    if (!el) return;
+    var at = function () { return el.getBoundingClientRect().top + window.scrollY - 110; };
+    window.scrollTo({ top: at(), behavior: smooth ? "smooth" : "auto" });
+    setTimeout(function () { if (Math.abs(el.getBoundingClientRect().top - 110) > 4) window.scrollTo({ top: at() }); }, smooth ? 700 : 60);
+  }
 
   // Highlight the section in view.
   var observer = null;

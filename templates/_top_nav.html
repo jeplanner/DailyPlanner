@@ -257,15 +257,19 @@
 }
 
 /* ── Help modal overlay + card ── */
+/* CLOSED OVERLAYS MUST COST NOTHING. A backdrop-filter on an invisible
+   (opacity:0) full-screen layer is still composited, and the page under it
+   re-blurred on every scrolled frame - phones showed blank patches on long
+   pages (an 80,000px deep dive). So the blur exists only while open, and a
+   closed overlay is visibility:hidden (delayed, so the fade-out still runs). */
 .help-overlay{
   position:fixed;inset:0;
   background:rgba(15,23,42,.5);
-  backdrop-filter:blur(3px);
-  opacity:0;pointer-events:none;
-  transition:opacity .2s ease;
+  opacity:0;pointer-events:none;visibility:hidden;
+  transition:opacity .2s ease,visibility 0s linear .2s;
   z-index:9990;
 }
-.help-overlay.open{opacity:1;pointer-events:auto;}
+.help-overlay.open{opacity:1;pointer-events:auto;visibility:visible;backdrop-filter:blur(3px);transition:opacity .2s ease;}
 
 .help-modal{
   position:fixed;
@@ -639,13 +643,13 @@ button.nav-group-title:hover{background:var(--color-surface-secondary);color:var
   position:fixed;
   inset:0;
   background:rgba(0,0,0,.35);
-  backdrop-filter:blur(3px);
   opacity:0;
   pointer-events:none;
-  transition:opacity .2s ease;
+  visibility:hidden;               /* see .help-overlay: closed = no layer, no blur */
+  transition:opacity .2s ease,visibility 0s linear .2s;
   z-index:1050;
 }
-.overlay.show{opacity:1;pointer-events:auto;}
+.overlay.show{opacity:1;pointer-events:auto;visibility:visible;backdrop-filter:blur(3px);transition:opacity .2s ease;}
 
 /* ── Section title under header (contextual page title) ── */
 .section-title{
@@ -1285,7 +1289,9 @@ button.nav-group-title:hover{background:var(--color-surface-secondary);color:var
   background:rgba(15,23,42,0.5); backdrop-filter: blur(4px);
   transition: opacity .15s ease;
 }
-.search-overlay.hidden { opacity: 0; pointer-events: none; }
+/* Closed: no blur, no layer (see .help-overlay). */
+.search-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; backdrop-filter: none;
+  transition: opacity .15s ease, visibility 0s linear .15s; }
 .search-palette {
   position: fixed; left: 50%; top: 12vh;
   transform: translateX(-50%);
@@ -1553,7 +1559,9 @@ document.addEventListener("keydown", (e) => {
     background:rgba(15,23,42,.55); backdrop-filter: blur(3px);
     transition: opacity .14s ease;
   }
-  .qpomo-overlay.hidden { opacity: 0; pointer-events: none; }
+  /* Closed: no blur, no layer (see .help-overlay). */
+  .qpomo-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; backdrop-filter: none;
+    transition: opacity .14s ease, visibility 0s linear .14s; }
   .qpomo-modal {
     position: fixed; left: 50%; top: 14vh;
     transform: translateX(-50%);

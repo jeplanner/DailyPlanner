@@ -676,3 +676,18 @@ html.fa-noscroll, html.fa-noscroll body { overflow: hidden; }
 .th-pl-row input[type=range] { flex: 1; min-width: 60px; accent-color: var(--color-primary); }
 .th-pl-t { font: 12px "IBM Plex Mono", ui-monospace, monospace; color: var(--color-text-secondary); white-space: nowrap; }
 .th-offline { color: var(--color-success-on-tint); font-weight: 600; }
+
+
+/* ── Deep dive reader: render only what is near the screen ──
+   One design is up to ~80,000px of text (Uber: 95 phone screens), all laid
+   out and painted at once: a ~0.9 s freeze on open and blank patches while
+   scrolling on a phone. content-visibility lets the browser skip sections
+   far from view; "auto" in the intrinsic size remembers each section's real
+   height once seen, so the scrollbar settles instead of jumping.
+   Applied to each block INSIDE a section, not the section: Concepts alone is
+   ~28,000px, and drawing a whole section as it scrolls into view was itself
+   a 130-180 ms stall. Blocks top out around 4,000px. */
+.dd-doc .dd-sec > :not(h3) { content-visibility: auto; contain-intrinsic-size: auto 500px; }
+/* The list too: 70 cards of summaries and chips cost ~750 ms of first layout
+   (CPU slowed 4x) before any of it could be tapped; cards off screen now wait. */
+#dd-list > .dd-card { content-visibility: auto; contain-intrinsic-size: auto 190px; }
