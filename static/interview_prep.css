@@ -613,6 +613,14 @@ a.focus-item:hover { border-color: var(--color-border-strong); }
 .fa-cell.fa-gone { opacity: .28; }
 .fa-msg { filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
 .fa-cap { min-height: 3em; margin: 10px 2px 8px; font-size: 14px; line-height: 1.5; }
+/* Narrated captions: each word appears as it is spoken; the one being
+   said is highlighted. Unsaid words keep their space (opacity, not
+   display), so the line never reflows while it builds. */
+.fa-w { opacity: 0; transition: opacity .18s ease-out; border-radius: 4px; padding: 0 1px; }
+.fa-w.on { opacity: 1; }
+.fa-w.now { background: var(--color-primary-light); color: var(--color-primary-on-tint); }
+@media (prefers-reduced-motion: reduce) { .fa-w { transition: none; } }
+.fa-btn[data-fa="voice"][aria-pressed="true"] { border-color: var(--color-primary-ink); }
 .fa-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .fa-btn { font: inherit; font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); }

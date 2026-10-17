@@ -668,3 +668,20 @@ def test_notes_work_in_the_real_page(auth_client):
     r = subprocess.run(["node", "tests/js/prep_thoughts_notes.test.js", path],
                        capture_output=True, text=True, timeout=180)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_animated_diagrams_narrate_and_build_captions():
+    """Runs tests/js/flow_anim_narration.test.js: Voice on/off, captions
+    following the speech word by word, Play waiting for the voice."""
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
+                           capture_output=True, text=True, cwd="tests/js")
+    if probe.returncode != 0:
+        pytest.skip("jsdom not installed")
+    # Generous: a cold require('jsdom') from the Windows drive takes ~25 s.
+    r = subprocess.run(["node", "tests/js/flow_anim_narration.test.js"],
+                       capture_output=True, text=True, timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr

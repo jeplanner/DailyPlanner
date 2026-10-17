@@ -16,6 +16,14 @@
  * right), note. Colours a-f are theme-aware. Steps run with Play / Next / Back;
  * Back rebuilds the picture up to the previous step, so it is always exact.
  * With prefers-reduced-motion, messages jump instead of travelling.
+ *
+ * NARRATION. With Voice on (the default where the browser can speak), each
+ * step's "say" is read aloud and its caption appears word by word as it is
+ * spoken, the current word highlighted. Play waits for the narration to end
+ * before the next step, so a long sentence is never cut off; Speed sets the
+ * speaking rate too. With Voice off the caption still builds up, at reading
+ * pace. Words follow the speech's own word-boundary events where the voice
+ * sends them, and an estimate where it does not (many Android voices).
  */
 (function () {
   "use strict";
@@ -27,6 +35,69 @@
     try { var v = parseFloat(localStorage.getItem("faSpeed")); if (SPEEDS.indexOf(v) >= 0) return v; } catch (e) {}
     return 1;
   }
+
+  function savedVoice() {
+    try { return localStorage.getItem("faVoice") !== "off"; } catch (e) { return true; }
+  }
+
+  /* ── Narrator: one voice for every player on the page ─────────────────
+     The rules static/js/read-aloud.js and time-announcer.js learned the
+     hard way, because speech synthesis fails silently:
+       1. never cancel() and speak() in the same task (Chrome drops it);
+       2. prime the voices (getVoices() is empty right after load);
+       3. resume() after speak() (a paused queue swallows utterances);
+       4. prefer a local voice (a network one dies in a background tab).
+     A step is spoken a sentence at a time: browsers cut one long
+     utterance off at ~15 s, which a 180-character line at 0.5x passes. */
+  var Narrator = (function () {
+    var synth = window.speechSynthesis;
+    var ok = !!(synth && typeof window.SpeechSynthesisUtterance === "function");
+    var voices = [], job = null;
+    function loadVoices() { try { voices = synth.getVoices() || []; } catch (e) { voices = []; } }
+    if (ok) { loadVoices(); try { synth.addEventListener("voiceschanged", loadVoices); } catch (e) {} }
+    function pickVoice(lang) {
+      var want = (lang || "en").slice(0, 2).toLowerCase();
+      var local = voices.filter(function (v) { return v.localService; });
+      return local.filter(function (v) { return (v.lang || "").slice(0, 2).toLowerCase() === want; })[0] ||
+        voices.filter(function (v) { return (v.lang || "").slice(0, 2).toLowerCase() === want; })[0] || null;
+    }
+    function sentences(text) {
+      var out = [], re = /[^.!?]+[.!?]*\s*/g, m;
+      while ((m = re.exec(text))) if (m[0].trim()) out.push({ text: m[0].trim(), off: m.index });
+      return out.length ? out : [{ text: text, off: 0 }];
+    }
+    function stop() {
+      if (job) job.dead = true;
+      job = null;
+      if (!ok) return;
+      try { if (synth.speaking || synth.pending) synth.cancel(); } catch (e) {}
+    }
+    // speak(text, rate, onWord(charIndex), onEnd()) -> false when it can't.
+    function speak(text, rate, onWord, onEnd) {
+      if (!ok) return false;
+      var busy = false;
+      try { busy = synth.speaking || synth.pending; } catch (e) {}
+      stop();
+      var me = job = { dead: false }, parts = sentences(text), lang = document.documentElement.lang || navigator.language || "en-US";
+      function say(k) {
+        if (me.dead) return;
+        if (k >= parts.length) { job = null; onEnd(); return; }
+        var u = new window.SpeechSynthesisUtterance(parts[k].text);
+        u.rate = Math.max(0.5, Math.min(2, rate || 1)); u.lang = lang;
+        var v = pickVoice(lang); if (v) u.voice = v;
+        u.onboundary = function (e) { if (!me.dead && (!e.name || e.name === "word")) onWord(parts[k].off + (e.charIndex || 0)); };
+        u.onend = function () { say(k + 1); };
+        // An error must not stall Play; a cancel() of ours is already dead.
+        u.onerror = function () { if (!me.dead) { job = null; onEnd(); } };
+        try { synth.speak(u); synth.resume(); } catch (e) { if (!me.dead) { job = null; onEnd(); } }
+      }
+      setTimeout(function () { say(0); }, busy ? 150 : 0);   // rule 1
+      return true;
+    }
+    return { ok: ok, speak: speak, stop: stop };
+  })();
+  var activePlayer = null;    // the player that owns the voice right now
+  window.addEventListener("pagehide", function () { if (activePlayer) activePlayer.stop(); });
 
   function el(tag, attrs, parent) {
     var n = document.createElementNS(NS, tag);
@@ -46,6 +117,8 @@
   function Player(host, spec) {
     this.host = host; this.spec = spec; this.i = 0; this.playing = false; this.busy = false;
     this.speed = savedSpeed();
+    this.voice = Narrator.ok && savedVoice();
+    this.tok = 0;             // bumps on every caption, so a stale callback is ignored
     this.byId = {};
     for (var k = 0; k < spec.nodes.length; k++) this.byId[spec.nodes[k].id] = spec.nodes[k];
     this.build();
@@ -93,11 +166,14 @@
       '<button type="button" class="fa-btn" data-fa="restart">↺ Restart</button>' +
       '<label class="fa-speed">Speed <select aria-label="Play speed">' +
       SPEEDS.map(function (v) { return '<option value="' + v + '">' + v + '×</option>'; }).join("") + '</select></label>' +
+      (Narrator.ok ? '<button type="button" class="fa-btn" data-fa="voice"></button>' : "") +
       '<button type="button" class="fa-btn" data-fa="full" aria-label="Full screen">⛶ Full screen</button>' +
       '<span class="fa-count"></span>';
     this.host.appendChild(bar);
     this.count = bar.querySelector(".fa-count"); this.playBtn = bar.querySelector('[data-fa="play"]');
     this.fullBtn = bar.querySelector('[data-fa="full"]');
+    this.voiceBtn = bar.querySelector('[data-fa="voice"]');
+    this.paintVoice();
     var sel = bar.querySelector(".fa-speed select"); sel.value = String(this.speed);
     sel.addEventListener("change", function () {
       self.speed = parseFloat(sel.value) || 1;
@@ -119,7 +195,27 @@
       else if (a === "back") { self.stop(); self.goto(self.i - 1); }
       else if (a === "restart") { self.stop(); self.reset(); }
       else if (a === "full") { self.full(!self.host.classList.contains("fa-full")); }
+      else if (a === "voice") { self.setVoice(!self.voice); }
     });
+  };
+
+  Player.prototype.paintVoice = function () {
+    if (!this.voiceBtn) return;
+    this.voiceBtn.textContent = this.voice ? "🔊 Voice on" : "🔇 Voice off";
+    this.voiceBtn.setAttribute("aria-pressed", this.voice ? "true" : "false");
+    this.voiceBtn.setAttribute("aria-label", this.voice ? "Turn narration off" : "Turn narration on");
+  };
+  Player.prototype.setVoice = function (on) {
+    this.voice = !!on && Narrator.ok;
+    try { localStorage.setItem("faVoice", this.voice ? "on" : "off"); } catch (e) {}
+    this.paintVoice();
+    // Turning it off mid-sentence: go quiet and let the words finish at
+    // reading pace. Turning it on takes effect from the next step.
+    if (!this.voice && this.speaking) {
+      this.speaking = false;
+      Narrator.stop();
+      if (this.saying) this.paceWords(this.saying.from, false);
+    }
   };
 
   Player.prototype.clearState = function () {
@@ -133,9 +229,113 @@
     this.gFly.innerHTML = "";
   };
   Player.prototype.reset = function () { this.clearState(); this.i = 0; this.caption(this.spec.intro || "Press Play, or step through with Next."); };
+  // The whole caption at once (Back, Restart, Pause, the intro).
   Player.prototype.caption = function (s) {
+    this.hush();
     this.cap.textContent = s || "";
     this.count.textContent = this.i + " / " + this.spec.steps.length;
+  };
+  // Stop talking and drop any half-built caption's timers.
+  Player.prototype.hush = function () {
+    this.tok++;
+    clearTimeout(this.wordTimer); clearTimeout(this.watchdog);
+    if (this.speaking) { this.speaking = false; Narrator.stop(); }
+    if (activePlayer === this) activePlayer = null;
+    this.saying = null;
+  };
+
+  /* A step's caption, built up word by word while it is spoken (or, with
+     Voice off, at reading pace). done() runs once, when the words are all
+     out and the voice has finished, so Play can move on. */
+  Player.prototype.narrate = function (s, done) {
+    var self = this;
+    this.hush();
+    var tok = this.tok;
+    s = String(s || "");
+    this.count.textContent = this.i + " / " + this.spec.steps.length;
+    var words = [], re = /\S+/g, m;
+    while ((m = re.exec(s))) words.push({ w: m[0], at: m.index });
+    this.cap.innerHTML = "";
+    words.forEach(function (x, k) {
+      var sp = document.createElement("span"); sp.className = "fa-w"; sp.textContent = x.w;
+      self.cap.appendChild(sp);
+      if (k < words.length - 1) self.cap.appendChild(document.createTextNode(" "));
+    });
+    this.wordEls = this.cap.querySelectorAll(".fa-w");
+    var finished = false;
+    var saying = this.saying = { words: words, from: 0, voiceDone: false, wordsDone: false,
+      done: function () {
+        if (finished || tok !== self.tok) return;
+        if (!(saying.wordsDone && saying.voiceDone)) return;
+        finished = true; clearTimeout(self.watchdog);
+        if (activePlayer === self) activePlayer = null;
+        self.showWord(-1);
+        if (done) done();
+      } };
+    // Nothing to build up: finish on the next tick, never synchronously
+    // (next() is still setting up when this returns).
+    if (!words.length || reduce && !this.voice) { this.showWord(-1); saying.wordsDone = saying.voiceDone = true; setTimeout(saying.done, 0); return; }
+    var spoken = false;
+    if (this.voice) {
+      if (activePlayer && activePlayer !== this) activePlayer.stop();
+      activePlayer = this;
+      var heard = false;   // true once the voice sends word boundaries
+      spoken = Narrator.speak(s, this.speed, function (ci) {
+        if (tok !== self.tok) return;
+        if (!heard) { heard = true; clearTimeout(self.wordTimer); }
+        var k = 0; while (k + 1 < words.length && words[k + 1].at <= ci) k++;
+        saying.from = k; self.showWord(k);
+      }, function () {
+        if (tok !== self.tok) return;
+        self.speaking = false;
+        saying.wordsDone = saying.voiceDone = true;   // the last word has been said
+        saying.done();
+      });
+      this.speaking = spoken;
+      if (spoken) {
+        // If the voice never reports an end (it happens), don't hang Play.
+        var est = this.msPerWord(true) * words.length;
+        this.watchdog = setTimeout(function () {
+          if (tok !== self.tok) return;
+          self.speaking = false; Narrator.stop();
+          saying.wordsDone = saying.voiceDone = true; saying.done();
+        }, est * 2 + 4000);
+      }
+    }
+    if (!spoken) saying.voiceDone = true;
+    this.paceWords(0, spoken);
+  };
+  // Words per minute: a speaking voice runs ~165 at rate 1, a reader ~200.
+  Player.prototype.msPerWord = function (voiced) { return 60000 / ((voiced ? 165 : 200) * (this.speed || 1)); };
+  // Reveal words on a timer from `from`. With the voice on this is only the
+  // fallback for voices that send no word boundaries, so it never ends the
+  // step itself (the voice's end does); with it off it does.
+  Player.prototype.paceWords = function (from, voiced) {
+    var self = this, tok = this.tok, saying = this.saying;
+    if (!saying) return;
+    clearTimeout(this.wordTimer);
+    var k = from, n = saying.words.length, step = this.msPerWord(voiced);
+    (function tick() {
+      if (tok !== self.tok) return;
+      self.showWord(k); saying.from = k;
+      if (k >= n - 1) {
+        if (voiced) return;
+        self.wordTimer = setTimeout(function () {
+          if (tok !== self.tok) return;
+          saying.wordsDone = saying.voiceDone = true; saying.done();
+        }, step);
+        return;
+      }
+      k++; self.wordTimer = setTimeout(tick, step);
+    })();
+  };
+  // Words up to k shown, k highlighted; -1 = the whole caption, no highlight.
+  Player.prototype.showWord = function (k) {
+    var els = this.wordEls || [];
+    for (var j = 0; j < els.length; j++) {
+      els[j].classList.toggle("on", k < 0 || j <= k);
+      els[j].classList.toggle("now", j === k);
+    }
   };
 
   Player.prototype.drawCell = function (nodeId, idx, label, color) {
@@ -203,8 +403,12 @@
     this.busy = true;
     var st = this.spec.steps[this.i];
     this.i++;
-    this.caption(st.say);
-    this.run(st, function () { self.busy = false; if (after) after(true); });
+    // The picture and the words run together; Play moves on when both are done.
+    var left = 2, tok;
+    function both() { if (--left === 0 && after && tok === self.tok) after(true); }
+    this.narrate(st.say, both);
+    tok = this.tok;
+    this.run(st, function () { self.busy = false; both(); });
   };
   Player.prototype.goto = function (k) {
     k = Math.max(0, Math.min(k, this.spec.steps.length));
@@ -220,13 +424,23 @@
     this.playing = true; this.playBtn.textContent = "❚❚ Pause";
     (function loop() {
       if (!self.playing) return;
+      // The page re-drew the answer (a poll): this player is gone.
+      if (!self.host.isConnected) { self.stop(); return; }
       self.next(function (moved) {
         if (!moved || !self.playing) { self.stop(); return; }
-        self.timer = setTimeout(loop, 1700 / (self.speed || 1));
+        // A short breath between steps; the narration already set the pace.
+        self.timer = setTimeout(loop, 700 / (self.speed || 1));
       });
     })();
   };
-  Player.prototype.stop = function () { this.playing = false; clearTimeout(this.timer); if (this.playBtn) this.playBtn.textContent = this.i >= this.spec.steps.length ? "▶ Replay" : "▶ Play"; };
+  Player.prototype.stop = function () {
+    var wasPlaying = this.playing;
+    this.playing = false; clearTimeout(this.timer);
+    // Pausing mid-sentence: go quiet and show the rest of the words.
+    if (this.saying || this.speaking) { this.hush(); this.showWord(-1); }
+    if (this.playBtn) this.playBtn.textContent = this.i >= this.spec.steps.length ? "▶ Replay" : "▶ Play";
+    return wasPlaying;
+  };
 
   // Full screen: the real Fullscreen API where the browser allows it on an
   // element (desktop, Android); otherwise (iPhone Safari) the player fills the
