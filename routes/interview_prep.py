@@ -10,6 +10,7 @@ Readiness and streak are computed on the fly from topics / stories /
 sessions — nothing to keep in sync. Schema: MIGRATION_INTERVIEW_PREP.sql.
 Soft-delete only (deleted_at).
 """
+import io
 import logging
 import re
 import threading
@@ -18,7 +19,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
 from flask import (Blueprint, Response, jsonify, redirect, render_template,
-                   request, session, url_for)
+                   request, send_file, session, url_for)
 
 from auth import login_required
 from interview_question_bank import CATEGORIES as QUESTION_CATEGORIES, QUESTIONS
@@ -42,6 +43,7 @@ import sql_bank
 import ai_sde_recall
 import ai_sde_summary
 from services import loud
+from services import thoughts_audio
 from services import thoughts_service
 from extensions import limiter
 from supabase_client import get, post, update
@@ -2239,11 +2241,11 @@ def tpm_rounds_pdf():
 
 _THOUGHT_COLS = ("id,parent_id,root_id,question,context,answer,status,model,error,"
                  "understood,pinned,tags,images,notes,highlight,created_at,updated_at,"
-                 "review_stage,next_review_at,last_reviewed_at,review_count")
+                 "review_stage,next_review_at,last_reviewed_at,review_count,audio")
 
 # Columns added by later sections of the migration. A table that predates
 # one still loads; the column is just left out of the select.
-_THOUGHT_LATE_COLS = ("notes", "images", "highlight")
+_THOUGHT_LATE_COLS = ("notes", "images", "highlight", "audio")
 
 
 def _thought_get(params, shelf=None, dropped=None):
@@ -2500,6 +2502,14 @@ def thoughts_edit(tid):
             return _thought_missing_resp()
         raise
     out = {"status": "ok"}
+    if "answer" in patch or patch.get("understood"):
+        # An edited answer is re-spoken; a question marked studied gets its
+        # audio for revision (both only where audio is wanted - see
+        # thoughts_audio.start_if_wanted).
+        try:
+            out["audio"] = thoughts_audio.start_if_wanted(tid, session["user_id"])
+        except Exception:
+            logger.warning("thoughts: audio not queued", exc_info=True)
     if "understood" in patch:
         # Studied -> first review tomorrow. Unmarked -> out of the review cycle.
         if patch["understood"]:
@@ -2630,6 +2640,69 @@ def thoughts_remove_image(tid):
     if key.startswith(thoughts_service.owner_prefix(user_id)):
         thoughts_service.remove_image(key)
     return jsonify({"images": images})
+
+
+# ── Spoken summaries (services/thoughts_audio.py) ──
+
+def _audio_stale(a):
+    """A build that has said "pending" for 10 minutes died with its process."""
+    if (a or {}).get("status") != "pending":
+        return False
+    try:
+        at = datetime.fromisoformat((a.get("at") or "").replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return (datetime.now(timezone.utc) - at).total_seconds() > 600
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/audio", methods=["POST"])
+@login_required
+@limiter.limit("120 per hour")
+def thoughts_audio_make(tid):
+    """Make the question's audio if it has none or it is out of date.
+    Body {force: true} remakes it anyway (a new take on the script)."""
+    data = request.get_json(silent=True) or {}
+    user_id = session["user_id"]
+    try:
+        rows = _thought_get({"id": f"eq.{tid}", "user_id": f"eq.{user_id}", "deleted_at": "is.null",
+                             "select": "id,parent_id,question,answer,status,audio", "limit": "1"})
+    except Exception as exc:
+        if _thoughts_missing(exc):
+            return _thought_missing_resp()
+        raise
+    if not rows:
+        return jsonify({"error": "Not found."}), 404
+    t = rows[0]
+    if "audio" not in t:
+        return jsonify({"error": f"Audio needs the latest {thoughts_service.MIGRATION} run in "
+                                 f"Supabase (it adds prep_thoughts.audio and the thought-audio "
+                                 f"bucket; safe to re-run)."}), 503
+    if t.get("parent_id") or t.get("status") != "ready":
+        return jsonify({"error": "Audio is made once the answer is ready."}), 409
+    force = bool(data.get("force"))
+    if not force and thoughts_audio.is_current(t) and not _audio_stale(t.get("audio")):
+        return jsonify({"audio": t["audio"]})
+    return jsonify({"audio": thoughts_audio.start(tid, user_id, force=force)})
+
+
+@interview_prep_bp.route("/interview-prep/thoughts/audio/<tid>", methods=["GET"])
+@login_required
+def thoughts_audio_file(tid):
+    """The MP3, to its owner only, with Range support (iOS needs it to play)."""
+    rows = get(thoughts_service.TABLE, {"id": f"eq.{tid}", "user_id": f"eq.{session['user_id']}",
+                                        "select": "audio", "limit": "1"}) or []
+    a = (rows[0].get("audio") if rows else None) or {}
+    key = a.get("key") or ""
+    if a.get("status") != "ready" or not key.startswith(thoughts_audio.owner_prefix(session["user_id"])):
+        return jsonify({"error": "Not found."}), 404
+    data = thoughts_audio.fetch(key)
+    if data is None:
+        return jsonify({"error": "Not found."}), 404
+    resp = send_file(io.BytesIO(data), mimetype="audio/mpeg", conditional=True,
+                     etag=a.get("hash") or key, max_age=31536000,
+                     download_name=f"thought-{tid}.mp3")
+    resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+    return resp
 
 
 @interview_prep_bp.route("/interview-prep/thoughts/img/<path:key>", methods=["GET"])

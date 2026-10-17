@@ -16,7 +16,7 @@
    route at /service-worker.js is served with no-cache (app.py), so a
    new version is picked up on the next page load. */
 
-const CACHE_VERSION = "v325-2026-10-17-review-reminders"
+const CACHE_VERSION = "v326-2026-10-17-thought-audio-offline"
 const STATIC_CACHE = `dp-static-${CACHE_VERSION}`;
 const PAGES_CACHE  = `dp-pages-${CACHE_VERSION}`;
 const OFFLINE_URL  = "/offline";
@@ -25,9 +25,16 @@ const OFFLINE_URL  = "/offline";
 // hop around 50+ pages. We trim oldest entries (insertion order) when
 // the cache exceeds the cap. Static assets get more headroom because
 // they're small and cache hits are valuable.
+// Random thoughts audio summaries (~2.4 MB each). NOT "dp-" prefixed, so a
+// new app version doesn't throw away what was downloaded for offline; the
+// file URLs carry ?v=<answer hash>, so a re-recorded summary is a new entry
+// and the old one ages out under the cap (40 x 2.4 MB = ~100 MB).
+const AUDIO_CACHE = "thought-audio-v1";
+
 const CACHE_LIMITS = {
   [STATIC_CACHE]: 120,
   [PAGES_CACHE]:  50,
+  [AUDIO_CACHE]:  40,
 };
 
 // Files we want available immediately on first install so the very
@@ -257,6 +264,12 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  // Random thoughts audio summaries: kept whole for offline listening, and
+  // above the Range bail-out because media elements ask in Ranges.
+  if (url.pathname.startsWith("/interview-prep/thoughts/audio/")) {
+    event.respondWith(offlineAudio(req));
+    return;
+  }
   // Range requests (audio/video) are not cache-friendly.
   if (req.headers.has("range")) return;
 
@@ -459,6 +472,38 @@ async function networkFirst(req, cacheName, revalidate) {
 // LRU since each successful fetch re-puts the request (deleting the
 // old entry and appending). Fire-and-forget — no await needed in the
 // response path.
+/* The whole file from the cache (fetched once, in full, if missing), and
+   a Range request answered by slicing it - a media element on a phone with
+   no signal still gets the 206 it asks for. */
+async function offlineAudio(req) {
+  const cache = await caches.open(AUDIO_CACHE);
+  let res = await cache.match(req.url);
+  if (!res) {
+    let net;
+    try { net = await fetch(req.url, { credentials: "same-origin" }); }
+    catch (e) { return new Response("", { status: 504, statusText: "Offline and not downloaded" }); }
+    if (!net.ok || net.status !== 200) return net;
+    await cache.put(req.url, net.clone());
+    trimCache(AUDIO_CACHE);
+    res = net;
+  }
+  const range = req.headers.get("range");
+  if (!range) return res;
+  const buf = await res.arrayBuffer();
+  const m = /bytes=(\d*)-(\d*)/.exec(range) || [];
+  const size = buf.byteLength;
+  let start = m[1] ? parseInt(m[1], 10) : 0;
+  let end = m[2] ? parseInt(m[2], 10) : size - 1;
+  if (!m[1] && m[2]) { start = Math.max(0, size - parseInt(m[2], 10)); end = size - 1; }
+  end = Math.min(end, size - 1);
+  if (start > end || start >= size)
+    return new Response("", { status: 416, headers: { "Content-Range": "bytes */" + size } });
+  return new Response(buf.slice(start, end + 1), { status: 206, headers: {
+    "Content-Type": "audio/mpeg", "Accept-Ranges": "bytes",
+    "Content-Range": "bytes " + start + "-" + end + "/" + size,
+    "Content-Length": String(end - start + 1) } });
+}
+
 function trimCache(cacheName) {
   const max = CACHE_LIMITS[cacheName];
   if (!max) return;

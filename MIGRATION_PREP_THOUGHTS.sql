@@ -94,3 +94,17 @@ alter table prep_thoughts add column if not exists notes jsonb not null default 
 --   {quote: the highlighted text, prefix: up to 80 chars before it}
 -- Ordinary follow-ups leave it null.
 alter table prep_thoughts add column if not exists highlight jsonb;
+
+-- ── Audio summaries (added 2026-10-17; safe to re-run) ───────────────
+-- A ~5 minute spoken summary of each question's answer, as an MP3:
+-- the question, a 5-second pause to recall it, then the answer
+-- (services/thoughts_audio.py). This column tracks it:
+--   {status: pending|ready|failed, key, hash, seconds, words, error, at}
+-- `hash` is of the question + answer, so an edited answer is re-spoken.
+alter table prep_thoughts add column if not exists audio jsonb;
+
+-- The files live in their own PRIVATE bucket: the user-photos bucket
+-- only accepts images. Served through the app to their owner only.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('thought-audio', 'thought-audio', false, 10485760, array['audio/mpeg'])
+on conflict (id) do nothing;

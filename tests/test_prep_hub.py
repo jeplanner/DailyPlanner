@@ -298,10 +298,13 @@ def thoughts(monkeypatch):
             if all(f"eq.{r.get(k)}" == v for k, v in params.items()):
                 r.update(json)
 
-    for mod in (ip, ts):
+    from services import thoughts_audio as ta
+    for mod in (ip, ts, ta):
         monkeypatch.setattr(mod, "get", fake_get)
         monkeypatch.setattr(mod, "update", fake_update)
     monkeypatch.setattr(ip, "post", fake_post)
+    # Audio builds never run in tests: record what would have been queued.
+    monkeypatch.setattr(ta, "start", lambda tid, uid, force=False: started.append(("audio", tid)) or {"status": "pending"})
     monkeypatch.setattr("supabase_client.post", fake_post)
     monkeypatch.setattr(ts, "answer_in_background", lambda *a, **k: started.append(a))
     ts._seeded.clear()
@@ -778,3 +781,41 @@ def test_a_failed_read_is_an_error_not_the_read_only_seed_list(auth_client, thou
     ts._seeded.clear()
     j = auth_client.get("/api/prep/thoughts").get_json()
     assert j["available"] is False and j["items"][0]["id"].startswith("seed-")
+
+
+def test_audio_is_made_on_request_and_served_to_its_owner_only(auth_client, thoughts, monkeypatch):
+    import routes.interview_prep as ip
+    started = []
+    monkeypatch.setattr(ip.thoughts_audio, "start",
+                        lambda tid, uid, force=False: started.append((tid, force)) or {"status": "pending"})
+    thoughts["rows"].append({"id": "a1", "user_id": "test-user-id", "parent_id": None, "root_id": "a1",
+                             "question": "Q?", "answer": "A.", "status": "ready", "audio": None})
+    r = auth_client.post("/api/prep/thoughts/a1/audio", json={})
+    assert r.status_code == 200 and r.get_json()["audio"]["status"] == "pending" and started == [("a1", False)]
+    # Ready and current: nothing to do unless asked for a new take.
+    from services import thoughts_audio as ta
+    row = thoughts["rows"][-1]
+    row["audio"] = {"status": "ready", "hash": ta.answer_hash("Q?", "A."), "key": "test-user-id/a1-x.mp3"}
+    assert auth_client.post("/api/prep/thoughts/a1/audio", json={}).get_json()["audio"]["status"] == "ready"
+    auth_client.post("/api/prep/thoughts/a1/audio", json={"force": True})
+    assert started[-1] == ("a1", True)
+    # The file: Range works (iOS needs it); someone else's key is refused.
+    monkeypatch.setattr(ip.thoughts_audio, "fetch", lambda key: b"\xff\xf3\x84\xc4" + bytes(500))
+    r = auth_client.get("/interview-prep/thoughts/audio/a1", headers={"Range": "bytes=0-99"})
+    assert r.status_code == 206 and r.mimetype == "audio/mpeg" and len(r.data) == 100
+    row["audio"]["key"] = "someone-else/a1-x.mp3"
+    assert auth_client.get("/interview-prep/thoughts/audio/a1").status_code == 404
+    # Follow-ups have no audio of their own.
+    thoughts["rows"].append({"id": "f1", "user_id": "test-user-id", "parent_id": "a1", "question": "Why?",
+                             "answer": "B.", "status": "ready", "audio": None})
+    assert auth_client.post("/api/prep/thoughts/f1/audio", json={}).status_code == 409
+
+
+def test_marking_studied_queues_its_audio_and_a_plain_open_does_not(auth_client, thoughts):
+    thoughts["rows"].append({"id": "s1", "user_id": "test-user-id", "parent_id": None, "root_id": "s1",
+                             "question": "Q?", "answer": "A.", "status": "ready", "audio": None,
+                             "understood": False})
+    assert auth_client.get("/api/prep/thoughts").status_code == 200
+    assert ("audio", "s1") not in thoughts["started"]
+    r = auth_client.post("/api/prep/thoughts/s1", json={"understood": True}).get_json()
+    assert r["audio"] == {"status": "pending"} and ("audio", "s1") in thoughts["started"]

@@ -266,6 +266,7 @@
       render();
       schedulePoll();
       maybeReview();
+      prefetchDue();
     }).catch(function () {
       $("th-list").innerHTML = '<div class="card"><div class="empty">Couldn\'t load your thoughts.</div></div>';
     });
@@ -273,7 +274,7 @@
 
   function schedulePoll() {
     clearTimeout(pollTimer);
-    var pending = ITEMS.some(function (t) { return t.status === "pending"; });
+    var pending = ITEMS.some(function (t) { return t.status === "pending" || (t.audio && t.audio.status === "pending"); });
     if (!pending) return;
     pollTimer = setTimeout(function () {
       var panel = document.querySelector("[data-panel=thoughts]");
@@ -318,6 +319,7 @@
       '<button class="rchip" type="button" data-thf="studied" aria-pressed="false">Studied <span class="n" id="thn-studied"></span></button>' +
       '<button class="rchip" type="button" data-thf="due" aria-pressed="false">Due for review <span class="n" id="thn-due"></span></button></div>' +
       '<button class="btn sm" type="button" id="th-review-now" hidden>Review now</button>' +
+      '<button class="btn sm" type="button" id="th-listen-due" hidden>🎧 Listen to due</button>' +
       '<label class="th-order mini-lbl">Order <select id="th-order" aria-label="Order of questions"><option value="study">Study order, by topic</option><option value="new">Newest first</option></select></label></div>' +
       '<details class="card th-guide" id="th-guide"><summary>Suggested study order</summary><div id="th-guide-body"></div></details>' +
       '<div id="th-list"><div class="card"><div class="empty">Loading…</div></div></div>';
@@ -342,6 +344,7 @@
     if ($("thn-studied")) $("thn-studied").textContent = rs.filter(function (r) { return r.understood; }).length;
     if ($("thn-due")) $("thn-due").textContent = dueN || "";
     if ($("th-review-now")) { $("th-review-now").hidden = !dueN; $("th-review-now").textContent = "Review now (" + dueN + ")"; }
+    if ($("th-listen-due")) { $("th-listen-due").hidden = !dueN; $("th-listen-due").textContent = "🎧 Listen to due (" + dueN + ")"; }
     paintGuide(rs);
     if ($("tn-th")) $("tn-th").textContent = rs.length || "";
     var list = rs.filter(function (r) {
@@ -493,6 +496,7 @@
 
     var body = (r.context ? '<div class="th-ctx"><b>What prompted it</b>' + esc(r.context) + "</div>" : "") +
       imagesBlock(r) +
+      audioBlock(r) +
       answerBlock(r) +
       notesBlock(r) +
       quizBlock(r) +
@@ -576,6 +580,8 @@
 
   document.addEventListener("click", async function (e) {
     if (e.target.id === "th-review-now") { openReview(dueList(), true); return; }
+    if (e.target.id === "th-listen-due") { listenTo(dueList()); return; }
+    if (e.target.closest("#th-player")) { playerClick(e); return; }
     if (e.target.closest("#th-rev")) { reviewClick(e); return; }
     var panel = e.target.closest("[data-panel=thoughts]");
     if (!panel) return;
@@ -597,6 +603,13 @@
     try {
       switch (a.dataset.th) {
         case "toggle": open[rootId] = !open[rootId]; render(); break;
+        case "listen": listenTo([root]); break;
+        case "audio-save": a.disabled = true; await saveOffline([root]); if (!offline[rootId]) H().say("Couldn't save it offline here", "error"); break;
+        case "audio-make": case "audio-again": {
+          a.disabled = true;
+          var ar = await api("/api/prep/thoughts/" + rootId + "/audio", { method: "POST", body: JSON.stringify({ force: a.dataset.th === "audio-again" }) });
+          root.audio = ar.audio || root.audio; render(); schedulePoll(); break;
+        }
         case "goto": {
           var target = roots().filter(function (x) { return x.question === a.dataset.q; })[0];
           if (!target) { H().say("That question isn't in this list", "info"); break; }
@@ -613,6 +626,7 @@
           var res = await api("/api/prep/thoughts/" + rootId, { method: "POST", body: JSON.stringify({ understood: !root.understood }) });
           root.understood = !root.understood;
           if ("next_review_at" in res) { root.next_review_at = res.next_review_at; root.review_stage = res.review_stage; }
+          if (res.audio) { root.audio = res.audio; schedulePoll(); }
           if (root.understood) H().say(res.review_unavailable ? "Marked as studied" : "Marked as studied — first review tomorrow", "success");
           render(); break;
         }
@@ -813,6 +827,142 @@
   function quizScore(wrap) {
     var done = wrap.querySelectorAll(".th-mcq[data-done]").length, got = wrap.querySelectorAll(".th-mcq.got").length;
     var el = wrap.querySelector(".th-score"); if (el) el.textContent = got + " / " + done + " right";
+  }
+
+  /* ── Audio summaries: question, a recall pause, then the answer ──── */
+  // One player bar outside the list: the list re-renders while anything is
+  // pending, and an <audio> inside a card would stop mid-sentence each time.
+  var autoAsked = {};
+  // Offline copies live in the service worker's "thought-audio-v1" cache:
+  // playing a file stores it, and today's due ones are fetched ahead.
+  var AUDIO_CACHE = "thought-audio-v1", offline = {};
+  function mmss(sec) { sec = Math.max(0, Math.round(sec || 0)); return Math.floor(sec / 60) + ":" + ("0" + (sec % 60)).slice(-2); }
+  function audioUrl(r) { return "/interview-prep/thoughts/audio/" + r.id + "?v=" + encodeURIComponent((r.audio && r.audio.hash) || ""); }
+  function audioReady(r) { return !!(r.audio && r.audio.status === "ready"); }
+  function checkOffline() {
+    if (!window.caches) return Promise.resolve();
+    return caches.open(AUDIO_CACHE).then(function (c) {
+      return Promise.all(roots().filter(audioReady).map(function (r) {
+        return c.match(location.origin + audioUrl(r)).then(function (hit) { offline[r.id] = !!hit; });
+      }));
+    }).catch(function () {});
+  }
+  function saveOffline(list) {
+    // One at a time, and not on a metered "save data" connection.
+    if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return Promise.resolve();
+    if (navigator.connection && navigator.connection.saveData) return Promise.resolve();
+    return list.filter(function (r) { return audioReady(r) && !offline[r.id]; }).reduce(function (p, r) {
+      return p.then(function () {
+        return fetch(audioUrl(r), { credentials: "same-origin" }).then(function (res) {
+          if (res.ok) { offline[r.id] = true; render(); }
+        }).catch(function () {});
+      });
+    }, Promise.resolve());
+  }
+  var prefetching = false;
+  function prefetchDue() {
+    // Studied before audio existed: queue a few per visit (the server records
+    // one at a time anyway), soonest review first.
+    roots().filter(function (r) { return r.understood && "audio" in r && r.status === "ready" && !r.audio && !autoAsked[r.id]; })
+      .sort(function (a, b) { return (a.next_review_at || "").localeCompare(b.next_review_at || ""); })
+      .slice(0, 3).forEach(function (r) {
+        autoAsked[r.id] = true;
+        api("/api/prep/thoughts/" + r.id + "/audio", { method: "POST", body: "{}" })
+          .then(function (j) { r.audio = j.audio || r.audio; schedulePoll(); }).catch(function () {});
+      });
+    if (prefetching) return;
+    prefetching = true;
+    checkOffline().then(function () { render(); return saveOffline(dueList()); })
+      .then(function () { prefetching = false; }, function () { prefetching = false; });
+  }
+  function audioBlock(r) {
+    if (!("audio" in r) || r.status !== "ready" || r.parent_id) return "";
+    var au = r.audio;
+    if (au && au.status === "pending" && au.at && Date.now() - Date.parse(au.at) > 600000)
+      au = { status: "failed", error: "it stopped part-way (the server restarted)" };
+    if (!au)
+      return '<div class="th-audio"><button class="btn sm" data-th="audio-make" type="button">🎧 Make 5-min audio</button>' +
+        '<span class="th-audio-meta">Made automatically when you mark it studied</span></div>';
+    if (au.status === "pending")
+      return '<div class="th-audio"><span class="th-audio-wait"><span class="th-spin"></span>Making the 5-minute audio summary…</span></div>';
+    if (au.status === "failed")
+      return '<div class="th-audio"><span class="th-audio-err">Audio: ' + esc(au.error || "could not be made") + "</span>" +
+        '<button class="btn sm ghost" data-th="audio-make" type="button">Try again</button></div>';
+    return '<div class="th-audio"><button class="btn sm primary" data-th="listen" type="button">▶ Listen (' + mmss(au.seconds) + ")</button>" +
+      '<span class="th-audio-meta">Question, 5 seconds to recall it, then the answer' +
+      (offline[r.id] ? ' · <span class="th-offline">✓ saved offline</span>' : "") + "</span>" +
+      (offline[r.id] ? "" : '<button class="btn sm ghost" data-th="audio-save" type="button">Save offline</button>') +
+      '<button class="btn sm ghost" data-th="audio-again" type="button" title="Write and record a fresh summary">New take</button></div>';
+  }
+
+  var PL = { list: [], i: 0, el: null };
+  function playerBar() {
+    var bar = $("th-player");
+    if (bar) return bar;
+    bar = document.createElement("div"); bar.id = "th-player"; bar.className = "th-player"; bar.hidden = true;
+    bar.setAttribute("role", "region"); bar.setAttribute("aria-label", "Audio summaries");
+    bar.innerHTML = '<div class="th-pl-top"><span class="th-pl-n" id="th-pl-n"></span><b class="th-pl-q" id="th-pl-q"></b>' +
+      '<button type="button" class="th-pl-x" data-pl="close" aria-label="Stop and close">×</button></div>' +
+      '<div class="th-pl-row"><button type="button" class="btn sm" data-pl="prev" aria-label="Previous">⏮</button>' +
+      '<button type="button" class="btn sm primary" data-pl="toggle" id="th-pl-play">⏸</button>' +
+      '<button type="button" class="btn sm" data-pl="next" aria-label="Next">⏭</button>' +
+      '<input type="range" id="th-pl-seek" min="0" max="100" step="1" value="0" aria-label="Position">' +
+      '<span class="th-pl-t" id="th-pl-t">0:00</span></div>';
+    document.body.appendChild(bar);
+    var au = new Audio(); au.preload = "auto"; PL.el = au;
+    au.addEventListener("ended", function () { playAt(PL.i + 1); });
+    au.addEventListener("play", function () { $("th-pl-play").textContent = "⏸"; });
+    au.addEventListener("pause", function () { $("th-pl-play").textContent = "▶"; });
+    au.addEventListener("timeupdate", function () {
+      if (!au.duration) return;
+      $("th-pl-seek").value = String(Math.round(au.currentTime / au.duration * 100));
+      $("th-pl-t").textContent = mmss(au.currentTime) + " / " + mmss(au.duration);
+    });
+    au.addEventListener("error", function () { H().say("That audio could not play — skipping it", "error"); playAt(PL.i + 1); });
+    $("th-pl-seek").addEventListener("input", function (e) { if (au.duration) au.currentTime = au.duration * e.target.value / 100; });
+    if ("mediaSession" in navigator) {
+      try {
+        navigator.mediaSession.setActionHandler("play", function () { au.play(); });
+        navigator.mediaSession.setActionHandler("pause", function () { au.pause(); });
+        navigator.mediaSession.setActionHandler("nexttrack", function () { playAt(PL.i + 1); });
+        navigator.mediaSession.setActionHandler("previoustrack", function () { playAt(PL.i - 1); });
+      } catch (e) {}
+    }
+    return bar;
+  }
+  function listenTo(list) {
+    var ready = list.filter(audioReady);
+    // Anything still without audio is queued now, for next time.
+    list.filter(function (r) { return "audio" in r && r.status === "ready" && !r.audio && !autoAsked[r.id]; }).forEach(function (r) {
+      autoAsked[r.id] = true;
+      api("/api/prep/thoughts/" + r.id + "/audio", { method: "POST", body: "{}" }).then(function (j) { r.audio = j.audio; schedulePoll(); }).catch(function () {});
+    });
+    if (!ready.length) { H().say("The audio for these is still being made — try again in a few minutes", "info"); return; }
+    if (ready.length < list.length) H().say("Playing " + ready.length + " of " + list.length + " — the rest are still being made", "info");
+    playerBar().hidden = false;
+    PL.list = ready; playAt(0);
+  }
+  function playAt(i) {
+    if (i < 0) i = 0;
+    if (i >= PL.list.length) { closePlayer(); H().say("That's all of them", "success"); return; }
+    PL.i = i;
+    var r = PL.list[i];
+    $("th-pl-q").textContent = r.question;
+    $("th-pl-n").textContent = PL.list.length > 1 ? (i + 1) + " of " + PL.list.length : "";
+    PL.el.src = audioUrl(r);
+    PL.el.play().catch(function () { $("th-pl-play").textContent = "▶"; });
+    if ("mediaSession" in navigator && window.MediaMetadata) {
+      try { navigator.mediaSession.metadata = new MediaMetadata({ title: r.question, artist: "Random thoughts", album: PL.list.length > 1 ? "Revision · " + (i + 1) + " of " + PL.list.length : "Revision" }); } catch (e) {}
+    }
+  }
+  function closePlayer() { var b = $("th-player"); if (b) b.hidden = true; if (PL.el) { PL.el.pause(); PL.el.removeAttribute("src"); PL.el.load(); } PL.list = []; }
+  function playerClick(e) {
+    var b = e.target.closest("[data-pl]"); if (!b) return;
+    var act = b.dataset.pl;
+    if (act === "close") closePlayer();
+    else if (act === "next") playAt(PL.i + 1);
+    else if (act === "prev") playAt(PL.el.currentTime > 5 ? PL.i : PL.i - 1);
+    else if (act === "toggle") { if (PL.el.paused) PL.el.play(); else PL.el.pause(); }
   }
 
   /* ── Spaced repetition: reviews pop up when they are due ─────────── */

@@ -282,7 +282,7 @@ def _prompt(question, context, parent):
     return "\n\n".join(parts)
 
 
-def _anthropic(prompt, images=(), system=None):
+def _anthropic(prompt, images=(), system=None, max_tokens=None):
     system = system or SYSTEM
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
@@ -292,7 +292,7 @@ def _anthropic(prompt, images=(), system=None):
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                  "content-type": "application/json"},
-        json={"model": model, "max_tokens": 8000, "system": system,
+        json={"model": model, "max_tokens": max_tokens or 8000, "system": system,
               "messages": [{"role": "user", "content": [
                   {"type": "image", "source": {"type": "base64", "media_type": m, "data": b}}
                   for m, b in images] + [{"type": "text", "text": prompt}]}]},
@@ -306,7 +306,7 @@ def _anthropic(prompt, images=(), system=None):
     return (text or None), model
 
 
-def _gemini(prompt, images=(), system=None):
+def _gemini(prompt, images=(), system=None, max_tokens=None):
     system = system or SYSTEM
     key = os.getenv("GOOGLE_API_KEY")
     if not key:
@@ -318,7 +318,7 @@ def _gemini(prompt, images=(), system=None):
         json={"systemInstruction": {"parts": [{"text": system}]},
               "contents": [{"parts": [{"inline_data": {"mime_type": m, "data": b}}
                                       for m, b in images] + [{"text": prompt}]}],
-              "generationConfig": {"maxOutputTokens": 8192, "temperature": 0.4}},
+              "generationConfig": {"maxOutputTokens": max_tokens or 8192, "temperature": 0.4}},
         timeout=120,
     )
     if r.status_code != 200:
@@ -331,7 +331,7 @@ def _gemini(prompt, images=(), system=None):
         return None, None
 
 
-def _groq(prompt, images=(), system=None):
+def _groq(prompt, images=(), system=None, max_tokens=None):
     system = system or SYSTEM
     key = os.getenv("GROQ_API_KEY")
     if not key:
@@ -345,7 +345,7 @@ def _groq(prompt, images=(), system=None):
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"model": model, "temperature": 0.4, "max_tokens": 6000,
+        json={"model": model, "temperature": 0.4, "max_tokens": max_tokens or 6000,
               "messages": [{"role": "system", "content": system},
                            {"role": "user", "content": prompt}]},
         timeout=120,
@@ -417,6 +417,15 @@ def answer_in_background(row_id, user_id, question, context="", parent=None, ima
             update(TABLE, params={"id": f"eq.{row_id}", "user_id": f"eq.{user_id}"}, json=patch)
         except Exception:
             logger.exception("thoughts: could not save the answer for %s", row_id)
+            return
+        # A rewritten answer on a question that has (or is studied, so wants)
+        # a spoken summary gets it re-recorded.
+        if patch.get("status") == "ready" and not parent and not highlight:
+            try:
+                from services import thoughts_audio
+                thoughts_audio.start_if_wanted(row_id, user_id)
+            except Exception:
+                logger.warning("thoughts: audio not queued for %s", row_id, exc_info=True)
 
     t = threading.Thread(target=run, name=f"thought-{row_id}", daemon=True)
     t.start()
