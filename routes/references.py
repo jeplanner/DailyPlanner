@@ -20,7 +20,7 @@ references_bp = Blueprint("references", __name__)
 ALLOWED_TAGS = ["p", "br", "h1", "h2", "h3", "strong", "em", "ul", "ol", "li", "a"]
 ALLOWED_ATTRIBUTES = {"a": ["href", "target", "rel"]}
 
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL = "openai/gpt-oss-20b"
 GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
 
 

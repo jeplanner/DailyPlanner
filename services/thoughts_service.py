@@ -8,7 +8,7 @@ held open, so the page polls instead of waiting.
 
 Providers, best first, each used only if its key is set:
   ANTHROPIC_API_KEY -> Claude (THOUGHTS_ANTHROPIC_MODEL, default claude-sonnet-5-5)
-  GOOGLE_API_KEY    -> Gemini (THOUGHTS_GEMINI_MODEL, default gemini-2.0-flash)
+  GOOGLE_API_KEY    -> Gemini (THOUGHTS_GEMINI_MODEL, default gemini-2.5-flash)
   GROQ_API_KEY      -> Llama 3.3 70B on Groq (THOUGHTS_GROQ_MODEL)
 Each is asked for a long answer; the existing ai_service caps Groq at 1,024
 tokens, which is far too short for this.
@@ -302,7 +302,7 @@ def _gemini(prompt, images=(), system=None):
     key = os.getenv("GOOGLE_API_KEY")
     if not key:
         return None, None
-    model = os.getenv("THOUGHTS_GEMINI_MODEL", "gemini-2.0-flash")
+    model = os.getenv("THOUGHTS_GEMINI_MODEL", "gemini-2.5-flash")
     r = requests.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         params={"key": key},
@@ -327,7 +327,7 @@ def _groq(prompt, images=(), system=None):
     key = os.getenv("GROQ_API_KEY")
     if not key:
         return None, None
-    model = os.getenv("THOUGHTS_GROQ_MODEL", "llama-3.3-70b-versatile")
+    model = os.getenv("THOUGHTS_GROQ_MODEL", "openai/gpt-oss-120b")
     if images:
         # This model reads text only; say so rather than answer as if it saw them.
         prompt += (f"\n\n(Note: {len(images)} image(s) were attached but this model "

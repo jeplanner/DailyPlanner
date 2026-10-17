@@ -32,7 +32,7 @@ def _gemini(prompt, retries=2):
     if not API_KEY:
         return None
 
-    model = "gemini-2.0-flash"
+    model = "gemini-2.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
 
     payload = {
@@ -81,7 +81,7 @@ def _groq(prompt):
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.1-8b-instant",
+                "model": "openai/gpt-oss-20b",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
                 "max_tokens": 1024,
