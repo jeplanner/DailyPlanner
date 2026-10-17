@@ -188,9 +188,10 @@ def key_kind(key=None):
     return {"service_role": "secret", "anon": "public"}.get(role, "unknown")
 
 
-PUBLIC_KEY_MSG = ("The server is using Supabase's PUBLIC key, which row-level security hides "
-                  "these questions from. On Render, set SUPABASE_KEY to the project's SECRET key "
-                  "(Supabase → Project Settings → API Keys → secret), then redeploy.")
+PUBLIC_KEY_MSG = ("The server is using Supabase's PUBLIC key. If row-level security is on for "
+                  "prep_thoughts, that key sees no questions: either run \"alter table prep_thoughts "
+                  "disable row level security;\" in Supabase, or set SUPABASE_KEY on Render to the "
+                  "project's SECRET key and redeploy.")
 
 
 def shelf_missing(exc):

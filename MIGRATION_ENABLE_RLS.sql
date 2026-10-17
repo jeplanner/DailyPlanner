@@ -20,6 +20,11 @@
 --
 --  Safe to re-run: enabling RLS on a table that already has it
 --  is a no-op.
+--
+--  !! NOT YET SAFE TO RUN (2026-10-17): the live server's SUPABASE_KEY
+--  is still the PUBLIC key. Running this now empties every feature
+--  at once, exactly as RLS on prep_thoughts emptied Random thoughts.
+--  First set SUPABASE_KEY on Render to the secret key and deploy.
 -- ============================================================
 
 do $$

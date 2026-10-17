@@ -48,9 +48,11 @@ create index if not exists ix_kr_checkins_kr_created
 create index if not exists ix_kr_checkins_user_created
     on kr_checkins (user_id, created_at desc);
 
--- Same posture as every other table (MIGRATION_ENABLE_RLS.sql): RLS on,
--- no policies, the server talks to it with the service key.
-alter table kr_checkins enable row level security;
+-- NO ROW-LEVEL SECURITY HERE, ON PURPOSE (2026-10-17). The live server's
+-- SUPABASE_KEY is the PUBLIC key, and RLS with no policies hides every row
+-- from it and refuses every write: re-running this file emptied Random
+-- thoughts that day. RLS is switched on in ONE place, MIGRATION_ENABLE_RLS.sql,
+-- and only after SUPABASE_KEY on Render is the secret key.
 
 -- Backfill: give existing key results a starting point so the check-in
 -- screen does not flag every one of them as "never updated" on day one.

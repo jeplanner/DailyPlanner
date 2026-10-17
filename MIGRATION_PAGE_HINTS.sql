@@ -30,6 +30,8 @@ create table if not exists page_hints (
 create index if not exists page_hints_user_page
   on page_hints (user_id, page, created_at) where deleted_at is null;
 
--- The app uses the service key (bypasses RLS); with RLS on and no
--- policies, the public anon key can read nothing here.
-alter table page_hints enable row level security;
+-- NO ROW-LEVEL SECURITY HERE, ON PURPOSE (2026-10-17). The live server's
+-- SUPABASE_KEY is the PUBLIC key, and RLS with no policies hides every row
+-- from it and refuses every write: re-running this file emptied Random
+-- thoughts that day. RLS is switched on in ONE place, MIGRATION_ENABLE_RLS.sql,
+-- and only after SUPABASE_KEY on Render is the secret key.

@@ -37,9 +37,11 @@ create index if not exists prep_thoughts_user_recent
 create index if not exists prep_thoughts_root
   on prep_thoughts (root_id) where deleted_at is null;
 
--- The app uses the service key (bypasses RLS); with RLS on and no
--- policies, the public anon key can read nothing here.
-alter table prep_thoughts enable row level security;
+-- NO ROW-LEVEL SECURITY HERE, ON PURPOSE (2026-10-17). The live server's
+-- SUPABASE_KEY is the PUBLIC key, and RLS with no policies hides every row
+-- from it and refuses every write: re-running this file emptied Random
+-- thoughts that day. RLS is switched on in ONE place, MIGRATION_ENABLE_RLS.sql,
+-- and only after SUPABASE_KEY on Render is the secret key.
 
 -- ── Diagrams & images (added later; safe to re-run) ─────────────────
 -- Images you attach to a question or follow-up: [{key, name, mime, size}].

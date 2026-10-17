@@ -851,7 +851,7 @@ def test_an_empty_list_says_why(auth_client, thoughts, monkeypatch):
     monkeypatch.setattr(ts, "key_kind", lambda key=None: "public")
     ts._seeded.clear()
     j = auth_client.get("/api/prep/thoughts").get_json()
-    assert j["items"] == [] and "SECRET key" in j["empty_reason"]
+    assert j["items"] == [] and "SECRET key" in j["empty_reason"] and "disable row level security" in j["empty_reason"]
     monkeypatch.setattr(ts, "key_kind", lambda key=None: "secret")
     def refuse(*a, **k):
         raise RuntimeError("new row violates row-level security policy")

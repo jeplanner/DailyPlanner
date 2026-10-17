@@ -65,9 +65,11 @@ create unique index if not exists prep_progress_user_bank_title
 create index if not exists prep_progress_user_done
   on prep_progress (user_id, bank) where done;
 
--- The app talks to Supabase with the service key, which bypasses RLS; with
--- RLS on and no policies, the public anon key can read nothing here.
-alter table prep_progress enable row level security;
+-- NO ROW-LEVEL SECURITY HERE, ON PURPOSE (2026-10-17). The live server's
+-- SUPABASE_KEY is the PUBLIC key, and RLS with no policies hides every row
+-- from it and refuses every write: re-running this file emptied Random
+-- thoughts that day. RLS is switched on in ONE place, MIGRATION_ENABLE_RLS.sql,
+-- and only after SUPABASE_KEY on Render is the secret key.
 
 -- Best quiz score (0-100) for the system design deep dives; 80%+ marks the
 -- design as studied.
