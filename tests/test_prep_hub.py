@@ -564,8 +564,9 @@ def test_thoughts_have_interview_version_and_ask_about_a_sentence():
     import pathlib
     js = (pathlib.Path(__file__).resolve().parent.parent / "static/js/prep_thoughts.js").read_text()
     assert 'data-th="interview"' in js and 'case "interview"' in js
-    assert "th-selchip" in js and "selectionchange" in js and "About this part: \\u201c" in js
-    assert "function followHead" in js
+    # Selecting text is handled on every page by page_hints.js now; quoted
+    # follow-ups made earlier still show their quote.
+    assert "About this part: \\u201c" in js and "function followHead" in js
 
 
 def test_a_follow_up_about_a_sentence_is_saved_on_that_thread(auth_client, thoughts):
@@ -738,11 +739,9 @@ def test_a_hint_gets_short_hint_instructions(monkeypatch):
     assert seen["system"] is None or not seen["system"].startswith(ts.HINT_SYSTEM)
 
 
-def test_highlight_ui_is_wired():
+def test_random_thoughts_leave_highlighting_to_page_hints():
     import pathlib
     root = pathlib.Path(__file__).resolve().parent.parent
     js = (root / "static/js/prep_thoughts.js").read_text()
-    for needle in ("function paintHighlights", "Highlight & ask", 'case "hint-del"', 'case "hint-rewrite"',
-                   "paintHighlights($(\"th-list\"))", "!t.highlight"):
-        assert needle in js, needle
-    assert "add column if not exists highlight jsonb" in (root / "MIGRATION_PREP_THOUGHTS.sql").read_text()
+    assert "Highlight & ask" not in js and "!t.highlight" in js
+    assert 'data-tid="' in js  # answers carry their id, which page_hints uses as the anchor

@@ -97,6 +97,7 @@ def create_app():
     from routes.programs import programs_bp
     from routes.knowledgebase import knowledgebase_bp
     from routes.chat import chat_bp, user_allowed as _chat_allowed
+    from routes.page_hints import page_hints_bp
     from routes.family_tasks import family_tasks_bp
     from routes.admin import admin_bp
     from routes.expenses import expenses_bp
@@ -150,6 +151,7 @@ def create_app():
     app.register_blueprint(programs_bp)
     app.register_blueprint(knowledgebase_bp)
     app.register_blueprint(chat_bp)
+    app.register_blueprint(page_hints_bp)
     app.register_blueprint(family_tasks_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(expenses_bp)
@@ -203,6 +205,7 @@ def create_app():
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens
     csrf.exempt(events_bp)
+    csrf.exempt(page_hints_bp)
     csrf.exempt(habits_bp)
     csrf.exempt(health_bp)
     csrf.exempt(ai_bp)
