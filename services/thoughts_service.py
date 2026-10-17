@@ -118,6 +118,47 @@ def system_for(shelf):
     return SYSTEM_STUDENT if clean_shelf(shelf) == "aisde" else SYSTEM
 
 
+# A HINT answers a question about one highlighted passage. It is re-read
+# later when the reader taps the highlight, so it is short and plain - not
+# the 8-section structure of a full answer.
+HINT_SYSTEM = """You are a patient tutor. While reading a study answer, the \
+reader highlighted a passage and asked a question about it. Your reply is \
+saved as a HINT on that highlight and re-read later, so:
+- Answer the question about the highlighted passage directly, in the first \
+sentence.
+- Then explain in plain words: short sentences, define any term you use, and \
+give one small concrete example (an e-commerce or food-delivery app works \
+well) if it helps.
+- Stay consistent with the study answer you are given.
+- 60 to 180 words. Markdown is fine (short bullet lists, **bold** for key \
+terms, `code`). No headings, no tables, no diagrams."""
+
+HINT_AUDIENCE = {
+    "tpm": "The reader is a senior engineering leader preparing for Director-level interviews.",
+    "aisde": "The reader is a final-year student preparing for campus SDE / ML interviews; keep it simple.",
+}
+
+
+def hint_prompt(quote, question, parent):
+    parts = []
+    if parent:
+        parts.append("THE STUDY ANSWER (for context):\n" + (parent.get("answer") or "")[:12000])
+    parts.append("THE HIGHLIGHTED PASSAGE:\n\u201c" + (quote or "") + "\u201d")
+    parts.append("THE READER'S QUESTION ABOUT IT:\n" + (question or "Explain this part simply."))
+    return "\n\n".join(parts)
+
+
+def clean_highlight(raw):
+    """{quote, prefix} from the page -> a bounded dict, or None."""
+    if not isinstance(raw, dict):
+        return None
+    quote = " ".join(str(raw.get("quote") or "").split())[:500]
+    if len(quote) < 2:
+        return None
+    prefix = " ".join(str(raw.get("prefix") or "").split())[-80:]
+    return {"quote": quote, "prefix": prefix}
+
+
 def shelf_missing(exc):
     """True when the database predates the `shelf` column."""
     t = str(exc)
@@ -316,13 +357,21 @@ def any_provider():
     return any(os.getenv(k) for k in ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY"))
 
 
-def generate(question, context="", parent=None, images=(), shelf=None):
+def generate(question, context="", parent=None, images=(), shelf=None, highlight=None):
     """(answer, model) from the first provider that answers, else (None, None).
-    `images` is [(mime, base64)] - shown to providers that can see them."""
-    prompt = _prompt(question, context, parent)
+    `images` is [(mime, base64)] - shown to providers that can see them.
+    With `highlight` ({quote, prefix}) it writes a short hint instead."""
+    if highlight:
+        prompt = hint_prompt(highlight.get("quote"), question, parent)
+        system = HINT_SYSTEM + "\n" + HINT_AUDIENCE[clean_shelf(shelf)]
+    else:
+        prompt = _prompt(question, context, parent)
+        system = None
     for fn in PROVIDERS:
         try:
-            if shelf and clean_shelf(shelf) != DEFAULT_SHELF:
+            if system:
+                text, model = fn(prompt, images, system=system)
+            elif shelf and clean_shelf(shelf) != DEFAULT_SHELF:
                 text, model = fn(prompt, images, system=system_for(shelf))
             else:
                 text, model = fn(prompt, images) if images else fn(prompt)
@@ -335,13 +384,14 @@ def generate(question, context="", parent=None, images=(), shelf=None):
 
 
 def answer_in_background(row_id, user_id, question, context="", parent=None, images=None,
-                         shelf=None):
+                         shelf=None, highlight=None):
     """Answer one saved question and write the result back to its row.
     `images` is the row's image list ([{key, mime}]); loaded in the thread."""
     def run():
         try:
             loaded = _load_images(images) if images else []
-            text, model = generate(question, context, parent, loaded, shelf=shelf)
+            text, model = generate(question, context, parent, loaded, shelf=shelf,
+                                   highlight=highlight)
             patch = ({"answer": text, "model": model, "status": "ready", "error": None}
                      if text else
                      {"status": "failed",

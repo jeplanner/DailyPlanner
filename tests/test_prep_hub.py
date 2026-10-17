@@ -699,3 +699,50 @@ def test_animated_diagrams_narrate_and_build_captions():
     r = subprocess.run(["node", "tests/js/flow_anim_narration.test.js"],
                        capture_output=True, text=True, timeout=180)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_highlight_and_ask_is_saved_as_a_hint_on_that_answer(auth_client, thoughts, monkeypatch):
+    from services import thoughts_service as ts
+    calls = []
+    monkeypatch.setattr(ts, "answer_in_background", lambda *a, **k: calls.append((a, k)))
+    root = auth_client.get("/api/prep/thoughts").get_json()["items"][0]
+    hl = {"quote": "  a single   append-only log ", "prefix": "x" * 200}
+    j = auth_client.post("/api/prep/thoughts", json={"question": "", "parent_id": root["id"], "highlight": hl})
+    assert j.status_code == 201
+    item = j.get_json()["item"]
+    assert item["highlight"] == {"quote": "a single append-only log", "prefix": "x" * 80}
+    assert item["parent_id"] == root["id"] and item["context"] == "a single append-only log"
+    assert item["question"].startswith("Explain this part simply")
+    assert calls[-1][1]["highlight"]["quote"] == "a single append-only log"
+    # A highlight needs an answer to sit on, and some words.
+    assert auth_client.post("/api/prep/thoughts", json={"question": "q", "highlight": hl}).status_code == 400
+    assert auth_client.post("/api/prep/thoughts", json={"question": "q", "parent_id": root["id"],
+                                                        "highlight": {"quote": " "}}).status_code == 400
+    # Rewrite keeps it a hint.
+    auth_client.post(f"/api/prep/thoughts/{item['id']}/retry")
+    assert calls[-1][1]["highlight"]["quote"] == "a single append-only log"
+
+
+def test_a_hint_gets_short_hint_instructions(monkeypatch):
+    from services import thoughts_service as ts
+    seen = {}
+    def fake(prompt, images=(), system=None):
+        seen.update(prompt=prompt, system=system); return "Short hint.", "fake"
+    monkeypatch.setattr(ts, "PROVIDERS", [fake])
+    text, _ = ts.generate("What is append-only?", "", {"question": "Q", "answer": "The study answer."},
+                          shelf="aisde", highlight={"quote": "append-only log", "prefix": ""})
+    assert text == "Short hint."
+    assert seen["system"].startswith(ts.HINT_SYSTEM) and "student" in seen["system"]
+    assert "“append-only log”" in seen["prompt"] and "The study answer." in seen["prompt"]
+    ts.generate("Normal question", shelf="tpm")
+    assert seen["system"] is None or not seen["system"].startswith(ts.HINT_SYSTEM)
+
+
+def test_highlight_ui_is_wired():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    js = (root / "static/js/prep_thoughts.js").read_text()
+    for needle in ("function paintHighlights", "Highlight & ask", 'case "hint-del"', 'case "hint-rewrite"',
+                   "paintHighlights($(\"th-list\"))", "!t.highlight"):
+        assert needle in js, needle
+    assert "add column if not exists highlight jsonb" in (root / "MIGRATION_PREP_THOUGHTS.sql").read_text()

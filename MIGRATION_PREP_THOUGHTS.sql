@@ -86,3 +86,11 @@ update prep_thoughts set next_review_at = now() + interval '1 day'
 -- delete, like every other row in the app). A refreshed shipped answer
 -- or a rewrite only touches `answer`, so notes survive both.
 alter table prep_thoughts add column if not exists notes jsonb not null default '[]'::jsonb;
+
+-- ── Highlights with hints (added 2026-10-17; safe to re-run) ─────────
+-- Highlight a passage of an answer and ask about it: the question and its
+-- short answer are saved as a HINT on that highlight. A hint is a follow-up
+-- row (parent_id = the answer it highlights) with this column set:
+--   {quote: the highlighted text, prefix: up to 80 chars before it}
+-- Ordinary follow-ups leave it null.
+alter table prep_thoughts add column if not exists highlight jsonb;

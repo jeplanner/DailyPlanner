@@ -2238,12 +2238,12 @@ def tpm_rounds_pdf():
 # in a background thread (services/thoughts_service.py) and the page polls.
 
 _THOUGHT_COLS = ("id,parent_id,root_id,question,context,answer,status,model,error,"
-                 "understood,pinned,tags,images,notes,created_at,updated_at,"
+                 "understood,pinned,tags,images,notes,highlight,created_at,updated_at,"
                  "review_stage,next_review_at,last_reviewed_at,review_count")
 
 # Columns added by later sections of the migration. A table that predates
 # one still loads; the column is just left out of the select.
-_THOUGHT_LATE_COLS = ("notes", "images")
+_THOUGHT_LATE_COLS = ("notes", "images", "highlight")
 
 
 def _thought_get(params, shelf=None, dropped=None):
@@ -2373,6 +2373,7 @@ def thoughts_list():
     return jsonify({"available": True, "items": thoughts_service.annotate(rows),
                     "categories": thoughts_service.CATEGORIES,
                     "notes_available": "notes" not in dropped,
+                    "highlights_available": "highlight" not in dropped,
                     "provider": thoughts_service.any_provider()})
 
 
@@ -2396,6 +2397,15 @@ def thoughts_ask():
     question = (data.get("question") or "").strip()[:thoughts_service.MAX_QUESTION]
     context = (data.get("context") or "").strip()[:thoughts_service.MAX_CONTEXT]
     shelf = _shelf_arg(data if not request.files else {"shelf": request.form.get("shelf")})
+    # A highlight: a passage of the parent's answer the question is about.
+    # Saved as a hint on that answer (a follow-up row with `highlight`).
+    highlight = thoughts_service.clean_highlight(data.get("highlight")) if not request.files else None
+    if data.get("highlight") is not None and not request.files:
+        if not highlight:
+            return jsonify({"error": "Select a few words to highlight first."}), 400
+        if not data.get("parent_id"):
+            return jsonify({"error": "A highlight belongs to an answer."}), 400
+        question = question or "Explain this part simply, with a small example."
     if not question:
         return jsonify({"error": "Write the question first."}), 400
     parent = None
@@ -2409,10 +2419,17 @@ def thoughts_ask():
         if parent:
             row["parent_id"] = parent["id"]
             row["root_id"] = parent.get("root_id") or parent["id"]
+        if highlight:
+            row["highlight"] = highlight
+            row["context"] = highlight["quote"]
         if shelf != thoughts_service.DEFAULT_SHELF:
             row["shelf"] = shelf
         created = post(thoughts_service.TABLE, row)
     except Exception as exc:
+        if highlight and "highlight" in str(exc):
+            return jsonify({"error": "Highlights need the latest MIGRATION_PREP_THOUGHTS.sql run "
+                                     "in Supabase (it adds the highlight column; safe to re-run).",
+                            "migration": thoughts_service.MIGRATION}), 503
         if thoughts_service.shelf_missing(exc):
             return _shelf_not_ready_resp()
         if _thoughts_missing(exc):
@@ -2441,7 +2458,8 @@ def thoughts_ask():
                                    "stored. Check that the user-photos storage bucket exists "
                                    "(see MIGRATION_USER_PHOTOS.sql) and attach them again.")
     thoughts_service.answer_in_background(item["id"], user_id, question, context, parent,
-                                          item.get("images") or None, shelf=shelf)
+                                          item.get("images") or None, shelf=shelf,
+                                          highlight=highlight)
     return jsonify({"item": item}), 201
 
 
@@ -2559,7 +2577,8 @@ def thoughts_retry(tid):
             return _thought_missing_resp()
         raise
     thoughts_service.answer_in_background(tid, user_id, t["question"], t.get("context") or "",
-                                          parent, t.get("images") or None, shelf=_shelf_arg())
+                                          parent, t.get("images") or None, shelf=_shelf_arg(),
+                                          highlight=thoughts_service.clean_highlight(t.get("highlight")))
     return jsonify({"status": "pending"})
 
 
@@ -2759,9 +2778,9 @@ def thoughts_pdf(tid):
     if not rows:
         return jsonify({"error": "Not found."}), 404
     sections = [{
-        "title": ("Follow-up: " if r.get("parent_id") else "") + r["question"],
+        "title": (("Hint: " if r.get("highlight") else "Follow-up: ") if r.get("parent_id") else "") + r["question"],
         "cat": (r.get("created_at") or "")[:10],
-        "fields": [("What prompted it", r.get("context")),
+        "fields": [("Highlighted" if r.get("highlight") else "What prompted it", r.get("context")),
                    ("Images", (f"{len(r['images'])} image(s) attached - view them in the app"
                                if r.get("images") else None)),
                    ("Answer", _md_plain(r.get("answer") or r.get("error") or "Not answered yet.")),
