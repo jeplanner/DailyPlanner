@@ -816,16 +816,19 @@
   }
 
   /* ── Spaced repetition: reviews pop up when they are due ─────────── */
+  // Due on a DAY, not to the minute: a question rated at 3pm is due all of
+  // the day it comes back, which is also what the 08:00 reminder counts.
+  function endOfToday() { var d = new Date(); d.setHours(24, 0, 0, 0); return d; }
   function isDue(r) {
-    return !!(r.understood && r.next_review_at && new Date(r.next_review_at) <= new Date());
+    return !!(r.understood && r.next_review_at && new Date(r.next_review_at) < endOfToday());
   }
   function dueList() {
     return roots().filter(isDue).sort(function (a, b) { return (a.next_review_at || "").localeCompare(b.next_review_at || ""); });
   }
   function reviewBadge(r) {
     if (!r.understood || !r.next_review_at) return "";
-    var days = Math.ceil((new Date(r.next_review_at) - new Date()) / 864e5);
-    return days <= 0 ? '<span class="badge P1">review due</span>' : '<span class="badge th-next">review in ' + days + "d</span>";
+    var days = Math.max(1, Math.ceil((new Date(r.next_review_at) - endOfToday()) / 864e5));
+    return isDue(r) ? '<span class="badge P1">review due</span>' : '<span class="badge th-next">review in ' + days + "d</span>";
   }
   function nextDays(stage, rating) {
     stage = stage || 0;
@@ -838,6 +841,11 @@
   function maybeReview() {
     var due = dueList();
     if (!due.length) return;
+    // The revision reminder links here with ?review=1: open it straight away.
+    if (/[?&]review=1/.test(location.search)) {
+      try { history.replaceState(null, "", location.pathname + location.hash); } catch (e) {}
+      openReview(due, true); return;
+    }
     var seen = false; try { seen = localStorage.getItem(todayKey()) === "1"; } catch (e) {}
     if (!seen) openReview(due, false);
   }

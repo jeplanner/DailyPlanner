@@ -32,6 +32,7 @@ from requests.exceptions import HTTPError
 from services import announcer_push
 from services import loud
 from services import push_service
+from services import review_reminders
 from supabase_client import get, post, update
 
 logger = logging.getLogger(__name__)
@@ -335,6 +336,13 @@ def tick():
                             at=a_time, failed=failed)
             except Exception:
                 logger.debug("announcement push skipped for %s", user_id,
+                             exc_info=True)
+
+            # Spaced-repetition reviews due on Random thoughts (08:00, 20:00).
+            try:
+                review_reminders.fire(user_id, now_local)
+            except Exception:
+                logger.debug("review reminder skipped for %s", user_id,
                              exc_info=True)
 
             fires = _due_fires_for_user(user_id, hhmm, weekday, today)
