@@ -2,6 +2,7 @@ import os
 from flask import Flask, session, request, jsonify, render_template, send_from_directory
 from flask_login import current_user
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.exceptions import HTTPException
 from logger import setup_logger
 from settings import config_map
 from extensions import login_manager, csrf, limiter
@@ -303,6 +304,15 @@ def create_app():
 
     @app.errorhandler(Exception)
     def handle_exception(e):
+        # An HTTP error raised on purpose (405 wrong method, 400 bad JSON or
+        # a missing CSRF token, 403, 413 ...) also lands here, because this
+        # handler catches everything. It is the request's fault, not a crash:
+        # answer with its own code and leave it out of the exception log.
+        # Before this, every one of them went out as a 500.
+        if isinstance(e, HTTPException):
+            if request.path.startswith("/api/"):
+                return jsonify({"status": "error", "error": e.description or e.name}), e.code
+            return e
         # logger.exception captures the traceback through the logger,
         # avoiding stack-trace leakage to stdout in production.
         logger.exception("Unhandled exception: %s", str(e))

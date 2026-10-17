@@ -573,3 +573,129 @@ def test_a_follow_up_about_a_sentence_is_saved_on_that_thread(auth_client, thoug
     q = "About this part: “Kafka keeps order only inside one partition.” Why?"
     j = auth_client.post("/api/prep/thoughts", json={"question": q, "parent_id": seed["id"]}).get_json()
     assert j["item"]["question"] == q and j["item"]["parent_id"] == seed["id"]
+
+# ── Your notes on a Random thoughts question ──────────────────────────
+
+def _a_question(auth_client):
+    r = auth_client.post("/api/prep/thoughts", json={"question": "Why is Kafka ordered per partition?"})
+    return r.get_json()["item"]
+
+
+def test_notes_add_edit_and_soft_delete(auth_client, thoughts):
+    q = _a_question(auth_client)
+    r = auth_client.post(f"/api/prep/thoughts/{q['id']}/notes", json={"text": "  Asked at the Flipkart loop  "})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    first = r.get_json()["notes"][0]
+    assert first["text"] == "Asked at the Flipkart loop" and first["id"]
+    second = auth_client.post(f"/api/prep/thoughts/{q['id']}/notes",
+                              json={"text": "Lead with ordering, then throughput"}).get_json()["notes"][1]
+
+    r = auth_client.post(f"/api/prep/thoughts/{q['id']}/notes/{first['id']}", json={"text": "Asked twice"})
+    assert [n["text"] for n in r.get_json()["notes"]] == ["Asked twice", "Lead with ordering, then throughput"]
+
+    r = auth_client.post(f"/api/prep/thoughts/{q['id']}/notes/{second['id']}/delete")
+    assert [n["text"] for n in r.get_json()["notes"]] == ["Asked twice"]
+    # Soft delete: the note is still in the row, stamped, and the list hides it.
+    row = next(x for x in thoughts["rows"] if x["id"] == q["id"])
+    gone = next(n for n in row["notes"] if n["id"] == second["id"])
+    assert gone["deleted_at"] and gone["text"] == "Lead with ordering, then throughput"
+    item = next(x for x in auth_client.get("/api/prep/thoughts").get_json()["items"] if x["id"] == q["id"])
+    assert [n["text"] for n in item["notes"]] == ["Asked twice"]
+    # A deleted note can't be edited back into view.
+    assert auth_client.post(f"/api/prep/thoughts/{q['id']}/notes/{second['id']}",
+                            json={"text": "x"}).status_code == 404
+
+
+def test_notes_reject_empty_text_and_other_peoples_questions(auth_client, thoughts):
+    q = _a_question(auth_client)
+    assert auth_client.post(f"/api/prep/thoughts/{q['id']}/notes", json={"text": "   "}).status_code == 400
+    thoughts["rows"].append({"id": "theirs", "user_id": "someone-else", "question": "Theirs", "notes": []})
+    assert auth_client.post("/api/prep/thoughts/theirs/notes", json={"text": "hi"}).status_code == 404
+    assert next(r for r in thoughts["rows"] if r["id"] == "theirs")["notes"] == []
+
+
+def test_follow_ups_take_notes_too(auth_client, thoughts):
+    q = _a_question(auth_client)
+    child = auth_client.post("/api/prep/thoughts", json={"question": "Simpler?", "parent_id": q["id"]}).get_json()["item"]
+    r = auth_client.post(f"/api/prep/thoughts/{child['id']}/notes", json={"text": "The queue analogy clicked"})
+    assert r.status_code == 200 and r.get_json()["notes"][0]["text"] == "The queue analogy clicked"
+
+
+def test_thoughts_still_load_before_the_notes_column_exists(auth_client, thoughts, monkeypatch):
+    """The notes column comes from a later section of the migration: until it
+    runs, the list must still load and say notes are unavailable, and adding
+    a note must name the migration rather than fail obscurely."""
+    import routes.interview_prep as ip
+    from services import thoughts_service as ts
+    q = _a_question(auth_client)
+    real_get = ip.get
+
+    def old_table(table, params=None, **kw):
+        if "notes" in ((params or {}).get("select") or "").split(","):
+            raise Exception('{"code":"42703","message":"column prep_thoughts.notes does not exist"}')
+        return real_get(table, params, **kw)
+    monkeypatch.setattr(ip, "get", old_table)
+    monkeypatch.setattr(ts, "get", old_table)
+
+    j = auth_client.get("/api/prep/thoughts").get_json()
+    assert j["available"] is True and j["notes_available"] is False
+    assert any(x["id"] == q["id"] for x in j["items"])
+    r = auth_client.post(f"/api/prep/thoughts/{q['id']}/notes", json={"text": "hi"})
+    assert r.status_code == 503 and "MIGRATION_PREP_THOUGHTS.sql" in r.get_json()["error"]
+
+
+def test_the_thread_pdf_carries_your_notes(auth_client, thoughts, monkeypatch):
+    import routes.interview_prep as ip
+    q = _a_question(auth_client)
+    auth_client.post(f"/api/prep/thoughts/{q['id']}/notes", json={"text": "Say partition key first"})
+    seen = {}
+    monkeypatch.setattr(ip, "_pdf_bytes", lambda title, sub, sections, **k: seen.setdefault("s", sections) and b"%PDF")
+    thoughts["rows"][-1]["root_id"] = q["id"]
+    for r in thoughts["rows"]:
+        r.setdefault("root_id", r["id"])
+
+    def by_root(table, params=None, **kw):
+        out = [dict(r) for r in thoughts["rows"] if f"eq.{r.get('root_id')}" == (params or {}).get("root_id")]
+        return out if "root_id" in (params or {}) else []
+    monkeypatch.setattr(ip, "get", by_root)
+    assert auth_client.get(f"/interview-prep/thoughts/{q['id']}/pdf").status_code == 200
+    fields = dict(seen["s"][0]["fields"])
+    assert "Say partition key first" in fields["Your notes"]
+
+
+def test_notes_work_in_the_real_page(auth_client):
+    """Runs tests/js/prep_thoughts_notes.test.js against the rendered page."""
+    import shutil
+    import subprocess
+    import tempfile
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
+                           capture_output=True, text=True, cwd="tests/js")
+    if probe.returncode != 0:
+        pytest.skip("jsdom not installed")
+    html = auth_client.get("/ai-sde/thoughts").get_data(as_text=True)
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as fh:
+        fh.write(html)
+        path = fh.name
+    # Generous: a cold require('jsdom') from the Windows drive takes ~25 s.
+    r = subprocess.run(["node", "tests/js/prep_thoughts_notes.test.js", path],
+                       capture_output=True, text=True, timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_animated_diagrams_narrate_and_build_captions():
+    """Runs tests/js/flow_anim_narration.test.js: Voice on/off, captions
+    following the speech word by word, Play waiting for the voice."""
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    probe = subprocess.run(["node", "-e", "require.resolve('jsdom')"],
+                           capture_output=True, text=True, cwd="tests/js")
+    if probe.returncode != 0:
+        pytest.skip("jsdom not installed")
+    # Generous: a cold require('jsdom') from the Windows drive takes ~25 s.
+    r = subprocess.run(["node", "tests/js/flow_anim_narration.test.js"],
+                       capture_output=True, text=True, timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr

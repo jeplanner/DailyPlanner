@@ -9,7 +9,8 @@
  * Answers are written in the background (they take up to a minute), so a
  * new question shows as "Writing…" and the list polls until it is ready.
  * Follow-ups ("Explain simpler", "Go deeper", or your own) stay threaded
- * under the original question.
+ * under the original question. Your own notes can sit under any question
+ * or follow-up — what you'd say differently, where it came up, a link.
  */
 (function () {
   "use strict";
@@ -43,6 +44,9 @@
   var asking = null;        // root id with the follow-up box open
   var askQuote = null;      // {text, parentId} when the follow-up is about a selected sentence
   var pollTimer = null;
+  var notesOk = true;       // false until the notes column exists
+  var noteDraft = null;     // {tid, nid}: the note box that is open (nid null = new note)
+  var noteText = "";        // its text, kept so a poll's re-render doesn't lose it
   var quizCache = {};      // step -> [mcq]
   var quizOpen = {};       // root id -> quiz shown
   var REVIEW_DAYS = [1, 3, 7, 14, 30, 60, 120];   // mirrors thoughts_service.REVIEW_DAYS
@@ -252,6 +256,7 @@
     return api("/api/prep/thoughts" + Q).then(function (j) {
       available = j.available !== false;
       provider = j.provider !== false;
+      notesOk = available && j.notes_available !== false;
       ITEMS = j.items || [];
       CATS = j.categories || CATS;
       if (!Object.keys(open).length) {
@@ -317,6 +322,9 @@
   }
 
   function render() {
+    var ae = document.activeElement;
+    var hadNoteFocus = wantNoteFocus || !!(ae && ae.matches && ae.matches("[data-th-note]"));
+    wantNoteFocus = false;
     var note = $("th-note");
     if (!available) { note.hidden = false; note.textContent = "Random thoughts need MIGRATION_PREP_THOUGHTS.sql run in Supabase before questions can be saved" + (STUDENT ? " (re-run it if it was run before — it now adds the AI SDE shelf)." : "."); }
     else if (!provider) { note.hidden = false; note.textContent = "No AI provider is configured on the server, so questions will be saved but not answered. Set ANTHROPIC_API_KEY, GOOGLE_API_KEY or GROQ_API_KEY."; }
@@ -342,7 +350,8 @@
       if (view.filter === "due" && !isDue(r)) return false;
       if (!q) return true;
       return [r].concat(children(r)).some(function (t) {
-        return ((t.question || "") + " " + (t.answer || "") + " " + (t.tags || []).join(" ")).toLowerCase().indexOf(q) >= 0;
+        return ((t.question || "") + " " + (t.answer || "") + " " + (t.tags || []).join(" ") + " " +
+          notesOf(t).map(function (n) { return n.text; }).join(" ")).toLowerCase().indexOf(q) >= 0;
       });
     }).sort(function (a, b) {
       if (view.order === "study") {
@@ -372,7 +381,17 @@
     drawDiagrams($("th-list"));
     if (window.FlowAnim) window.FlowAnim.init($("th-list"));
     if (window.feather) window.feather.replace();
+    // A re-render (the poll, another click) rebuilt the open note box: put
+    // the cursor back where it was so typing just carries on.
+    var nb = document.querySelector("[data-th-note]");
+    if (nb && hadNoteFocus && noteFocus) {
+      nb.focus();
+      try { nb.setSelectionRange(noteFocus[0], noteFocus[1]); } catch (_) {}
+      nb.style.height = "auto"; nb.style.height = Math.min(nb.scrollHeight + 2, 520) + "px";
+    }
   }
+  var noteFocus = null;     // [start, end] of the cursor in the open note box
+  var wantNoteFocus = false; // the box was just opened: focus it on this render
 
   function when(iso) {
     if (!iso) return "";
@@ -398,6 +417,35 @@
         '<button class="btn sm" data-th="edit" type="button">Write it myself</button></div>';
     }
     return '<div class="th-answer">' + md(t.answer) + "</div>";
+  }
+
+  /* ── Your notes ──────────────────────────────────────────────────── */
+  function notesOf(t) { return (t && t.notes) || []; }
+  function noteBox(t, nid, text) {
+    return '<div class="th-nbox"><textarea data-th-note rows="3" maxlength="5000" placeholder="Your note — what you\'d say differently, where this came up, what to revisit…">' +
+      esc(text) + "</textarea>" +
+      '<div class="q-actions"><button class="btn sm primary" data-th="note-save" type="button">' + (nid ? "Save note" : "Add note") + "</button>" +
+      '<button class="btn sm" data-th="note-cancel" type="button">Cancel</button>' +
+      '<span class="mini-lbl th-hint">Ctrl/⌘ + Enter to save</span></div></div>';
+  }
+  function notesBlock(t) {
+    if (!notesOk || t.seed) return "";
+    var ns = notesOf(t);
+    var draft = noteDraft && noteDraft.tid === t.id ? noteDraft : null;
+    var list = ns.map(function (n) {
+      if (draft && draft.nid === n.id) return noteBox(t, n.id, noteText);
+      var edited = n.updated_at && n.updated_at !== n.created_at;
+      return '<div class="th-note" data-nid="' + esc(n.id) + '"><div class="th-note-text">' + esc(n.text) + "</div>" +
+        '<div class="th-note-meta"><span>' + when(n.created_at) + (edited ? " · edited " + when(n.updated_at) : "") + "</span>" +
+        '<button class="th-note-btn" data-th="note-edit" data-nid="' + esc(n.id) + '" type="button">Edit</button>' +
+        '<button class="th-note-btn" data-th="note-del" data-nid="' + esc(n.id) + '" type="button">Delete</button></div></div>';
+    }).join("");
+    var adding = draft && !draft.nid;
+    return '<div class="th-notes">' +
+      (ns.length ? '<div class="th-notes-k">Your notes</div>' + list : "") +
+      (adding ? noteBox(t, null, noteText)
+              : '<button class="btn sm ghost th-note-add" data-th="note-add" type="button">+ Add a note</button>') +
+      "</div>";
   }
 
   function relatedBlock(r) {
@@ -433,6 +481,10 @@
       (pending ? '<span class="badge P2">writing…</span>' : r.status === "failed" ? '<span class="badge P0">failed</span>' :
         "") +
       (kids.length ? '<span class="badge">' + kids.length + " follow-up" + (kids.length === 1 ? "" : "s") + "</span>" : "") +
+      (function () {
+        var n = [r].concat(kids).reduce(function (c, t) { return c + notesOf(t).length; }, 0);
+        return n ? '<span class="badge th-nbadge">' + n + " note" + (n === 1 ? "" : "s") + "</span>" : "";
+      })() +
       (r.tags || []).map(function (g) { return '<span class="badge">#' + esc(g) + "</span>"; }).join("") +
       '<span class="badge">' + when(r.created_at) + "</span></span></div>";
     if (!isOpen) return '<div class="q-card th-card' + (r.understood ? " done" : "") + '" data-id="' + r.id + '">' + head + "</div>";
@@ -440,12 +492,14 @@
     var body = (r.context ? '<div class="th-ctx"><b>What prompted it</b>' + esc(r.context) + "</div>" : "") +
       imagesBlock(r) +
       answerBlock(r) +
+      notesBlock(r) +
       quizBlock(r) +
       relatedBlock(r) +
       kids.map(function (k) {
         return '<div class="th-follow" data-id="' + k.id + '">' + followHead(k.question) +
           imagesBlock(k) +
           answerBlock(k) +
+          notesBlock(k) +
           (k.status !== "pending" && editing !== k.id ? '<div class="q-actions th-small"><button class="btn sm ghost" data-th="retry" type="button">Rewrite</button>' +
             '<button class="btn sm ghost" data-th="edit" type="button">Edit</button><button class="btn sm ghost" data-th="delete" type="button">Delete</button></div>' : "") +
           "</div>";
@@ -639,6 +693,30 @@
           var j = await api("/api/prep/thoughts/" + owner.id + "/images/delete", { method: "POST", body: JSON.stringify({ key: a.dataset.key }) });
           owner.images = j.images; render(); break;
         }
+        case "note-add": noteDraft = { tid: id, nid: null }; noteText = ""; noteFocus = [0, 0]; wantNoteFocus = true; render(); break;
+        case "note-edit": {
+          var en = notesOf(t).find(function (n) { return n.id === a.dataset.nid; });
+          if (!en) break;
+          noteDraft = { tid: id, nid: en.id }; noteText = en.text;
+          noteFocus = [en.text.length, en.text.length]; wantNoteFocus = true; render(); break;
+        }
+        case "note-cancel": noteDraft = null; noteText = ""; noteFocus = null; render(); break;
+        case "note-save": {
+          var nv = noteText.trim();
+          if (!nv) { var nb = document.querySelector("[data-th-note]"); if (nb) nb.focus(); break; }
+          var d = noteDraft;
+          a.disabled = true;
+          var nr = await api("/api/prep/thoughts/" + d.tid + "/notes" + (d.nid ? "/" + d.nid : ""),
+                             { method: "POST", body: JSON.stringify({ text: nv }) });
+          find(d.tid).notes = nr.notes;
+          noteDraft = null; noteText = ""; noteFocus = null;
+          H().say(d.nid ? "Note saved" : "Note added", "success"); render(); break;
+        }
+        case "note-del": {
+          if (!confirm("Delete this note?")) break;
+          var dr = await api("/api/prep/thoughts/" + id + "/notes/" + a.dataset.nid + "/delete", { method: "POST" });
+          t.notes = dr.notes; render(); break;
+        }
         case "cancel-edit": editing = null; render(); break;
         case "save-edit": {
           var ta = document.querySelector("[data-th-edit]");
@@ -650,7 +728,10 @@
           ITEMS = ITEMS.filter(function (x) { return x.id !== id && (sub || x.root_id !== id); });
           render(); break;
       }
-    } catch (err) { H().say(err.message, "error"); }
+    } catch (err) {
+      H().say(err.message, "error");
+      if (a.dataset.th === "note-save") a.disabled = false;
+    }
   });
 
   // A follow-up asked about a selected sentence is stored as
@@ -721,6 +802,9 @@
       else if (e.target.matches && e.target.matches("[data-th-follow]")) {
         e.preventDefault(); var b = document.querySelector('[data-th="send-follow"]'); if (b) b.click();
       }
+      else if (e.target.matches && e.target.matches("[data-th-note]")) {
+        e.preventDefault(); var nb = document.querySelector('[data-th="note-save"]'); if (nb) nb.click();
+      }
     }
   });
   document.addEventListener("change", function (e) {
@@ -746,7 +830,10 @@
   });
   document.addEventListener("input", function (e) {
     if (e.target.id === "th-search") { view.q = e.target.value; render(); }
-    if (e.target.id === "th-q" || (e.target.matches && e.target.matches("[data-th-follow],[data-th-edit]"))) {
+    if (e.target.matches && e.target.matches("[data-th-note]")) {
+      noteText = e.target.value; noteFocus = [e.target.selectionStart, e.target.selectionEnd];
+    }
+    if (e.target.id === "th-q" || (e.target.matches && e.target.matches("[data-th-follow],[data-th-edit],[data-th-note]"))) {
       e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight + 2, 520) + "px";
     }
   });

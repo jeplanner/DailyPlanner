@@ -7752,3 +7752,35 @@ def test_p3_progress_is_reported_honestly():
     # detached something.
     assert len(done) >= 100, f"P3 completed fell to {len(done)}"
     assert len(p3) == 336
+
+
+# ── HTTP errors keep their own status code ────────────────────────────
+# The catch-all errorhandler(Exception) used to turn every HTTPException
+# (405 wrong method, 400 missing CSRF token, ...) into a 500, which logged
+# a traceback and told the page "Internal server error" for a client slip.
+
+def test_wrong_method_on_an_api_route_is_405_json(auth_client):
+    r = auth_client.get("/api/prep/thoughts/x/notes")
+    assert r.status_code == 405, r.status_code
+    assert r.get_json()["status"] == "error"
+
+
+def test_wrong_method_on_a_page_route_is_405(auth_client):
+    r = auth_client.post("/interview-prep/thoughts")
+    assert r.status_code == 405, r.status_code
+
+
+def test_missing_csrf_token_on_an_api_route_is_400_not_500(app, auth_client):
+    app.config["WTF_CSRF_ENABLED"] = True
+    r = auth_client.post("/api/prep/thoughts/x/notes", json={"text": "hi"})
+    assert r.status_code == 400, r.status_code
+    assert "CSRF" in r.get_json()["error"]
+
+
+def test_a_real_crash_is_still_a_500(app, client):
+    @app.route("/api/_boom_for_test")
+    def _boom():
+        raise RuntimeError("boom")
+    r = client.get("/api/_boom_for_test")
+    assert r.status_code == 500
+    assert r.get_json()["error"] == "Internal server error"

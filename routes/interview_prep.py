@@ -13,6 +13,7 @@ Soft-delete only (deleted_at).
 import logging
 import re
 import threading
+import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
@@ -2237,34 +2238,43 @@ def tpm_rounds_pdf():
 # in a background thread (services/thoughts_service.py) and the page polls.
 
 _THOUGHT_COLS = ("id,parent_id,root_id,question,context,answer,status,model,error,"
-                 "understood,pinned,tags,images,created_at,updated_at,"
+                 "understood,pinned,tags,images,notes,created_at,updated_at,"
                  "review_stage,next_review_at,last_reviewed_at,review_count")
 
+# Columns added by later sections of the migration. A table that predates
+# one still loads; the column is just left out of the select.
+_THOUGHT_LATE_COLS = ("notes", "images")
 
-def _thought_get(params, shelf=None):
+
+def _thought_get(params, shelf=None, dropped=None):
     """get() on prep_thoughts that tolerates a table created before the
-    images column existed (the first version of the migration). With a
-    shelf, only that shelf's rows (Interview Prep or AI SDE Prep)."""
+    images or notes column existed (earlier versions of the migration).
+    With a shelf, only that shelf's rows (Interview Prep or AI SDE Prep).
+    Columns it had to leave out are appended to `dropped`."""
     def run(p):
         if shelf is None:
             return get(thoughts_service.TABLE, p) or []
         return thoughts_service.get_shelved(p, shelf)
-    # Older tables may lack the images column or the spaced-repetition columns
-    # (added by later runs of MIGRATION_PREP_THOUGHTS.sql): drop them and retry.
-    for _ in range(3):
+    # Older tables may lack the images or notes column or the spaced-
+    # repetition columns (added by later runs of MIGRATION_PREP_THOUGHTS.sql):
+    # drop them from the select and retry.
+    for _ in range(4):
         try:
             return run(params)
         except Exception as exc:
             if "select" not in params:
                 raise
-            sel = params["select"]
+            cols = params["select"].split(",")
             if thoughts_service.review_missing(exc):
-                sel = ",".join(c for c in sel.split(",") if c not in thoughts_service.REVIEW_COLS)
-            elif "images" in str(exc):
-                sel = sel.replace(",images", "")
-            if sel == params["select"]:
+                keep = [c for c in cols if c not in thoughts_service.REVIEW_COLS]
+            else:
+                late = [c for c in _THOUGHT_LATE_COLS if c in cols and c in str(exc)][:1]
+                keep = [c for c in cols if c not in late]
+                if late and dropped is not None:
+                    dropped.append(late[0])
+            if keep == cols:
                 raise
-            params = dict(params, select=sel)
+            params = dict(params, select=",".join(keep))
     return run(params)
 
 
@@ -2340,10 +2350,11 @@ def thoughts_list():
             if _thoughts_missing(exc) or isinstance(exc, thoughts_service.ShelfNotReady):
                 raise
             logger.warning("thoughts: could not add the starter questions", exc_info=True)
+        dropped = []
         rows = _thought_get({
             "user_id": f"eq.{session['user_id']}", "deleted_at": "is.null",
             "select": _THOUGHT_COLS, "order": "created_at.desc", "limit": "500",
-        }, shelf)
+        }, shelf, dropped)
     except Exception as exc:
         if _thoughts_missing(exc) or isinstance(exc, thoughts_service.ShelfNotReady):
             # Show the shipped answers read-only until the table exists.
@@ -2357,8 +2368,11 @@ def thoughts_list():
                             "categories": thoughts_service.CATEGORIES,
                             "migration": thoughts_service.MIGRATION})
         raise
+    for r in rows:
+        r["notes"] = _live_notes(r.get("notes"))
     return jsonify({"available": True, "items": thoughts_service.annotate(rows),
                     "categories": thoughts_service.CATEGORIES,
+                    "notes_available": "notes" not in dropped,
                     "provider": thoughts_service.any_provider()})
 
 
@@ -2611,6 +2625,111 @@ def thoughts_image(key):
         "Cache-Control": "private, max-age=31536000, immutable"})
 
 
+# ── Your notes on a question ──
+# Kept on the question's own row as a jsonb list, so the list endpoint
+# returns them with no second query and search on the page covers them.
+# Deleting one stamps deleted_at and keeps it (never a hard delete).
+
+_MAX_NOTE = 5000
+_MAX_NOTES = 200
+
+
+def _live_notes(notes):
+    """The notes the page shows: not deleted, oldest first."""
+    return [n for n in (notes if isinstance(notes, list) else [])
+            if isinstance(n, dict) and not n.get("deleted_at")]
+
+
+def _notes_missing_resp():
+    return jsonify({"error": "Notes need the latest MIGRATION_PREP_THOUGHTS.sql run in "
+                             "Supabase (it adds the notes column; safe to re-run).",
+                    "migration": thoughts_service.MIGRATION}), 503
+
+
+def _notes_change(tid, change):
+    """Load one question's notes, apply `change(notes) -> error or None`,
+    save, and answer with the notes the page should now show."""
+    user_id = session["user_id"]
+    dropped = []
+    try:
+        rows = _thought_get({"id": f"eq.{tid}", "user_id": f"eq.{user_id}",
+                             "deleted_at": "is.null", "select": "id,notes", "limit": "1"},
+                            dropped=dropped)
+    except Exception as exc:
+        if _thoughts_missing(exc):
+            return _thought_missing_resp()
+        raise
+    if "notes" in dropped:
+        return _notes_missing_resp()
+    if not rows:
+        return jsonify({"error": "That question no longer exists."}), 404
+    notes = [n for n in (rows[0].get("notes") or []) if isinstance(n, dict)]
+    err = change(notes)
+    if err:
+        return jsonify({"error": err[0]}), err[1]
+    try:
+        update(thoughts_service.TABLE, params={"id": f"eq.{tid}", "user_id": f"eq.{user_id}"},
+               json={"notes": notes})
+    except Exception as exc:
+        if "notes" in str(exc):
+            return _notes_missing_resp()
+        logger.warning("thoughts: note save failed for %s", tid, exc_info=True)
+        return jsonify({"error": "Couldn't save that note - please retry."}), 502
+    return jsonify({"notes": _live_notes(notes)})
+
+
+def _note_text():
+    return ((request.get_json(silent=True) or {}).get("text") or "").strip()[:_MAX_NOTE]
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/notes", methods=["POST"])
+@login_required
+def thoughts_note_add(tid):
+    """Body: {text}. Adds a note to a question or follow-up."""
+    text = _note_text()
+    if not text:
+        return jsonify({"error": "Write the note first."}), 400
+
+    def add(notes):
+        if len(_live_notes(notes)) >= _MAX_NOTES:
+            return (f"Up to {_MAX_NOTES} notes per question.", 400)
+        now = _now_iso()
+        notes.append({"id": uuid.uuid4().hex[:12], "text": text,
+                      "created_at": now, "updated_at": now})
+    return _notes_change(tid, add)
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/notes/<nid>", methods=["POST"])
+@login_required
+def thoughts_note_edit(tid, nid):
+    """Body: {text}. Rewrites one note."""
+    text = _note_text()
+    if not text:
+        return jsonify({"error": "A note can't be empty - delete it instead."}), 400
+
+    def edit(notes):
+        for n in _live_notes(notes):
+            if n.get("id") == nid:
+                n["text"] = text
+                n["updated_at"] = _now_iso()
+                return None
+        return ("That note no longer exists.", 404)
+    return _notes_change(tid, edit)
+
+
+@interview_prep_bp.route("/api/prep/thoughts/<tid>/notes/<nid>/delete", methods=["POST"])
+@login_required
+def thoughts_note_delete(tid, nid):
+    """Soft delete: the note is stamped deleted_at and kept in the row."""
+    def drop(notes):
+        for n in _live_notes(notes):
+            if n.get("id") == nid:
+                n["deleted_at"] = _now_iso()
+                return None
+        return ("That note no longer exists.", 404)
+    return _notes_change(tid, drop)
+
+
 @interview_prep_bp.route("/api/prep/thoughts/<tid>/delete", methods=["POST"])
 @login_required
 def thoughts_delete(tid):
@@ -2645,7 +2764,10 @@ def thoughts_pdf(tid):
         "fields": [("What prompted it", r.get("context")),
                    ("Images", (f"{len(r['images'])} image(s) attached - view them in the app"
                                if r.get("images") else None)),
-                   ("Answer", _md_plain(r.get("answer") or r.get("error") or "Not answered yet."))],
+                   ("Answer", _md_plain(r.get("answer") or r.get("error") or "Not answered yet.")),
+                   ("Your notes", "\n\n".join(
+                       f"{(n.get('created_at') or '')[:10]}: {n.get('text') or ''}"
+                       for n in _live_notes(r.get("notes"))) or None)],
         "arch": None, "tags": r.get("tags") or None,
     } for r in rows]
     try:

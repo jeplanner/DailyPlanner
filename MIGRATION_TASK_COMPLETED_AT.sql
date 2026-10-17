@@ -42,10 +42,22 @@ create trigger trg_project_tasks_completed_at
     for each row execute function project_tasks_stamp_completed_at();
 
 -- Backfill: tasks already done get their last-updated time — the best
--- record there is of when they were finished.
-update project_tasks
-   set completed_at = coalesce(updated_at, created_at)
- where status = 'done' and completed_at is null;
+-- record there is of when they were finished. The live project_tasks has
+-- no updated_at column (it is in MIGRATION_ALL_TABLES.sql but was never
+-- applied), and naming a missing column fails the whole file, so use it
+-- only where it exists and fall back to created_at.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'project_tasks'
+                and column_name = 'updated_at') then
+    execute 'update project_tasks set completed_at = coalesce(updated_at, created_at)
+              where status = ''done'' and completed_at is null';
+  else
+    update project_tasks set completed_at = created_at
+     where status = 'done' and completed_at is null;
+  end if;
+end $$;
 
 create index if not exists ix_project_tasks_sprint_completed
     on project_tasks (sprint_id, completed_at)

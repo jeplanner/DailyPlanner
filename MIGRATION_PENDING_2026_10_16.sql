@@ -3,7 +3,7 @@
 --
 --  Run this whole file once in the Supabase SQL editor.
 --
---  It is two migrations concatenated in dependency-free order.
+--  It is three migrations concatenated in dependency-free order.
 --  EVERY STATEMENT IS IDEMPOTENT — running it twice changes nothing,
 --  so it is safe even if you have already run some of them.
 --
@@ -12,6 +12,11 @@
 --                                        the last column is missing)
 --    2. MIGRATION_TASK_COMPLETED_AT.sql  project_tasks.completed_at,
 --                                        its trigger, backfill and index
+--    3. MIGRATION_PREP_THOUGHTS.sql      Random thoughts: the spaced-
+--                                        repetition review columns and
+--                                        prep_thoughts.notes (your notes
+--                                        on each question) - only the two
+--                                        newest sections of that file
 --
 --  NOTE: Supabase's SQL editor runs a file as ONE transaction, so if
 --  any statement fails NOTHING in the file takes effect. If you get an
@@ -21,7 +26,7 @@
 
 
 -- ################################################################
--- ##  1 of 2  —  PREP PROGRESS (quiz scores on the deep dives)
+-- ##  1 of 3  —  PREP PROGRESS (quiz scores on the deep dives)
 -- ################################################################
 -- ============================================================
 --  PREP PROGRESS — "rehearsed" ticks and mock-interview scores for the
@@ -71,7 +76,7 @@ alter table prep_progress add column if not exists quiz_best_pct smallint
 
 
 -- ################################################################
--- ##  2 of 2  —  WHEN WAS A TASK FINISHED (sprint burndown)
+-- ##  2 of 3  —  WHEN WAS A TASK FINISHED (sprint burndown)
 -- ################################################################
 -- ============================================================
 --  DailyPlanner — WHEN WAS A TASK FINISHED?
@@ -117,11 +122,48 @@ create trigger trg_project_tasks_completed_at
     for each row execute function project_tasks_stamp_completed_at();
 
 -- Backfill: tasks already done get their last-updated time — the best
--- record there is of when they were finished.
-update project_tasks
-   set completed_at = coalesce(updated_at, created_at)
- where status = 'done' and completed_at is null;
+-- record there is of when they were finished. The live project_tasks has
+-- no updated_at column (it is in MIGRATION_ALL_TABLES.sql but was never
+-- applied), and naming a missing column fails the whole file, so use it
+-- only where it exists and fall back to created_at.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'project_tasks'
+                and column_name = 'updated_at') then
+    execute 'update project_tasks set completed_at = coalesce(updated_at, created_at)
+              where status = ''done'' and completed_at is null';
+  else
+    update project_tasks set completed_at = created_at
+     where status = 'done' and completed_at is null;
+  end if;
+end $$;
 
 create index if not exists ix_project_tasks_sprint_completed
     on project_tasks (sprint_id, completed_at)
     where sprint_id is not null;
+
+
+-- ################################################################
+-- ##  3 of 3  —  RANDOM THOUGHTS: REVIEW SCHEDULE + YOUR NOTES
+-- ################################################################
+-- ── Spaced repetition (added later; safe to re-run) ─────────────────
+-- Marking a question "studied" schedules a review tomorrow; each review
+-- (Forgot / Hard / Got it / Easy) moves it 1, 3, 7, 14, 30, 60 or 120 days out.
+alter table prep_thoughts add column if not exists review_stage     integer not null default 0;
+alter table prep_thoughts add column if not exists next_review_at   timestamptz;
+alter table prep_thoughts add column if not exists last_reviewed_at timestamptz;
+alter table prep_thoughts add column if not exists review_count     integer not null default 0;
+create index if not exists prep_thoughts_due
+  on prep_thoughts (user_id, next_review_at) where deleted_at is null and next_review_at is not null;
+-- Questions you had already marked understood join the cycle: first review tomorrow.
+update prep_thoughts set next_review_at = now() + interval '1 day'
+  where understood and next_review_at is null and deleted_at is null and parent_id is null;
+
+-- ── Your notes (added 2026-10-16; safe to re-run) ───────────────────
+-- Your own notes against a question or follow-up, newest last:
+--   [{id, text, created_at, updated_at, deleted_at}]
+-- Deleting a note sets its deleted_at; the note itself is kept (soft
+-- delete, like every other row in the app). A refreshed shipped answer
+-- or a rewrite only touches `answer`, so notes survive both.
+alter table prep_thoughts add column if not exists notes jsonb not null default '[]'::jsonb;
